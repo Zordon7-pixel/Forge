@@ -62,7 +62,12 @@ const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 
     async post(path, body) {
       calls.push({ method: 'post', path, body })
       if (path.endsWith('/removal-preview')) {
-        return { data: { requires_apply: true, candidate_id: 'candidate-1', candidate_hash: 'sha256:owned' } }
+        return { data: {
+          requires_apply: true,
+          candidate_id: 'candidate-1',
+          candidate_hash: 'sha256:owned',
+          removal: { remaining_race_ids: ['army'] },
+        } }
       }
       return { data: { ok: true } }
     },
@@ -70,6 +75,7 @@ const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 
   }
   const result = await removeOwnedRace({ api, raceId: 'linked-race', planningClock: clock })
   assert.equal(result.path, 'linked')
+  assert.deepEqual(result.expectedRemainingRaceIds, ['army'])
   assert.equal(calls[1].path, '/races/linked-race/removal-apply')
   assert.deepEqual(calls[1].body, {
     candidate_id: 'candidate-1',
@@ -78,6 +84,28 @@ const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 
     ...clock,
   })
   assert.equal(calls.some((call) => call.path.includes('/plans/candidates/')), false)
+}
+
+{
+  const api = {
+    async post(path) {
+      if (path.endsWith('/removal-preview')) return { data: {
+        requires_apply: true,
+        candidate_id: 'candidate-replay',
+        candidate_hash: 'sha256:replay',
+        removal: { remaining_race_ids: ['army'] },
+      } }
+      const error = new Error('ambiguous apply response')
+      error.code = 'ETIMEDOUT'
+      throw error
+    },
+  }
+  await assert.rejects(
+    () => removeOwnedRace({ api, raceId: 'linked-race', planningClock: clock }),
+    (error) => error?.code === 'REMOVAL_TIMEOUT'
+      && JSON.stringify(error.expectedRemainingRaceIds) === JSON.stringify(['army']),
+    'an ambiguous apply preserves the exact remaining-goal expectation for authoritative refetch',
+  )
 }
 
 assert.equal(SELF_SERVICE_REMOVAL_TIMEOUT_MS, 45000)
@@ -128,6 +156,7 @@ assert.match(planSource, /proposal_plan_version: adaptationProposal\.planVersion
 assert.match(planSource, /Review the updated proposal before accepting it/)
 assert.match(racesSource, /await load\(\{ fresh: true \}\)/)
 assert.match(racesSource, /The race is still listed/)
+assert.match(racesSource, /active plan goals are not confirmed/)
 assert.match(racesSource, /Forge confirmed it after refreshing your account/)
 assert.match(serviceWorkerSource, /isReplayUnsafeMutation/)
 assert.match(serviceWorkerSource, /removal-\(\?:preview\|apply\)/)

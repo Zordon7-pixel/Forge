@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronLeft, ShieldCheck, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import DurationPicker from '../DurationPicker'
 import api from '../../lib/api'
 import { hyroxCombinedPlanGuidance, hyroxDivisionLabel, hyroxSetupInitialState } from '../../lib/hyroxSelfService'
 import { activateModalDialog } from '../../lib/modalDialog'
 import { phonePlanningClock } from '../../lib/planCandidates'
+import { applyPlanCandidateWithActivation } from '../../lib/planCandidateActivation'
 import { hyroxCandidateReviewModel } from '../../lib/planCalendar'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -41,6 +43,8 @@ function planFromPreview(preview = {}) {
 export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = [], initialRace = null, initialSecondaryRaceId = '', onClose, onComplete }) {
   const { t } = useTranslation()
   const dialogRef = useRef(null)
+  const retryRef = useRef(null)
+  const feedbackRef = useRef(null)
   const tx = (key, defaultValue, values = {}) => t(`hyrox.${key}`, { defaultValue, ...values })
   const initial = useMemo(
     () => hyroxSetupInitialState(initialRace, initialSecondaryRaceId, browserTimezone()),
@@ -53,6 +57,7 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
   const [location, setLocation] = useState(initial.location)
   const [eventFormat, setEventFormat] = useState(initial.eventFormat)
   const [eventCategory, setEventCategory] = useState(initial.eventCategory)
+  const [goalTimeSeconds, setGoalTimeSeconds] = useState(initial.goalTimeSeconds)
   const [rulesVersion] = useState(RULES_VERSION)
   const [runningPriority, setRunningPriority] = useState(initial.runningPriority)
   const [equipment, setEquipment] = useState(initial.equipment)
@@ -84,6 +89,25 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
     dialog: dialogRef.current,
     onClose: () => { if (!busy) onClose?.() },
   }), [busy, onClose])
+
+  useEffect(() => {
+    if (!error || !candidate || busy) return undefined
+    const frame = window.requestAnimationFrame(() => {
+      const dialog = dialogRef.current
+      const retry = retryRef.current
+      const feedback = feedbackRef.current
+      if (!dialog || !retry || !feedback) return
+      const dialogBox = dialog.getBoundingClientRect()
+      const retryBox = retry.getBoundingClientRect()
+      const feedbackBox = feedback.getBoundingClientRect()
+      const visibleTop = Math.max(0, dialogBox.top)
+      const visibleBottom = Math.min(window.innerHeight, dialogBox.bottom)
+      const revealBy = Math.max(0, feedbackBox.bottom - visibleBottom)
+      const retryRoom = Math.max(0, retryBox.top - visibleTop)
+      if (revealBy > 0 && revealBy <= retryRoom) dialog.scrollTop += Math.ceil(revealBy)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [busy, candidate, error])
 
   const toggleEquipment = (key) => setEquipment((current) => (
     current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
@@ -132,6 +156,7 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
     event_kind: 'hyrox',
     event_format: eventFormat,
     event_category: eventCategory,
+    goal_time_seconds: goalTimeSeconds || null,
     rules_version: rulesVersion,
     location: location.trim() || null,
     status: 'upcoming',
@@ -197,15 +222,17 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
     try {
       const candidateId = String(candidate.candidate_id || '')
       const candidateHash = String(candidate.candidate_hash || '')
-      if (!candidateId || !candidateHash) throw new Error('The reviewed plan is missing its apply token. Preview again.')
-      await api.post(`/plans/candidates/${encodeURIComponent(candidateId)}/apply`, {
-        candidate_hash: candidateHash,
-        choice: 'train_for_target',
-        ...phonePlanningClock(),
+      const result = await applyPlanCandidateWithActivation({
+        api,
+        candidateId,
+        candidateHash,
+        planningClock: phonePlanningClock(),
+        hyroxRace: eventMode === 'event_date' ? ownedHyroxRace : null,
+        secondaryRaceId: eventMode === 'event_date' ? secondaryRaceId : '',
       })
-      onComplete?.()
+      onComplete?.({ ...result, mode: eventMode })
     } catch (err) {
-      setError(err?.response?.data?.error || err?.message || 'Could not apply this plan. Your current calendar is unchanged.')
+      setError(err?.response?.data?.error || err?.message || 'Forge could not confirm the final active calendar. Refresh before trying again.')
     } finally {
       setBusy(false)
     }
@@ -224,7 +251,7 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
           <button type="button" onClick={onClose} disabled={busy} aria-label={tx('close', 'Close HYROX setup')} style={{ width: 44, height: 44, flex: '0 0 auto', display: 'grid', placeItems: 'center', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}><X size={19} /></button>
         </header>
 
-        {error && <p role="alert" aria-live="assertive" style={{ margin: '12px 0 0', padding: 12, borderRadius: 8, background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 750 }}>{error}</p>}
+        {error && !candidate && <p role="alert" aria-live="assertive" style={{ margin: '12px 0 0', padding: 12, borderRadius: 8, background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 750 }}>{error}</p>}
 
         {candidate && review ? (
           <div style={{ display: 'grid', gap: 12, marginTop: 16, minWidth: 0 }}>
@@ -272,9 +299,10 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
               )}
             </dl>
             <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 12 }}>Canonical station distances, loads, and repetitions remain metric. Locale conversion is display-only.</p>
-            <button type="button" onClick={applyCandidate} disabled={busy} style={{ width: '100%', minHeight: 48, borderRadius: 8, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 15, fontWeight: 950, opacity: busy ? 0.6 : 1 }}>
+            <button ref={retryRef} type="button" onClick={applyCandidate} disabled={busy} style={{ width: '100%', minHeight: 48, borderRadius: 8, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 15, fontWeight: 950, opacity: busy ? 0.6 : 1 }}>
               {busy ? tx('review.applying', 'Applying reviewed plan…') : tx('review.apply', 'Apply reviewed HYROX plan')}
             </button>
+            {error && <p ref={feedbackRef} role="alert" aria-live="assertive" style={{ margin: 0, padding: 12, borderRadius: 8, background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 750, overflowWrap: 'anywhere' }}>{error}</p>}
             <button type="button" onClick={() => { setCandidate(null); setError('') }} disabled={busy} style={{ width: '100%', minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 14, fontWeight: 800 }}><ChevronLeft size={16} style={{ display: 'inline', marginRight: 5, verticalAlign: -3 }} />Back to setup</button>
           </div>
         ) : (
@@ -322,6 +350,20 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
                   <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>{tx('field.location', 'Event location')}</span>
                   <input value={location} onChange={(event) => setLocation(event.target.value)} maxLength={200} placeholder={tx('field.location_placeholder', 'City, region, country')} style={inputStyle} />
                 </label>
+              </div>
+            )}
+            {eventMode === 'event_date' && (
+              <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+                <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>{tx('field.goal_time', 'Target finish time')}</span>
+                <DurationPicker
+                  value={goalTimeSeconds}
+                  onChange={setGoalTimeSeconds}
+                  disabled={busy}
+                  idPrefix="hyrox-goal-time"
+                  maxHours={12}
+                  ariaLabel={tx('field.goal_time', 'Target finish time')}
+                />
+                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{tx('field.goal_time_help', 'Leave blank for a completion goal. Forge will not claim a performance target is supported without evidence.')}</span>
               </div>
             )}
             <label style={{ display: 'grid', gap: 6, minWidth: 0 }}>

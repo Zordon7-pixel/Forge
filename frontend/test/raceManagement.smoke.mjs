@@ -28,7 +28,7 @@ assert.doesNotMatch(removal, /\/plans\/candidates\//, 'race ownership removal do
 assert.match(races, /if \(removingRaceId\) return[\s\S]*setRemovingRaceId\(race\.id\)/, 'a single in-flight guard prevents duplicate Remove taps')
 assert.match(races, /catch \(err\)[\s\S]*await load\(\{ fresh: true \}\)[\s\S]*finally[\s\S]*setRemovingRaceId\(null\)/, 'failed or ambiguous removal refreshes account truth and restores the action')
 assert.match(races, /The race is still listed[\s\S]*Refresh and try again/, 'a confirmed non-removal reports a truthful recoverable state')
-assert.match(races, /await removeOwnedRace[\s\S]*const refreshed = await load\(\{ fresh: true \}\)[\s\S]*refreshed\.races\.some/, 'race and plan state come from a fresh account read after the atomic removal succeeds')
+assert.match(races, /await removeOwnedRace[\s\S]*const refreshed = await load\(\{ fresh: true \}\)[\s\S]*verifyRaceRemovalActivation/, 'race ownership and replacement-plan goals come from a fresh account read after the atomic removal succeeds')
 
 assert.ok(races.includes("removingRaceId === r.id ? 'Removing…'"), 'the in-flight button copy truthfully says Removing…')
 assert.equal(/Reviewing…|Applying safely…|Removal review/.test(races), false, 'one-tap removal never implies a separate review phase')
