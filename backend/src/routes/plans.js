@@ -2226,6 +2226,7 @@ const GOAL_BACKWARD_RUNNING_FAMILIES = new Set([
   'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run', 'interval_run',
   'race_rhythm_run', 'assessment', 'race',
 ]);
+const GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES = new Set(['hyrox_compromised']);
 
 function goalBackwardCandidateMaterial(plan, availableLocalDates) {
   const available = Array.isArray(availableLocalDates) ? new Set(availableLocalDates) : null;
@@ -2248,36 +2249,62 @@ function goalBackwardMaterialRunningMeters(session) {
   return Number.isFinite(miles) && miles >= 0 ? Math.round(miles * 1609.344) : 0;
 }
 
+function goalBackwardSupportRequirement(primaryRoles, family) {
+  const exact = primaryRoles.find((role) => (role.any_of || []).includes(family));
+  if (exact) return exact.requirement_id;
+  const familyGroup = String(family || '').startsWith('hyrox_')
+    ? 'hyrox'
+    : GOAL_BACKWARD_RUNNING_FAMILIES.has(family) ? 'running' : null;
+  if (familyGroup) {
+    const related = primaryRoles.find((role) => (role.any_of || []).some((candidateFamily) => (
+      familyGroup === 'hyrox'
+        ? String(candidateFamily || '').startsWith('hyrox_')
+        : GOAL_BACKWARD_RUNNING_FAMILIES.has(candidateFamily)
+    )));
+    if (related) return related.requirement_id;
+  }
+  return primaryRoles[0]?.requirement_id || null;
+}
+
 function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumRunningM) {
-  const unmatchedPrimary = (Array.isArray(primaryRoles) ? primaryRoles : [])
-    .filter((role) => role.role === 'PRIMARY_KEY')
-    .map((role) => new Set(role.any_of || []));
-  const primaryRequirementId = (Array.isArray(primaryRoles) ? primaryRoles : [])
-    .find((role) => role.role === 'PRIMARY_KEY')?.requirement_id || null;
+  const primary = (Array.isArray(primaryRoles) ? primaryRoles : [])
+    .filter((role) => role.role === 'PRIMARY_KEY');
+  const usedMaterialIndexes = new Set();
   const requiredRunningM = Number(minimumRunningM);
   let selectedRunningM = 0;
   const supporting = [];
-  for (const session of candidateMaterial) {
-    const family = legacyGoalBackwardFamily(session);
-    if (!family) continue;
-    const primaryIndex = unmatchedPrimary.findIndex((families) => families.has(family));
-    if (primaryIndex >= 0) {
-      unmatchedPrimary.splice(primaryIndex, 1);
-      if (GOAL_BACKWARD_RUNNING_FAMILIES.has(family)) {
-        selectedRunningM += goalBackwardMaterialRunningMeters(session);
-      }
-      continue;
-    }
-    if (!GOAL_BACKWARD_RUNNING_FAMILIES.has(family)) continue;
+  for (const role of primary) {
+    const materialIndex = candidateMaterial.findIndex((session, index) => (
+      !usedMaterialIndexes.has(index) && (role.any_of || []).includes(legacyGoalBackwardFamily(session))
+    ));
+    if (materialIndex < 0) continue;
+    usedMaterialIndexes.add(materialIndex);
+    selectedRunningM += goalBackwardMaterialRunningMeters(candidateMaterial[materialIndex]);
+  }
+  const availableRunningMaterial = candidateMaterial.map((session, index) => {
+    const sourceFamily = legacyGoalBackwardFamily(session);
+    const family = GOAL_BACKWARD_RUNNING_FAMILIES.has(sourceFamily)
+      ? sourceFamily
+      : GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(sourceFamily) ? 'easy_run' : null;
+    return { family, index, runningM: goalBackwardMaterialRunningMeters(session), sourceFamily };
+  }).filter((entry) => (
+    !usedMaterialIndexes.has(entry.index) && entry.family && entry.runningM > 0
+  )).sort((left, right) => (
+    right.runningM - left.runningM
+      || left.family.localeCompare(right.family)
+      || left.sourceFamily.localeCompare(right.sourceFamily)
+      || left.index - right.index
+  ));
+  for (const { family, runningM } of availableRunningMaterial) {
     if (!Number.isSafeInteger(requiredRunningM) || requiredRunningM < 0 || selectedRunningM >= requiredRunningM) continue;
+    const supportsRequirementId = goalBackwardSupportRequirement(primary, family);
     supporting.push({
       requirement_id: `current-candidate-support-${supporting.length + 1}`,
       any_of: [family],
       role: 'SUPPORTING',
-      scheduled_local_date: String(session.date || ''),
-      ...(primaryRequirementId ? { supports_requirement_id: primaryRequirementId } : {}),
+      ...(supportsRequirementId ? { supports_requirement_id: supportsRequirementId } : {}),
     });
-    selectedRunningM += goalBackwardMaterialRunningMeters(session);
+    selectedRunningM += runningM;
   }
   return supporting;
 }
@@ -2414,6 +2441,8 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     active_applied_plan: activeAppliedPlan,
     preferred_weekdays: state.target?.trainingDays || [],
     selected_running_volume_m: decision.proposed_running_volume_m,
+    hybrid_running_projection_pace_s_per_mile:
+      state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile ?? null,
     mandatory_hyrox_cluster: decision.mandatory_hyrox_cluster === true,
     previous_two_weeks_passed: state.context?.history?.previousTwoWeeksPassed === true,
     modality_history: state.context?.history?.modalityHistory
@@ -3015,6 +3044,16 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       ? { alertEntries: goalBackwardDependencies.alertEntries } : {}),
   });
   if (goalBackwardMode !== 'off' && !isRevisionedGoalBackedRequest(userId, initial, request)) {
+    emitPlanReleaseTelemetry({
+      userId,
+      eventType: 'mode_resolution',
+      mode: goalBackwardMode,
+      outcome: 'candidate_rejected',
+      candidateSelected: false,
+      failReasonCodes: ['EVIDENCE_MISSING'],
+      surfaceCapability: 'BLOCKED',
+      sink: goalBackwardDependencies.telemetrySink,
+    });
     goalBackwardMode = 'off';
   }
   let goalBackwardShadow = null;

@@ -906,30 +906,55 @@ function legacyGoalBackwardFamily(session = {}) {
   return null;
 }
 
+function finiteCandidateMaterialNumber(...values) {
+  const value = values.find((candidate) => (
+    candidate !== null && candidate !== undefined
+      && !(typeof candidate === 'string' && candidate.trim() === '')
+  ));
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function roadCandidateMaterial(source) {
-  return legacyCandidateMaterialEntries(source).map((session, index) => ({
-    material_id: String(session.session_id ?? session.id ?? `road-material-${index + 1}`),
-    source_workout_id: session.workout_id ?? null,
-    workout_family: legacyGoalBackwardFamily(session),
-    legacy_scheduled_local_date: String(
-      session.scheduled_local_date ?? session.date ?? ''
-    ).slice(0, 10) || null,
-    source_kind: session.kind ?? 'run',
-    source_title: session.title ?? null,
-    duration_min: Number.isFinite(Number(session.duration_min)) ? Number(session.duration_min) : null,
-    distance_m: Number.isFinite(Number(session.distance_m)) ? Number(session.distance_m) : null,
-    distance_miles: Number.isFinite(Number(session.distance_miles)) ? Number(session.distance_miles) : null,
-    quality_work_duration_min: Number.isFinite(Number(session.quality_work_duration_min))
-      ? Number(session.quality_work_duration_min)
-      : null,
-    main_work_duration_min: Number.isFinite(Number(session.main_work_duration_min))
-      ? Number(session.main_work_duration_min)
-      : null,
-    run_station_pair_count: Number.isFinite(Number(session.run_station_pair_count))
-      ? Number(session.run_station_pair_count)
-      : null,
-    source_session: clone(session),
-  }));
+  return legacyCandidateMaterialEntries(source).map((session, index) => {
+    const durationMin = finiteCandidateMaterialNumber(session.duration_min, session.durationMin);
+    const distanceM = finiteCandidateMaterialNumber(session.distance_m, session.distanceMeters);
+    const distanceMiles = finiteCandidateMaterialNumber(session.distance_miles, session.distanceMiles);
+    const qualityWorkDurationMin = finiteCandidateMaterialNumber(
+      session.quality_work_duration_min, session.qualityWorkDurationMin,
+    );
+    const mainWorkDurationMin = finiteCandidateMaterialNumber(
+      session.main_work_duration_min, session.mainWorkDurationMin,
+    );
+    const runStationPairCount = finiteCandidateMaterialNumber(
+      session.run_station_pair_count, session.runStationPairCount,
+    );
+    return {
+      material_id: String(session.session_id ?? session.id ?? `road-material-${index + 1}`),
+      source_workout_id: session.workout_id ?? null,
+      workout_family: legacyGoalBackwardFamily(session),
+      legacy_scheduled_local_date: String(
+        session.scheduled_local_date ?? session.date ?? ''
+      ).slice(0, 10) || null,
+      source_kind: session.kind ?? 'run',
+      source_title: session.title ?? null,
+      duration_min: durationMin,
+      distance_m: distanceM,
+      distance_miles: distanceMiles,
+      quality_work_duration_min: qualityWorkDurationMin,
+      main_work_duration_min: mainWorkDurationMin,
+      run_station_pair_count: runStationPairCount,
+      source_session: {
+        ...clone(session),
+        duration_min: durationMin,
+        distance_m: distanceM,
+        distance_miles: distanceMiles,
+        quality_work_duration_min: qualityWorkDurationMin,
+        main_work_duration_min: mainWorkDurationMin,
+        run_station_pair_count: runStationPairCount,
+      },
+    };
+  });
 }
 
 function placementFor(placements, requirementId) {
@@ -950,10 +975,46 @@ function goalBackwardSkeletonIdentity(input = {}) {
   }
   const materials = roadCandidateMaterial(input.legacy_road_candidate_material || []);
   const usedMaterialIds = new Set();
+  const hybridProjectionPace = finiteCandidateMaterialNumber(input.hybrid_running_projection_pace_s_per_mile);
+  const hybridProjectionPaceAvailable = hybridProjectionPace >= 180 && hybridProjectionPace <= 2400;
   const sessions = decision.role_multiset.map((role, index) => {
-    const material = materials.find((entry) => (
+    const exactMaterial = materials.find((entry) => (
       !usedMaterialIds.has(entry.material_id) && (role.any_of || []).includes(entry.workout_family)
     ));
+    const projectedRunningMaterial = !exactMaterial
+      && String(role.role || '').toUpperCase() === 'SUPPORTING'
+      && (role.any_of || []).includes('easy_run')
+      && hybridProjectionPaceAvailable
+      ? materials.filter((entry) => (
+        !usedMaterialIds.has(entry.material_id)
+          && entry.workout_family === 'hyrox_compromised'
+          && Number(entry.distance_m ?? (Number(entry.distance_miles) * 1609.344)) > 0
+      )).sort((left, right) => (
+        Number(right.distance_m ?? (Number(right.distance_miles) * 1609.344))
+          - Number(left.distance_m ?? (Number(left.distance_miles) * 1609.344))
+          || left.material_id.localeCompare(right.material_id)
+      ))[0] : null;
+    const material = exactMaterial || projectedRunningMaterial;
+    if (projectedRunningMaterial) {
+      const projectionDistanceMiles = Number(projectedRunningMaterial.distance_m) > 0
+        ? Number(projectedRunningMaterial.distance_m) / 1609.344
+        : Number(projectedRunningMaterial.distance_miles);
+      const projectionDurationMin = Math.max(1, Math.ceil(
+        (projectionDistanceMiles * hybridProjectionPace) / 60,
+      ));
+      projectedRunningMaterial.source_session = {
+        ...projectedRunningMaterial.source_session,
+        kind: 'run',
+        sessionType: 'easy',
+        type: 'easy',
+        workout_family: 'easy_run',
+        title: 'Easy aerobic run',
+        purpose: 'Preserve the recorded running component without adding unmaterialized station load.',
+        duration_min: projectionDurationMin,
+        projection_pace_s_per_mile: hybridProjectionPace,
+        projection_source_workout_family: projectedRunningMaterial.workout_family,
+      };
+    }
     if (material) usedMaterialIds.add(material.material_id);
     const placement = placementFor(input.placements, role.requirement_id);
     return {
@@ -967,7 +1028,10 @@ function goalBackwardSkeletonIdentity(input = {}) {
       scheduled_start_at: placement.scheduled_start_at,
       supports_requirement_id: role.supports_requirement_id || null,
       candidate_material_id: material?.material_id || null,
-      material_source: material ? 'CURRENT_ROAD_SESSION_CONSTRUCTOR_OUTPUT' : 'EVENT_POLICY_ROLE',
+      material_source: projectedRunningMaterial
+        ? 'CURRENT_HYBRID_RUNNING_COMPONENT'
+        : material ? 'CURRENT_ROAD_SESSION_CONSTRUCTOR_OUTPUT' : 'EVENT_POLICY_ROLE',
+      material_source_workout_family: material?.workout_family || null,
       duration_min: material?.duration_min ?? null,
       distance_m: material?.distance_m ?? null,
       distance_miles: material?.distance_miles ?? null,
@@ -1248,6 +1312,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
         placements: placementMap,
         legacy_road_candidate_material: input.legacy_road_candidate_material,
         active_applied_plan: input.active_applied_plan,
+        hybrid_running_projection_pace_s_per_mile: input.hybrid_running_projection_pace_s_per_mile,
       });
       const sessions = identity.sessions;
       const canonicalPlacement = canonicalStringify(identity);

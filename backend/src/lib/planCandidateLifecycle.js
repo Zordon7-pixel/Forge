@@ -623,36 +623,82 @@ function buildGoalBackwardShadowBindings({
     Math.max(1, Number(goal.source_revision || 1)),
   ]));
   const materialChange = selectedCandidate?.material_change || { required: false, reason_codes: [] };
-  const compactMaterialChange = jsonBytes(materialChange) <= (MAX_BINDING_JSON_BYTES / 2)
-    ? materialChange
-    : {
-      material_change: materialChange.material_change === true,
-      preview_required: materialChange.preview_required === true,
-      review_required: materialChange.review_required === true,
-      review_contract_complete: materialChange.review_contract_complete === true,
-      baseline_source: materialChange.baseline_source || null,
-      baseline_plan_revision: materialChange.baseline_plan_revision ?? null,
-      candidate_plan_revision: materialChange.candidate_plan_revision ?? null,
-      active_prescription_hash: materialChange.active_prescription_hash || null,
-      candidate_prescription_hash: materialChange.candidate_prescription_hash || null,
-      reason_codes: materialChange.reason_codes || [],
-      changes: (materialChange.changes || []).map((change) => ({
-        code: change.code,
-        session_id: change.session_id || null,
-        reason_code: change.reason_code || null,
+  const applyBindings = buildGoalBackwardFingerprintBindings(decision, { decisionArtifact });
+  const fullMaterialChange = {
+    ...cloneJson(materialChange),
+    apply_bindings: applyBindings,
+  };
+  let boundedMaterialChange = fullMaterialChange;
+  if (jsonBytes(fullMaterialChange) > MAX_BINDING_JSON_BYTES) {
+    const compactAppendBudget = MAX_BINDING_JSON_BYTES - 128;
+    const sourceChanges = Array.isArray(materialChange.changes) ? materialChange.changes : [];
+    const sourceReasonCodes = Array.isArray(materialChange.reason_codes)
+      ? materialChange.reason_codes.map((value) => String(value || '')).filter((value) => (
+        value.length > 0 && value.length <= 200
+      ))
+      : [];
+    const compactChanges = sourceChanges.map((change) => {
+      const evidenceIds = Array.isArray(change.decisive_evidence_ids)
+        ? [...new Set(change.decisive_evidence_ids.map((value) => String(value || '')).filter((value) => (
+          value.length > 0 && value.length <= 200
+        )))].sort()
+        : [];
+      return {
+        code: boundedIdentifier(String(change.code || '')),
+        session_id: boundedIdentifier(String(change.session_id || '')),
+        reason_code: boundedIdentifier(String(change.reason_code || '')),
         review_required: change.review_required === true,
-        decisive_evidence_ids: change.decisive_evidence_ids || [],
+        decisive_evidence_ids: evidenceIds.slice(0, 8),
+        decisive_evidence_count: evidenceIds.length,
+        decisive_evidence_hash: prefixedHash(evidenceIds),
+        decisive_evidence_truncated: evidenceIds.length > 8,
         baseline_plan_revision: change.baseline_plan_revision ?? null,
         candidate_plan_revision: change.candidate_plan_revision ?? null,
         baseline_session_revision: change.baseline_session_revision ?? null,
         candidate_session_revision: change.candidate_session_revision ?? null,
-        baseline_session_content_hash: change.baseline_session_content_hash || null,
-        candidate_session_content_hash: change.candidate_session_content_hash || null,
-        decision_id: change.decision_id || null,
-        candidate_hash: change.candidate_hash || null,
-        canonical_session_set_hash: change.canonical_session_set_hash || null,
-      })),
+        baseline_session_content_hash: normalizeHash(change.baseline_session_content_hash, { requirePrefix: true }),
+        candidate_session_content_hash: normalizeHash(change.candidate_session_content_hash, { requirePrefix: true }),
+        decision_id: boundedIdentifier(String(change.decision_id || '')),
+        candidate_hash: normalizeHash(change.candidate_hash, { requirePrefix: true }),
+        canonical_session_set_hash: normalizeHash(change.canonical_session_set_hash, { requirePrefix: true }),
+      };
+    });
+    boundedMaterialChange = {
+      material_change: materialChange.material_change === true,
+      preview_required: materialChange.preview_required === true,
+      review_required: materialChange.review_required === true,
+      review_contract_complete: materialChange.review_contract_complete === true,
+      baseline_source: boundedIdentifier(String(materialChange.baseline_source || '')),
+      baseline_plan_revision: materialChange.baseline_plan_revision ?? null,
+      candidate_plan_revision: materialChange.candidate_plan_revision ?? null,
+      active_prescription_hash: normalizeHash(materialChange.active_prescription_hash, { requirePrefix: true }),
+      candidate_prescription_hash: normalizeHash(materialChange.candidate_prescription_hash, { requirePrefix: true }),
+      material_change_hash: prefixedHash(materialChange),
+      reason_codes: [],
+      reason_code_count: sourceReasonCodes.length,
+      reason_codes_hash: prefixedHash(sourceReasonCodes),
+      reason_codes_truncated: sourceReasonCodes.length > 0,
+      changes: [],
+      change_count: sourceChanges.length,
+      changes_hash: prefixedHash(sourceChanges),
+      changes_truncated: sourceChanges.length > 0,
+      apply_bindings: applyBindings,
     };
+    for (const reasonCode of sourceReasonCodes) {
+      const next = { ...boundedMaterialChange, reason_codes: [...boundedMaterialChange.reason_codes, reasonCode] };
+      if (jsonBytes(next) > compactAppendBudget) break;
+      boundedMaterialChange = next;
+    }
+    boundedMaterialChange.reason_codes_truncated = boundedMaterialChange.reason_codes.length < sourceReasonCodes.length;
+    for (const change of compactChanges) {
+      const next = { ...boundedMaterialChange, changes: [...boundedMaterialChange.changes, change] };
+      if (jsonBytes(next) > compactAppendBudget) break;
+      boundedMaterialChange = next;
+    }
+    boundedMaterialChange.changes_truncated = boundedMaterialChange.changes.length < sourceChanges.length
+      || compactChanges.some((change) => change.decisive_evidence_truncated);
+    assertBoundedJson(boundedMaterialChange, MAX_BINDING_JSON_BYTES, 'material change bindings');
+  }
   return buildGoalBackwardCandidateBindings({
     decisionId: decision?.decision_id,
     candidateRevision: 1,
@@ -665,10 +711,7 @@ function buildGoalBackwardShadowBindings({
     exportRevision: 1,
     featureMode: 'shadow',
     selectedCandidateHash: selectedCandidate?.candidate_hash || currentCandidateHash,
-    materialChange: {
-      ...cloneJson(compactMaterialChange),
-      apply_bindings: buildGoalBackwardFingerprintBindings(decision, { decisionArtifact }),
-    },
+    materialChange: boundedMaterialChange,
   });
 }
 

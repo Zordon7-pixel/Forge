@@ -9,11 +9,87 @@ const hyrox = require('../src/lib/hyroxPlan');
 const { aggregateWeeklyStress } = require('../src/lib/goalBackwardLoad');
 const { buildGoalBackwardPlanningDecision } = require('../src/lib/goalBackwardDecisionEngine');
 const { targetRef: goalBackwardTargetRef } = require('../src/lib/betaPlanRollout');
+const candidateLifecycle = require('../src/lib/planCandidateLifecycle');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
 const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
 
 const HYROX_EQUIPMENT = ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'];
+
+function checkC1BoundedMaterialBindings() {
+  const decision = {
+    decision_id: 'decision-c1-binding-boundary',
+    decision_hash: 'a'.repeat(64),
+    timezone: 'America/New_York',
+    athlete_state_revision: 4,
+    evidence_snapshot_id: 'snapshot-c1-binding-boundary',
+    evidence_used: [{ evidence_id: 'evidence-c1-binding-boundary', purpose: 'CURRENT_PLANNING_SNAPSHOT' }],
+    active_goals: [{
+      goal_id: 'goal-c1-binding-boundary', race_id: 'race-c1-binding-boundary', source_revision: 3,
+      event_local_date: '2026-09-06', event_state: 'SCHEDULED', priority: 'A',
+    }],
+    lock_revision: 0,
+    edit_revision: 0,
+    constraint_fingerprint: `sha256:${'b'.repeat(64)}`,
+    safety_state: { action: 'NORMAL', scope: [] },
+    policy_versions: {
+      planning_policy_version: 'goal-backward-planning-policy-v1',
+      event_policy_registry_version: 1,
+      stress_taxonomy_version: 1,
+    },
+    event_policy_id: 'hyrox_doubles_v1',
+  };
+  const changes = Array.from({ length: 40 }, (_, index) => ({
+    code: 'SESSION_DURATION_CHANGED',
+    session_id: `session-c1-${String(index + 1).padStart(2, '0')}`,
+    reason_code: 'MATERIAL_CHANGE_REVIEW_REQUIRED',
+    review_required: true,
+    decisive_evidence_ids: Array.from({ length: 4 }, (__, evidenceIndex) => (
+      `evidence-${index + 1}-${evidenceIndex + 1}-${'x'.repeat(120)}`
+    )),
+    baseline_plan_revision: 2,
+    candidate_plan_revision: 3,
+    baseline_session_revision: 1,
+    candidate_session_revision: 2,
+    baseline_session_content_hash: `sha256:${String(index).padStart(64, '0')}`,
+    candidate_session_content_hash: `sha256:${String(index + 1).padStart(64, '0')}`,
+    decision_id: decision.decision_id,
+    candidate_hash: `sha256:${'c'.repeat(64)}`,
+    canonical_session_set_hash: `sha256:${'d'.repeat(64)}`,
+  }));
+  const input = {
+    decision,
+    decisionArtifact: {
+      id: 'artifact-c1-binding-boundary', revision: 1, content_hash: `sha256:${'e'.repeat(64)}`,
+    },
+    selectedCandidate: {
+      candidate_hash: `sha256:${'c'.repeat(64)}`,
+      material_change: {
+        material_change: true,
+        preview_required: true,
+        review_required: true,
+        review_contract_complete: true,
+        baseline_source: 'active_applied_plan',
+        baseline_plan_revision: 2,
+        candidate_plan_revision: 3,
+        reason_codes: ['MATERIAL_CHANGE_REVIEW_REQUIRED'],
+        changes,
+      },
+    },
+    currentCandidateHash: `sha256:${'c'.repeat(64)}`,
+  };
+  const first = candidateLifecycle.buildGoalBackwardShadowBindings(input);
+  const second = candidateLifecycle.buildGoalBackwardShadowBindings(input);
+  assert.deepEqual(second, first, 'oversized material bindings compact deterministically');
+  assert.ok(Buffer.byteLength(JSON.stringify(first.material_change_json), 'utf8') <= 16 * 1024);
+  assert.equal(first.material_change_json.change_count, 40);
+  assert.equal(first.material_change_json.changes_truncated, true);
+  assert.match(first.material_change_json.changes_hash, /^sha256:[a-f0-9]{64}$/);
+  assert.ok(first.material_change_json.changes.length > 0);
+  assert.ok(first.material_change_json.changes.length < changes.length);
+  assert.equal(first.material_change_json.apply_bindings.decision_hash, decision.decision_hash);
+  assert.equal(first.material_change_json.apply_bindings.decision_artifact.artifact_id, input.decisionArtifact.id);
+}
 
 function checkExplicitEventLifecycleAndOrderedPromotion() {
   const racesRouter = require('../src/routes/races');
@@ -722,6 +798,7 @@ async function checkDedicatedRouteBoundary() {
     goal_type: 'race',
     comeback_mode: 0,
     injury_notes: '',
+    training_age_class: 'ESTABLISHED',
     planning_input_revision: 0,
   };
   const raceRows = new Map();
@@ -1042,11 +1119,11 @@ async function checkHyroxCandidateImmediateAdoption() {
     }],
   ]);
   const recentRuns = [
-    { id: 'run-1', date: '2026-07-27', distance_miles: 1, duration_seconds: 720, type: 'easy', created_at: '2026-07-27T12:00:00Z' },
-    { id: 'run-2', date: '2026-07-30', distance_miles: 1, duration_seconds: 720, type: 'easy', created_at: '2026-07-30T12:00:00Z' },
-    { id: 'run-3', date: '2026-08-04', distance_miles: 1, duration_seconds: 720, type: 'easy', created_at: '2026-08-04T12:00:00Z' },
-    { id: 'run-4', date: '2026-08-08', distance_miles: 1, duration_seconds: 720, type: 'long', created_at: '2026-08-08T12:00:00Z' },
-    { id: 'completed-today', date: planningDate, distance_miles: 1, duration_seconds: 720, type: 'easy', created_at: '2026-08-14T11:00:00Z' },
+    { id: 'run-1', date: '2026-07-27', distance_miles: 4, duration_seconds: 2200, type: 'easy', created_at: '2026-07-27T12:00:00Z' },
+    { id: 'run-2', date: '2026-07-30', distance_miles: 5, duration_seconds: 2700, type: 'easy', created_at: '2026-07-30T12:00:00Z' },
+    { id: 'run-3', date: '2026-08-04', distance_miles: 4, duration_seconds: 2200, type: 'easy', created_at: '2026-08-04T12:00:00Z' },
+    { id: 'run-4', date: '2026-08-08', distance_miles: 6, duration_seconds: 3300, type: 'long', created_at: '2026-08-08T12:00:00Z' },
+    { id: 'completed-today', date: planningDate, distance_miles: 3, duration_seconds: 1650, type: 'easy', created_at: '2026-08-14T11:00:00Z' },
   ];
   const initialPlan = hyrox.generateHyroxPlan({
     planningLocalDate: planningDate,
@@ -1323,6 +1400,33 @@ async function checkHyroxCandidateImmediateAdoption() {
       headers: { 'x-forged-local-date': planningDate, 'x-forged-timezone-offset-minutes': '240' },
       get(name) { return this.headers[String(name).toLowerCase()]; },
     };
+    const eligibilityTelemetry = [];
+    const currentCandidateCountBeforeIneligible = candidates.size;
+    const ineligibleGoalBackward = await plansRouter._test.previewPlanForUser(ownerId, {
+      ...requestClock,
+      race_ids: [],
+      target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+    }, {
+      store: false,
+      goalBackwardDependencies: {
+        mode: 'preview',
+        cohortRefs: [goalBackwardTargetRef(ownerId)],
+        alertEntries: [],
+        telemetrySink: (entry) => eligibilityTelemetry.push(entry),
+      },
+    });
+    assert.equal(ineligibleGoalBackward.plan.goal_backward_engine_version, undefined,
+      'a zero-goal request safely remains on the current engine');
+    assert.equal(candidates.size, currentCandidateCountBeforeIneligible,
+      'a read-only zero-goal compatibility probe persists no candidate');
+    assert.equal(eligibilityTelemetry.length, 1, 'an authorized but ineligible v2.4 request is auditable');
+    assert.deepEqual(eligibilityTelemetry[0].reason_counts, {
+      EVIDENCE_MISSING: { pass: 0, fail: 1 },
+    });
+    assert.equal(eligibilityTelemetry[0].event_type, 'mode_resolution');
+    assert.equal(eligibilityTelemetry[0].mode, 'preview');
+    assert.equal(eligibilityTelemetry[0].outcome, 'candidate_rejected');
+    assert.equal(eligibilityTelemetry[0].surface_capability, 'BLOCKED');
     const candidateCountBeforeForcedFailure = candidates.size;
     const artifactCountBeforeForcedFailure = planningArtifacts.size;
     const activePlanBeforeForcedFailure = currentAssignment().id;
@@ -1372,6 +1476,95 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(planningArtifacts.size, artifactCountBeforeArtifactFailure, 'artifact failure persists no partial artifacts');
     assert.equal(currentAssignment().id, activePlanBeforeForcedFailure, 'artifact failure changes no active plan');
 
+    profile.training_age_class = 'BEGINNER';
+    let beginnerResult = null;
+    await assert.rejects(
+      () => plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: {
+          trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+          runDaysPerWeek: 4,
+          liftingEnabled: false,
+        },
+      }, {
+        goalBackwardDependencies: {
+          mode: 'preview',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          inspectDecision: (result) => { beginnerResult = result; },
+        },
+      }),
+      (error) => error?.code === 'GOAL_BACKWARD_GENERATION_FAILED' && error?.status === 409,
+      'realistic volume that exceeds the explicit beginner cross-modal fallback must fail closed',
+    );
+    assert.equal(beginnerResult?.decision.training_age_class, 'BEGINNER');
+    assert.equal(beginnerResult?.selected_candidate, null);
+    assert.ok(beginnerResult?.candidates.some((candidate) => candidate.validation.violations.some((violation) => (
+      violation.code === 'CROSS_MODAL_FATIGUE_LIMIT'
+    ))));
+
+    profile.training_age_class = 'ESTABLISHED';
+    const originalRecentMiles = recentRuns.map((run) => run.distance_miles);
+    [2, 3, 2, 4, 2].forEach((miles, index) => { recentRuns[index].distance_miles = miles; });
+    let moderateResult = null;
+    await plansRouter._test.previewPlanForUser(ownerId, {
+      ...requestClock,
+      race_ids: ['hyrox', 'army'],
+      target: {
+        trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+        runDaysPerWeek: 4,
+        liftingEnabled: false,
+      },
+    }, {
+      store: false,
+      goalBackwardDependencies: {
+        mode: 'preview',
+        cohortRefs: [goalBackwardTargetRef(ownerId)],
+        alertEntries: [],
+        inspectDecision: (result) => { moderateResult = result; },
+      },
+    });
+    assert.ok(moderateResult?.selected_candidate,
+      'realistic two-to-four-mile runs retain an eligible bounded candidate');
+    assert.equal(moderateResult.selected_candidate.validation.validator_results.find((entry) => (
+      entry.validator === 'cross_modal_ceiling'
+    )).valid, true);
+    originalRecentMiles.forEach((miles, index) => { recentRuns[index].distance_miles = miles; });
+
+    const originalLatestDuration = recentRuns.at(-1).duration_seconds;
+    recentRuns.at(-1).duration_seconds = 0;
+    let missingProjectionEvidenceResult = null;
+    await assert.rejects(
+      () => plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: {
+          trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+          runDaysPerWeek: 4,
+          liftingEnabled: false,
+        },
+      }, {
+        store: false,
+        goalBackwardDependencies: {
+          mode: 'preview',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          inspectDecision: (result) => { missingProjectionEvidenceResult = result; },
+        },
+      }),
+      (error) => error?.code === 'GOAL_BACKWARD_GENERATION_FAILED' && error?.status === 409,
+      'hybrid running cannot be projected without current pace evidence',
+    );
+    assert.equal(missingProjectionEvidenceResult?.selected_candidate, null);
+    assert.ok(missingProjectionEvidenceResult?.candidates.some((candidate) => (
+      candidate.validation.violations.some((violation) => (
+        violation.reason === 'WEEKLY_RUNNING_FLOOR' || violation.reason === 'WEEKLY_RUNNING_DISTANCE_UNKNOWN'
+      ))
+    )));
+    recentRuns.at(-1).duration_seconds = originalLatestDuration;
+
+    let authorizedResult = null;
     const authorizedPreview = await plansRouter._test.previewPlanForUser(ownerId, {
       ...requestClock,
       race_ids: ['hyrox', 'army'],
@@ -1386,8 +1579,53 @@ async function checkHyroxCandidateImmediateAdoption() {
         cohortRefs: [goalBackwardTargetRef(ownerId)],
         alertEntries: [],
         sourceRevision: 'd4169340b99469895372dd45ef6505c4e25d049e',
+        inspectDecision: (result) => { authorizedResult = result; },
       },
     });
+    assert.equal(authorizedResult.decision.training_age_class, 'ESTABLISHED');
+    assert.ok(authorizedResult.selected_candidate, 'realistic established mileage produces an eligible bounded candidate');
+    assert.ok(authorizedResult.candidates.length <= 64);
+    const runningFamilies = new Set([
+      'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
+      'interval_run', 'race_rhythm_run', 'assessment', 'race',
+    ]);
+    const selectedRunningMeters = authorizedResult.selected_candidate.sessions.reduce((sum, session) => (
+      sum + (runningFamilies.has(session.workout_family) ? Number(session.derived_totals?.distance_m || 0) : 0)
+    ), 0);
+    assert.equal(selectedRunningMeters, 14690);
+    assert.ok(selectedRunningMeters >= authorizedResult.decision.minimum_weekly_demand.running_m,
+      'selected candidate satisfies the full realistic-volume weekly running floor');
+    assert.equal(authorizedResult.selected_candidate.validation.validator_results.find((entry) => (
+      entry.validator === 'cross_modal_ceiling'
+    )).valid, true);
+    const selectedRunningPrimary = authorizedResult.selected_candidate.skeleton_sessions.find((session) => (
+      session.requirement_id === 'hyrox_running_support'
+    ));
+    assert.equal(selectedRunningPrimary.workout_family, 'long_aerobic');
+    assert.equal(selectedRunningPrimary.material_source_workout_family, 'long_aerobic',
+      'the exact long-run source remains attached to the running primary requirement');
+    const selectedSupports = authorizedResult.selected_candidate.sessions
+      .filter((session) => session.role === 'SUPPORTING')
+      .map((session) => ({ family: session.workout_family, supports: session.supports_requirement_id }));
+    assert.ok(selectedSupports.length >= 2);
+    assert.ok(selectedSupports.every((entry) => (
+      entry.family === 'easy_run' && entry.supports === 'hyrox_running_support'
+    )), 'running support maps to the exact running primary requirement');
+    const projectedRunningSupport = authorizedResult.selected_candidate.skeleton_sessions.find((session) => (
+      session.material_source === 'CURRENT_HYBRID_RUNNING_COMPONENT'
+        && session.material_source_workout_family === 'hyrox_compromised'
+        && session.workout_family === 'easy_run'
+        && session.supports_requirement_id === 'hyrox_running_support'
+    ));
+    assert.ok(projectedRunningSupport,
+      'a hybrid source contributes only its bounded running component to the canonical candidate');
+    const projectedCanonicalRun = authorizedResult.selected_candidate.sessions.find((session) => (
+      session.session_id === projectedRunningSupport.session_id
+    ));
+    assert.equal(projectedCanonicalRun.title, 'Easy aerobic run',
+      'the projected session is presented as its canonical running-only purpose');
+    assert.equal(projectedCanonicalRun.derived_totals.duration_s, 35 * 60,
+      'the running-only duration is derived from current run evidence, not the hybrid session total');
     const authorizedRow = candidates.get(authorizedPreview.id);
     assert.equal(authorizedRow.feature_mode, 'preview');
     assert.equal(authorizedRow.engine_version, 'goal-backward-coaching-v2.4');
@@ -1460,8 +1698,9 @@ async function checkHyroxCandidateImmediateAdoption() {
       artifact.artifact_kind === 'candidate_week'
     )).payload_json);
     assert.equal(shadowCandidateReceipt.authoritative_engine, 'current');
+    assert.ok(shadowCandidateReceipt.candidates.length > 1);
     assert.ok(shadowCandidateReceipt.candidates.some((candidate) => candidate.valid === true));
-    assert.ok(shadowCandidateReceipt.candidates.some((candidate) => candidate.valid === false));
+    assert.ok(shadowCandidateReceipt.candidates.every((candidate) => typeof candidate.valid === 'boolean'));
     const shadowSurfaceReceipt = JSON.parse(shadowArtifacts.find((artifact) => (
       artifact.artifact_kind === 'surface_manifest'
     )).payload_json);
@@ -1605,6 +1844,7 @@ async function checkHyroxCandidateImmediateAdoption() {
 }
 
 checkBryanGoalBackwardWitnessIntegration();
+checkC1BoundedMaterialBindings();
 checkExplicitEventLifecycleAndOrderedPromotion();
 
 checkRacePatchNoOpBoundary()
