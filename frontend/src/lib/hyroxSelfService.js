@@ -64,6 +64,7 @@ export function hyroxSetupInitialState(initialRace = null, initialSecondaryRaceI
     // New plans fail closed until the athlete explicitly chooses a division.
     eventFormat: String(race?.event_format || ''),
     eventCategory: String(race?.event_category || ''),
+    goalTimeSeconds: Number(race?.goal_time_seconds) > 0 ? Math.round(Number(race.goal_time_seconds)) : 0,
     runningPriority: RUNNING_PRIORITIES.has(String(config.runningPriority)) ? String(config.runningPriority) : 'maintain',
     equipment: Array.isArray(config.equipment)
       ? [...new Set(config.equipment.map(String).filter((item) => SUPPORTED_EQUIPMENT.has(item)))]

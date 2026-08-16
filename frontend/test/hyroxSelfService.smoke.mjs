@@ -17,6 +17,7 @@ const hyrox = {
   event_kind: 'hyrox',
   event_format: 'doubles',
   event_category: 'men',
+  goal_time_seconds: 3600,
   location: 'Washington, DC',
   status: 'upcoming',
   event_config_json: JSON.stringify({
@@ -39,6 +40,7 @@ assert.equal(fresh.eventCategory, '', 'new HYROX setup requires a category')
 const existing = hyroxSetupInitialState(hyrox, 'army', 'UTC')
 assert.equal(existing.eventFormat, 'doubles')
 assert.equal(existing.eventCategory, 'men')
+assert.equal(existing.goalTimeSeconds, 3600)
 assert.equal(existing.eventLocalDate, '2026-09-06')
 assert.equal(existing.eventTimezone, 'America/New_York')
 assert.equal(existing.runDaysPerWeek, 4)

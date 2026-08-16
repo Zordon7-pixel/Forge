@@ -125,12 +125,14 @@ function assertFourWeekShortRunwayPeakSpecificity() {
     planningLocalDate: '2026-08-14',
     athlete: { weeklyMilesCurrent: 22, runDaysPerWeek: 4 },
     currentLoad: { weeklyMiles: 22 },
-    event: { raceId: 'hyrox-nyc', eventLocalDate: '2026-09-06' },
+    event: { raceId: 'hyrox-nyc', eventLocalDate: '2026-09-06', goalTimeSeconds: 3600 },
   }));
   assert.deepEqual(
     bryan.weeks.map((week) => week.phase),
     ['orientation_assessment', 'peak_partial_simulation', 'sharpen_reduce', 'taper_race'],
   );
+  assert.equal(bryan.goals[0].goalType, 'performance');
+  assert.equal(bryan.goals[0].goalTimeSeconds, 3600);
   const peakWeek = bryan.weeks.find((week) => week.startDate === '2026-08-17');
   assert.equal(peakWeek?.phase, 'peak_partial_simulation');
   const peakSessions = peakWeek.days.flatMap((day) => day.sessions);

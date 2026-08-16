@@ -1808,6 +1808,13 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
       throw candidateError(400, 'RACE_DATE_PASSED', 'HYROX event date must be today or later.');
     }
     const config = storedEventConfig(hyroxRace);
+    const hyroxGoalTimeSeconds = parsePositiveNumber(hyroxRace.goal_time_seconds)
+      ? Math.round(Number(hyroxRace.goal_time_seconds))
+      : null;
+    const storedHyroxPerformanceBudget = config.hyroxPerformanceBudget
+      && typeof config.hyroxPerformanceBudget === 'object'
+      ? config.hyroxPerformanceBudget
+      : {};
     const storedHyroxEventState = {
       ...((config.hyroxEventState && typeof config.hyroxEventState === 'object') ? config.hyroxEventState : {}),
       ...((config.hyrox_event_state && typeof config.hyrox_event_state === 'object') ? config.hyrox_event_state : {}),
@@ -1850,6 +1857,8 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
       raceDate: localDate,
       raceId: hyroxRace.id,
       raceName: hyroxRace.race_name,
+      goalTimeSeconds: hyroxGoalTimeSeconds,
+      goalType: hyroxGoalTimeSeconds ? 'performance' : 'completion',
       runDaysPerWeek: runSchedule.runDaysPerWeek,
       trainingDays: runSchedule.trainingDays,
       runDaysSource: runSchedule.runDaysSource,
@@ -1865,11 +1874,14 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
         eventTimezone: hyroxRace.event_timezone,
         format: hyroxRace.event_format,
         category: hyroxRace.event_category,
+        goalTimeSeconds: hyroxGoalTimeSeconds,
         rulesVersion: hyroxRace.rules_version,
         runningPriority: config.runningPriority || 'maintain',
         ...(Object.keys(storedHyroxEventState).length ? { hyroxEventState: storedHyroxEventState } : {}),
-        ...(config.hyroxPerformanceBudget && typeof config.hyroxPerformanceBudget === 'object'
-          ? { hyroxPerformanceBudget: config.hyroxPerformanceBudget } : {}),
+        hyroxPerformanceBudget: {
+          ...storedHyroxPerformanceBudget,
+          ...(hyroxGoalTimeSeconds ? { target_total_time_s: hyroxGoalTimeSeconds } : {}),
+        },
       },
       hyroxEquipment: Array.isArray(config.equipment) ? config.equipment : [],
       secondaryRace: secondary,

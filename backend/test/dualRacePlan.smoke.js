@@ -1014,12 +1014,15 @@ async function checkHyroxCandidateImmediateAdoption() {
       event_local_date: '2026-09-06',
       event_timezone: 'America/New_York',
       event_kind: 'hyrox',
-      event_format: 'individual_open',
+      event_format: 'doubles',
       event_category: 'men',
       rules_version: '2026-2027',
-      event_config_json: JSON.stringify({ equipment: HYROX_EQUIPMENT }),
+      event_config_json: JSON.stringify({
+        equipment: HYROX_EQUIPMENT,
+        hyroxPerformanceBudget: { target_total_time_s: 3660, source: 'stored-event-evidence' },
+      }),
       distance_miles: 4.97,
-      goal_time_seconds: null,
+      goal_time_seconds: 3600,
     }],
     ['army', {
       id: 'army',
@@ -1060,7 +1063,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       name: 'HYROX New York',
       eventLocalDate: '2026-09-06',
       eventTimezone: 'America/New_York',
-      format: 'individual_open',
+      format: 'doubles',
       category: 'men',
       rulesVersion: '2026-2027',
     },
@@ -1328,6 +1331,15 @@ async function checkHyroxCandidateImmediateAdoption() {
       'the route regression applies a legacy/current-engine candidate with attached shadow diagnostics');
     assert.equal(previewResponse.payload.effective_from, planningDate);
     assert.deepEqual(previewResponse.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
+    const retainedHyroxGoal = previewResponse.payload.plan.plan_data.goals[0];
+    assert.equal(retainedHyroxGoal.division, 'doubles');
+    assert.equal(retainedHyroxGoal.category, 'men');
+    assert.equal(retainedHyroxGoal.eventLocalDate, '2026-09-06');
+    assert.equal(retainedHyroxGoal.goalType, 'performance');
+    assert.equal(retainedHyroxGoal.goalTimeSeconds, 3600);
+    assert.equal(JSON.parse(candidates.get(previewResponse.payload.candidate_id).planning_snapshot_json)
+      .context.target.hyroxEvent.hyroxPerformanceBudget.target_total_time_s, 3600,
+      'an explicit owned-race target overrides older stored performance-budget evidence');
     const retainedArmyGoal = previewResponse.payload.plan.plan_data.goals[1];
     assert.equal(retainedArmyGoal.goalType, 'pr');
     assert.equal(retainedArmyGoal.goalTimeSeconds, 5220);
@@ -1352,6 +1364,8 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(immediate.payload.user_plan.id, applyResponse.payload.user_plan_id);
     assert.equal(immediate.payload.user_plan.effective_from, planningDate);
     assert.deepEqual(immediate.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
+    assert.equal(immediate.payload.plan.plan_data.goals[0].division, 'doubles');
+    assert.equal(immediate.payload.plan.plan_data.goals[0].goalTimeSeconds, 3600);
     assert.notEqual(immediate.payload.user_plan.id, 'assignment-hyrox', 'the predecessor is not returned on the accepted local date');
 
     const combinedPlan = immediate.payload.plan.plan_data;
@@ -1381,6 +1395,34 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(replay.payload.user_plan_id, applyResponse.payload.user_plan_id);
     assert.equal(replay.payload.effective_from, planningDate);
     assert.equal(userPlans.size, assignmentCount, 'candidate replay cannot create a duplicate assignment');
+
+    raceRows.set('hyrox', {
+      ...raceRows.get('hyrox'),
+      goal_time_seconds: null,
+      event_config_json: JSON.stringify({
+        equipment: HYROX_EQUIPMENT,
+        hyroxPerformanceBudget: { target_total_time_s: 3660, source: 'stored-event-evidence' },
+      }),
+    });
+    const nullTargetPreview = await invoke(preview, {
+      ...requestBase,
+      body: {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+      },
+    });
+    assert.equal(nullTargetPreview.statusCode, 201, JSON.stringify(nullTargetPreview.payload));
+    assert.equal(nullTargetPreview.payload.plan.plan_data.goals[0].goalType, 'completion');
+    assert.equal(nullTargetPreview.payload.plan.plan_data.goals[0].goalTimeSeconds, null,
+      'stored budget evidence is not promoted into an explicit athlete race target');
+    assert.equal(JSON.parse(candidates.get(nullTargetPreview.payload.candidate_id).planning_snapshot_json)
+      .context.target.hyroxEvent.hyroxPerformanceBudget.target_total_time_s, 3660,
+      'a null race target does not discard existing stored performance-budget evidence');
+    raceRows.set('hyrox', {
+      ...raceRows.get('hyrox'),
+      goal_time_seconds: 3600,
+    });
 
     const rejectedPreview = await invoke(preview, {
       ...requestBase,
