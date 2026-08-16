@@ -107,6 +107,20 @@ const ZERO_TOLERANCE_RELEASE_REASONS = new Set([
   'DUPLICATE_ASSIGNMENT',
 ]);
 const RELEASE_TELEMETRY_BUFFER_LIMIT = 256;
+const RELEASE_TELEMETRY_REASON_COUNT_LIMIT = 64;
+const GOAL_BACKWARD_RELEASE_TELEMETRY_KEYS = Object.freeze([
+  'schema_version',
+  'target_ref',
+  'event_type',
+  'mode',
+  'policy_versions',
+  'outcome',
+  'candidate_selected',
+  'reason_counts',
+  'surface_capability',
+  'revision_mismatch',
+]);
+const GOAL_BACKWARD_RELEASE_POLICY_VERSION_KEYS = Object.freeze(Object.keys(CONTRACT_VERSIONS));
 const releaseTelemetryBuffer = [];
 
 function getGoalBackwardV24Mode(value = process.env.FORGE_GOAL_BACKWARD_V24_MODE) {
@@ -117,6 +131,161 @@ function getGoalBackwardV24Mode(value = process.env.FORGE_GOAL_BACKWARD_V24_MODE
 function getGoalBackwardV24Audience(value = process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE) {
   const configured = typeof value === 'string' ? value : '';
   return GOAL_BACKWARD_V24_AUDIENCE_SET.has(configured) ? configured : 'cohort';
+}
+
+function snapshotExactPlainOwnDataRecord(value, exactKeys) {
+  try {
+    if (!value || value === Object.prototype || typeof value !== 'object'
+      || Array.isArray(value) || isProxy(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.length !== exactKeys.length
+      || ownKeys.some((key) => typeof key !== 'string' || !exactKeys.includes(key))) return null;
+    const snapshot = Object.create(null);
+    for (const key of exactKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) return null;
+      Object.defineProperty(snapshot, key, {
+        configurable: false,
+        enumerable: true,
+        value: descriptor.value,
+        writable: false,
+      });
+    }
+    return Object.freeze(snapshot);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function snapshotGoalBackwardReleasePolicyVersions(value) {
+  const record = snapshotExactPlainOwnDataRecord(
+    value,
+    GOAL_BACKWARD_RELEASE_POLICY_VERSION_KEYS,
+  );
+  if (!record) return null;
+  const snapshot = {};
+  for (const key of GOAL_BACKWARD_RELEASE_POLICY_VERSION_KEYS) {
+    if (record[key] !== CONTRACT_VERSIONS[key]) return null;
+    Object.defineProperty(snapshot, key, {
+      configurable: false,
+      enumerable: true,
+      value: record[key],
+      writable: false,
+    });
+  }
+  return Object.freeze(snapshot);
+}
+
+function snapshotGoalBackwardReleaseReasonCounts(value) {
+  try {
+    if (!value || value === Object.prototype || typeof value !== 'object'
+      || Array.isArray(value) || isProxy(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.length > RELEASE_TELEMETRY_REASON_COUNT_LIMIT
+      || ownKeys.some((key) => typeof key !== 'string' || !RELEASE_REASON_CODES.has(key))) return null;
+    const normalized = {};
+    for (const code of [...ownKeys].sort()) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, code);
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) return null;
+      const counts = snapshotExactPlainOwnDataRecord(descriptor.value, ['pass', 'fail']);
+      if (!counts || !Number.isSafeInteger(counts.pass) || counts.pass < 0
+        || !Number.isSafeInteger(counts.fail) || counts.fail < 0) return null;
+      const normalizedCounts = {};
+      Object.defineProperties(normalizedCounts, {
+        pass: { enumerable: true, value: counts.pass },
+        fail: { enumerable: true, value: counts.fail },
+      });
+      Object.defineProperty(normalized, code, {
+        configurable: false,
+        enumerable: true,
+        value: Object.freeze(normalizedCounts),
+        writable: false,
+      });
+    }
+    return Object.freeze(normalized);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function snapshotGoalBackwardReleaseTelemetryRecord(value) {
+  const record = snapshotExactPlainOwnDataRecord(value, GOAL_BACKWARD_RELEASE_TELEMETRY_KEYS);
+  if (!record) return null;
+  const policyVersions = snapshotGoalBackwardReleasePolicyVersions(record.policy_versions);
+  const reasonCounts = snapshotGoalBackwardReleaseReasonCounts(record.reason_counts);
+  if (!policyVersions || !reasonCounts
+    || record.schema_version !== GOAL_BACKWARD_RELEASE_TELEMETRY_SCHEMA
+    || typeof record.target_ref !== 'string'
+    || !GOAL_BACKWARD_TARGET_REF_PATTERN.test(record.target_ref)
+    || typeof record.event_type !== 'string'
+    || !GOAL_BACKWARD_RELEASE_EVENT_TYPES.has(record.event_type)
+    || typeof record.mode !== 'string'
+    || !GOAL_BACKWARD_V24_MODE_SET.has(record.mode)
+    || typeof record.outcome !== 'string'
+    || !GOAL_BACKWARD_RELEASE_OUTCOMES.has(record.outcome)
+    || typeof record.candidate_selected !== 'boolean'
+    || typeof record.surface_capability !== 'string'
+    || !GOAL_BACKWARD_SURFACE_CAPABILITIES.has(record.surface_capability)
+    || typeof record.revision_mismatch !== 'boolean') return null;
+  const snapshot = {};
+  const normalizedValues = {
+    schema_version: record.schema_version,
+    target_ref: record.target_ref,
+    event_type: record.event_type,
+    mode: record.mode,
+    policy_versions: policyVersions,
+    outcome: record.outcome,
+    candidate_selected: record.candidate_selected,
+    reason_counts: reasonCounts,
+    surface_capability: record.surface_capability,
+    revision_mismatch: record.revision_mismatch,
+  };
+  for (const key of GOAL_BACKWARD_RELEASE_TELEMETRY_KEYS) {
+    Object.defineProperty(snapshot, key, {
+      configurable: false,
+      enumerable: true,
+      value: normalizedValues[key],
+      writable: false,
+    });
+  }
+  if (Buffer.byteLength(JSON.stringify(snapshot), 'utf8') > 8192) return null;
+  return Object.freeze(snapshot);
+}
+
+function snapshotGoalBackwardReleaseAlertEntries(value) {
+  try {
+    if (!value || typeof value !== 'object' || isProxy(value) || !Array.isArray(value)) return null;
+    if (Object.getPrototypeOf(value) !== Array.prototype) return null;
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+    const length = lengthDescriptor?.value;
+    if (!Object.hasOwn(lengthDescriptor || {}, 'value') || !Number.isSafeInteger(length)
+      || length < 0 || length > RELEASE_TELEMETRY_BUFFER_LIMIT) return null;
+    const expectedKeys = new Set(['length']);
+    for (let index = 0; index < length; index += 1) expectedKeys.add(String(index));
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.length !== expectedKeys.size
+      || ownKeys.some((key) => typeof key !== 'string' || !expectedKeys.has(key))) return null;
+    const snapshot = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) return null;
+      const event = snapshotGoalBackwardReleaseTelemetryRecord(descriptor.value);
+      if (!event) return null;
+      Object.defineProperty(snapshot, String(index), {
+        configurable: false,
+        enumerable: true,
+        value: event,
+        writable: false,
+      });
+    }
+    return Object.freeze(snapshot);
+  } catch (_error) {
+    return null;
+  }
 }
 
 function snapshotGoalBackwardV24Authority(value) {
@@ -130,10 +299,14 @@ function snapshotGoalBackwardV24Authority(value) {
       const descriptor = Object.getOwnPropertyDescriptor(value, field);
       if (!descriptor) continue;
       if (!Object.hasOwn(descriptor, 'value')) return null;
+      const fieldValue = field === 'alertEntries'
+        ? snapshotGoalBackwardReleaseAlertEntries(descriptor.value)
+        : descriptor.value;
+      if (field === 'alertEntries' && !fieldValue) return null;
       Object.defineProperty(snapshot, field, {
         configurable: false,
         enumerable: true,
-        value: descriptor.value,
+        value: fieldValue,
         writable: false,
       });
     }
@@ -287,37 +460,9 @@ function buildGoalBackwardReleaseTelemetry(input = {}) {
 }
 
 function assertGoalBackwardReleaseTelemetry(event = {}) {
-  const exactKeys = [
-    'schema_version', 'target_ref', 'event_type', 'mode', 'policy_versions', 'outcome',
-    'candidate_selected', 'reason_counts', 'surface_capability', 'revision_mismatch',
-  ];
-  if (!event || typeof event !== 'object' || Array.isArray(event)
-    || Object.keys(event).sort().join('|') !== [...exactKeys].sort().join('|')) {
-    throw new Error('Invalid goal-backward release telemetry record');
-  }
-  if (event.schema_version !== GOAL_BACKWARD_RELEASE_TELEMETRY_SCHEMA
-    || !GOAL_BACKWARD_TARGET_REF_PATTERN.test(String(event.target_ref || ''))
-    || !GOAL_BACKWARD_RELEASE_EVENT_TYPES.has(event.event_type)
-    || getGoalBackwardV24Mode(event.mode) !== event.mode
-    || !GOAL_BACKWARD_RELEASE_OUTCOMES.has(event.outcome)
-    || typeof event.candidate_selected !== 'boolean'
-    || !GOAL_BACKWARD_SURFACE_CAPABILITIES.has(event.surface_capability)
-    || typeof event.revision_mismatch !== 'boolean'
-    || JSON.stringify(event.policy_versions) !== JSON.stringify(CONTRACT_VERSIONS)
-    || !event.reason_counts || typeof event.reason_counts !== 'object' || Array.isArray(event.reason_counts)) {
-    throw new Error('Invalid goal-backward release telemetry record');
-  }
-  for (const [code, counts] of Object.entries(event.reason_counts)) {
-    stableTelemetryReasonCode(code);
-    if (!counts || !Number.isSafeInteger(counts.pass) || counts.pass < 0
-      || !Number.isSafeInteger(counts.fail) || counts.fail < 0) {
-      throw new Error('Invalid goal-backward release telemetry record');
-    }
-  }
-  if (Buffer.byteLength(JSON.stringify(event), 'utf8') > 8192) {
-    throw new Error('Invalid goal-backward release telemetry record');
-  }
-  return event;
+  const snapshot = snapshotGoalBackwardReleaseTelemetryRecord(event);
+  if (!snapshot) throw new Error('Invalid goal-backward release telemetry record');
+  return snapshot;
 }
 
 function emitGoalBackwardReleaseTelemetry(input, { sink = null } = {}) {
@@ -343,14 +488,9 @@ function clearGoalBackwardReleaseTelemetry() {
 
 function evaluateGoalBackwardReleaseAlerts(entries = []) {
   const breached = new Set();
-  for (const event of Array.isArray(entries) ? entries : []) {
-    let normalized;
-    try {
-      normalized = assertGoalBackwardReleaseTelemetry(event);
-    } catch (_error) {
-      breached.add('TELEMETRY_REDACTION_VIOLATION');
-      continue;
-    }
+  const snapshot = snapshotGoalBackwardReleaseAlertEntries(entries);
+  if (!snapshot) breached.add('TELEMETRY_REDACTION_VIOLATION');
+  for (const normalized of snapshot || []) {
     if (normalized.revision_mismatch) breached.add('REVISION_MISMATCH');
     for (const [code, counts] of Object.entries(normalized.reason_counts)) {
       if (ZERO_TOLERANCE_RELEASE_REASONS.has(code) && counts.fail > 0) breached.add(code);

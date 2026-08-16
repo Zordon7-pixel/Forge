@@ -8,6 +8,10 @@ const {
   assertApplyAuthorized,
   assertRedactedBackup,
   buildBackupManifest,
+  buildGoalBackwardReleaseTelemetry,
+  clearGoalBackwardReleaseTelemetry,
+  emitGoalBackwardReleaseTelemetry,
+  evaluateGoalBackwardReleaseAlerts,
   getGoalBackwardV24Audience,
   isCurrentRolloutPlan,
   localDateForOffset,
@@ -364,6 +368,293 @@ async function run() {
     }),
     'off',
     'a zero-tolerance release alert forces the public audience off',
+  );
+  const hermesBreachedAlertEntries = [{}];
+  let hermesAlertProxyTrapCalls = 0;
+  const hermesHiddenBreachedAlerts = new Proxy(hermesBreachedAlertEntries, {
+    get(target, property, receiver) {
+      hermesAlertProxyTrapCalls += 1;
+      if (property === Symbol.iterator) return function* hiddenAlerts() {};
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  assert.deepEqual({
+    plainOperational: resolveOperationalGoalBackwardV24Mode('on', {
+      userId: publicAccountId,
+      audience: 'all',
+      alertEntries: hermesBreachedAlertEntries,
+    }),
+    proxyOperational: resolveOperationalGoalBackwardV24Mode('on', {
+      userId: publicAccountId,
+      audience: 'all',
+      alertEntries: hermesHiddenBreachedAlerts,
+    }),
+    proxyRoute: plansRouter._test.resolvePlanGoalBackwardV24Mode(publicAccountId, {
+      mode: 'on',
+      audience: 'all',
+      alertEntries: hermesHiddenBreachedAlerts,
+    }),
+    proxyTrapCalls: hermesAlertProxyTrapCalls,
+  }, {
+    plainOperational: 'off',
+    proxyOperational: 'off',
+    proxyRoute: 'off',
+    proxyTrapCalls: 0,
+  }, 'a Proxy cannot hide the same breached alert history from either resolver');
+  assert.deepEqual(
+    evaluateGoalBackwardReleaseAlerts(hermesHiddenBreachedAlerts),
+    {
+      threshold_policy: 'goal_backward_release_zero_tolerance_v1',
+      breached_thresholds: ['TELEMETRY_REDACTION_VIOLATION'],
+      rollback_required: true,
+    },
+    'an invalid alert history is an explicit rollback-required condition',
+  );
+  assert.equal(hermesAlertProxyTrapCalls, 0, 'alert evaluation does not invoke the hiding Proxy');
+
+  const resolvePublicAlertModes = (alertEntries) => {
+    const capture = (operation) => {
+      try {
+        return operation();
+      } catch (_error) {
+        return 'threw';
+      }
+    };
+    return {
+      operational: capture(() => resolveOperationalGoalBackwardV24Mode('on', {
+        userId: publicAccountId,
+        audience: 'all',
+        alertEntries,
+      })),
+      route: capture(() => plansRouter._test.resolvePlanGoalBackwardV24Mode(publicAccountId, {
+        mode: 'on',
+        audience: 'all',
+        alertEntries,
+      })),
+    };
+  };
+  const safeReleaseEvent = buildGoalBackwardReleaseTelemetry({
+    targetRef: targetRef(publicAccountId),
+    eventType: 'mode_resolution',
+    mode: 'on',
+    outcome: 'candidate_selected',
+    candidateSelected: true,
+    passReasonCodes: ['PASS'],
+    surfaceCapability: 'PREVIEW_ONLY',
+  });
+  const breachedReleaseEvent = buildGoalBackwardReleaseTelemetry({
+    targetRef: targetRef(publicAccountId),
+    eventType: 'candidate_outcome',
+    mode: 'on',
+    outcome: 'apply_rejected',
+    failReasonCodes: ['HARD_VALIDATOR_BYPASS'],
+    surfaceCapability: 'BLOCKED',
+  });
+  const revisionMismatchReleaseEvent = buildGoalBackwardReleaseTelemetry({
+    targetRef: targetRef(publicAccountId),
+    eventType: 'surface_capability',
+    mode: 'on',
+    outcome: 'revision_mismatch',
+    failReasonCodes: ['REVISION_MISMATCH'],
+    surfaceCapability: 'BLOCKED',
+    revisionMismatch: true,
+  });
+  assert.deepEqual(
+    resolvePublicAlertModes([]),
+    { operational: 'on', route: 'on' },
+    'a safe exact empty injected alert history leaves public authority on',
+  );
+  assert.equal(
+    evaluateGoalBackwardReleaseAlerts([]).rollback_required,
+    false,
+    'a safe exact empty alert history does not request rollback',
+  );
+  assert.deepEqual(
+    resolvePublicAlertModes([safeReleaseEvent]),
+    { operational: 'on', route: 'on' },
+    'legitimate safe release telemetry leaves both resolvers on',
+  );
+  assert.deepEqual(
+    resolvePublicAlertModes([breachedReleaseEvent]),
+    { operational: 'off', route: 'off' },
+    'legitimate zero-tolerance release telemetry forces both resolvers off',
+  );
+  assert.deepEqual(
+    resolvePublicAlertModes([revisionMismatchReleaseEvent]),
+    { operational: 'off', route: 'off' },
+    'legitimate revision-mismatch telemetry forces both resolvers off',
+  );
+  clearGoalBackwardReleaseTelemetry();
+  try {
+    emitGoalBackwardReleaseTelemetry(breachedReleaseEvent, { sink: () => {} });
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: publicAccountId,
+        audience: 'all',
+      }),
+      'off',
+      'trusted runtime telemetry in the bounded internal buffer still forces rollback',
+    );
+  } finally {
+    clearGoalBackwardReleaseTelemetry();
+  }
+
+  let forbiddenAlertHookCalls = 0;
+  const alertArrayProxy = new Proxy([safeReleaseEvent], {
+    get(target, property, receiver) {
+      forbiddenAlertHookCalls += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const revokedAlertArray = Proxy.revocable([safeReleaseEvent], {});
+  revokedAlertArray.revoke();
+  class AlertHistorySubclass extends Array {}
+  const sparseAlertArray = new Array(1);
+  const accessorAlertArray = [];
+  Object.defineProperty(accessorAlertArray, '0', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      forbiddenAlertHookCalls += 1;
+      return safeReleaseEvent;
+    },
+  });
+  const iteratorOverrideAlertArray = [safeReleaseEvent];
+  Object.defineProperty(iteratorOverrideAlertArray, Symbol.iterator, {
+    configurable: true,
+    value() {
+      forbiddenAlertHookCalls += 1;
+      return [][Symbol.iterator]();
+    },
+  });
+  const coercibleAlertHistory = {
+    [Symbol.iterator]() {
+      forbiddenAlertHookCalls += 1;
+      return [safeReleaseEvent][Symbol.iterator]();
+    },
+    [Symbol.toPrimitive]() {
+      forbiddenAlertHookCalls += 1;
+      return '';
+    },
+  };
+  const invalidAlertHistories = [
+    ['array Proxy', alertArrayProxy],
+    ['revoked array Proxy', revokedAlertArray.proxy],
+    ['array subclass', new AlertHistorySubclass()],
+    ['sparse array', sparseAlertArray],
+    ['array index accessor', accessorAlertArray],
+    ['array iterator override', iteratorOverrideAlertArray],
+    ['over-limit array', new Array(257).fill(safeReleaseEvent)],
+    ['non-array object', {}],
+    ['coercible iterable object', coercibleAlertHistory],
+  ];
+  for (const [label, alertEntries] of invalidAlertHistories) {
+    assert.deepEqual(
+      resolvePublicAlertModes(alertEntries),
+      { operational: 'off', route: 'off' },
+      `${label} alert history fails closed in both resolvers`,
+    );
+  }
+
+  const cloneReleaseEvent = (overrides = {}) => ({
+    ...safeReleaseEvent,
+    policy_versions: { ...safeReleaseEvent.policy_versions },
+    reason_counts: Object.fromEntries(Object.entries(safeReleaseEvent.reason_counts).map(
+      ([code, counts]) => [code, { ...counts }],
+    )),
+    ...overrides,
+  });
+  const eventProxy = new Proxy(safeReleaseEvent, {
+    get(target, property, receiver) {
+      forbiddenAlertHookCalls += 1;
+      return Reflect.get(target, property, receiver);
+    },
+    ownKeys(target) {
+      forbiddenAlertHookCalls += 1;
+      return Reflect.ownKeys(target);
+    },
+  });
+  class ReleaseEventSubclass {}
+  const nonPlainEvent = Object.assign(new ReleaseEventSubclass(), cloneReleaseEvent());
+  const accessorEvent = cloneReleaseEvent();
+  Object.defineProperty(accessorEvent, 'mode', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      forbiddenAlertHookCalls += 1;
+      return 'on';
+    },
+  });
+  const policyProxy = new Proxy({ ...safeReleaseEvent.policy_versions }, {
+    get(target, property, receiver) {
+      forbiddenAlertHookCalls += 1;
+      return Reflect.get(target, property, receiver);
+    },
+    ownKeys(target) {
+      forbiddenAlertHookCalls += 1;
+      return Reflect.ownKeys(target);
+    },
+  });
+  const accessorPolicy = { ...safeReleaseEvent.policy_versions };
+  Object.defineProperty(accessorPolicy, 'planning_policy_version', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      forbiddenAlertHookCalls += 1;
+      return safeReleaseEvent.policy_versions.planning_policy_version;
+    },
+  });
+  const reasonCountsProxy = new Proxy(safeReleaseEvent.reason_counts, {
+    get(target, property, receiver) {
+      forbiddenAlertHookCalls += 1;
+      return Reflect.get(target, property, receiver);
+    },
+    ownKeys(target) {
+      forbiddenAlertHookCalls += 1;
+      return Reflect.ownKeys(target);
+    },
+  });
+  const accessorCount = { pass: 1 };
+  Object.defineProperty(accessorCount, 'fail', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      forbiddenAlertHookCalls += 1;
+      return 0;
+    },
+  });
+  const invalidReleaseEvents = [
+    ['event Proxy', eventProxy],
+    ['non-plain event', nonPlainEvent],
+    ['event accessor', accessorEvent],
+    ['event unknown key', { ...cloneReleaseEvent(), payload: {} }],
+    ['policy Proxy', cloneReleaseEvent({ policy_versions: policyProxy })],
+    ['policy accessor', cloneReleaseEvent({ policy_versions: accessorPolicy })],
+    ['sparse nested policy array', cloneReleaseEvent({ policy_versions: new Array(11) })],
+    ['unknown policy shape', cloneReleaseEvent({
+      policy_versions: { ...safeReleaseEvent.policy_versions, unexpected_version: 1 },
+    })],
+    ['reason-counts Proxy', cloneReleaseEvent({ reason_counts: reasonCountsProxy })],
+    ['sparse nested reason-counts array', cloneReleaseEvent({ reason_counts: new Array(1) })],
+    ['count accessor', cloneReleaseEvent({ reason_counts: { PASS: accessorCount } })],
+    ['invalid negative count', cloneReleaseEvent({
+      reason_counts: { PASS: { pass: 1, fail: -1 } },
+    })],
+    ['unknown count shape', cloneReleaseEvent({
+      reason_counts: { PASS: { pass: 1, fail: 0, total: 1 } },
+    })],
+  ];
+  for (const [label, event] of invalidReleaseEvents) {
+    assert.deepEqual(
+      resolvePublicAlertModes([event]),
+      { operational: 'off', route: 'off' },
+      `${label} fails closed in both resolvers`,
+    );
+  }
+  assert.equal(
+    forbiddenAlertHookCalls,
+    0,
+    'alert histories and nested telemetry are validated without invoking forbidden hooks',
   );
   assert.equal(
     resolveOperationalGoalBackwardV24Mode('shadow', {
