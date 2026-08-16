@@ -1642,6 +1642,8 @@ function generateHyroxPlan(input = {}) {
     eventTimezone: event.eventTimezone,
     division: resolved.format,
     category: resolved.category,
+    goalType: Number(event.goalTimeSeconds) > 0 ? 'performance' : 'completion',
+    goalTimeSeconds: Number(event.goalTimeSeconds) > 0 ? Math.round(Number(event.goalTimeSeconds)) : null,
     rulesVersion: resolved.rulesVersion,
     ...(includeGoalBackwardV24 ? {
       rulesetId: resolved.rulesetId,
@@ -1733,6 +1735,9 @@ function generateHyroxPlan(input = {}) {
       || {};
     hyroxPerformanceBudget = buildHyroxPerformanceBudget({
       ...suppliedPerformanceBudget,
+      target_total_time_s: Number(event.goalTimeSeconds) > 0
+        ? Math.round(Number(event.goalTimeSeconds))
+        : (suppliedPerformanceBudget.target_total_time_s ?? suppliedPerformanceBudget.targetTotalTimeSeconds),
       team_budget: suppliedPerformanceBudget.team_budget ?? hyroxEventState.team_performance_burden ?? {},
       individual_training_burden: suppliedPerformanceBudget.individual_training_burden
         ?? hyroxEventState.individual_training_burden,

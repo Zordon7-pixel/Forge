@@ -526,6 +526,7 @@ function assertBryanOrderedGoals() {
         raceId: hyroxGoal.race_id, name: 'Synthetic HYROX', eventLocalDate: hyroxGoal.event_local_date,
         eventTimezone: input.timezone, format: input.hyrox_event.format,
         category: input.hyrox_event.registered_division, rulesVersion: input.hyrox_event.ruleset_version,
+        goalTimeSeconds: hyroxGoal.target_time_s,
         hyroxEventState: { planned_station_split: input.hyrox_event.planned_station_split },
       },
       equipment: ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'],
@@ -537,6 +538,9 @@ function assertBryanOrderedGoals() {
     });
     assert.deepEqual(plan.goals.map((goal) => goal.priority), ['A', 'B']);
     assert.deepEqual(plan.goals.map((goal) => goal.feasibility_status), ['unvalidated', 'unvalidated']);
+    assert.equal(plan.goals[0].goalType, 'performance');
+    assert.equal(plan.goals[0].goalTimeSeconds, hyroxGoal.target_time_s);
+    assert.equal(plan.hyroxPerformanceBudget.target_total_time_s, hyroxGoal.target_time_s);
     const raceWeek = plan.weeks.findIndex((week) => week.days.some((day) => (
       day.sessions.some((session) => session.sessionType === 'hyrox_race')
     )));

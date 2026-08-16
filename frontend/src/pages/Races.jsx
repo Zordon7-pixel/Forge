@@ -8,6 +8,7 @@ import api from '../lib/api'
 import { hyroxDivisionLabel, isHyroxRace, preferredActiveSecondaryRaceId } from '../lib/hyroxSelfService'
 import { phonePlanningClock, previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
+import { activePlanRaceIds as planRaceIds, verifyRaceRemovalActivation } from '../lib/planActivation'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
 import { removeOwnedRace } from '../lib/selfServiceRemoval'
 
@@ -190,10 +191,12 @@ export default function Races() {
       headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
       params: { forge_refresh: Date.now() },
     } : undefined
+    let activePlanReadConfirmed = true
     const [raceResponse, planResponse] = await Promise.all([
       api.get('/races', freshConfig),
       api.get('/plans/my', freshConfig).catch((err) => {
         console.error('[Races] active plan load failed:', err?.message || err)
+        activePlanReadConfirmed = false
         return null
       }),
     ])
@@ -201,14 +204,12 @@ export default function Races() {
     const nextActivePlan = planResponse?.data?.plan || null
     setRaces(nextRaces)
     setActivePlan(nextActivePlan)
-    return { races: nextRaces, activePlan: nextActivePlan }
+    return { races: nextRaces, activePlan: nextActivePlan, activePlanReadConfirmed }
   }
   useEffect(() => { load() }, [])
 
   const activePlanRaceIds = useMemo(() => {
-    const data = activePlan?.plan_data || activePlan?.plan_json || {}
-    const goals = Array.isArray(data.goals) && data.goals.length ? data.goals : (data.goal ? [data.goal] : [])
-    return goals.map((goal) => String(goal.raceId || goal.race_id || '')).filter(Boolean)
+    return planRaceIds(activePlan)
   }, [activePlan])
 
   const upcoming = useMemo(() => races
@@ -313,25 +314,42 @@ export default function Races() {
     setRemovingRaceId(race.id)
     setMessage('')
     const successMessage = `${race.race_name} was removed. Recorded runs, lifts, health data, check-ins, and training history were preserved.`
+    let expectedRemainingRaceIds = null
     try {
-      await removeOwnedRace({ api, raceId: race.id, planningClock: phonePlanningClock() })
+      const removal = await removeOwnedRace({ api, raceId: race.id, planningClock: phonePlanningClock() })
+      expectedRemainingRaceIds = removal.expectedRemainingRaceIds
       const refreshed = await load({ fresh: true })
-      if (refreshed.races.some((item) => String(item.id) === String(race.id))) {
-        const persistenceError = new Error('Forge did not confirm the race removal. The race is still listed.')
+      const confirmation = verifyRaceRemovalActivation({
+        ...refreshed,
+        removedRaceId: race.id,
+        expectedRemainingRaceIds,
+      })
+      if (!confirmation.confirmed) {
+        const persistenceError = new Error(confirmation.raceStillExists
+          ? 'Forge did not confirm the race removal. The race is still listed.'
+          : 'The race was removed, but Forge did not confirm the replacement plan goals.')
         persistenceError.code = 'REMOVAL_NOT_CONFIRMED'
+        persistenceError.expectedRemainingRaceIds = expectedRemainingRaceIds
         throw persistenceError
       }
       setMessage(successMessage)
     } catch (err) {
+      expectedRemainingRaceIds = err?.expectedRemainingRaceIds ?? expectedRemainingRaceIds
       const reason = err?.response?.data?.error || err?.message || `Could not remove ${race.race_name}.`
       try {
         const refreshed = await load({ fresh: true })
-        const raceStillExists = refreshed.races.some((item) => String(item.id) === String(race.id))
-        if (!raceStillExists) {
+        const confirmation = verifyRaceRemovalActivation({
+          ...refreshed,
+          removedRaceId: race.id,
+          expectedRemainingRaceIds,
+        })
+        if (confirmation.confirmed) {
           setMessage(`${successMessage} Forge confirmed it after refreshing your account.`)
           return
         }
-        setMessage(`${reason} ${race.race_name} is still listed, and the removal stopped. Refresh and try again.`)
+        setMessage(confirmation.raceStillExists
+          ? `${reason} ${race.race_name} is still listed, and the removal stopped. Refresh and try again.`
+          : `${reason} The race is gone, but the active plan goals are not confirmed. Refresh before making another change.`)
       } catch (confirmationError) {
         console.error('[Races] race removal confirmation failed:', confirmationError?.message || confirmationError)
         setMessage(`${reason} Forge could not confirm the final account state. Refresh before trying again.`)

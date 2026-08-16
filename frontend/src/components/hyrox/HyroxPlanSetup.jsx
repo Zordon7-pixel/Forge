@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronLeft, ShieldCheck, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import DurationPicker from '../DurationPicker'
 import api from '../../lib/api'
 import { hyroxCombinedPlanGuidance, hyroxDivisionLabel, hyroxSetupInitialState } from '../../lib/hyroxSelfService'
 import { activateModalDialog } from '../../lib/modalDialog'
 import { phonePlanningClock } from '../../lib/planCandidates'
 import { hyroxCandidateReviewModel } from '../../lib/planCalendar'
+import { verifyHyroxPlanActivation } from '../../lib/planActivation'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const RULES_VERSION = '2026-2027'
@@ -53,6 +55,7 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
   const [location, setLocation] = useState(initial.location)
   const [eventFormat, setEventFormat] = useState(initial.eventFormat)
   const [eventCategory, setEventCategory] = useState(initial.eventCategory)
+  const [goalTimeSeconds, setGoalTimeSeconds] = useState(initial.goalTimeSeconds)
   const [rulesVersion] = useState(RULES_VERSION)
   const [runningPriority, setRunningPriority] = useState(initial.runningPriority)
   const [equipment, setEquipment] = useState(initial.equipment)
@@ -132,6 +135,7 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
     event_kind: 'hyrox',
     event_format: eventFormat,
     event_category: eventCategory,
+    goal_time_seconds: goalTimeSeconds || null,
     rules_version: rulesVersion,
     location: location.trim() || null,
     status: 'upcoming',
@@ -194,18 +198,36 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
     if (!candidate || busy) return
     setBusy(true)
     setError('')
+    let applied = false
     try {
       const candidateId = String(candidate.candidate_id || '')
       const candidateHash = String(candidate.candidate_hash || '')
       if (!candidateId || !candidateHash) throw new Error('The reviewed plan is missing its apply token. Preview again.')
-      await api.post(`/plans/candidates/${encodeURIComponent(candidateId)}/apply`, {
+      const { data: appliedCandidate } = await api.post(`/plans/candidates/${encodeURIComponent(candidateId)}/apply`, {
         candidate_hash: candidateHash,
         choice: 'train_for_target',
         ...phonePlanningClock(),
       })
-      onComplete?.()
+      applied = true
+      const { data: activeResponse } = await api.get('/plans/my', {
+        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        params: { forge_refresh: Date.now() },
+      })
+      const activation = verifyHyroxPlanActivation({
+        planResponse: activeResponse,
+        expectedUserPlanId: appliedCandidate?.user_plan_id,
+        hyroxRace: ownedHyroxRace,
+        secondaryRaceId,
+      })
+      if (!activation.confirmed) {
+        throw new Error('Forge applied the candidate but did not confirm the exact HYROX and secondary-race goals in the active calendar.')
+      }
+      onComplete?.({ activation, activeResponse })
     } catch (err) {
-      setError(err?.response?.data?.error || err?.message || 'Could not apply this plan. Your current calendar is unchanged.')
+      const reason = err?.response?.data?.error || err?.message
+      setError(applied
+        ? `${reason || 'The plan was applied, but Forge could not confirm the active calendar.'} Refresh before making another plan change.`
+        : reason || 'Could not apply this plan. Your current calendar is unchanged.')
     } finally {
       setBusy(false)
     }
@@ -322,6 +344,20 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
                   <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>{tx('field.location', 'Event location')}</span>
                   <input value={location} onChange={(event) => setLocation(event.target.value)} maxLength={200} placeholder={tx('field.location_placeholder', 'City, region, country')} style={inputStyle} />
                 </label>
+              </div>
+            )}
+            {eventMode === 'event_date' && (
+              <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+                <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>{tx('field.goal_time', 'Target finish time')}</span>
+                <DurationPicker
+                  value={goalTimeSeconds}
+                  onChange={setGoalTimeSeconds}
+                  disabled={busy}
+                  idPrefix="hyrox-goal-time"
+                  maxHours={12}
+                  ariaLabel={tx('field.goal_time', 'Target finish time')}
+                />
+                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{tx('field.goal_time_help', 'Leave blank for a completion goal. Forge will not claim a performance target is supported without evidence.')}</span>
               </div>
             )}
             <label style={{ display: 'grid', gap: 6, minWidth: 0 }}>

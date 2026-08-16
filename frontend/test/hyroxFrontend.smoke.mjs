@@ -114,6 +114,8 @@ assert.equal(normalizedHyrox.raw.canonicalUnits, 'metric', 'display normalizatio
 assert.match(setup, /hyroxCandidateReviewModel/, 'candidate dialog uses the backend-driven HYROX review model')
 assert.match(setup, /Days remaining[\s\S]*Phase sequence[\s\S]*Equipment and substitutions[\s\S]*Hard-day safety/, 'candidate dialog presents the required review sections before apply')
 assert.match(setup, /setCandidate\(data\)[\s\S]*applyCandidate[\s\S]*candidate_hash:[\s\S]*choice:\s*'train_for_target'/, 'HYROX always pauses on the candidate before explicit apply')
+assert.match(setup, /goal_time_seconds:\s*goalTimeSeconds \|\| null/, 'HYROX saves the explicit performance target with the event truth')
+assert.match(setup, /verifyHyroxPlanActivation[\s\S]*expectedUserPlanId:[\s\S]*secondaryRaceId/, 'HYROX apply verifies assignment identity and exact combined-goal membership')
 assert.match(calendar, /kind === 'hyrox'|kind="hyrox"/, 'calendar visibly distinguishes HYROX sessions')
 assert.match(dayView, /stationSequence[\s\S]*exactStation[\s\S]*substitute/, 'day details show ordered stations and truthful substitutions')
 assert.match(dayView, /distanceMeters|repetitions|officialStandard/, 'day details keep metric station prescriptions visible')

@@ -1459,14 +1459,17 @@ test('ambiguous race-removal response is reconciled from fresh account state and
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
       ['GET /api/races', () => ({ races: racePresent ? [race] : [] })],
-      ['GET /api/plans/my', {
-        plan: { id: 'race-plan', plan_data: { schemaVersion: 2, goals: [{ raceId: race.id, name: race.race_name, dateISO: race.race_date }] } },
-        user_plan: { current_week: 1, started_at: today, progress: {} },
-      }],
+      ['GET /api/plans/my', () => ({
+        plan: racePresent
+          ? { id: 'race-plan', plan_data: { schemaVersion: 2, goals: [{ raceId: race.id, name: race.race_name, dateISO: race.race_date }] } }
+          : { id: 'replacement-plan', plan_data: { schemaVersion: 2, goals: [] } },
+        user_plan: { id: racePresent ? 'assignment-old' : 'assignment-replacement', current_week: 1, started_at: today, progress: {} },
+      })],
       ['POST /api/races/yonkers-race/removal-preview', {
         requires_apply: true,
         candidate_id: 'remove-yonkers-candidate',
         candidate_hash: 'sha256:remove-yonkers',
+        removal: { remaining_race_ids: [] },
       }],
       ['POST /api/races/yonkers-race/removal-apply', () => {
         racePresent = false
@@ -1486,6 +1489,41 @@ test('ambiguous race-removal response is reconciled from fresh account state and
   expect(requestsFor(apiState, 'GET', '/api/races')).toHaveLength(2)
   expect([...new Set(apiState.unexpectedRequests)]).toEqual([])
   expect(runtimeErrors.filter((message) => !/status of 504 \(Gateway Timeout\)/.test(message))).toEqual([])
+})
+
+test('failed linked race removal returns to a retryable terminal state at 320px', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 })
+  const runtimeErrors = collectRuntimeErrors(page)
+  const race = {
+    id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20',
+    distance_miles: 13.1, status: 'upcoming',
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/races', { races: [race] }],
+      ['GET /api/plans/my', {
+        plan: { id: 'race-plan', plan_data: { schemaVersion: 2, goals: [{ raceId: race.id, name: race.race_name, dateISO: race.race_date }] } },
+        user_plan: { id: 'assignment-race', current_week: 1, started_at: today, progress: {} },
+      }],
+      ['POST /api/races/yonkers-race/removal-preview', {
+        requires_apply: true,
+        candidate_id: 'remove-yonkers-candidate',
+        candidate_hash: 'sha256:remove-yonkers',
+        removal: { remaining_race_ids: [] },
+      }],
+      ['POST /api/races/yonkers-race/removal-apply', qaResponse({ error: 'Unable to apply race removal.' }, 500)],
+    ]),
+  })
+
+  await page.goto('/races')
+  const manage = page.getByLabel('Manage Yonkers Half Marathon')
+  await manage.getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(page.getByText(/Yonkers Half Marathon is still listed, and the removal stopped\. Refresh and try again\./)).toBeVisible()
+  await expect(manage.getByRole('button', { name: 'Remove', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: /Removing/ })).toHaveCount(0)
+  expect(requestsFor(apiState, 'POST', '/api/races/yonkers-race/removal-apply')).toHaveLength(1)
+  expect([...new Set(apiState.unexpectedRequests)]).toEqual([])
+  expect(runtimeErrors.filter((message) => !/status of 500 \(Internal Server Error\)/.test(message))).toEqual([])
 })
 
 test('an existing HYROX event can correct its division and review a combined candidate without mutating the current plan', async ({ page }) => {
@@ -1573,6 +1611,98 @@ test('an existing HYROX event can correct its division and review a combined can
   expect(previews).toHaveLength(1)
   expect(previews[0].body.race_ids).toEqual([hyrox.id, army.id])
   expect(requestsFor(apiState, 'POST', '/api/plans/candidates/hyrox-doubles-candidate/apply')).toHaveLength(0)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('a reviewed HYROX apply confirms exact assignment, goal truth, and no stale races at 393px', async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 852 })
+  const runtimeErrors = collectRuntimeErrors(page)
+  let applied = false
+  let savedHyrox = {
+    id: 'hyrox-dc',
+    race_name: 'HYROX Washington DC',
+    race_date: '2026-09-06',
+    event_local_date: '2026-09-06',
+    event_timezone: 'America/New_York',
+    event_kind: 'hyrox',
+    event_format: 'individual_open',
+    event_category: 'men',
+    goal_time_seconds: 6900,
+    status: 'upcoming',
+  }
+  const yonkers = { id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20', event_kind: 'run_race', status: 'upcoming', distance_miles: 13.1 }
+  const army = { id: 'army-race', race_name: 'Army Ten-Miler', race_date: '2026-10-11', event_kind: 'run_race', status: 'upcoming', distance_miles: 10, goal_time_seconds: 5400 }
+  const replacementPlan = () => ({
+    plan: {
+      id: 'hyrox-army-plan',
+      plan_data: {
+        schemaVersion: 2,
+        goals: [
+          {
+            kind: 'hyrox', raceId: savedHyrox.id, name: savedHyrox.race_name,
+            eventLocalDate: savedHyrox.event_local_date, division: savedHyrox.event_format,
+            category: savedHyrox.event_category, goalTimeSeconds: savedHyrox.goal_time_seconds,
+          },
+          { kind: 'run_race', raceId: army.id, name: army.race_name, eventLocalDate: army.race_date, goalTimeSeconds: army.goal_time_seconds },
+        ],
+        weeks: [],
+      },
+    },
+    user_plan: { id: 'assignment-hyrox-army', current_week: 1, started_at: today, progress: {} },
+  })
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/races', () => ({ races: [savedHyrox, yonkers, army] })],
+      ['GET /api/plans/my', () => applied ? replacementPlan() : ({
+        plan: { id: 'stale-plan', plan_data: { schemaVersion: 2, goals: [
+          { raceId: yonkers.id, name: yonkers.race_name, eventLocalDate: yonkers.race_date },
+          { raceId: army.id, name: army.race_name, eventLocalDate: army.race_date },
+        ] } },
+        user_plan: { id: 'assignment-stale', current_week: 1, started_at: today, progress: {} },
+      })],
+      ['PATCH /api/races/hyrox-dc', (request) => {
+        savedHyrox = { ...savedHyrox, ...request.body }
+        return { race: savedHyrox }
+      }],
+      ['POST /api/plans/generate-for-races', () => ({
+        candidate_id: 'hyrox-army-candidate',
+        candidate_hash: 'sha256:hyrox-army-candidate',
+        candidate: { plan_data: {
+          schemaVersion: 2,
+          schedulePreferences: { runDaysPerWeek: 3 },
+          hyroxPolicy: { daysToEventAtGeneration: 23, runwayClass: 'short_runway', sessionsPerWeek: 2, maximumHardLowerBodyDaysPerRollingSeven: 2, equipment: [], missingEquipment: [] },
+          goals: [
+            { kind: 'hyrox', raceId: savedHyrox.id, name: savedHyrox.race_name, eventLocalDate: savedHyrox.event_local_date, division: savedHyrox.event_format, category: savedHyrox.event_category, goalTimeSeconds: savedHyrox.goal_time_seconds },
+            { kind: 'run_race', raceId: army.id, name: army.race_name },
+          ],
+          weeks: [{ week: 1, phase: 'post_hyrox_recovery', days: [] }],
+        } },
+      })],
+      ['POST /api/plans/candidates/hyrox-army-candidate/apply', () => {
+        applied = true
+        return { ok: true, plan_id: 'hyrox-army-plan', user_plan_id: 'assignment-hyrox-army' }
+      }],
+    ]),
+  })
+
+  await page.goto('/races')
+  await page.getByLabel('Manage HYROX Washington DC').getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByLabel('Format / division').selectOption('doubles')
+  await page.getByLabel('Target finish time hours').selectOption('0')
+  await page.getByLabel('Target finish time minutes').selectOption('59')
+  await page.getByLabel('Target finish time seconds').selectOption('0')
+  await expect(page.getByLabel('Optional secondary running race')).toHaveValue(army.id)
+  await page.getByRole('button', { name: 'Preview combined HYROX plan', exact: true }).click()
+  await page.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true }).click()
+
+  await expect(page.getByRole('heading', { name: 'Update your HYROX plan' })).toHaveCount(0)
+  await expect(page.getByText('HYROX Washington DC and the reviewed HYROX calendar are updated.', { exact: true })).toBeVisible()
+  expect(savedHyrox.event_format).toBe('doubles')
+  expect(savedHyrox.event_category).toBe('men')
+  expect(savedHyrox.goal_time_seconds).toBe(3540)
+  expect(requestsFor(apiState, 'POST', '/api/plans/candidates/hyrox-army-candidate/apply')).toHaveLength(1)
+  expect(requestsFor(apiState, 'GET', '/api/plans/my').length).toBeGreaterThanOrEqual(3)
+  await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll')
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 

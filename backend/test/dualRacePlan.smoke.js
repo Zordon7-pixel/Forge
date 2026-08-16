@@ -1014,12 +1014,12 @@ async function checkHyroxCandidateImmediateAdoption() {
       event_local_date: '2026-09-06',
       event_timezone: 'America/New_York',
       event_kind: 'hyrox',
-      event_format: 'individual_open',
+      event_format: 'doubles',
       event_category: 'men',
       rules_version: '2026-2027',
       event_config_json: JSON.stringify({ equipment: HYROX_EQUIPMENT }),
       distance_miles: 4.97,
-      goal_time_seconds: null,
+      goal_time_seconds: 3600,
     }],
     ['army', {
       id: 'army',
@@ -1060,7 +1060,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       name: 'HYROX New York',
       eventLocalDate: '2026-09-06',
       eventTimezone: 'America/New_York',
-      format: 'individual_open',
+      format: 'doubles',
       category: 'men',
       rulesVersion: '2026-2027',
     },
@@ -1328,6 +1328,12 @@ async function checkHyroxCandidateImmediateAdoption() {
       'the route regression applies a legacy/current-engine candidate with attached shadow diagnostics');
     assert.equal(previewResponse.payload.effective_from, planningDate);
     assert.deepEqual(previewResponse.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
+    const retainedHyroxGoal = previewResponse.payload.plan.plan_data.goals[0];
+    assert.equal(retainedHyroxGoal.division, 'doubles');
+    assert.equal(retainedHyroxGoal.category, 'men');
+    assert.equal(retainedHyroxGoal.eventLocalDate, '2026-09-06');
+    assert.equal(retainedHyroxGoal.goalType, 'performance');
+    assert.equal(retainedHyroxGoal.goalTimeSeconds, 3600);
     const retainedArmyGoal = previewResponse.payload.plan.plan_data.goals[1];
     assert.equal(retainedArmyGoal.goalType, 'pr');
     assert.equal(retainedArmyGoal.goalTimeSeconds, 5220);
@@ -1352,6 +1358,8 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(immediate.payload.user_plan.id, applyResponse.payload.user_plan_id);
     assert.equal(immediate.payload.user_plan.effective_from, planningDate);
     assert.deepEqual(immediate.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
+    assert.equal(immediate.payload.plan.plan_data.goals[0].division, 'doubles');
+    assert.equal(immediate.payload.plan.plan_data.goals[0].goalTimeSeconds, 3600);
     assert.notEqual(immediate.payload.user_plan.id, 'assignment-hyrox', 'the predecessor is not returned on the accepted local date');
 
     const combinedPlan = immediate.payload.plan.plan_data;

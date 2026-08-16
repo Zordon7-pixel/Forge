@@ -64,7 +64,7 @@ export async function removeOwnedRace({ api, raceId, planningClock, timeoutMs = 
       'Race removal',
     )
     ensureImmediateResponse(directResponse?.data)
-    return { path: 'direct' }
+    return { path: 'direct', expectedRemainingRaceIds: null }
   }
 
   const candidateId = String(data.candidate_id || '')
@@ -72,18 +72,27 @@ export async function removeOwnedRace({ api, raceId, planningClock, timeoutMs = 
   if (!candidateId || !candidateHash) {
     throw new Error('The safe replacement plan is missing its apply token.')
   }
-  const applyResponse = await requestWithDeadline(
-    (config) => api.post(`/races/${encodedRaceId}/removal-apply`, {
-      candidate_id: candidateId,
-      candidate_hash: candidateHash,
-      choice: 'train_for_target',
-      ...planningClock,
-    }, config),
-    timeoutMs,
-    'Race removal apply',
-  )
+  const expectedRemainingRaceIds = Array.isArray(data?.removal?.remaining_race_ids)
+    ? data.removal.remaining_race_ids.map(String)
+    : null
+  let applyResponse
+  try {
+    applyResponse = await requestWithDeadline(
+      (config) => api.post(`/races/${encodedRaceId}/removal-apply`, {
+        candidate_id: candidateId,
+        candidate_hash: candidateHash,
+        choice: 'train_for_target',
+        ...planningClock,
+      }, config),
+      timeoutMs,
+      'Race removal apply',
+    )
+  } catch (error) {
+    error.expectedRemainingRaceIds = expectedRemainingRaceIds
+    throw error
+  }
   ensureImmediateResponse(applyResponse?.data)
-  return { path: 'linked', candidateId }
+  return { path: 'linked', candidateId, expectedRemainingRaceIds }
 }
 
 export async function removeScheduledWorkout({ api, sessionId, timeoutMs = SELF_SERVICE_REMOVAL_TIMEOUT_MS }) {
