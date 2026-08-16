@@ -45,6 +45,7 @@ const {
   buildGoalBackwardReleaseTelemetry,
   emitGoalBackwardReleaseTelemetry,
   resolveOperationalGoalBackwardV24Mode,
+  snapshotGoalBackwardV24Authority,
   targetRef: goalBackwardTargetRef,
 } = require('../lib/betaPlanRollout');
 const { requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
@@ -125,14 +126,27 @@ function sendCandidateError(res, err, context) {
 }
 
 function resolvePlanGoalBackwardV24Mode(userId, dependencies = {}, options = {}) {
-  return resolveOperationalGoalBackwardV24Mode(dependencies.mode, {
-    userId,
-    audience: dependencies.audience,
-    cohortRefs: dependencies.cohortRefs,
-    allowSyntheticShadow: options.allowSyntheticShadow === true,
-    ...(Object.hasOwn(dependencies, 'alertEntries')
-      ? { alertEntries: dependencies.alertEntries } : {}),
-  });
+  const injected = snapshotGoalBackwardV24Authority(dependencies);
+  const internal = snapshotGoalBackwardV24Authority(options);
+  if (!injected || !internal) return 'off';
+  const authority = Object.create(null);
+  Object.defineProperty(authority, 'userId', { enumerable: true, value: userId });
+  for (const field of ['audience', 'cohortRefs', 'alertEntries']) {
+    if (Object.hasOwn(injected, field)) {
+      Object.defineProperty(authority, field, { enumerable: true, value: injected[field] });
+    }
+  }
+  if (Object.hasOwn(internal, 'allowSyntheticShadow')) {
+    Object.defineProperty(authority, 'allowSyntheticShadow', {
+      enumerable: true,
+      value: internal.allowSyntheticShadow,
+    });
+  }
+  if (Object.hasOwn(injected, 'mode') && typeof injected.mode !== 'string') return 'off';
+  return resolveOperationalGoalBackwardV24Mode(
+    Object.hasOwn(injected, 'mode') ? injected.mode : undefined,
+    authority,
+  );
 }
 
 function getDayShort() {

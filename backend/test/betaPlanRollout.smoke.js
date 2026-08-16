@@ -20,6 +20,7 @@ const {
 const { RACE_PLAN_POLICY_V1 } = require('../src/lib/racePlanPolicy');
 const { resolveRunSchedule } = require('../src/lib/runSchedule');
 const rolloutScript = require('../scripts/upgrade-beta-race-plans');
+const plansRouter = require('../src/routes/plans');
 
 async function run() {
   const disposableId = '00000000-0000-4000-8000-000000000024';
@@ -29,7 +30,7 @@ async function run() {
   assert.deepEqual(GOAL_BACKWARD_V24_AUDIENCES, ['cohort', 'all']);
   assert.equal(getGoalBackwardV24Audience('cohort'), 'cohort');
   assert.equal(getGoalBackwardV24Audience('all'), 'all');
-  for (const invalidAudience of [null, false, [], ' all ', 'public', 'ALL']) {
+  for (const invalidAudience of [null, false, [], new String('all'), ' all ', 'public', 'ALL']) {
     assert.equal(
       getGoalBackwardV24Audience(invalidAudience),
       'cohort',
@@ -73,6 +74,270 @@ async function run() {
       'off',
       `an invalid audience is never promoted to public: ${JSON.stringify(invalidAudience)}`,
     );
+  }
+  const originalAuthorityEnvironment = {
+    mode: process.env.FORGE_GOAL_BACKWARD_V24_MODE,
+    audience: process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE,
+    cohortRefs: process.env.FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS,
+  };
+  try {
+    delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    delete process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
+    delete process.env.FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS;
+
+    const inheritedAudienceOptions = Object.assign(Object.create({ audience: 'all' }), {
+      userId: publicAccountId,
+      cohortRefs: [],
+      alertEntries: [],
+    });
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', inheritedAudienceOptions),
+      'off',
+      'an inherited public audience cannot widen an injected cohort decision',
+    );
+
+    let audienceGetterCalls = 0;
+    const getterAudienceOptions = { userId: publicAccountId, cohortRefs: [], alertEntries: [] };
+    Object.defineProperty(getterAudienceOptions, 'audience', {
+      enumerable: true,
+      get() {
+        audienceGetterCalls += 1;
+        return 'all';
+      },
+    });
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', getterAudienceOptions),
+      'off',
+      'an audience accessor cannot authorize the public rollout',
+    );
+    assert.equal(audienceGetterCalls, 0, 'audience accessors are not invoked during authority validation');
+    let throwingGetterCalls = 0;
+    const throwingAudienceOptions = { userId: publicAccountId, cohortRefs: [], alertEntries: [] };
+    Object.defineProperty(throwingAudienceOptions, 'audience', {
+      enumerable: true,
+      get() {
+        throwingGetterCalls += 1;
+        throw new Error('authority getter must not run');
+      },
+    });
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', throwingAudienceOptions),
+      'off',
+      'a throwing audience accessor fails closed without escaping',
+    );
+    assert.equal(throwingGetterCalls, 0, 'throwing authority accessors are not invoked');
+
+    let proxyTrapCalls = 0;
+    const proxyAuthority = new Proxy({
+      userId: publicAccountId,
+      audience: 'all',
+      alertEntries: [],
+    }, {
+      get() {
+        proxyTrapCalls += 1;
+        throw new Error('authority get trap must not run');
+      },
+      getOwnPropertyDescriptor() {
+        proxyTrapCalls += 1;
+        throw new Error('authority descriptor trap must not run');
+      },
+      getPrototypeOf() {
+        proxyTrapCalls += 1;
+        throw new Error('authority prototype trap must not run');
+      },
+    });
+    let proxyResolution = 'threw';
+    try {
+      proxyResolution = resolveOperationalGoalBackwardV24Mode('on', proxyAuthority);
+    } catch (_error) {
+      // The assertion below records the fail-closed contract without allowing the hostile trap to escape.
+    }
+    assert.equal(proxyResolution, 'off', 'a Proxy authority object fails closed');
+    assert.equal(proxyTrapCalls, 0, 'Proxy traps are not invoked during authority validation');
+
+    class NonPlainAuthority {
+      constructor() {
+        this.userId = publicAccountId;
+        this.audience = 'all';
+        this.alertEntries = [];
+      }
+    }
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', new NonPlainAuthority()),
+      'off',
+      'a non-plain authority object cannot authorize the public rollout',
+    );
+    let audienceCoercionCalls = 0;
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: publicAccountId,
+        audience: {
+          [Symbol.toPrimitive]() {
+            audienceCoercionCalls += 1;
+            return 'all';
+          },
+        },
+        alertEntries: [],
+      }),
+      'off',
+      'a coercible audience value cannot authorize the public rollout',
+    );
+    assert.equal(audienceCoercionCalls, 0, 'audience coercion hooks are not invoked');
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: publicAccountId,
+        audience: 'all',
+        alertEntries: [],
+      }),
+      'on',
+      'an exact own public audience data property remains authorized for a production UUID',
+    );
+
+    const resolveInjectedMode = plansRouter._test.resolvePlanGoalBackwardV24Mode;
+    const inheritedModeDependencies = Object.assign(Object.create({ mode: 'on' }), {
+      audience: 'all',
+      alertEntries: [],
+    });
+    assert.equal(
+      resolveInjectedMode(publicAccountId, inheritedModeDependencies),
+      'off',
+      'an inherited injected mode cannot activate the public rollout',
+    );
+    let modeGetterCalls = 0;
+    const getterModeDependencies = { audience: 'all', alertEntries: [] };
+    Object.defineProperty(getterModeDependencies, 'mode', {
+      enumerable: true,
+      get() {
+        modeGetterCalls += 1;
+        return 'on';
+      },
+    });
+    assert.equal(
+      resolveInjectedMode(publicAccountId, getterModeDependencies),
+      'off',
+      'an injected mode accessor cannot activate the public rollout',
+    );
+    assert.equal(modeGetterCalls, 0, 'mode accessors are not invoked during authority validation');
+
+    const inheritedUserOptions = Object.assign(Object.create({ userId: publicAccountId }), {
+      audience: 'all',
+      alertEntries: [],
+    });
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', inheritedUserOptions),
+      'off',
+      'an inherited user ID cannot authorize the public rollout',
+    );
+    let userCoercionCalls = 0;
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: {
+          [Symbol.toPrimitive]() {
+            userCoercionCalls += 1;
+            return publicAccountId;
+          },
+        },
+        audience: 'all',
+        alertEntries: [],
+      }),
+      'off',
+      'a coercible user ID cannot authorize the public rollout',
+    );
+    assert.equal(userCoercionCalls, 0, 'user ID coercion hooks are not invoked during authority validation');
+
+    const inheritedCohortOptions = Object.assign(Object.create({ cohortRefs: [disposableRef] }), {
+      userId: disposableId,
+      audience: 'cohort',
+      alertEntries: [],
+    });
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', inheritedCohortOptions),
+      'off',
+      'inherited cohort refs cannot authorize an injected cohort decision',
+    );
+    let cohortCoercionCalls = 0;
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: disposableId,
+        audience: 'cohort',
+        cohortRefs: {
+          [Symbol.toPrimitive]() {
+            cohortCoercionCalls += 1;
+            return disposableRef;
+          },
+        },
+        alertEntries: [],
+      }),
+      'off',
+      'coercible cohort refs cannot authorize an injected cohort decision',
+    );
+    assert.equal(cohortCoercionCalls, 0, 'cohort ref coercion hooks are not invoked during authority validation');
+
+    const inheritedSyntheticOptions = Object.assign(Object.create({ allowSyntheticShadow: true }), {
+      userId: 'synthetic-shadow-athlete',
+      audience: 'cohort',
+      cohortRefs: [],
+      alertEntries: [],
+    });
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('shadow', inheritedSyntheticOptions),
+      'off',
+      'inherited synthetic-shadow authority cannot widen a cohort decision',
+    );
+    let syntheticGetterCalls = 0;
+    const getterSyntheticOptions = {
+      userId: 'synthetic-shadow-athlete',
+      audience: 'cohort',
+      cohortRefs: [],
+      alertEntries: [],
+    };
+    Object.defineProperty(getterSyntheticOptions, 'allowSyntheticShadow', {
+      enumerable: true,
+      get() {
+        syntheticGetterCalls += 1;
+        return true;
+      },
+    });
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('shadow', getterSyntheticOptions),
+      'off',
+      'a synthetic-shadow accessor cannot widen a cohort decision',
+    );
+    assert.equal(syntheticGetterCalls, 0, 'synthetic-shadow accessors are not invoked during authority validation');
+
+    const originalPrototypeAudience = Object.getOwnPropertyDescriptor(Object.prototype, 'audience');
+    try {
+      Object.defineProperty(Object.prototype, 'audience', {
+        configurable: true,
+        value: 'all',
+      });
+      const pollutedDependencies = { mode: 'on', cohortRefs: [], alertEntries: [] };
+      const previewMode = resolveInjectedMode(publicAccountId, pollutedDependencies, {
+        allowSyntheticShadow: true,
+      });
+      const applyMode = resolveInjectedMode(publicAccountId, pollutedDependencies);
+      assert.deepEqual(
+        { previewMode, applyMode },
+        { previewMode: 'off', applyMode: 'off' },
+        'preview and apply remain equally non-public under prototype pollution',
+      );
+    } finally {
+      if (originalPrototypeAudience) {
+        Object.defineProperty(Object.prototype, 'audience', originalPrototypeAudience);
+      } else {
+        delete Object.prototype.audience;
+      }
+    }
+  } finally {
+    for (const [key, value] of Object.entries(originalAuthorityEnvironment)) {
+      const environmentKey = {
+        mode: 'FORGE_GOAL_BACKWARD_V24_MODE',
+        audience: 'FORGE_GOAL_BACKWARD_V24_AUDIENCE',
+        cohortRefs: 'FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS',
+      }[key];
+      if (value === undefined) delete process.env[environmentKey];
+      else process.env[environmentKey] = value;
+    }
   }
   const originalAudience = process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
   try {

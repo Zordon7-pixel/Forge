@@ -39,8 +39,13 @@ function runStaticAssetFallbackSmoke() {
   );
   assert.match(
     plansSource,
-    /function resolvePlanGoalBackwardV24Mode[\s\S]*audience: dependencies\.audience/,
-    'plan mode resolution accepts an injectable release audience'
+    /function resolvePlanGoalBackwardV24Mode[\s\S]*snapshotGoalBackwardV24Authority\(dependencies\)[\s\S]*\['audience', 'cohortRefs', 'alertEntries'\][\s\S]*Object\.hasOwn\(injected, field\)/,
+    'plan mode resolution snapshots only own data authority fields'
+  );
+  assert.doesNotMatch(
+    plansSource,
+    /dependencies\.(?:mode|audience|cohortRefs|allowSyntheticShadow|userId)/,
+    'plan mode resolution does not read injected authority through inherited properties or accessors'
   );
   assert.match(
     plansSource,

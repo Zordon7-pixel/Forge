@@ -1,4 +1,5 @@
 const planSchema = require('./planSchema');
+const { types: { isProxy } } = require('node:util');
 const { DAY_ORDER, normalizeTrainingDays } = require('./runSchedule');
 const { RACE_PLAN_POLICY_V1, addDays, canonicalHash } = require('./racePlanPolicy');
 const { localDateForOffset } = require('./requestPlanningDate');
@@ -15,6 +16,14 @@ const FORBIDDEN_BACKUP_KEYS = /(email|phone|password|token|secret|health|heart.?
 const GOAL_BACKWARD_V24_MODE_SET = new Set(FEATURE_MODES);
 const GOAL_BACKWARD_V24_AUDIENCES = Object.freeze(['cohort', 'all']);
 const GOAL_BACKWARD_V24_AUDIENCE_SET = new Set(GOAL_BACKWARD_V24_AUDIENCES);
+const GOAL_BACKWARD_V24_AUTHORITY_FIELDS = Object.freeze([
+  'mode',
+  'userId',
+  'cohortRefs',
+  'allowSyntheticShadow',
+  'audience',
+  'alertEntries',
+]);
 const GOAL_BACKWARD_TARGET_REF_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const PRODUCTION_ACCOUNT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GOAL_BACKWARD_RELEASE_TELEMETRY_SCHEMA = 'goal_backward_release_telemetry_v1';
@@ -110,49 +119,111 @@ function getGoalBackwardV24Audience(value = process.env.FORGE_GOAL_BACKWARD_V24_
   return GOAL_BACKWARD_V24_AUDIENCE_SET.has(configured) ? configured : 'cohort';
 }
 
+function snapshotGoalBackwardV24Authority(value) {
+  try {
+    if (!value || value === Object.prototype || typeof value !== 'object'
+      || Array.isArray(value) || isProxy(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const snapshot = Object.create(null);
+    for (const field of GOAL_BACKWARD_V24_AUTHORITY_FIELDS) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, field);
+      if (!descriptor) continue;
+      if (!Object.hasOwn(descriptor, 'value')) return null;
+      Object.defineProperty(snapshot, field, {
+        configurable: false,
+        enumerable: true,
+        value: descriptor.value,
+        writable: false,
+      });
+    }
+    return Object.freeze(snapshot);
+  } catch (_error) {
+    return null;
+  }
+}
+
 function parseGoalBackwardCohortRefs(
   value = process.env.FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS,
 ) {
-  const values = Array.isArray(value) ? value : String(value || '').split(',');
-  const refs = [...new Set(values.map((entry) => String(entry || '').trim()).filter(Boolean))];
+  let values;
+  if (value === undefined) {
+    values = [];
+  } else if (typeof value === 'string') {
+    values = value.split(',');
+  } else if (value && typeof value === 'object' && !isProxy(value) && Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      throw new Error('Goal-backward cohorts accept only bounded pseudonymous sha256 refs');
+    }
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+    const length = lengthDescriptor?.value;
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new Error('Goal-backward cohorts accept only bounded pseudonymous sha256 refs');
+    }
+    values = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor) continue;
+      if (!Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string') {
+        throw new Error('Goal-backward cohorts accept only bounded pseudonymous sha256 refs');
+      }
+      values.push(descriptor.value);
+    }
+  } else {
+    throw new Error('Goal-backward cohorts accept only bounded pseudonymous sha256 refs');
+  }
+  const refs = [...new Set(values.map((entry) => entry.trim()).filter(Boolean))];
   if (refs.length > 64 || refs.some((entry) => !GOAL_BACKWARD_TARGET_REF_PATTERN.test(entry))) {
     throw new Error('Goal-backward cohorts accept only bounded pseudonymous sha256 refs');
   }
   return refs;
 }
 
-function releaseAlertEntries(options = {}) {
-  return Object.hasOwn(options, 'alertEntries') ? options.alertEntries : releaseTelemetryBuffer;
+function releaseAlertEntries(authority) {
+  return Object.hasOwn(authority, 'alertEntries') ? authority.alertEntries : releaseTelemetryBuffer;
 }
 
-function resolveOperationalGoalBackwardV24Mode(
-  value = process.env.FORGE_GOAL_BACKWARD_V24_MODE,
-  options = {},
-) {
-  const configured = getGoalBackwardV24Mode(value);
+function resolveOperationalGoalBackwardV24Mode(value, options = {}) {
+  const usesEnvironmentMode = value === undefined;
+  const configured = getGoalBackwardV24Mode(
+    usesEnvironmentMode ? process.env.FORGE_GOAL_BACKWARD_V24_MODE : value,
+  );
   if (configured === 'off') return 'off';
-  const userId = String(options.userId || '').trim();
+  const authority = snapshotGoalBackwardV24Authority(options);
+  if (!authority || !Object.hasOwn(authority, 'userId') || typeof authority.userId !== 'string') {
+    return 'off';
+  }
+  const userId = authority.userId.trim();
   if (!userId) return 'off';
-  const audience = getGoalBackwardV24Audience(options.audience);
+  const hasInjectedAudience = Object.hasOwn(authority, 'audience');
+  const audience = hasInjectedAudience
+    ? getGoalBackwardV24Audience(authority.audience === undefined ? null : authority.audience)
+    : usesEnvironmentMode ? getGoalBackwardV24Audience() : 'cohort';
   let audienceAuthorized = false;
   if (audience === 'all') {
     audienceAuthorized = PRODUCTION_ACCOUNT_ID_PATTERN.test(userId);
   } else {
     let cohortRefs;
     try {
-      cohortRefs = parseGoalBackwardCohortRefs(options.cohortRefs);
+      if (Object.hasOwn(authority, 'cohortRefs')) {
+        if (authority.cohortRefs === undefined) return 'off';
+        cohortRefs = parseGoalBackwardCohortRefs(authority.cohortRefs);
+      } else {
+        cohortRefs = usesEnvironmentMode ? parseGoalBackwardCohortRefs() : [];
+      }
     } catch (_error) {
       return 'off';
     }
     const cohortAuthorized = cohortRefs.includes(targetRef(userId));
     const syntheticShadowCompatibility = configured === 'shadow'
-      && options.allowSyntheticShadow === true
+      && Object.hasOwn(authority, 'allowSyntheticShadow')
+      && authority.allowSyntheticShadow === true
       && /(?:^|[/\\])[^/\\]+\.smoke\.js$/.test(String(process.argv[1] || ''))
       && !PRODUCTION_ACCOUNT_ID_PATTERN.test(userId);
     audienceAuthorized = cohortAuthorized || syntheticShadowCompatibility;
   }
   if (!audienceAuthorized) return 'off';
-  const alerts = evaluateGoalBackwardReleaseAlerts(releaseAlertEntries(options));
+  const alerts = evaluateGoalBackwardReleaseAlerts(releaseAlertEntries(authority));
   return alerts.rollback_required ? 'off' : configured;
 }
 
@@ -503,5 +574,6 @@ module.exports = {
   redactedBackupEntry,
   resolveOperationalGoalBackwardV24Mode,
   selectProtectedRaces,
+  snapshotGoalBackwardV24Authority,
   targetRef,
 };
