@@ -251,6 +251,39 @@ async function runSmoke() {
     assert.equal(classifyCanonicalActivityIdentity(identity(), identity({
       source_system: 'manual',
     })), null, 'manual entries are never suppressed by cross-source metric inference');
+
+    const providerCopyOfManual = classifyCanonicalActivityIdentity(identity({
+      source_system: 'manual',
+      source_activity_id: null,
+      observed_at: null,
+      local_activity_date: '2026-08-16',
+      distance_m: 5 * MILE_M,
+    }), identity({
+      source_system: 'strava',
+      source_activity_id: 'provider-copy-of-manual',
+      observed_at: '2026-08-16T17:30:00.000Z',
+      local_activity_date: '2026-08-16',
+      distance_m: 5.049 * MILE_M,
+    }));
+    assert.equal(providerCopyOfManual?.reason_code, 'MANUAL_PROVIDER_SUMMARY_CORROBORATION',
+      'a provider-startless manual summary has one bounded same-date/distance identity rule');
+    assert.equal(classifyCanonicalActivityIdentity(identity({
+      source_system: 'manual', source_activity_id: null, observed_at: null,
+      local_activity_date: '2026-08-16', distance_m: 5 * MILE_M,
+    }), identity({
+      source_system: 'strava', source_activity_id: 'provider-copy-of-manual',
+      observed_at: '2026-08-16T17:30:00.000Z', local_activity_date: '2026-08-16',
+      distance_m: 5.05 * MILE_M,
+    })), null, 'the manual/provider distance ceiling is strict and matches the existing SQL bound');
+    assert.equal(classifyCanonicalActivityIdentity(identity({
+      source_system: 'manual', source_activity_id: null,
+      observed_at: '2026-08-16T12:00:00.000Z', local_activity_date: '2026-08-16',
+      distance_m: 5 * MILE_M,
+    }), identity({
+      source_system: 'strava', source_activity_id: 'provider-copy-of-manual',
+      observed_at: '2026-08-16T17:30:00.000Z', local_activity_date: '2026-08-16',
+      distance_m: 5 * MILE_M,
+    })), null, 'a manual row with an actual provider start is not eligible for the startless fallback');
   }
 
   {
@@ -395,6 +428,84 @@ async function runSmoke() {
     assert.equal(load.windows[0].distance_m, Math.round(4 * MILE_M), 'mileage counts once despite conflicting provider duration summaries');
     assert.equal(load.windows[0].duplicate_removal_delta_m, Math.round(4 * MILE_M));
     assert.equal(load.windows[0].duration_s, null, 'conflicting duration remains explicitly unknown');
+  }
+
+  {
+    const historicalManualProviderRows = [
+      run({
+        id: 'manual-five-mile',
+        date: '2026-08-16',
+        type: 'easy',
+        distance_miles: 5,
+        duration_seconds: 3000,
+        health_source: 'manual',
+        health_source_workout_id: null,
+        health_start_at: null,
+      }),
+      run({
+        id: 'strava-five-mile',
+        date: '2026-08-16',
+        type: 'easy',
+        distance_miles: 5.04,
+        duration_seconds: 3000,
+        health_source: 'strava',
+        health_source_workout_id: 'strava-five-mile-provider-id',
+        health_start_at: '2026-08-16T17:30:00.000Z',
+      }),
+    ];
+    const load = canonicalizeRunLoadInput({
+      athleteId: ATHLETE_ID,
+      planningInstant: PLANNING_INSTANT,
+      planningDateLocal: PLANNING_DATE,
+      timezone: TIMEZONE,
+      runs: historicalManualProviderRows,
+      providerCoverage: [coverage()],
+    });
+    assert.equal(load.raw_row_count, 2, 'manual and provider raw observations remain immutable');
+    assert.equal(load.canonical_activity_count, 1, 'historical manual/provider copies count once at planning read');
+    assert.equal(load.duplicate_activity_count, 1);
+    assert.equal(load.identity_decision_receipt.decisions[0].reason_code, 'MANUAL_PROVIDER_SUMMARY_CORROBORATION');
+    assert.equal(load.windows.find((window) => window.days === 7).distance_m, Math.round(5.04 * MILE_M));
+    assert.equal(load.windows.find((window) => window.days === 7).duplicate_removal_delta_m, Math.round(5 * MILE_M));
+    assert.equal(load.canonical_run_rows[0].health_source, 'strava', 'provider evidence is retained as the canonical measurement source');
+    assertBoundedPrivateReceipt(load.identity_decision_receipt, [ATHLETE_ID, 'strava-five-mile-provider-id', 'manual-five-mile']);
+
+    const normalizedProvider = normalizeRow({
+      date: '2026-08-16',
+      startDate: '2026-08-16T17:30:00.000Z',
+      type: 'running',
+      distanceMiles: 5.04,
+      durationSeconds: 3000,
+      source: 'strava',
+      sourceWorkoutId: 'ingestion-strava-five-mile',
+    });
+    const manualCandidate = {
+      id: 'manual-ingestion-candidate',
+      date: '2026-08-16',
+      type: 'easy',
+      distance_miles: 5,
+      duration_seconds: 3000,
+      health_source: null,
+      health_source_workout_id: null,
+      health_start_at: null,
+    };
+    const ingestionMatch = selectExistingRunIdentityMatch(ATHLETE_ID, [manualCandidate], normalizedProvider);
+    assert.equal(ingestionMatch.identityDecision?.reason_code, 'MANUAL_PROVIDER_SUMMARY_CORROBORATION');
+    assert.equal(ingestionMatch.run?.id, manualCandidate.id);
+    const rejects = [
+      [{ ...manualCandidate, type: 'walk' }, normalizedProvider, 'different kind'],
+      [{ ...manualCandidate, distance_miles: 4.98 }, normalizedProvider, 'distance outside strict bound'],
+      [{ ...manualCandidate, distance_miles: null }, normalizedProvider, 'unknown manual distance'],
+      [{ ...manualCandidate, health_start_at: '2026-08-16T12:00:00.000Z' }, normalizedProvider, 'manual provider start present'],
+      [manualCandidate, { ...normalizedProvider, sourceWorkoutId: null }, 'incoming provider identity absent'],
+    ];
+    for (const [candidate, item, label] of rejects) {
+      assert.equal(selectExistingRunIdentityMatch(ATHLETE_ID, [candidate], item).run, null, `${label} remains distinct`);
+    }
+    assert.equal(selectExistingRunIdentityMatch(ATHLETE_ID, [
+      manualCandidate,
+      { ...manualCandidate, id: 'second-same-distance-manual' },
+    ], normalizedProvider).run, null, 'ambiguous repeated same-distance manual laps fail closed');
   }
 
   {
@@ -792,6 +903,69 @@ async function runSmoke() {
     assert.equal(summaryPlan.inputSummary.missedWorkouts, null, 'runtime input summary keeps unknown misses nullable');
     assert.equal(summaryPlan.inputSummary.adherenceBand, 'unknown');
 
+    const olderDurationOnlyRuns = [30, 33, 36, 39, 42, 48].map((daysAgo, index) => ({
+      ...run({
+        id: `older-duration-only-${index}`,
+        date: new Date(Date.parse(`${PLANNING_DATE}T12:00:00.000Z`) - daysAgo * 86400000).toISOString().slice(0, 10),
+        distance_miles: null,
+        duration_seconds: 1800 + index * 60,
+        health_source_workout_id: `older-duration-provider-${index}`,
+        health_start_at: new Date(Date.parse(`${PLANNING_DATE}T12:00:00.000Z`) - daysAgo * 86400000).toISOString(),
+      }),
+    }));
+    const unknownBaselineTarget = {
+      todayISO: PLANNING_DATE,
+      startDate: PLANNING_DATE,
+      weeks: 4,
+      planMode: 'run_only',
+      runDaysPerWeek: 3,
+      liftDaysPerWeek: 0,
+      trainingDays: ['Mon', 'Wed', 'Sun'],
+      distanceMiles: 10,
+      raceDate: '2026-09-13',
+      raceName: 'Synthetic 10 Miler',
+    };
+    const unknownBaselineContext = await plansRouter._test.buildConcurrentContext(ATHLETE_ID, {
+      timezone: TIMEZONE,
+      weekly_miles_current: null,
+      run_days_per_week: 3,
+      lift_days_per_week: 0,
+      comeback_mode: false,
+      injury_notes: null,
+    }, unknownBaselineTarget, {
+      async all(sql) {
+        if (sql.includes('FROM runs')) return olderDurationOnlyRuns.map((row) => ({ ...row }));
+        return [];
+      },
+      async get() { return null; },
+    });
+    assert.equal(unknownBaselineContext.history.weeklyMileageBaseline, null);
+    assert.equal(unknownBaselineContext.history.mileageBaseline.meaningfulRunCount, 6);
+    assert.equal(concurrentPlan.qualitySafetyForWeek(unknownBaselineContext, {
+      weekNumber: 1,
+      weekStart: PLANNING_DATE,
+    }).lowExperience, true, 'unknown baseline stays fail-closed even with several duration-only runs');
+    const unknownBaselinePlan = concurrentPlan.buildConcurrentPlan(unknownBaselineContext);
+    assert.equal(unknownBaselinePlan.inputSummary.weeklyMileageBaseline, null, 'unknown baseline remains nullable in plan truth');
+    assert.ok(unknownBaselinePlan.weeks[0].totalMiles <= 6.1,
+      'unknown load uses a bounded conservative planning anchor, never the race distance');
+    const unsafeUnknownBaselineSessions = unknownBaselinePlan.weeks.flatMap((week) => week.days)
+      .flatMap((day) => day.sessions || [])
+      .filter((session) => session.kind === 'run' && session.type !== 'race')
+      .filter((session) => ['intervals', 'threshold', 'hills', 'benchmark', 'race_pace'].includes(session.workout_family));
+    assert.deepEqual(unsafeUnknownBaselineSessions, [], 'unknown baseline cannot enable interval, tempo, hill, benchmark, or race-pace escalation');
+    assert.equal(concurrentPlan.validateConcurrentPlan(unknownBaselinePlan, unknownBaselineContext).valid, true,
+      'the bounded unknown-baseline plan passes the same production validator');
+    assert.equal(concurrentPlan.qualitySafetyForWeek({
+      ...unknownBaselineContext,
+      history: {
+        ...unknownBaselineContext.history,
+        weeklyMileageBaseline: 12,
+        mileageBaseline: { ...unknownBaselineContext.history.mileageBaseline, meaningfulRunCount: 6 },
+      },
+    }, { weekNumber: 1, weekStart: PLANNING_DATE }).lowExperience, false,
+    'explicit finite mileage plus sufficient history can remove low-experience protection');
+
     let capturedRequest = null;
     ai._test.setClient({
       messages: {
@@ -900,7 +1074,7 @@ async function runSmoke() {
     assert.doesNotMatch(JSON.stringify(unknownCompletion), /"missedWorkouts":0/, 'adaptation artifacts never restate unknown misses as zero');
   }
 
-  console.log('ACTIVITY IDENTITY + LOAD INPUT SMOKE OK (17 groups)');
+  console.log('ACTIVITY IDENTITY + LOAD INPUT SMOKE OK (19 groups)');
 }
 
 runSmoke().catch((error) => {

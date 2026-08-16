@@ -198,6 +198,44 @@ async function runHealthImportConcurrencySmoke() {
   assert.equal(otherOwnerResult.imported, 1, 'identity claims and fuzzy matching remain owner scoped');
   assert.equal(harness.counts().runInserts, 2);
 
+  const manualHarness = createImportHarness();
+  const manualOptions = { transaction: manualHarness.transaction, updateRunPrs: async () => {} };
+  const manualRun = {
+    source: 'manual',
+    type: 'running',
+    date: '2026-07-22',
+    distanceMiles: 5,
+    durationSeconds: 3000,
+  };
+  const manualResult = await _test.importRows(userId, [manualRun], manualOptions);
+  assert.equal(manualResult.imported, 1);
+  const providerCopy = {
+    source: 'strava',
+    sourceWorkoutId: 'manual-provider-copy-private-id',
+    type: 'running',
+    startDate: '2026-07-22T17:30:00.000Z',
+    endDate: '2026-07-22T18:20:00.000Z',
+    distanceMiles: 5.04,
+    durationSeconds: 3000,
+  };
+  const providerResults = await Promise.all([
+    _test.importRows(userId, [providerCopy], manualOptions),
+    _test.importRows(userId, [providerCopy], manualOptions),
+  ]);
+  assert.equal(providerResults.reduce((sum, result) => sum + result.skipped, 0), 2);
+  assert.equal(manualHarness.counts().runInserts, 1, 'concurrent provider copies reuse the one manual canonical run');
+  assert.equal(providerResults.flatMap((result) => result.identity_decision_receipt.decisions)
+    .some((decision) => decision.reason_code === 'MANUAL_PROVIDER_SUMMARY_CORROBORATION'), true);
+  assert.doesNotMatch(JSON.stringify(providerResults), /health-import-user|manual-provider-copy-private-id/i,
+    'manual/provider identity receipts remain owner- and provider-private');
+  const retainedManual = manualHarness.runs()[0];
+  assert.equal(retainedManual.health_source, 'manual', 'provider reconciliation preserves raw manual source facts');
+  assert.equal(retainedManual.health_source_workout_id, null);
+  assert.equal(retainedManual.health_start_at, null);
+  const otherOwnerManualResult = await _test.importRows('health-import-other-user', [providerCopy], manualOptions);
+  assert.equal(otherOwnerManualResult.imported, 1, 'manual/provider fallback remains owner-scoped');
+  assert.equal(manualHarness.counts().runInserts, 2);
+
   const liftResults = await Promise.all([
     _test.importRows(userId, [lift], options),
     _test.importRows(userId, [lift], options),
@@ -217,7 +255,7 @@ async function runHealthImportConcurrencySmoke() {
   });
   assert.equal(failed.errors[0].retryable, true, 'operational row failures are explicitly retryable');
 
-  console.log('HEALTH IMPORT CONCURRENCY SMOKE OK (14)');
+  console.log('HEALTH IMPORT CONCURRENCY SMOKE OK (22)');
 }
 
 if (require.main === module) {

@@ -528,6 +528,7 @@ function selectExistingRunIdentityMatch(userId, candidates, item) {
     distance_m: Number(item.distanceMiles) * 1609.344,
     source_system: item.source,
     source_activity_id: item.sourceWorkoutId,
+    local_activity_date: item.date,
     route_points: item.routeCoords,
   };
   const matches = (Array.isArray(candidates) ? candidates : []).map((row) => ({
@@ -538,8 +539,9 @@ function selectExistingRunIdentityMatch(userId, candidates, item) {
       observed_at: row.health_start_at,
       duration_s: row.duration_seconds,
       distance_m: Number(row.distance_miles) * 1609.344,
-      source_system: row.health_source,
+      source_system: row.health_source || (row.watch_mode === 'import' ? 'import' : 'manual'),
       source_activity_id: row.health_source_workout_id,
+      local_activity_date: row.date,
       route_points: row.route_coords,
     }, incoming),
   })).filter((entry) => entry.identity?.duplicate === true)
@@ -547,7 +549,12 @@ function selectExistingRunIdentityMatch(userId, candidates, item) {
       left.identity.reason_code.localeCompare(right.identity.reason_code)
       || String(left.row.id).localeCompare(String(right.row.id))
     ));
-  const selected = matches[0] || null;
+  const primaryMatches = matches.filter((entry) => entry.identity.reason_code !== 'MANUAL_PROVIDER_SUMMARY_CORROBORATION');
+  const manualProviderMatches = matches.filter((entry) => entry.identity.reason_code === 'MANUAL_PROVIDER_SUMMARY_CORROBORATION');
+  // Same-date same-distance manual logs can be legitimate repeated laps. Only a
+  // unique fallback candidate is safe; stronger provider/start identity always
+  // wins when it exists.
+  const selected = primaryMatches[0] || (manualProviderMatches.length === 1 ? manualProviderMatches[0] : null);
   return selected ? {
     run: selected.row,
     identityDecision: {
@@ -1286,7 +1293,11 @@ async function importItem(db, userId, item) {
       if (claimedRun) {
         const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, claimedRun, item);
         if (consolidatedRunId) return { status: 'skipped', runId: consolidatedRunId, changed: true };
-        const runId = await updateExistingRunHealth(db, userId, claimedRun, item);
+        const claimedIdentityMatchesRawFacts = claimedRun.health_source === item.source
+          && claimedRun.health_source_workout_id === item.sourceWorkoutId;
+        const runId = await updateExistingRunHealth(db, userId, claimedRun, item, {
+          preserveRawIdentityFacts: !claimedIdentityMatchesRawFacts,
+        });
         return {
           status: 'skipped',
           runId,
@@ -1294,7 +1305,8 @@ async function importItem(db, userId, item) {
           identityDecision: {
             kept_ref: claimedRun.id,
             suppressed_ref: item.sourceWorkoutId || claim.sourceKey,
-            reason_code: item.sourceWorkoutId ? 'EXACT_SOURCE_ACTIVITY_ID' : 'EXACT_IMPORT_CLAIM',
+            reason_code: claimedIdentityMatchesRawFacts && item.sourceWorkoutId
+              ? 'EXACT_SOURCE_ACTIVITY_ID' : 'EXACT_IMPORT_CLAIM',
           },
         };
       }

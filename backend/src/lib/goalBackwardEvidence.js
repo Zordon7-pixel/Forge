@@ -35,6 +35,7 @@ const ACTIVITY_IDENTITY_REASON_CODES = Object.freeze([
   'EXACT_START_SOURCE_METRIC_COLLISION',
   'CROSS_SOURCE_ROUTE_CORROBORATION',
   'CROSS_SOURCE_METRIC_CORROBORATION',
+  'MANUAL_PROVIDER_SUMMARY_CORROBORATION',
   'EXACT_IMPORT_CLAIM',
 ]);
 const ACTIVITY_IDENTITY_REASON_CODE_SET = new Set(ACTIVITY_IDENTITY_REASON_CODES);
@@ -43,6 +44,15 @@ const ROUTE_POINT_TOLERANCE_M = 50;
 const ROUTE_MATCH_MINIMUM = 0.8;
 const DISTANCE_EQUIVALENCE_FLOOR_M = 0.02 * MILE_M;
 const DISTANCE_EQUIVALENCE_RATIO = 0.005;
+const MANUAL_PROVIDER_DISTANCE_TOLERANCE_M = 0.05 * MILE_M;
+const TRUSTED_PROVIDER_ACTIVITY_SOURCES = new Set([
+  'apple_health',
+  'health_connect',
+  'garmin',
+  'fit',
+  'strava',
+  'csv',
+]);
 const HR_MEDIAN_TOLERANCE_BPM = 5;
 const HR_COVERAGE_TOLERANCE_PCT = 3;
 const STRESS_DIMENSIONS = Object.freeze([
@@ -179,7 +189,7 @@ function sourceNamespace(value) {
 
 function sourceSystem(value) {
   const namespace = sourceNamespace(value);
-  return ['forge', 'fit', 'garmin', 'apple_health', 'health_connect', 'manual', 'import'].includes(namespace)
+  return ['forge', 'fit', 'garmin', 'apple_health', 'health_connect', 'strava', 'csv', 'manual', 'import'].includes(namespace)
     ? namespace
     : 'import';
 }
@@ -262,10 +272,9 @@ function exactStartMetricCollision(left, right) {
 }
 
 function crossSourceMetricCorroboration(left, right) {
-  const allowedSources = new Set(['apple_health', 'health_connect', 'garmin', 'fit', 'strava', 'csv']);
   const leftSource = sourceNamespace(left?.source_namespace || left?.source_system);
   const rightSource = sourceNamespace(right?.source_namespace || right?.source_system);
-  if (leftSource === rightSource || !allowedSources.has(leftSource) || !allowedSources.has(rightSource)) return false;
+  if (leftSource === rightSource || !TRUSTED_PROVIDER_ACTIVITY_SOURCES.has(leftSource) || !TRUSTED_PROVIDER_ACTIVITY_SOURCES.has(rightSource)) return false;
   const leftStart = timestamp(left?.observed_at);
   const rightStart = timestamp(right?.observed_at);
   const leftDuration = finite(left?.duration_s);
@@ -280,6 +289,24 @@ function crossSourceMetricCorroboration(left, right) {
   // not allowed to fall back to looser summary metrics.
   if (leftRoute.length && rightRoute.length) return false;
   return true;
+}
+
+function manualProviderSummaryCorroboration(left, right) {
+  const leftSource = sourceNamespace(left?.source_namespace || left?.source_system);
+  const rightSource = sourceNamespace(right?.source_namespace || right?.source_system);
+  const manual = leftSource === 'manual' ? left : rightSource === 'manual' ? right : null;
+  const provider = leftSource === 'manual' ? right : rightSource === 'manual' ? left : null;
+  const providerSource = sourceNamespace(provider?.source_namespace || provider?.source_system);
+  if (!manual || !provider || !TRUSTED_PROVIDER_ACTIVITY_SOURCES.has(providerSource)) return false;
+  if (String(manual.source_activity_id || '').trim() || timestamp(manual.observed_at) !== null) return false;
+  if (!String(provider.source_activity_id || '').trim() || timestamp(provider.observed_at) === null) return false;
+  const manualDate = String(manual.local_activity_date || '').slice(0, 10);
+  const providerDate = String(provider.local_activity_date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(manualDate) || manualDate !== providerDate) return false;
+  const manualDistance = finite(manual.distance_m);
+  const providerDistance = finite(provider.distance_m);
+  if (manualDistance === null || providerDistance === null || manualDistance <= 0 || providerDistance <= 0) return false;
+  return Math.abs(manualDistance - providerDistance) < MANUAL_PROVIDER_DISTANCE_TOLERANCE_M;
 }
 
 function classifyCanonicalActivityIdentity(left = {}, right = {}) {
@@ -306,6 +333,9 @@ function classifyCanonicalActivityIdentity(left = {}, right = {}) {
   }
   if (sameSource && exactStartMetricCollision(left, right)) {
     return { duplicate: true, reason_code: 'EXACT_START_SOURCE_METRIC_COLLISION' };
+  }
+  if (!sameSource && manualProviderSummaryCorroboration(left, right)) {
+    return { duplicate: true, reason_code: 'MANUAL_PROVIDER_SUMMARY_CORROBORATION' };
   }
   return null;
 }
@@ -674,7 +704,7 @@ function distanceEquivalent(left, right) {
 }
 
 function preferredActivity(records) {
-  const priority = { fit: 5, forge: 4, garmin: 3, apple_health: 2, health_connect: 2, manual: 1, import: 0 };
+  const priority = { fit: 6, forge: 5, garmin: 4, strava: 3, apple_health: 2, health_connect: 2, csv: 2, manual: 1, import: 0 };
   return [...records].sort((left, right) => {
     const sampleDelta = finite(right.envelope.value?.route_point_count) - finite(left.envelope.value?.route_point_count);
     const qualityDelta = Number(right.envelope.quality_state === 'COMPLETE') - Number(left.envelope.quality_state === 'COMPLETE');
@@ -695,6 +725,7 @@ function identityComparableForRecord(record) {
     source_system: record.envelope.source_system,
     source_namespace: record.envelope.source_namespace,
     source_activity_id: record.envelope.source_activity_id,
+    local_activity_date: record.envelope.local_activity_date,
     route_points: record.routePoints,
   };
 }
@@ -728,7 +759,13 @@ function deduplicateActivityRecords(records, corrections) {
     const preferredDistance = preferredActivity(group.filter((record) => record.envelope.value.distance_m !== null)) || preferred;
     const preferredDuration = preferredActivity(group.filter((record) => record.envelope.value.duration_s !== null)) || preferred;
     const distances = group.map((record) => record.envelope.value.distance_m).filter((value) => value !== null);
-    const distanceConflict = distances.some((distance) => !distanceEquivalent(distance, preferredDistance.envelope.value.distance_m));
+    const preferredDistanceComparable = identityComparableForRecord(preferredDistance);
+    const distanceConflict = group.some((record) => {
+      const distance = record.envelope.value.distance_m;
+      if (distance === null || distanceEquivalent(distance, preferredDistance.envelope.value.distance_m)) return false;
+      return classifyCanonicalActivityIdentity(identityComparableForRecord(record), preferredDistanceComparable)?.reason_code
+        !== 'MANUAL_PROVIDER_SUMMARY_CORROBORATION';
+    });
     const durations = group.map((record) => record.envelope.value.duration_s).filter((value) => value !== null);
     const durationConflict = durations.some((duration) => (
       preferredDuration.envelope.value.duration_s !== null

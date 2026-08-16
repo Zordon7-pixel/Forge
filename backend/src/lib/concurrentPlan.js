@@ -1416,7 +1416,7 @@ function hasLowExperienceQualityProtection(context = {}) {
     300,
   );
   const meaningfulRunCount = Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0);
-  return (baseline !== null && baseline < 5) || meaningfulRunCount < 3;
+  return baseline === null || baseline < 5 || meaningfulRunCount < 3;
 }
 
 function qualitySafetyForWeek(context = {}, options = {}) {
@@ -1563,7 +1563,10 @@ function buildConcurrentPlan(context = {}) {
       ?? profile.weekly_miles_current,
     300,
   );
-  const baseline = rawBaseline > 0 ? rawBaseline : Math.max(6, raceDistance);
+  // Unknown is not zero and must not expand to a longer race-distance target.
+  // Six miles is the existing conservative internal planning floor; the input
+  // summary continues to expose the source baseline as null.
+  const baseline = rawBaseline !== null && rawBaseline > 0 ? rawBaseline : 6;
   const weekPhases = phasesForRaceTargets(startDate, weekCount, raceTargets);
   const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history, { ...target, weekPhases });
   const anchorMetadata = planAnchorMetadata(history);
