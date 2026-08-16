@@ -1614,6 +1614,107 @@ test('an existing HYROX event can correct its division and review a combined can
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('an existing owned HYROX event can apply a foundation without requiring dated race truth at 393px', async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 852 })
+  const runtimeErrors = collectRuntimeErrors(page)
+  let applied = false
+  const hyrox = {
+    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
+    event_local_date: '2026-09-06', event_timezone: 'America/New_York', event_kind: 'hyrox',
+    event_format: 'doubles', event_category: 'men', goal_time_seconds: 3540, status: 'upcoming',
+  }
+  const before = {
+    plan: { id: 'dated-plan', plan_data: { schemaVersion: 2, goals: [{
+      raceId: hyrox.id, eventLocalDate: hyrox.event_local_date, division: hyrox.event_format,
+      category: hyrox.event_category, goalTimeSeconds: hyrox.goal_time_seconds,
+    }] } },
+    user_plan: { id: 'assignment-dated', supersedes_user_plan_id: null, current_week: 1, started_at: today, progress: {} },
+  }
+  const foundation = {
+    plan: { id: 'foundation-plan', plan_data: { schemaVersion: 2, goals: [], hyroxPolicy: {
+      daysToEventAtGeneration: null, runwayClass: 'foundation_only', sessionsPerWeek: 2,
+      maximumHardLowerBodyDaysPerRollingSeven: 2, equipment: [], missingEquipment: [],
+    }, weeks: Array.from({ length: 8 }, (_, index) => ({ week: index + 1, phase: 'foundation', days: [] })) } },
+    user_plan: { id: 'assignment-foundation', supersedes_user_plan_id: 'assignment-dated', current_week: 1, started_at: today, progress: {} },
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/races', { races: [hyrox] }],
+      ['GET /api/plans/my', () => applied ? foundation : before],
+      ['POST /api/plans/generate', {
+        candidate_id: 'foundation-candidate',
+        candidate_hash: 'sha256:foundation-candidate',
+        candidate: { plan_data: foundation.plan.plan_data },
+      }],
+      ['POST /api/plans/candidates/foundation-candidate/apply', () => {
+        applied = true
+        return { ok: true, plan_id: 'foundation-plan', user_plan_id: 'assignment-foundation' }
+      }],
+    ]),
+  })
+
+  await page.goto('/races')
+  await page.getByLabel('Manage HYROX Washington DC').getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByRole('button', { name: 'Build an 8-week foundation', exact: true }).click()
+  await page.getByRole('button', { name: 'Preview HYROX plan', exact: true }).click()
+  await expect(page.getByText('Eight-week foundation · no event date', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true }).click()
+
+  await expect(page.getByRole('heading', { name: 'Update your HYROX plan' })).toHaveCount(0)
+  await expect(page.getByText('The reviewed eight-week HYROX foundation calendar is updated. Your saved event was not changed.', { exact: true })).toBeVisible()
+  expect(requestsFor(apiState, 'PATCH', '/api/races/hyrox-dc')).toHaveLength(0)
+  expect(requestsFor(apiState, 'POST', '/api/plans/candidates/foundation-candidate/apply')).toHaveLength(1)
+  await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll')
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('a failed reviewed HYROX apply confirms the prior assignment and remains retryable at 320px', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 })
+  const runtimeErrors = collectRuntimeErrors(page)
+  const hyrox = {
+    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
+    event_local_date: '2026-09-06', event_timezone: 'America/New_York', event_kind: 'hyrox',
+    event_format: 'doubles', event_category: 'men', goal_time_seconds: 3540, status: 'upcoming',
+  }
+  const active = {
+    plan: { id: 'active-before-failure', plan_data: { schemaVersion: 2, goals: [{
+      raceId: hyrox.id, eventLocalDate: hyrox.event_local_date, division: hyrox.event_format,
+      category: hyrox.event_category, goalTimeSeconds: hyrox.goal_time_seconds,
+    }] } },
+    user_plan: { id: 'assignment-before-failure', supersedes_user_plan_id: null, current_week: 1, started_at: today, progress: {} },
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/races', { races: [hyrox] }],
+      ['GET /api/plans/my', active],
+      ['PATCH /api/races/hyrox-dc', { race: hyrox }],
+      ['POST /api/plans/generate-for-race/hyrox-dc', {
+        candidate_id: 'failed-hyrox-candidate',
+        candidate_hash: 'sha256:failed-hyrox-candidate',
+        candidate: { plan_data: {
+          schemaVersion: 2,
+          goals: active.plan.plan_data.goals,
+          hyroxPolicy: { daysToEventAtGeneration: 22, runwayClass: 'short_runway', sessionsPerWeek: 2, maximumHardLowerBodyDaysPerRollingSeven: 2, equipment: [], missingEquipment: [] },
+          weeks: [{ week: 1, phase: 'build', days: [] }],
+        } },
+      }],
+      ['POST /api/plans/candidates/failed-hyrox-candidate/apply', qaResponse({ error: 'Apply service unavailable.' }, 500)],
+    ]),
+  })
+
+  await page.goto('/races')
+  await page.getByLabel('Manage HYROX Washington DC').getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByRole('button', { name: 'Preview HYROX plan', exact: true }).click()
+  await page.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true }).click()
+
+  await expect(page.getByRole('alert')).toContainText('Forge confirmed the prior calendar is still active, so it is safe to retry.')
+  await expect(page.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Applying reviewed plan…', exact: true })).toHaveCount(0)
+  expect(requestsFor(apiState, 'POST', '/api/plans/candidates/failed-hyrox-candidate/apply')).toHaveLength(1)
+  expect([...new Set(apiState.unexpectedRequests)]).toEqual([])
+  expect(runtimeErrors.filter((message) => !/status of 500 \(Internal Server Error\)/.test(message))).toEqual([])
+})
+
 test('a reviewed HYROX apply confirms exact assignment, goal truth, and no stale races at 393px', async ({ page }) => {
   await page.setViewportSize({ width: 393, height: 852 })
   const runtimeErrors = collectRuntimeErrors(page)

@@ -6,8 +6,8 @@ import api from '../../lib/api'
 import { hyroxCombinedPlanGuidance, hyroxDivisionLabel, hyroxSetupInitialState } from '../../lib/hyroxSelfService'
 import { activateModalDialog } from '../../lib/modalDialog'
 import { phonePlanningClock } from '../../lib/planCandidates'
+import { applyPlanCandidateWithActivation } from '../../lib/planCandidateActivation'
 import { hyroxCandidateReviewModel } from '../../lib/planCalendar'
-import { verifyHyroxPlanActivation } from '../../lib/planActivation'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const RULES_VERSION = '2026-2027'
@@ -198,36 +198,20 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
     if (!candidate || busy) return
     setBusy(true)
     setError('')
-    let applied = false
     try {
       const candidateId = String(candidate.candidate_id || '')
       const candidateHash = String(candidate.candidate_hash || '')
-      if (!candidateId || !candidateHash) throw new Error('The reviewed plan is missing its apply token. Preview again.')
-      const { data: appliedCandidate } = await api.post(`/plans/candidates/${encodeURIComponent(candidateId)}/apply`, {
-        candidate_hash: candidateHash,
-        choice: 'train_for_target',
-        ...phonePlanningClock(),
+      const result = await applyPlanCandidateWithActivation({
+        api,
+        candidateId,
+        candidateHash,
+        planningClock: phonePlanningClock(),
+        hyroxRace: eventMode === 'event_date' ? ownedHyroxRace : null,
+        secondaryRaceId: eventMode === 'event_date' ? secondaryRaceId : '',
       })
-      applied = true
-      const { data: activeResponse } = await api.get('/plans/my', {
-        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
-        params: { forge_refresh: Date.now() },
-      })
-      const activation = verifyHyroxPlanActivation({
-        planResponse: activeResponse,
-        expectedUserPlanId: appliedCandidate?.user_plan_id,
-        hyroxRace: ownedHyroxRace,
-        secondaryRaceId,
-      })
-      if (!activation.confirmed) {
-        throw new Error('Forge applied the candidate but did not confirm the exact HYROX and secondary-race goals in the active calendar.')
-      }
-      onComplete?.({ activation, activeResponse })
+      onComplete?.({ ...result, mode: eventMode })
     } catch (err) {
-      const reason = err?.response?.data?.error || err?.message
-      setError(applied
-        ? `${reason || 'The plan was applied, but Forge could not confirm the active calendar.'} Refresh before making another plan change.`
-        : reason || 'Could not apply this plan. Your current calendar is unchanged.')
+      setError(err?.response?.data?.error || err?.message || 'Forge could not confirm the final active calendar. Refresh before trying again.')
     } finally {
       setBusy(false)
     }

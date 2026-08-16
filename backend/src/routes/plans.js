@@ -1811,6 +1811,10 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
     const hyroxGoalTimeSeconds = parsePositiveNumber(hyroxRace.goal_time_seconds)
       ? Math.round(Number(hyroxRace.goal_time_seconds))
       : null;
+    const storedHyroxPerformanceBudget = config.hyroxPerformanceBudget
+      && typeof config.hyroxPerformanceBudget === 'object'
+      ? config.hyroxPerformanceBudget
+      : {};
     const storedHyroxEventState = {
       ...((config.hyroxEventState && typeof config.hyroxEventState === 'object') ? config.hyroxEventState : {}),
       ...((config.hyrox_event_state && typeof config.hyrox_event_state === 'object') ? config.hyrox_event_state : {}),
@@ -1875,9 +1879,8 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
         runningPriority: config.runningPriority || 'maintain',
         ...(Object.keys(storedHyroxEventState).length ? { hyroxEventState: storedHyroxEventState } : {}),
         hyroxPerformanceBudget: {
-          ...((config.hyroxPerformanceBudget && typeof config.hyroxPerformanceBudget === 'object')
-            ? config.hyroxPerformanceBudget : {}),
-          target_total_time_s: hyroxGoalTimeSeconds,
+          ...storedHyroxPerformanceBudget,
+          ...(hyroxGoalTimeSeconds ? { target_total_time_s: hyroxGoalTimeSeconds } : {}),
         },
       },
       hyroxEquipment: Array.isArray(config.equipment) ? config.equipment : [],

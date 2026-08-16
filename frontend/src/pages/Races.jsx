@@ -641,11 +641,13 @@ export default function Races() {
           initialRace={hyroxEditor.race}
           initialSecondaryRaceId={hyroxEditor.secondaryRaceId}
           onClose={() => setHyroxEditor(null)}
-          onComplete={async () => {
+          onComplete={async ({ mode } = {}) => {
             const raceName = hyroxEditor.race.race_name
             setHyroxEditor(null)
             await load({ fresh: true })
-            setMessage(`${raceName} and the reviewed HYROX calendar are updated.`)
+            setMessage(mode === 'foundation'
+              ? 'The reviewed eight-week HYROX foundation calendar is updated. Your saved event was not changed.'
+              : `${raceName} and the reviewed HYROX calendar are updated.`)
           }}
         />
       )}

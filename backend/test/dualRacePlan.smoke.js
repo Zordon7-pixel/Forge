@@ -1017,7 +1017,10 @@ async function checkHyroxCandidateImmediateAdoption() {
       event_format: 'doubles',
       event_category: 'men',
       rules_version: '2026-2027',
-      event_config_json: JSON.stringify({ equipment: HYROX_EQUIPMENT }),
+      event_config_json: JSON.stringify({
+        equipment: HYROX_EQUIPMENT,
+        hyroxPerformanceBudget: { target_total_time_s: 3660, source: 'stored-event-evidence' },
+      }),
       distance_miles: 4.97,
       goal_time_seconds: 3600,
     }],
@@ -1334,6 +1337,9 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(retainedHyroxGoal.eventLocalDate, '2026-09-06');
     assert.equal(retainedHyroxGoal.goalType, 'performance');
     assert.equal(retainedHyroxGoal.goalTimeSeconds, 3600);
+    assert.equal(JSON.parse(candidates.get(previewResponse.payload.candidate_id).planning_snapshot_json)
+      .context.target.hyroxEvent.hyroxPerformanceBudget.target_total_time_s, 3600,
+      'an explicit owned-race target overrides older stored performance-budget evidence');
     const retainedArmyGoal = previewResponse.payload.plan.plan_data.goals[1];
     assert.equal(retainedArmyGoal.goalType, 'pr');
     assert.equal(retainedArmyGoal.goalTimeSeconds, 5220);
@@ -1389,6 +1395,34 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(replay.payload.user_plan_id, applyResponse.payload.user_plan_id);
     assert.equal(replay.payload.effective_from, planningDate);
     assert.equal(userPlans.size, assignmentCount, 'candidate replay cannot create a duplicate assignment');
+
+    raceRows.set('hyrox', {
+      ...raceRows.get('hyrox'),
+      goal_time_seconds: null,
+      event_config_json: JSON.stringify({
+        equipment: HYROX_EQUIPMENT,
+        hyroxPerformanceBudget: { target_total_time_s: 3660, source: 'stored-event-evidence' },
+      }),
+    });
+    const nullTargetPreview = await invoke(preview, {
+      ...requestBase,
+      body: {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+      },
+    });
+    assert.equal(nullTargetPreview.statusCode, 201, JSON.stringify(nullTargetPreview.payload));
+    assert.equal(nullTargetPreview.payload.plan.plan_data.goals[0].goalType, 'completion');
+    assert.equal(nullTargetPreview.payload.plan.plan_data.goals[0].goalTimeSeconds, null,
+      'stored budget evidence is not promoted into an explicit athlete race target');
+    assert.equal(JSON.parse(candidates.get(nullTargetPreview.payload.candidate_id).planning_snapshot_json)
+      .context.target.hyroxEvent.hyroxPerformanceBudget.target_total_time_s, 3660,
+      'a null race target does not discard existing stored performance-budget evidence');
+    raceRows.set('hyrox', {
+      ...raceRows.get('hyrox'),
+      goal_time_seconds: 3600,
+    });
 
     const rejectedPreview = await invoke(preview, {
       ...requestBase,

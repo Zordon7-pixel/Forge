@@ -71,7 +71,13 @@ export function verifyHyroxPlanActivation({
   const actualFormat = String(hyroxGoal?.division || hyroxGoal?.event_format || '')
   const expectedCategory = String(hyroxRace?.event_category || '')
   const actualCategory = String(hyroxGoal?.category || hyroxGoal?.event_category || '')
-  const userPlanMatches = String(planResponse?.user_plan?.id || '') === String(expectedUserPlanId || '')
+  const actualUserPlanId = String(planResponse?.user_plan?.id || '').trim()
+  const normalizedExpectedUserPlanId = String(expectedUserPlanId || '').trim()
+  const userPlanMatches = Boolean(
+    normalizedExpectedUserPlanId
+    && actualUserPlanId
+    && actualUserPlanId === normalizedExpectedUserPlanId
+  )
   const exactGoals = sameOrderedIds(activeRaceIds, expectedRaceIds)
   const hyroxTruthMatches = !expectedHyroxId || (Boolean(hyroxGoal)
     && actualDate === expectedDate

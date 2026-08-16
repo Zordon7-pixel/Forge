@@ -1,0 +1,207 @@
+import { verifyHyroxPlanActivation } from './planActivation.js'
+
+export const PLAN_CANDIDATE_APPLY_TIMEOUT_MS = 45000
+export const PLAN_ACTIVATION_READ_TIMEOUT_MS = 15000
+
+function lifecycleError(message, code, details = {}) {
+  const error = new Error(message)
+  error.code = code
+  Object.assign(error, details)
+  return error
+}
+
+function assignmentId(response = {}) {
+  return String(response?.user_plan?.id || '').trim()
+}
+
+function supersededAssignmentId(response = {}) {
+  return String(response?.user_plan?.supersedes_user_plan_id || '').trim()
+}
+
+function isTimeout(error) {
+  return error?.code === 'PLAN_APPLY_TIMEOUT'
+    || error?.code === 'ECONNABORTED'
+    || error?.code === 'ETIMEDOUT'
+    || error?.name === 'AbortError'
+}
+
+async function requestWithDeadline(request, timeoutMs, timeoutMessage) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null
+  let timer = null
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort()
+      reject(lifecycleError(timeoutMessage, 'PLAN_APPLY_TIMEOUT'))
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => request({ timeout: timeoutMs, signal: controller?.signal })),
+      deadline,
+    ])
+  } catch (error) {
+    if (error?.code === 'PLAN_APPLY_TIMEOUT') throw error
+    if (isTimeout(error)) throw lifecycleError(timeoutMessage, 'PLAN_APPLY_TIMEOUT', { cause: error })
+    throw error
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function readActivePlan(api, timeoutMs) {
+  const { data } = await requestWithDeadline(
+    (config) => api.get('/plans/my', {
+      ...config,
+      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      params: { forge_refresh: Date.now() },
+    }),
+    timeoutMs,
+    'Forge timed out while confirming the active calendar.',
+  )
+  return data || {}
+}
+
+async function tryReadActivePlan(api, timeoutMs) {
+  try {
+    return { confirmed: true, response: await readActivePlan(api, timeoutMs), error: null }
+  } catch (error) {
+    return { confirmed: false, response: null, error }
+  }
+}
+
+function ensureImmediateApplyResponse(data) {
+  if (data?.queued === true || data?.offline === true) {
+    throw lifecycleError(
+      'Applying a reviewed plan needs a live connection and was not queued.',
+      'PLAN_APPLY_OFFLINE',
+    )
+  }
+  const userPlanId = String(data?.user_plan_id || '').trim()
+  if (data?.ok !== true || !userPlanId) {
+    throw lifecycleError(
+      'Forge did not return the applied plan assignment identity.',
+      'PLAN_APPLY_INVALID_RESPONSE',
+    )
+  }
+  return data
+}
+
+function reconciledAssignmentId(beforeRead, afterRead) {
+  if (!beforeRead.confirmed || !afterRead.confirmed) return ''
+  const beforeId = assignmentId(beforeRead.response)
+  const afterId = assignmentId(afterRead.response)
+  if (!afterId || afterId === beforeId) return ''
+  const afterSupersedes = supersededAssignmentId(afterRead.response)
+  if (beforeId) return afterSupersedes === beforeId ? afterId : ''
+  return afterSupersedes ? '' : afterId
+}
+
+function failureAfterReconciliation(applyError, beforeRead, afterRead) {
+  const beforeId = beforeRead.confirmed ? assignmentId(beforeRead.response) : ''
+  const afterId = afterRead.confirmed ? assignmentId(afterRead.response) : ''
+  const priorStateConfirmed = Boolean(
+    beforeRead.confirmed
+    && afterRead.confirmed
+    && beforeId
+    && afterId
+    && beforeId === afterId
+  )
+  const timedOut = isTimeout(applyError)
+  const offline = applyError?.code === 'PLAN_APPLY_OFFLINE'
+
+  if (priorStateConfirmed) {
+    const message = timedOut
+      ? 'Plan apply timed out, and Forge confirmed the prior calendar is still active. Retry the reviewed candidate.'
+      : offline
+        ? 'The reviewed plan was not queued. Forge confirmed the prior calendar is still active; reconnect and retry.'
+        : 'Could not apply the reviewed plan. Forge confirmed the prior calendar is still active, so it is safe to retry.'
+    return lifecycleError(message, timedOut ? 'PLAN_APPLY_TIMEOUT_UNCHANGED' : 'PLAN_APPLY_FAILED_UNCHANGED', {
+      cause: applyError,
+      priorStateConfirmed: true,
+    })
+  }
+
+  return lifecycleError(
+    `${applyError?.message || 'The reviewed plan did not return a final response.'} Forge could not confirm the final active calendar. Refresh before making another plan change.`,
+    'PLAN_APPLY_STATE_UNKNOWN',
+    { cause: applyError, priorStateConfirmed: false },
+  )
+}
+
+export async function applyPlanCandidateWithActivation({
+  api,
+  candidateId,
+  candidateHash,
+  planningClock,
+  hyroxRace = null,
+  secondaryRaceId = '',
+  applyTimeoutMs = PLAN_CANDIDATE_APPLY_TIMEOUT_MS,
+  readTimeoutMs = PLAN_ACTIVATION_READ_TIMEOUT_MS,
+} = {}) {
+  const normalizedCandidateId = String(candidateId || '').trim()
+  const normalizedCandidateHash = String(candidateHash || '').trim()
+  if (!normalizedCandidateId || !normalizedCandidateHash) {
+    throw lifecycleError('The reviewed plan is missing its apply token. Preview again.', 'PLAN_APPLY_TOKEN_MISSING')
+  }
+
+  const beforeRead = await tryReadActivePlan(api, readTimeoutMs)
+  let applyData = null
+  let applyError = null
+  try {
+    const { data } = await requestWithDeadline(
+      (config) => api.post(`/plans/candidates/${encodeURIComponent(normalizedCandidateId)}/apply`, {
+        candidate_hash: normalizedCandidateHash,
+        choice: 'train_for_target',
+        ...planningClock,
+      }, config),
+      applyTimeoutMs,
+      'Plan apply took too long. Forge stopped waiting so the screen cannot remain pending.',
+    )
+    applyData = ensureImmediateApplyResponse(data)
+  } catch (error) {
+    applyError = error
+  }
+
+  const afterRead = await tryReadActivePlan(api, readTimeoutMs)
+  if (!afterRead.confirmed) {
+    if (applyData) {
+      throw lifecycleError(
+        'Forge accepted the reviewed plan but could not confirm the active calendar. Refresh before making another plan change.',
+        'PLAN_APPLY_NOT_CONFIRMED',
+        { cause: afterRead.error, applyResponse: applyData },
+      )
+    }
+    throw failureAfterReconciliation(applyError, beforeRead, afterRead)
+  }
+
+  let expectedUserPlanId = String(applyData?.user_plan_id || '').trim()
+  let reconciled = false
+  if (!expectedUserPlanId && applyError) {
+    expectedUserPlanId = reconciledAssignmentId(beforeRead, afterRead)
+    reconciled = Boolean(expectedUserPlanId)
+  }
+  const activation = verifyHyroxPlanActivation({
+    planResponse: afterRead.response,
+    expectedUserPlanId,
+    hyroxRace,
+    secondaryRaceId,
+  })
+  if (activation.confirmed) {
+    return {
+      activation,
+      activeResponse: afterRead.response,
+      applyResponse: applyData,
+      reconciled,
+      replay: Boolean(applyData?.replay),
+    }
+  }
+
+  if (applyData) {
+    throw lifecycleError(
+      'Forge accepted the reviewed plan but did not confirm its exact assignment and goals in the active calendar. Refresh before making another plan change.',
+      'PLAN_APPLY_NOT_CONFIRMED',
+      { activation, applyResponse: applyData },
+    )
+  }
+  throw failureAfterReconciliation(applyError, beforeRead, afterRead)
+}

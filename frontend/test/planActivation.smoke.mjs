@@ -73,4 +73,10 @@ assert.equal(verifyHyroxPlanActivation({
   hyroxRace: null,
 }).confirmed, true, 'an undated foundation confirms assignment identity without inventing an owned race goal')
 
+assert.equal(verifyHyroxPlanActivation({
+  planResponse: { plan: { plan_data: { goals: [] } }, user_plan: { id: '' } },
+  expectedUserPlanId: '',
+  hyroxRace: null,
+}).confirmed, false, 'all-empty assignment and goal inputs can never confirm activation')
+
 console.log('PLAN ACTIVATION IDENTITY SMOKE OK')
