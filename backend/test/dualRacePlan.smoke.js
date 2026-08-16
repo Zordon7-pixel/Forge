@@ -8,6 +8,12 @@ const concurrent = require('../src/lib/concurrentPlan');
 const hyrox = require('../src/lib/hyroxPlan');
 const { aggregateWeeklyStress } = require('../src/lib/goalBackwardLoad');
 const { buildGoalBackwardPlanningDecision } = require('../src/lib/goalBackwardDecisionEngine');
+const {
+  MAX_GOAL_BACKWARD_SEARCH_FRONTIER,
+  MAX_GOAL_BACKWARD_SEARCH_NODES,
+  buildGoalBackwardCandidateSkeleton,
+  enumerateGoalBackwardCandidates,
+} = require('../src/lib/racePlanCandidateEngine');
 const { targetRef: goalBackwardTargetRef } = require('../src/lib/betaPlanRollout');
 const candidateLifecycle = require('../src/lib/planCandidateLifecycle');
 const adaptation = require('../src/lib/adaptationEngine');
@@ -15,6 +21,118 @@ const planSchema = require('../src/lib/planSchema');
 const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
 
 const HYROX_EQUIPMENT = ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'];
+
+function checkC1ProjectionAggregationBoundary() {
+  const decision = {
+    decision_id: 'decision-c1-projection-boundary',
+    decision_hash: 'a'.repeat(64),
+    phase: 'DEVELOPMENT',
+    primary_goal_id: 'goal-c1-projection-boundary',
+    training_age_class: 'ESTABLISHED',
+    minimum_weekly_demand: { running_m: 8000, required_exposure_count: 0 },
+    role_multiset: [
+      { requirement_id: 'support-1', any_of: ['easy_run'], role: 'SUPPORTING' },
+      { requirement_id: 'support-2', any_of: ['easy_run'], role: 'SUPPORTING' },
+    ],
+    evidence_used: [],
+    active_goals: [],
+  };
+  const skeleton = buildGoalBackwardCandidateSkeleton({
+    decision,
+    hybrid_running_projection_pace_s_per_mile: 550,
+    legacy_road_candidate_material: [
+      { id: 'compromised-large', workout_family: 'hyrox_compromised', distance_m: 6000, duration_min: 56 },
+      { id: 'compromised-token', workout_family: 'hyrox_compromised', distance_m: 2000, duration_min: 30 },
+    ],
+  });
+  const projected = skeleton.sessions.filter((session) => (
+    session.material_source === 'CURRENT_HYBRID_RUNNING_COMPONENT'
+  ));
+  assert.equal(projected.length, 1, 'compromised running components aggregate into at most one support');
+  assert.equal(projected[0].distance_m, 8000);
+  assert.equal(projected[0].duration_min, 46,
+    'the skeleton duration matches the aggregate running-only prescription');
+  assert.deepEqual(projected[0].projection_source_material_ids, [
+    'compromised-large', 'compromised-token',
+  ]);
+}
+
+function checkC1BoundedCandidateSearch() {
+  const availableDates = Array.from({ length: 7 }, (_, index) => (
+    `2026-08-${String(index + 17).padStart(2, '0')}`
+  ));
+  const roles = Array.from({ length: 6 }, (_, index) => ({
+    requirement_id: `bounded-role-${index + 1}`,
+    any_of: ['manual_recovery', 'mobility'],
+    role: index < 2 ? 'PRIMARY_KEY' : 'SUPPORTING',
+  }));
+  const decision = {
+    decision_id: 'decision-c1-search-boundary',
+    decision_hash: 'b'.repeat(64),
+    phase: 'DEVELOPMENT',
+    primary_goal_id: 'goal-c1-search-boundary',
+    training_age_class: 'ESTABLISHED',
+    role_multiset: roles,
+    due_exposure_ledger: { due_roles: roles, unplaceable_requirement_ids: [] },
+    evidence_used: [],
+    active_goals: [],
+  };
+  const started = process.hrtime.bigint();
+  const result = enumerateGoalBackwardCandidates({
+    decision,
+    available_local_dates: availableDates,
+    maximum_session_count: roles.length,
+    materialize_canonical: false,
+    validation_options: {
+      available_local_dates: availableDates,
+      available_days_count: availableDates.length,
+      training_age_class: 'ESTABLISHED',
+      safety_action: 'NORMAL',
+    },
+  });
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(result.search_diagnostics, 'bounded enumeration exposes deterministic diagnostics');
+  assert.equal(result.search_diagnostics.search_complete, false);
+  assert.equal(result.search_diagnostics.frontier_limit, MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
+  assert.equal(result.search_diagnostics.node_limit, MAX_GOAL_BACKWARD_SEARCH_NODES);
+  assert.ok(result.search_diagnostics.expanded_node_count <= MAX_GOAL_BACKWARD_SEARCH_NODES);
+  assert.ok(result.search_diagnostics.generated_leaf_count <= MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
+  assert.equal(result.truncation_reason, 'CANDIDATE_SEARCH_FRONTIER_TRUNCATED_128');
+  assert.ok(elapsedMs < 2000, `bounded synthetic enumeration took ${elapsedMs.toFixed(1)}ms`);
+  const replay = enumerateGoalBackwardCandidates({
+    decision,
+    available_local_dates: availableDates,
+    maximum_session_count: roles.length,
+    materialize_canonical: false,
+    validation_options: {
+      available_local_dates: availableDates,
+      available_days_count: availableDates.length,
+      training_age_class: 'ESTABLISHED',
+      safety_action: 'NORMAL',
+    },
+  });
+  assert.deepEqual(replay.search_diagnostics, result.search_diagnostics);
+  assert.deepEqual(replay.candidates.map((candidate) => candidate.candidate_hash),
+    result.candidates.map((candidate) => candidate.candidate_hash));
+
+  const insufficientDates = availableDates.slice(0, 5);
+  const impossible = enumerateGoalBackwardCandidates({
+    decision,
+    available_local_dates: insufficientDates,
+    maximum_session_count: roles.length,
+    materialize_canonical: false,
+    validation_options: {
+      available_local_dates: insufficientDates,
+      available_days_count: insufficientDates.length,
+      training_age_class: 'ESTABLISHED',
+      safety_action: 'NORMAL',
+    },
+  });
+  assert.equal(impossible.selected_candidate, null);
+  assert.equal(impossible.candidates.length, 0);
+  assert.equal(impossible.search_diagnostics.expanded_node_count, 0);
+  assert.equal(impossible.truncation_reason, 'CANDIDATE_ROLE_COUNT_EXCEEDS_AVAILABLE_DAYS');
+}
 
 function checkC1BoundedMaterialBindings() {
   const decision = {
@@ -89,6 +207,24 @@ function checkC1BoundedMaterialBindings() {
   assert.ok(first.material_change_json.changes.length < changes.length);
   assert.equal(first.material_change_json.apply_bindings.decision_hash, decision.decision_hash);
   assert.equal(first.material_change_json.apply_bindings.decision_artifact.artifact_id, input.decisionArtifact.id);
+
+  const unknownFieldReceipt = candidateLifecycle.buildGoalBackwardShadowBindings({
+    ...input,
+    selectedCandidate: {
+      ...input.selectedCandidate,
+      material_change: {
+        ...input.selectedCandidate.material_change,
+        changes: [{
+          ...changes[0],
+          diagnostic_blob: 'not-persisted-'.repeat(1500),
+        }],
+      },
+    },
+  }).material_change_json;
+  assert.equal(unknownFieldReceipt.changes.length, 1);
+  assert.equal(unknownFieldReceipt.changes[0].source_fields_truncated, true);
+  assert.equal(unknownFieldReceipt.changes_truncated, true,
+    'dropped non-contract change fields cannot be reported as a complete change receipt');
 }
 
 function checkExplicitEventLifecycleAndOrderedPromotion() {
@@ -1532,6 +1668,48 @@ async function checkHyroxCandidateImmediateAdoption() {
     )).valid, true);
     originalRecentMiles.forEach((miles, index) => { recentRuns[index].distance_miles = miles; });
 
+    for (const mileageVector of [[6, 7, 6, 8, 4], [8, 9, 8, 12, 6]]) {
+      mileageVector.forEach((miles, index) => { recentRuns[index].distance_miles = miles; });
+      let sweepResult = null;
+      let sweepError = null;
+      try {
+        await plansRouter._test.previewPlanForUser(ownerId, {
+          ...requestClock,
+          race_ids: ['hyrox', 'army'],
+          target: {
+            trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+            runDaysPerWeek: 4,
+            liftingEnabled: false,
+          },
+        }, {
+          store: false,
+          goalBackwardDependencies: {
+            mode: 'preview',
+            cohortRefs: [goalBackwardTargetRef(ownerId)],
+            alertEntries: [],
+            inspectDecision: (result) => { sweepResult = result; },
+          },
+        });
+      } catch (error) {
+        sweepError = error;
+      }
+      assert.equal(sweepError?.code, 'GOAL_BACKWARD_GENERATION_FAILED',
+        `${mileageVector.join('/')} must fail closed when the current constructor cannot meet the running floor`);
+      assert.equal(sweepResult?.selected_candidate, null);
+      assert.ok(sweepResult?.candidates.length > 0);
+      assert.ok(sweepResult.candidates.every((candidate) => candidate.validation.violations.every((violation) => (
+        violation.code !== 'BELOW_PRESENTATION_FLOOR_EXCEPTION'
+      ))), `${mileageVector.join('/')} must not emit a token projected run`);
+      assert.ok(sweepResult.candidates.some((candidate) => candidate.validation.violations.some((violation) => (
+        violation.reason === 'WEEKLY_RUNNING_FLOOR'
+          || violation.reason === 'WEEKLY_RUNNING_DISTANCE_UNKNOWN'
+      ))), `${mileageVector.join('/')} preserves the honest unmet-running-demand reason`);
+      assert.ok(sweepResult.search_diagnostics.expanded_node_count <= MAX_GOAL_BACKWARD_SEARCH_NODES);
+      assert.ok(sweepResult.search_diagnostics.generated_leaf_count <= MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
+      assert.ok(sweepResult.search_diagnostics.role_count <= sweepResult.search_diagnostics.available_day_count);
+    }
+    originalRecentMiles.forEach((miles, index) => { recentRuns[index].distance_miles = miles; });
+
     const originalLatestDuration = recentRuns.at(-1).duration_seconds;
     recentRuns.at(-1).duration_seconds = 0;
     let missingProjectionEvidenceResult = null;
@@ -1585,6 +1763,12 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(authorizedResult.decision.training_age_class, 'ESTABLISHED');
     assert.ok(authorizedResult.selected_candidate, 'realistic established mileage produces an eligible bounded candidate');
     assert.ok(authorizedResult.candidates.length <= 64);
+    assert.ok(authorizedResult.search_diagnostics.expanded_node_count <= MAX_GOAL_BACKWARD_SEARCH_NODES);
+    assert.ok(authorizedResult.search_diagnostics.generated_leaf_count <= MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
+    assert.equal(
+      authorizedResult.decision.candidate_enumeration.expanded_node_count,
+      authorizedResult.search_diagnostics.expanded_node_count,
+    );
     const runningFamilies = new Set([
       'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
       'interval_run', 'race_rhythm_run', 'assessment', 'race',
@@ -1626,6 +1810,30 @@ async function checkHyroxCandidateImmediateAdoption() {
       'the projected session is presented as its canonical running-only purpose');
     assert.equal(projectedCanonicalRun.derived_totals.duration_s, 35 * 60,
       'the running-only duration is derived from current run evidence, not the hybrid session total');
+    assert.equal(projectedRunningSupport.duration_min, 35,
+      'the skeleton and canonical running-only durations remain consistent');
+
+    let onResult = null;
+    await plansRouter._test.previewPlanForUser(ownerId, {
+      ...requestClock,
+      race_ids: ['hyrox', 'army'],
+      target: {
+        trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+        runDaysPerWeek: 4,
+        liftingEnabled: false,
+      },
+    }, {
+      store: false,
+      goalBackwardDependencies: {
+        mode: 'on',
+        cohortRefs: [goalBackwardTargetRef(ownerId)],
+        alertEntries: [],
+        inspectDecision: (result) => { onResult = result; },
+      },
+    });
+    assert.ok(onResult?.selected_candidate, 'on mode uses the same bounded candidate search');
+    assert.ok(onResult.search_diagnostics.expanded_node_count <= MAX_GOAL_BACKWARD_SEARCH_NODES);
+    assert.ok(onResult.search_diagnostics.generated_leaf_count <= MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
     const authorizedRow = candidates.get(authorizedPreview.id);
     assert.equal(authorizedRow.feature_mode, 'preview');
     assert.equal(authorizedRow.engine_version, 'goal-backward-coaching-v2.4');
@@ -1701,6 +1909,11 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.ok(shadowCandidateReceipt.candidates.length > 1);
     assert.ok(shadowCandidateReceipt.candidates.some((candidate) => candidate.valid === true));
     assert.ok(shadowCandidateReceipt.candidates.every((candidate) => typeof candidate.valid === 'boolean'));
+    const shadowDecisionReceipt = JSON.parse(shadowArtifacts.find((artifact) => (
+      artifact.artifact_kind === 'planning_decision'
+    )).payload_json);
+    assert.ok(shadowDecisionReceipt.candidate_enumeration.expanded_node_count <= MAX_GOAL_BACKWARD_SEARCH_NODES);
+    assert.ok(shadowDecisionReceipt.candidate_enumeration.generated_leaf_count <= MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
     const shadowSurfaceReceipt = JSON.parse(shadowArtifacts.find((artifact) => (
       artifact.artifact_kind === 'surface_manifest'
     )).payload_json);
@@ -1845,6 +2058,8 @@ async function checkHyroxCandidateImmediateAdoption() {
 
 checkBryanGoalBackwardWitnessIntegration();
 checkC1BoundedMaterialBindings();
+checkC1ProjectionAggregationBoundary();
+checkC1BoundedCandidateSearch();
 checkExplicitEventLifecycleAndOrderedPromotion();
 
 checkRacePatchNoOpBoundary()

@@ -2266,11 +2266,18 @@ function goalBackwardSupportRequirement(primaryRoles, family) {
   return primaryRoles[0]?.requirement_id || null;
 }
 
-function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumRunningM) {
+function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumRunningM, options = {}) {
   const primary = (Array.isArray(primaryRoles) ? primaryRoles : [])
     .filter((role) => role.role === 'PRIMARY_KEY');
   const usedMaterialIndexes = new Set();
   const requiredRunningM = Number(minimumRunningM);
+  const trainingAgeClass = String(options.trainingAgeClass || '').toUpperCase();
+  const presentationFloorMin = ['BEGINNER', 'RETURNING'].includes(trainingAgeClass) ? 20 : 25;
+  const projectionPace = Number(options.projectionPaceSecondsPerMile);
+  const projectionPaceAvailable = projectionPace >= 180 && projectionPace <= 2400;
+  const availableDaysCount = Number(options.availableDaysCount);
+  const maximumSupportingCount = Number.isSafeInteger(availableDaysCount) && availableDaysCount >= 0
+    ? Math.max(0, availableDaysCount - primary.length) : 0;
   let selectedRunningM = 0;
   const supporting = [];
   for (const role of primary) {
@@ -2279,14 +2286,24 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
     ));
     if (materialIndex < 0) continue;
     usedMaterialIndexes.add(materialIndex);
-    selectedRunningM += goalBackwardMaterialRunningMeters(candidateMaterial[materialIndex]);
+    const selectedFamily = legacyGoalBackwardFamily(candidateMaterial[materialIndex]);
+    if (GOAL_BACKWARD_RUNNING_FAMILIES.has(selectedFamily)
+      || GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(selectedFamily)) {
+      selectedRunningM += goalBackwardMaterialRunningMeters(candidateMaterial[materialIndex]);
+    }
   }
   const availableRunningMaterial = candidateMaterial.map((session, index) => {
     const sourceFamily = legacyGoalBackwardFamily(session);
     const family = GOAL_BACKWARD_RUNNING_FAMILIES.has(sourceFamily)
       ? sourceFamily
       : GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(sourceFamily) ? 'easy_run' : null;
-    return { family, index, runningM: goalBackwardMaterialRunningMeters(session), sourceFamily };
+    const runningM = goalBackwardMaterialRunningMeters(session);
+    const directDuration = Number(session?.duration_min ?? session?.durationMin);
+    const durationMin = Number.isFinite(directDuration) && directDuration >= 0
+      ? directDuration
+      : projectionPaceAvailable && runningM > 0
+        ? (runningM / 1609.344) * projectionPace / 60 : null;
+    return { durationMin, family, index, runningM, sourceFamily };
   }).filter((entry) => (
     !usedMaterialIndexes.has(entry.index) && entry.family && entry.runningM > 0
   )).sort((left, right) => (
@@ -2295,8 +2312,13 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
       || left.sourceFamily.localeCompare(right.sourceFamily)
       || left.index - right.index
   ));
-  for (const { family, runningM } of availableRunningMaterial) {
-    if (!Number.isSafeInteger(requiredRunningM) || requiredRunningM < 0 || selectedRunningM >= requiredRunningM) continue;
+  const exactRunningMaterial = availableRunningMaterial.filter((entry) => (
+    !GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(entry.sourceFamily)
+  ));
+  for (const { durationMin, family, runningM } of exactRunningMaterial) {
+    if (!Number.isSafeInteger(requiredRunningM) || requiredRunningM < 0
+      || selectedRunningM >= requiredRunningM || supporting.length >= maximumSupportingCount) continue;
+    if (!Number.isFinite(durationMin) || durationMin < presentationFloorMin) continue;
     const supportsRequirementId = goalBackwardSupportRequirement(primary, family);
     supporting.push({
       requirement_id: `current-candidate-support-${supporting.length + 1}`,
@@ -2305,6 +2327,30 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
       ...(supportsRequirementId ? { supports_requirement_id: supportsRequirementId } : {}),
     });
     selectedRunningM += runningM;
+  }
+  if (Number.isSafeInteger(requiredRunningM) && requiredRunningM >= 0
+    && selectedRunningM < requiredRunningM && supporting.length < maximumSupportingCount
+    && projectionPaceAvailable) {
+    const selectedProjectable = [];
+    let projectedRunningM = 0;
+    for (const entry of availableRunningMaterial.filter((candidate) => (
+      GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(candidate.sourceFamily)
+    ))) {
+      if (selectedRunningM + projectedRunningM >= requiredRunningM) break;
+      selectedProjectable.push(entry);
+      projectedRunningM += entry.runningM;
+    }
+    const projectedDurationMin = projectedRunningM > 0
+      ? Math.ceil(((projectedRunningM / 1609.344) * projectionPace) / 60) : 0;
+    if (selectedProjectable.length && projectedDurationMin >= presentationFloorMin) {
+      const supportsRequirementId = goalBackwardSupportRequirement(primary, 'easy_run');
+      supporting.push({
+        requirement_id: `current-candidate-support-${supporting.length + 1}`,
+        any_of: ['easy_run'],
+        role: 'SUPPORTING',
+        ...(supportsRequirementId ? { supports_requirement_id: supportsRequirementId } : {}),
+      });
+    }
   }
   return supporting;
 }
@@ -2424,6 +2470,12 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       candidateMaterial,
       decision.role_multiset,
       decision.minimum_weekly_demand?.running_m,
+      {
+        availableDaysCount: availableLocalDates.length,
+        projectionPaceSecondsPerMile:
+          state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile ?? null,
+        trainingAgeClass,
+      },
     );
     if (supportingStimuli.length) {
       decision = buildDecision({ ...decisionInput, supporting_stimuli: supportingStimuli });

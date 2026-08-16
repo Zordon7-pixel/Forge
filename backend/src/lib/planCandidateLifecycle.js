@@ -637,6 +637,13 @@ function buildGoalBackwardShadowBindings({
         value.length > 0 && value.length <= 200
       ))
       : [];
+    const compactChangeFields = new Set([
+      'code', 'session_id', 'reason_code', 'review_required', 'decisive_evidence_ids',
+      'baseline_plan_revision', 'candidate_plan_revision', 'baseline_session_revision',
+      'candidate_session_revision', 'baseline_session_content_hash',
+      'candidate_session_content_hash', 'decision_id', 'candidate_hash',
+      'canonical_session_set_hash',
+    ]);
     const compactChanges = sourceChanges.map((change) => {
       const evidenceIds = Array.isArray(change.decisive_evidence_ids)
         ? [...new Set(change.decisive_evidence_ids.map((value) => String(value || '')).filter((value) => (
@@ -661,6 +668,7 @@ function buildGoalBackwardShadowBindings({
         decision_id: boundedIdentifier(String(change.decision_id || '')),
         candidate_hash: normalizeHash(change.candidate_hash, { requirePrefix: true }),
         canonical_session_set_hash: normalizeHash(change.canonical_session_set_hash, { requirePrefix: true }),
+        source_fields_truncated: Object.keys(change).some((key) => !compactChangeFields.has(key)),
       };
     });
     boundedMaterialChange = {
@@ -696,7 +704,9 @@ function buildGoalBackwardShadowBindings({
       boundedMaterialChange = next;
     }
     boundedMaterialChange.changes_truncated = boundedMaterialChange.changes.length < sourceChanges.length
-      || compactChanges.some((change) => change.decisive_evidence_truncated);
+      || compactChanges.some((change) => (
+        change.decisive_evidence_truncated || change.source_fields_truncated
+      ));
     assertBoundedJson(boundedMaterialChange, MAX_BINDING_JSON_BYTES, 'material change bindings');
   }
   return buildGoalBackwardCandidateBindings({

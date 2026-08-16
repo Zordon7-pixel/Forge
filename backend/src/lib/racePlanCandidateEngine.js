@@ -41,6 +41,12 @@ const { materializeCanonicalSessionSet } = require('./canonicalWorkout');
 const { buildCanonicalPlanFromSessionSet } = require('./planSchema');
 
 const MAX_GOAL_BACKWARD_CANDIDATES = 64;
+const MAX_GOAL_BACKWARD_SEARCH_FRONTIER = 128;
+const MAX_GOAL_BACKWARD_SEARCH_NODES = 65536;
+const MAX_GOAL_BACKWARD_ROLE_COUNT = 14;
+const MAX_GOAL_BACKWARD_AVAILABLE_DATES = 14;
+const MAX_GOAL_BACKWARD_FAMILIES_PER_ROLE = 8;
+const MAX_GOAL_BACKWARD_PLACEMENT_CHOICES_PER_ROLE = 32;
 const ROLE_RANK = Object.freeze({ PRIMARY_KEY: 0, ASSESSMENT: 1, SUPPORTING: 2, RECOVERY: 3, REST: 4 });
 const RUNNING_GOAL_BACKWARD_FAMILIES = new Set([
   'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run', 'interval_run',
@@ -977,45 +983,96 @@ function goalBackwardSkeletonIdentity(input = {}) {
   const usedMaterialIds = new Set();
   const hybridProjectionPace = finiteCandidateMaterialNumber(input.hybrid_running_projection_pace_s_per_mile);
   const hybridProjectionPaceAvailable = hybridProjectionPace >= 180 && hybridProjectionPace <= 2400;
-  const sessions = decision.role_multiset.map((role, index) => {
-    const exactMaterial = materials.find((entry) => (
+  const assignedMaterials = decision.role_multiset.map((role) => {
+    const material = materials.find((entry) => (
       !usedMaterialIds.has(entry.material_id) && (role.any_of || []).includes(entry.workout_family)
     ));
-    const projectedRunningMaterial = !exactMaterial
+    if (material) usedMaterialIds.add(material.material_id);
+    return material || null;
+  });
+  const materialRunningMeters = (material) => {
+    const direct = Number(material?.distance_m);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const miles = Number(material?.distance_miles);
+    return Number.isFinite(miles) && miles > 0 ? miles * 1609.344 : 0;
+  };
+  const exactRunningMeters = assignedMaterials.reduce((sum, material) => (
+    sum + (material && RUNNING_GOAL_BACKWARD_FAMILIES.has(material.workout_family)
+      ? materialRunningMeters(material) : 0)
+  ), 0);
+  const projectionRoleIndex = decision.role_multiset.findIndex((role, index) => (
+    !assignedMaterials[index]
       && String(role.role || '').toUpperCase() === 'SUPPORTING'
       && (role.any_of || []).includes('easy_run')
-      && hybridProjectionPaceAvailable
-      ? materials.filter((entry) => (
-        !usedMaterialIds.has(entry.material_id)
-          && entry.workout_family === 'hyrox_compromised'
-          && Number(entry.distance_m ?? (Number(entry.distance_miles) * 1609.344)) > 0
-      )).sort((left, right) => (
-        Number(right.distance_m ?? (Number(right.distance_miles) * 1609.344))
-          - Number(left.distance_m ?? (Number(left.distance_miles) * 1609.344))
-          || left.material_id.localeCompare(right.material_id)
-      ))[0] : null;
-    const material = exactMaterial || projectedRunningMaterial;
-    if (projectedRunningMaterial) {
-      const projectionDistanceMiles = Number(projectedRunningMaterial.distance_m) > 0
-        ? Number(projectedRunningMaterial.distance_m) / 1609.344
-        : Number(projectedRunningMaterial.distance_miles);
-      const projectionDurationMin = Math.max(1, Math.ceil(
-        (projectionDistanceMiles * hybridProjectionPace) / 60,
-      ));
-      projectedRunningMaterial.source_session = {
-        ...projectedRunningMaterial.source_session,
-        kind: 'run',
-        sessionType: 'easy',
-        type: 'easy',
-        workout_family: 'easy_run',
-        title: 'Easy aerobic run',
-        purpose: 'Preserve the recorded running component without adding unmaterialized station load.',
-        duration_min: projectionDurationMin,
-        projection_pace_s_per_mile: hybridProjectionPace,
-        projection_source_workout_family: projectedRunningMaterial.workout_family,
-      };
+  ));
+  const requiredRunningMeters = Number(decision.minimum_weekly_demand?.running_m);
+  if (projectionRoleIndex >= 0 && hybridProjectionPaceAvailable
+    && Number.isSafeInteger(requiredRunningMeters) && exactRunningMeters < requiredRunningMeters) {
+    const projectable = materials.filter((entry) => (
+      !usedMaterialIds.has(entry.material_id)
+        && entry.workout_family === 'hyrox_compromised'
+        && materialRunningMeters(entry) > 0
+    )).sort((left, right) => (
+      materialRunningMeters(right) - materialRunningMeters(left)
+        || left.material_id.localeCompare(right.material_id)
+    ));
+    const selected = [];
+    let projectedRunningMeters = 0;
+    for (const material of projectable) {
+      if (exactRunningMeters + projectedRunningMeters >= requiredRunningMeters) break;
+      selected.push(material);
+      projectedRunningMeters += materialRunningMeters(material);
     }
-    if (material) usedMaterialIds.add(material.material_id);
+    const projectionDistanceMiles = projectedRunningMeters / 1609.344;
+    const projectionDurationMin = projectedRunningMeters > 0
+      ? Math.max(1, Math.ceil((projectionDistanceMiles * hybridProjectionPace) / 60)) : 0;
+    const presentationFloorMin = ['BEGINNER', 'RETURNING'].includes(String(
+      decision.training_age_class || ''
+    ).toUpperCase()) ? 20 : 25;
+    if (selected.length && projectionDurationMin >= presentationFloorMin) {
+      const projectionSourceMaterialIds = selected.map((material) => material.material_id).sort();
+      const projectedMaterial = {
+        material_id: `projected-hybrid-running-${canonicalHash({
+          projectionSourceMaterialIds,
+          projectedRunningMeters,
+          hybridProjectionPace,
+        }).slice(0, 24)}`,
+        source_workout_id: null,
+        workout_family: 'hyrox_compromised',
+        legacy_scheduled_local_date: null,
+        source_kind: 'run',
+        source_title: 'Easy aerobic run',
+        duration_min: projectionDurationMin,
+        distance_m: Math.round(projectedRunningMeters),
+        distance_miles: round(projectionDistanceMiles, 6),
+        quality_work_duration_min: null,
+        main_work_duration_min: null,
+        run_station_pair_count: null,
+        projection_source_material_ids: projectionSourceMaterialIds,
+        source_session: {
+          id: `projected-hybrid-running-${canonicalHash(projectionSourceMaterialIds).slice(0, 24)}`,
+          kind: 'run',
+          sessionType: 'easy',
+          type: 'easy',
+          workout_family: 'easy_run',
+          title: 'Easy aerobic run',
+          purpose: 'Preserve recorded running components without adding unmaterialized station load.',
+          duration_min: projectionDurationMin,
+          distance_m: Math.round(projectedRunningMeters),
+          distance_miles: round(projectionDistanceMiles, 6),
+          projection_pace_s_per_mile: hybridProjectionPace,
+          projection_source_workout_family: 'hyrox_compromised',
+          projection_source_material_ids: projectionSourceMaterialIds,
+        },
+      };
+      materials.push(projectedMaterial);
+      assignedMaterials[projectionRoleIndex] = projectedMaterial;
+      selected.forEach((material) => usedMaterialIds.add(material.material_id));
+    }
+  }
+  const sessions = decision.role_multiset.map((role, index) => {
+    const material = assignedMaterials[index];
+    const projectedRunningMaterial = material?.projection_source_material_ids?.length ? material : null;
     const placement = placementFor(input.placements, role.requirement_id);
     return {
       skeleton_session_id: String(material?.material_id || `skeleton-${role.requirement_id}-${index + 1}`),
@@ -1032,6 +1089,7 @@ function goalBackwardSkeletonIdentity(input = {}) {
         ? 'CURRENT_HYBRID_RUNNING_COMPONENT'
         : material ? 'CURRENT_ROAD_SESSION_CONSTRUCTOR_OUTPUT' : 'EVENT_POLICY_ROLE',
       material_source_workout_family: material?.workout_family || null,
+      projection_source_material_ids: projectedRunningMaterial?.projection_source_material_ids || [],
       duration_min: material?.duration_min ?? null,
       distance_m: material?.distance_m ?? null,
       distance_miles: material?.distance_miles ?? null,
@@ -1119,14 +1177,49 @@ function fixedPlacementForRole(role, input = {}) {
   };
 }
 
-function rolePlacementChoices(role, input, availableDates) {
+function rolePlacementChoices(role, input, availableDates, preferredMaterialFamily = null) {
   const fixed = fixedPlacementForRole(role, input);
   const dates = fixed.dates.length ? fixed.dates.filter((date) => availableDates.includes(date)) : availableDates;
   const allowedFamilies = [...new Set((role.any_of || []).map(String).filter(Boolean))].sort();
   const families = fixed.families.length
     ? allowedFamilies.filter((family) => fixed.families.includes(family))
     : allowedFamilies;
-  return dates.flatMap((date) => families.map((family) => ({ scheduled_local_date: date, workout_family: family })));
+  const allChoices = dates.flatMap((date) => families.map((family) => ({
+    scheduled_local_date: date,
+    workout_family: family,
+    material_family_match: !preferredMaterialFamily || family === preferredMaterialFamily,
+  })));
+  const boundedChoices = allChoices.slice(0, MAX_GOAL_BACKWARD_PLACEMENT_CHOICES_PER_ROLE);
+  Object.defineProperty(boundedChoices, 'search_truncated', {
+    enumerable: false,
+    value: allChoices.length > boundedChoices.length,
+  });
+  return boundedChoices;
+}
+
+function partialPlacementComparator(left, right) {
+  const materialMismatchCount = (placements) => placements.filter((placement) => (
+    placement.material_family_match === false
+  )).length;
+  const collisionCount = (placements) => {
+    const counts = placements.reduce((result, placement) => {
+      const date = placement.scheduled_local_date;
+      result[date] = (result[date] || 0) + 1;
+      return result;
+    }, {});
+    return Object.values(counts).reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+  };
+  return materialMismatchCount(left) - materialMismatchCount(right)
+    || collisionCount(left) - collisionCount(right)
+    || canonicalStringify(left).localeCompare(canonicalStringify(right));
+}
+
+function boundedPlacementSpace(placementSets) {
+  return placementSets.reduce((total, choices) => {
+    if (!total || !choices.length) return 0;
+    if (total > Math.floor(Number.MAX_SAFE_INTEGER / choices.length)) return Number.MAX_SAFE_INTEGER;
+    return total * choices.length;
+  }, 1);
 }
 
 function orderedSessionTuple(candidate) {
@@ -1139,7 +1232,8 @@ function orderedSessionTuple(candidate) {
 }
 
 function preliminaryCandidateComparator(left, right) {
-  return left.preliminary_spacing_violation_count - right.preliminary_spacing_violation_count
+  return left.preliminary_material_mismatch_count - right.preliminary_material_mismatch_count
+    || left.preliminary_spacing_violation_count - right.preliminary_spacing_violation_count
     || canonicalStringify(left.preliminary_ordering_tuple).localeCompare(canonicalStringify(right.preliminary_ordering_tuple))
     || left.canonical_placement.localeCompare(right.canonical_placement);
 }
@@ -1295,17 +1389,71 @@ function enumerateGoalBackwardCandidates(input = {}) {
   if (!decision?.decision_id || !decision?.decision_hash || !Array.isArray(decision.role_multiset)) {
     throw new Error('an immutable PlanningDecision with a role multiset is required');
   }
-  const availableDates = [...new Set((input.available_local_dates || []).map(validLocalDate).filter(Boolean))].sort();
-  const maximumSessionCount = Number.isSafeInteger(input.maximum_session_count)
+  const requestedAvailableDates = [...new Set(
+    (input.available_local_dates || []).map(validLocalDate).filter(Boolean)
+  )].sort();
+  const availableDates = requestedAvailableDates.slice(0, MAX_GOAL_BACKWARD_AVAILABLE_DATES);
+  const requestedMaximumSessionCount = Number.isSafeInteger(input.maximum_session_count)
     ? Math.max(0, input.maximum_session_count)
     : decision.role_multiset.length;
+  const maximumSessionCount = Math.min(requestedMaximumSessionCount, MAX_GOAL_BACKWARD_ROLE_COUNT);
   const roles = decision.role_multiset.slice(0, maximumSessionCount);
-  const placementSets = roles.map((role) => rolePlacementChoices(role, input, availableDates));
+  const roleCapacityExceeded = roles.length > availableDates.length;
+  const inputBounded = requestedAvailableDates.length > MAX_GOAL_BACKWARD_AVAILABLE_DATES
+    || requestedMaximumSessionCount > MAX_GOAL_BACKWARD_ROLE_COUNT
+    || roles.some((role) => new Set((role.any_of || []).map(String).filter(Boolean)).size
+      > MAX_GOAL_BACKWARD_FAMILIES_PER_ROLE);
+  const materialIdentity = !inputBounded && !roleCapacityExceeded
+    ? goalBackwardSkeletonIdentity({
+      decision,
+      placements: {},
+      legacy_road_candidate_material: input.legacy_road_candidate_material,
+      active_applied_plan: input.active_applied_plan,
+      hybrid_running_projection_pace_s_per_mile: input.hybrid_running_projection_pace_s_per_mile,
+    }) : { sessions: [] };
+  const preferredMaterialFamilyByRequirement = new Map(materialIdentity.sessions.map((session) => [
+    String(session.requirement_id),
+    session.material_source === 'CURRENT_HYBRID_RUNNING_COMPONENT'
+      ? 'easy_run' : session.material_source_workout_family,
+  ]));
+  const placementSets = roles.map((role) => rolePlacementChoices(
+    role,
+    input,
+    availableDates,
+    preferredMaterialFamilyByRequirement.get(String(role.requirement_id)) || null,
+  ));
+  const placementChoicesTruncated = placementSets.some((choices) => choices.search_truncated === true);
   const preliminary = [];
   const seen = new Set();
-
-  function visit(index, placements) {
-    if (index === roles.length) {
+  let expandedNodeCount = 0;
+  let frontierTrimmed = false;
+  let nodeLimitReached = false;
+  let frontier = [[]];
+  if (!inputBounded && !roleCapacityExceeded && roles.length
+    && placementSets.every((choices) => choices.length)) {
+    for (let roleIndex = 0; roleIndex < roles.length; roleIndex += 1) {
+      const role = roles[roleIndex];
+      const next = [];
+      outer: for (const placements of frontier) {
+        for (const choice of placementSets[roleIndex]) {
+          if (expandedNodeCount >= MAX_GOAL_BACKWARD_SEARCH_NODES) {
+            nodeLimitReached = true;
+            break outer;
+          }
+          expandedNodeCount += 1;
+          next.push([...placements, { requirement_id: role.requirement_id, ...choice }]);
+        }
+      }
+      next.sort(partialPlacementComparator);
+      if (next.length > MAX_GOAL_BACKWARD_SEARCH_FRONTIER) frontierTrimmed = true;
+      frontier = next.slice(0, MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
+      if (!frontier.length || nodeLimitReached) break;
+    }
+  } else {
+    frontier = [];
+  }
+  if (frontier.length && frontier[0].length === roles.length) {
+    for (const placements of frontier) {
       const placementMap = Object.fromEntries(placements.map((placement) => [placement.requirement_id, placement]));
       const identity = goalBackwardSkeletonIdentity({
         decision,
@@ -1322,21 +1470,20 @@ function enumerateGoalBackwardCandidates(input = {}) {
       preliminary.push({
         ...identity,
         canonical_placement: canonicalPlacement,
+        preliminary_material_mismatch_count: sessions.filter((session) => (
+          session.material_source === 'CURRENT_ROAD_SESSION_CONSTRUCTOR_OUTPUT'
+            && session.material_source_workout_family
+            && session.material_source_workout_family !== session.workout_family
+        )).length,
         preliminary_spacing_violation_count: interference?.violations?.length || 0,
         preliminary_ordering_tuple: orderedSessionTuple({ sessions }),
       });
-      return;
-    }
-    const role = roles[index];
-    for (const choice of placementSets[index] || []) {
-      visit(index + 1, [...placements, { requirement_id: role.requirement_id, ...choice }]);
     }
   }
-
-  if (roles.length && placementSets.every((choices) => choices.length)) visit(0, []);
   const retained = preliminary.sort(preliminaryCandidateComparator).slice(0, MAX_GOAL_BACKWARD_CANDIDATES).map((candidate) => {
     const candidateHash = canonicalHash(Object.fromEntries(Object.entries(candidate).filter(([key]) => ![
-      'canonical_placement', 'preliminary_spacing_violation_count', 'preliminary_ordering_tuple',
+      'canonical_placement', 'preliminary_material_mismatch_count',
+      'preliminary_spacing_violation_count', 'preliminary_ordering_tuple',
     ].includes(key))));
     let withCanonical = {
       ...candidate,
@@ -1390,18 +1537,53 @@ function enumerateGoalBackwardCandidates(input = {}) {
       validation: finalValidation,
     };
     delete withValidation.canonical_placement;
+    delete withValidation.preliminary_material_mismatch_count;
+    delete withValidation.preliminary_spacing_violation_count;
+    delete withValidation.preliminary_ordering_tuple;
     return immutable({ ...withValidation, ranking_tuple: candidateRankingTuple(withValidation, input) });
   });
   const accepted = retained.filter((candidate) => candidate.validation.valid).sort(compareGoalBackwardCandidateRankings);
   const selectedCandidate = accepted[0] || null;
-  const truncationReason = preliminary.length > MAX_GOAL_BACKWARD_CANDIDATES
-    ? 'CANDIDATE_ENUMERATION_TRUNCATED_64'
-    : null;
-  const finalizedDecision = finalizeGoalBackwardCandidateDecision(decision, {
+  const searchWasTruncated = inputBounded || roleCapacityExceeded || placementChoicesTruncated
+    || frontierTrimmed || nodeLimitReached;
+  const truncationReason = nodeLimitReached
+    ? 'CANDIDATE_SEARCH_NODE_BUDGET_EXHAUSTED'
+    : inputBounded ? 'CANDIDATE_SEARCH_INPUT_LIMIT_EXCEEDED'
+      : roleCapacityExceeded ? 'CANDIDATE_ROLE_COUNT_EXCEEDS_AVAILABLE_DAYS'
+        : placementChoicesTruncated ? 'CANDIDATE_PLACEMENT_CHOICES_TRUNCATED_32'
+          : frontierTrimmed ? 'CANDIDATE_SEARCH_FRONTIER_TRUNCATED_128'
+          : preliminary.length > MAX_GOAL_BACKWARD_CANDIDATES
+            ? 'CANDIDATE_ENUMERATION_TRUNCATED_64' : null;
+  const searchDiagnostics = immutable({
+    search_complete: !searchWasTruncated,
+    expanded_node_count: expandedNodeCount,
+    generated_leaf_count: preliminary.length,
+    retained_candidate_count: retained.length,
+    role_count: roles.length,
+    available_day_count: availableDates.length,
+    placement_space_upper_bound: boundedPlacementSpace(placementSets),
+    placement_choices_truncated: placementChoicesTruncated,
+    frontier_limit: MAX_GOAL_BACKWARD_SEARCH_FRONTIER,
+    node_limit: MAX_GOAL_BACKWARD_SEARCH_NODES,
+    truncation_reason: truncationReason,
+  });
+  const finalized = finalizeGoalBackwardCandidateDecision(decision, {
     candidates: retained,
     selectedCandidate,
     totalUniqueCandidateCount: preliminary.length,
     truncationReason,
+  });
+  const finalizedDecision = immutable({
+    ...clone(finalized),
+    candidate_enumeration: {
+      ...clone(finalized.candidate_enumeration),
+      search_complete: searchDiagnostics.search_complete,
+      expanded_node_count: searchDiagnostics.expanded_node_count,
+      generated_leaf_count: searchDiagnostics.generated_leaf_count,
+      placement_space_upper_bound: searchDiagnostics.placement_space_upper_bound,
+      frontier_limit: searchDiagnostics.frontier_limit,
+      node_limit: searchDiagnostics.node_limit,
+    },
   });
   return immutable({
     decision: finalizedDecision,
@@ -1410,11 +1592,14 @@ function enumerateGoalBackwardCandidates(input = {}) {
     rejected_candidates: finalizedDecision.rejected_candidates,
     total_unique_candidate_count: preliminary.length,
     truncation_reason: truncationReason,
+    search_diagnostics: searchDiagnostics,
   });
 }
 
 module.exports = {
   MAX_GOAL_BACKWARD_CANDIDATES,
+  MAX_GOAL_BACKWARD_SEARCH_FRONTIER,
+  MAX_GOAL_BACKWARD_SEARCH_NODES,
   applyPlanningCurve,
   buildGoalBackwardCandidateSkeleton,
   materializeGoalBackwardCandidate,
