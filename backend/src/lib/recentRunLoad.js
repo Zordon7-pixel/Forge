@@ -36,6 +36,7 @@ function mondayFor(iso) {
 }
 
 function finiteNumber(value, min, max) {
+  if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : null;
 }
@@ -90,7 +91,8 @@ function normalizeRun(row = {}) {
 function summarizeRecentRunLoad(rows = [], options = {}) {
   const todayISO = parseISODate(options.todayISO) ? options.todayISO : null;
   const focusRunId = options.focusRunId ? String(options.focusRunId) : null;
-  const weeklyBaseline = finiteNumber(options.weeklyBaseline, 0, 500) || 0;
+  const weeklyBaseline = finiteNumber(options.weeklyBaseline, 0, 500);
+  const coverageComplete = options.coverageComplete !== false;
   const recoveryState = String(options.recoveryState || 'unknown').toLowerCase();
   const normalized = (Array.isArray(rows) ? rows : [])
     .map(normalizeRun)
@@ -114,11 +116,12 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
         .sort((left, right) => right.distanceMiles - left.distanceMiles || String(right.createdAt || '').localeCompare(String(left.createdAt || '')))[0]
       : null;
   const sevenDayStart = todayISO ? addDays(todayISO, -6) : null;
-  const sevenDayMiles = round(normalized
-    .filter((run) => !sevenDayStart || (run.date >= sevenDayStart && run.date <= todayISO))
-    .reduce((sum, run) => sum + run.distanceMiles, 0), 1);
+  const sevenDayRuns = normalized
+    .filter((run) => !sevenDayStart || (run.date >= sevenDayStart && run.date <= todayISO));
+  const sevenDayMiles = !coverageComplete && sevenDayRuns.length === 0
+    ? null : round(sevenDayRuns.reduce((sum, run) => sum + run.distanceMiles, 0), 1);
 
-  const longRunThresholdMiles = round(Math.min(8, Math.max(5, weeklyBaseline * 0.35 || 5)), 1);
+  const longRunThresholdMiles = round(Math.min(8, Math.max(5, (weeklyBaseline ?? 0) * 0.35 || 5)), 1);
   const annotate = (run) => {
     const daysSince = daysBetween(todayISO, run.date);
     const isLong = run.distanceMiles >= longRunThresholdMiles || run.durationSeconds >= 75 * 60;
@@ -146,9 +149,10 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
     .sort((left, right) => right.distanceMiles - left.distanceMiles || right.durationSeconds - left.durationSeconds)[0] || null;
   const currentWeek = {
     startDate: currentWeekStart,
-    miles: round(normalized
-      .filter((run) => currentWeekStart && run.date >= currentWeekStart && run.date <= todayISO)
-      .reduce((sum, run) => sum + run.distanceMiles, 0), 1),
+    miles: !coverageComplete && currentWeekRuns.length === 0
+      ? null : round(normalized
+        .filter((run) => currentWeekStart && run.date >= currentWeekStart && run.date <= todayISO)
+        .reduce((sum, run) => sum + run.distanceMiles, 0), 1),
     runCount: currentWeekRuns.length,
     runDates: [...new Set(currentWeekRuns.map((run) => run.date))],
     longRunCompleted: Boolean(currentWeekLongest?.isLong),
@@ -158,7 +162,7 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
   if (!annotatedLatest || !todayISO) {
     return {
       available: false,
-      weeklyBaseline: round(weeklyBaseline, 1),
+      weeklyBaseline: weeklyBaseline === null ? null : round(weeklyBaseline, 1),
       sevenDayMiles,
       latestRun: null,
       protectiveRun: null,
@@ -205,9 +209,9 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
 
   return {
     available: true,
-    weeklyBaseline: round(weeklyBaseline, 1),
+    weeklyBaseline: weeklyBaseline === null ? null : round(weeklyBaseline, 1),
     sevenDayMiles,
-    loadRatio: weeklyBaseline > 0 ? round(sevenDayMiles / weeklyBaseline, 2) : null,
+    loadRatio: weeklyBaseline > 0 && sevenDayMiles !== null ? round(sevenDayMiles / weeklyBaseline, 2) : null,
     latestRun: annotatedLatest,
     protectiveRun,
     currentWeek,

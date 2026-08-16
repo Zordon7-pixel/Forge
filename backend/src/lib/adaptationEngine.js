@@ -510,10 +510,15 @@ function buildCheckinEvidence(checkin = {}, todaySessions = []) {
 function buildCompletionEvidence(completion = {}) {
   if (!completion || typeof completion !== 'object') return { evidence: [], driver: false };
   if (completion.adaptationEnabled === false) return { evidence: [], driver: false };
-  const adherence = Number(completion.adherenceRate ?? completion.adherence_rate);
-  const missed = Number(completion.missedWorkouts ?? completion.missed_workouts ?? completion.missedCount ?? 0);
-  const missedRuns = Number(completion.missedRuns ?? completion.missedRunCount ?? 0);
-  const missedLifts = Number(completion.missedLifts ?? completion.missedLiftCount ?? 0);
+  const nullableNonNegative = (value, maximum = Number.MAX_SAFE_INTEGER) => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : null;
+  };
+  const adherence = nullableNonNegative(completion.adherenceRate ?? completion.adherence_rate, 1);
+  const missed = nullableNonNegative(completion.missedWorkouts ?? completion.missed_workouts ?? completion.missedCount, 100);
+  const missedRuns = nullableNonNegative(completion.missedRuns ?? completion.missedRunCount, 100);
+  const missedLifts = nullableNonNegative(completion.missedLifts ?? completion.missedLiftCount, 100);
   const daysInactive = Number(completion.daysInactive ?? completion.days_inactive);
   const daysSinceRun = Number(completion.daysSinceRun ?? completion.days_since_run);
   const lastRunDate = completion.lastRunDate || completion.last_run_date || null;
@@ -524,11 +529,18 @@ function buildCompletionEvidence(completion = {}) {
     && Boolean(lastRunDate)
     && Number.isFinite(daysSinceRun)
     && daysSinceRun >= 7;
-  const driver = runGap || (Number.isFinite(adherence) && adherence < 0.65) || missed >= 2 || missedRuns >= 2;
+  const driver = runGap || (adherence !== null && adherence < 0.65)
+    || (missed !== null && missed >= 2) || (missedRuns !== null && missedRuns >= 2);
   if (!driver) return { evidence: [], driver: false };
   const details = [];
-  if (Number.isFinite(adherence)) details.push(`${Math.round(adherence * 100)}% recent adherence`);
-  if (missedRuns || missedLifts || missed) details.push(`${missedRuns || 0} missed runs, ${missedLifts || 0} missed lifts`);
+  if (adherence !== null) details.push(`${Math.round(adherence * 100)}% recent adherence`);
+  if ([missedRuns, missedLifts, missed].some((value) => value !== null && value > 0)) {
+    const missedDetails = [];
+    if (missedRuns !== null) missedDetails.push(`${missedRuns} missed runs`);
+    if (missedLifts !== null) missedDetails.push(`${missedLifts} missed lifts`);
+    if (!missedDetails.length && missed !== null) missedDetails.push(`${missed} missed sessions`);
+    details.push(missedDetails.join(', '));
+  }
   if (runGap) details.unshift(`${Math.round(daysSinceRun)} days since the last logged run`);
   return {
     driver: true,
@@ -538,7 +550,7 @@ function buildCompletionEvidence(completion = {}) {
     daysInactive: runGap ? Math.round(daysSinceRun) : null,
     lastRunDate: runGap ? lastRunDate : null,
     episodeKey: runGap ? runGapEpisodeKey : null,
-    weeklyMileageBaseline: Math.max(0, Number(completion.weeklyMileageBaseline || 0)),
+    weeklyMileageBaseline: nullableNonNegative(completion.weeklyMileageBaseline, 300),
     evidence: [{
       signal: runGap ? 'run_gap' : 'adherence',
       source: 'completion',
@@ -548,7 +560,7 @@ function buildCompletionEvidence(completion = {}) {
       daysInactive: runGap ? Math.round(daysSinceRun) : null,
       lastRunDate: runGap ? lastRunDate : null,
       episodeKey: runGap ? runGapEpisodeKey : null,
-      missedWorkouts: Math.max(0, missed || 0),
+      missedWorkouts: missed,
       detail: runGap
         ? `Forged Hybrid has not seen a logged run for ${Math.round(daysSinceRun)} days. Lifting and life events do not hide the running gap; a bounded easy re-entry is offered without treating it as failure.`
         : `Logged completion history shows ${details.join('; ') || 'recent missed sessions'}, so the next hard run is reduced instead of forcing a catch-up.`
@@ -1496,12 +1508,13 @@ function buildAdaptationProposal(input = {}) {
       const plannedRuns = sessionsInWindow.filter((item) => (
         item.kind === 'run' && String(item.session?.type || '').toLowerCase() !== 'race'
       ));
-      const baselineMiles = Number(completion.weeklyMileageBaseline || 0);
+      const baselineMiles = completion.weeklyMileageBaseline === null || completion.weeklyMileageBaseline === undefined
+        ? null : Number(completion.weeklyMileageBaseline);
       const originalMiles = plannedRuns.reduce((sum, item) => {
         const miles = Number(item.session?.distance_miles);
         return sum + (Number.isFinite(miles) && miles > 0 ? miles : 0);
       }, 0);
-      const mileageCap = baselineMiles > 0
+      const mileageCap = Number.isFinite(baselineMiles) && baselineMiles > 0
         ? Math.min(originalMiles * 0.8, baselineMiles * 0.7)
         : Math.min(originalMiles > 0 ? originalMiles * 0.8 : 9, 9);
       const mileageScale = originalMiles > 0
@@ -1509,7 +1522,7 @@ function buildAdaptationProposal(input = {}) {
         : 0.7;
       runGapConstraint = {
         plannedRuns,
-        retainedRunCount: baselineMiles > 0 ? plannedRuns.length : Math.min(plannedRuns.length, 3),
+        retainedRunCount: Number.isFinite(baselineMiles) && baselineMiles > 0 ? plannedRuns.length : Math.min(plannedRuns.length, 3),
         mileageScale,
         mileageCap,
         recoveryFloorOptions,

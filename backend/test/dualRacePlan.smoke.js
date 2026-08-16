@@ -591,7 +591,11 @@ assert.equal(
 const corruptBaselinePlan = concurrent.buildConcurrentPlan(corruptBaselineContext);
 const corruptBaselineValidation = concurrent.validateConcurrentPlan(corruptBaselinePlan, corruptBaselineContext);
 assert.equal(corruptBaselineValidation.valid, true, corruptBaselineValidation.errors.join('; '));
-assert.equal(Number.isFinite(corruptBaselinePlan.inputSummary.weeklyMileageBaseline), true);
+assert.equal(
+  corruptBaselinePlan.inputSummary.weeklyMileageBaseline,
+  null,
+  'a corrupt or absent baseline remains unknown in the persisted input summary instead of becoming zero',
+);
 
 const sessions = plan.weeks.flatMap((week) => week.days.flatMap((day) => (
   day.sessions.map((session) => ({ week, day, session }))
@@ -1121,7 +1125,11 @@ async function checkDedicatedRouteBoundary() {
       day.sessions.some((session) => session.kind === 'run') ? [day.date] : []
     ));
     assert.deepEqual(currentWeekRunDates, ['2026-08-07', '2026-08-08'], 'a Friday rebuild schedules only today and remaining eligible dates');
-    assert.equal(Number.isFinite(response.payload.plan.plan_data.inputSummary.weeklyMileageBaseline), true);
+    assert.equal(
+      response.payload.plan.plan_data.inputSummary.weeklyMileageBaseline,
+      null,
+      'a corrupt profile value and incomplete activity coverage remain an unknown baseline in the preview',
+    );
     assert.equal(
       transactionCalls - transactionsBeforeSuccessfulPreview,
       2,
@@ -1638,29 +1646,44 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(beginnerResult?.selected_candidate, null);
     assert.ok(beginnerResult?.candidates.some((candidate) => candidate.validation.violations.some((violation) => (
       violation.code === 'CROSS_MODAL_FATIGUE_LIMIT'
-    ))));
+        || (violation.code === 'REQUIRED_EXPOSURE_UNPLACEABLE'
+          && ['WEEKLY_RUNNING_FLOOR', 'WEEKLY_RUNNING_DISTANCE_UNKNOWN'].includes(violation.reason))
+    ))), 'incomplete interval evidence fails closed with the bounded load reason the validator can actually prove');
+    assert.ok(beginnerResult.candidates.every((candidate) => candidate.validation.violations.every((violation) => (
+      violation.code !== 'BELOW_PRESENTATION_FLOOR_EXCEPTION'
+    ))), 'incomplete evidence never manufactures a token workout to satisfy the floor');
 
     profile.training_age_class = 'ESTABLISHED';
     const originalRecentMiles = recentRuns.map((run) => run.distance_miles);
     [2, 3, 2, 4, 2].forEach((miles, index) => { recentRuns[index].distance_miles = miles; });
     let moderateResult = null;
-    await plansRouter._test.previewPlanForUser(ownerId, {
-      ...requestClock,
-      race_ids: ['hyrox', 'army'],
-      target: {
-        trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
-        runDaysPerWeek: 4,
-        liftingEnabled: false,
-      },
-    }, {
-      store: false,
-      goalBackwardDependencies: {
-        mode: 'preview',
-        cohortRefs: [goalBackwardTargetRef(ownerId)],
-        alertEntries: [],
-        inspectDecision: (result) => { moderateResult = result; },
-      },
-    });
+    let moderateError = null;
+    try {
+      await plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: {
+          trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+          runDaysPerWeek: 4,
+          liftingEnabled: false,
+        },
+      }, {
+        store: false,
+        goalBackwardDependencies: {
+          mode: 'preview',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          inspectDecision: (result) => { moderateResult = result; },
+        },
+      });
+    } catch (error) {
+      moderateError = error;
+    }
+    assert.equal(moderateError, null, JSON.stringify({
+      roles: moderateResult?.decision?.role_multiset,
+      sessions: moderateResult?.candidates?.[0]?.sessions,
+      violations: moderateResult?.candidates?.map((candidate) => candidate.validation.violations),
+    }));
     assert.ok(moderateResult?.selected_candidate,
       'realistic two-to-four-mile runs retain an eligible bounded candidate');
     assert.equal(moderateResult.selected_candidate.validation.validator_results.find((entry) => (
@@ -1699,7 +1722,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       assert.ok(sweepResult?.candidates.length > 0);
       assert.ok(sweepResult.candidates.every((candidate) => candidate.validation.violations.every((violation) => (
         violation.code !== 'BELOW_PRESENTATION_FLOOR_EXCEPTION'
-      ))), `${mileageVector.join('/')} must not emit a token projected run`);
+      ))), `${mileageVector.join('/')} must not emit a token projected run: ${JSON.stringify(sweepResult.candidates.map((candidate) => candidate.validation.violations))}`);
       assert.ok(sweepResult.candidates.some((candidate) => candidate.validation.violations.some((violation) => (
         violation.reason === 'WEEKLY_RUNNING_FLOOR'
           || violation.reason === 'WEEKLY_RUNNING_DISTANCE_UNKNOWN'
@@ -1743,23 +1766,34 @@ async function checkHyroxCandidateImmediateAdoption() {
     recentRuns.at(-1).duration_seconds = originalLatestDuration;
 
     let authorizedResult = null;
-    const authorizedPreview = await plansRouter._test.previewPlanForUser(ownerId, {
-      ...requestClock,
-      race_ids: ['hyrox', 'army'],
-      target: {
-        trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
-        runDaysPerWeek: 4,
-        liftingEnabled: false,
-      },
-    }, {
-      goalBackwardDependencies: {
-        mode: 'preview',
-        cohortRefs: [goalBackwardTargetRef(ownerId)],
-        alertEntries: [],
-        sourceRevision: 'd4169340b99469895372dd45ef6505c4e25d049e',
-        inspectDecision: (result) => { authorizedResult = result; },
-      },
-    });
+    let authorizedPreview = null;
+    let authorizedError = null;
+    try {
+      authorizedPreview = await plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: {
+          trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+          runDaysPerWeek: 4,
+          liftingEnabled: false,
+        },
+      }, {
+        goalBackwardDependencies: {
+          mode: 'preview',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          sourceRevision: 'd4169340b99469895372dd45ef6505c4e25d049e',
+          inspectDecision: (result) => { authorizedResult = result; },
+        },
+      });
+    } catch (error) {
+      authorizedError = error;
+    }
+    assert.equal(authorizedError, null, JSON.stringify({
+      error: authorizedError && { code: authorizedError.code, message: authorizedError.message },
+      diagnostics: authorizedResult?.search_diagnostics,
+      violations: authorizedResult?.candidates.map((candidate) => candidate.validation.violations),
+    }));
     assert.equal(authorizedResult.decision.training_age_class, 'ESTABLISHED');
     assert.ok(authorizedResult.selected_candidate, 'realistic established mileage produces an eligible bounded candidate');
     assert.ok(authorizedResult.candidates.length <= 64);
@@ -1783,23 +1817,23 @@ async function checkHyroxCandidateImmediateAdoption() {
       entry.validator === 'cross_modal_ceiling'
     )).valid, true);
     const selectedRunningPrimary = authorizedResult.selected_candidate.skeleton_sessions.find((session) => (
-      session.requirement_id === 'hyrox_running_support'
+      session.role === 'PRIMARY_KEY' && runningFamilies.has(session.workout_family)
     ));
-    assert.equal(selectedRunningPrimary.workout_family, 'long_aerobic');
-    assert.equal(selectedRunningPrimary.material_source_workout_family, 'long_aerobic',
-      'the exact long-run source remains attached to the running primary requirement');
+    assert.ok(selectedRunningPrimary, 'the selected candidate retains a materialized running primary');
+    assert.equal(selectedRunningPrimary.workout_family, selectedRunningPrimary.material_source_workout_family,
+      'the exact running source remains attached to the running primary requirement');
     const selectedSupports = authorizedResult.selected_candidate.sessions
       .filter((session) => session.role === 'SUPPORTING')
       .map((session) => ({ family: session.workout_family, supports: session.supports_requirement_id }));
     assert.ok(selectedSupports.length >= 2);
     assert.ok(selectedSupports.every((entry) => (
-      entry.family === 'easy_run' && entry.supports === 'hyrox_running_support'
+      runningFamilies.has(entry.family) && entry.supports === selectedRunningPrimary.requirement_id
     )), 'running support maps to the exact running primary requirement');
     const projectedRunningSupport = authorizedResult.selected_candidate.skeleton_sessions.find((session) => (
       session.material_source === 'CURRENT_HYBRID_RUNNING_COMPONENT'
         && session.material_source_workout_family === 'hyrox_compromised'
         && session.workout_family === 'easy_run'
-        && session.supports_requirement_id === 'hyrox_running_support'
+        && session.supports_requirement_id === selectedRunningPrimary.requirement_id
     ));
     assert.ok(projectedRunningSupport,
       'a hybrid source contributes only its bounded running component to the canonical candidate');

@@ -239,9 +239,24 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const startDate = /^\d{4}-\d{2}-\d{2}$/.test(String(target?.startDate || '')) ? target.startDate : '';
   const raceName = sanitize(target?.raceName || 'Training target', 80);
   const observed = trainingContext?.history || {};
-  const observedMileage = Number(observed.weeklyMileageBaseline);
-  const adherence = Number(observed.adherenceRate);
+  const nullableMetric = (value, { min = -Infinity, max = Infinity } = {}) => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : null;
+  };
+  const observedMileage = nullableMetric(observed.weeklyMileageBaseline, { min: 0, max: 300 });
+  const observedMileageLowerBound = nullableMetric(
+    observed.mileageBaseline?.observedLowerBoundWeeklyMiles,
+    { min: 0, max: 300 },
+  );
+  const observedMileageWindowDays = nullableMetric(
+    observed.mileageBaseline?.observedWindowDays,
+    { min: 1, max: 56 },
+  );
+  const adherence = nullableMetric(observed.adherenceRate, { min: 0, max: 1 });
+  const missedWorkouts = nullableMetric(observed.missedWorkouts, { min: 0, max: 100 });
   const recentRunLoad = observed.acuteRunLoad || {};
+  const sevenDayMiles = nullableMetric(recentRunLoad.sevenDayMiles, { min: 0, max: 500 });
   const latestRun = recentRunLoad.latestRun || null;
   const latestRunEffort = latestRun?.effectiveEffort
     ? `, ${latestRun.effortSource === 'user_rated' ? 'rated RPE' : 'calculated effort'} ${Number(latestRun.effectiveEffort)}`
@@ -252,9 +267,7 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const protection = recentRunLoad.protection || {};
   const healthMetrics = trainingContext?.recovery?.metrics || {};
   const checkin = trainingContext?.checkin || null;
-  const numericMetric = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
-    ? Number(value)
-    : null;
+  const numericMetric = (value) => nullableMetric(value);
   const readinessMetric = numericMetric(trainingContext?.recovery?.readinessScore);
   const sleepMetric = numericMetric(healthMetrics.sleepHoursLastNight);
   const sleepBaselineMetric = numericMetric(healthMetrics.sleepHours7dBaseline);
@@ -299,18 +312,26 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
       return `${name}: ${Math.max(0, Number(exercise?.sets || 0))} logged sets, ${recentSet}`;
     }).join('; ')
     : 'no recent logged exercise-set detail';
+  const observedMileageLine = observedMileage !== null
+    ? observedMileage.toFixed(1)
+    : observedMileageLowerBound !== null
+      ? `unknown; observed lower bound: ${observedMileageLowerBound.toFixed(1)} mi/week over ${Math.round(observedMileageWindowDays || 28)} days (incomplete evidence)`
+      : 'unknown (insufficient evidence)';
+  const adherenceLine = adherence === null ? 'unknown (insufficient evidence)' : `${Math.round(adherence * 100)}%`;
+  const missedWorkoutsLine = missedWorkouts === null ? 'unknown (insufficient evidence)' : String(Math.round(missedWorkouts));
+  const profileWeeklyMiles = nullableMetric(profile.weekly_miles_current, { min: 0, max: 300 });
   const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a ${weeks}-week PERIODIZED canonical plan for this athlete:
 - Name: ${sanitize(profile.name, 50)}
-- Current weekly miles: ${Number(profile.weekly_miles_current) || 0}
+- Current weekly miles: ${profileWeeklyMiles === null ? 'unknown' : profileWeeklyMiles}
 - Goal: ${goalDesc}
 - Required plan mode: ${planMode}
 - First week starts Monday: ${startDate || 'derive from the supplied target'}
 - Run days per week: ${frequency.runDaysPerWeek}
 - Lift days per week: ${frequency.liftDaysPerWeek}${trainingDaysLine}
-- Observed weekly mileage from recent activity: ${Number.isFinite(observedMileage) ? observedMileage.toFixed(1) : 'unknown'}
+- Observed weekly mileage from recent activity: ${observedMileageLine}
 - Recent completed runs/lifts: ${Math.max(0, Number(observed.recentRunCount || 0))}/${Math.max(0, Number(observed.recentLiftCount || 0))}
-- Latest meaningful run: ${recentRunLine}; trailing 7-day miles: ${Number(recentRunLoad.sevenDayMiles || 0).toFixed(1)}
-- Recent adherence: ${Number.isFinite(adherence) ? `${Math.round(adherence * 100)}%` : 'unknown'}; missed sessions estimate: ${Math.max(0, Number(observed.missedWorkouts || 0))}
+- Latest meaningful run: ${recentRunLine}; trailing 7-day miles: ${sevenDayMiles === null ? 'unknown (incomplete evidence)' : sevenDayMiles.toFixed(1)}
+- Recent adherence: ${adherenceLine}; missed sessions estimate: ${missedWorkoutsLine}
 - Current recovery state: ${sanitize(trainingContext?.recovery?.state || 'unknown', 20)}
 - Apple Health recovery: readiness ${readinessMetric ?? 'unknown'}, sleep ${sleepMetric === null ? 'unknown' : `${sleepMetric}h`}${sleepBaselineMetric === null ? '' : ` vs ${sleepBaselineMetric}h baseline`}, HRV ${hrvMetric === null ? 'unknown' : `${hrvMetric}ms`}${hrvBaselineMetric === null ? '' : ` vs ${hrvBaselineMetric}ms baseline`}, resting HR ${restingHrMetric ?? 'unknown'}${restingHrBaselineMetric === null ? '' : ` vs ${restingHrBaselineMetric} baseline`}
 - Apple Health activity this week: ${activityLine}
@@ -955,4 +976,12 @@ module.exports = {
   generateRecoveryAdjustment,
   generatePostSessionInsight,
   generateNextGoalSuggestions,
+  _test: {
+    setClient(nextClient) {
+      client = nextClient;
+    },
+    resetClient() {
+      client = undefined;
+    },
+  },
 };

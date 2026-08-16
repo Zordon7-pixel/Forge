@@ -38,6 +38,12 @@ function finiteNonNegative(value, fallback = 0, maximum = Number.MAX_SAFE_INTEGE
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : fallback;
 }
 
+function finiteNonNegativeOrNull(value, maximum = Number.MAX_SAFE_INTEGER) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : null;
+}
+
 function resolvedGoalTime(target = {}, existingGoal = {}, history = {}) {
   const requestedSeconds = Number(target.goalTimeSeconds ?? target.goal_time_seconds);
   if (Number.isFinite(requestedSeconds) && requestedSeconds > 0) {
@@ -920,11 +926,17 @@ function rebuildCanonicalRunSession({
   workoutId: requestedWorkoutId = null,
 }) {
   const history = context.history || {};
+  const weeklyMiles = finiteNonNegativeOrNull(
+    history.weeklyMileageBaseline
+      ?? history.mileageBaseline?.observedLowerBoundWeeklyMiles
+      ?? context.profile?.weekly_miles_current,
+    300,
+  );
   const workoutId = requestedWorkoutId || runWorkoutTaxonomy.workoutIdForSession(type, {
     phase,
     weekNumber,
     weekCount,
-    weeklyMiles: Number(history.weeklyMileageBaseline || context.profile?.weekly_miles_current || 0),
+    weeklyMiles: weeklyMiles ?? 0,
     meaningfulRunCount: Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0),
     conservative: type === 'recovery',
   });
@@ -1310,7 +1322,16 @@ function chooseLiftDays(availableDays, runByDay, count) {
 }
 
 function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = null, expectedStartDate = null) {
-  const adherence = Number(history.adherenceRate);
+  const adherence = finiteNonNegativeOrNull(history.adherenceRate, 1);
+  const missedWorkouts = finiteNonNegativeOrNull(history.missedWorkouts, 100);
+  const weeklyMileageBaseline = finiteNonNegativeOrNull(
+    history.weeklyMileageBaseline ?? profile.weekly_miles_current,
+    300,
+  );
+  const observedLowerBoundWeeklyMiles = finiteNonNegativeOrNull(
+    history.mileageBaseline?.observedLowerBoundWeeklyMiles,
+    300,
+  );
   const acute = acuteLoadMetadata(history);
   const reconciliation = expectedStartDate
     ? reconcileCurrentWeekActivity(history, expectedStartDate)
@@ -1321,12 +1342,13 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     ? Number(value)
     : null;
   return {
-    weeklyMileageBaseline: round(finiteNonNegative(history.weeklyMileageBaseline ?? profile.weekly_miles_current, 0, 300)),
+    weeklyMileageBaseline: weeklyMileageBaseline === null ? null : round(weeklyMileageBaseline),
+    observedLowerBoundWeeklyMiles: observedLowerBoundWeeklyMiles === null ? null : round(observedLowerBoundWeeklyMiles),
     mileageBaseline: history.mileageBaseline || null,
     recentRunCount: clamp(Math.round(Number(history.recentRunCount || 0)), 0, 100),
     recentLiftCount: clamp(Math.round(Number(history.recentLiftCount || 0)), 0, 100),
-    missedWorkouts: clamp(Math.round(Number(history.missedWorkouts || 0)), 0, 100),
-    adherenceBand: Number.isFinite(adherence) ? (adherence >= 0.85 ? 'high' : adherence >= 0.65 ? 'moderate' : 'low') : 'unknown',
+    missedWorkouts: missedWorkouts === null ? null : clamp(Math.round(missedWorkouts), 0, 100),
+    adherenceBand: adherence === null ? 'unknown' : (adherence >= 0.85 ? 'high' : adherence >= 0.65 ? 'moderate' : 'low'),
     recoveryState: String(recovery.state || recovery.recoveryState || 'unknown').slice(0, 20),
     appleHealth: (recovery.dataAvailable || recovery.available) ? {
       readinessScore: metric(recovery.readinessScore),
@@ -1364,7 +1386,7 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     currentWeekRunLoad: reconciliation?.runMatch === false ? null : acute?.currentWeek || null,
     currentWeekStrengthLoad: reconciliation?.strengthMatch === false ? null : history.currentWeekStrength || null,
     ...(reconciliation ? { currentWeekActivityReconciliation: reconciliation } : {}),
-    sevenDayRunMiles: acute?.sevenDayMiles ?? 0,
+    sevenDayRunMiles: acute?.sevenDayMiles ?? null,
     recentRunLoadRatio: acute?.loadRatio ?? null,
   };
 }
@@ -1387,9 +1409,14 @@ function hasCurrentWeekRecoveryProtection(context = {}) {
 
 function hasLowExperienceQualityProtection(context = {}) {
   const history = context.history || {};
-  const baseline = finiteNonNegative(history.weeklyMileageBaseline ?? context.profile?.weekly_miles_current, 0, 300);
+  const baseline = finiteNonNegativeOrNull(
+    history.weeklyMileageBaseline
+      ?? history.mileageBaseline?.observedLowerBoundWeeklyMiles
+      ?? context.profile?.weekly_miles_current,
+    300,
+  );
   const meaningfulRunCount = Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0);
-  return baseline < 5 || meaningfulRunCount < 3;
+  return (baseline !== null && baseline < 5) || meaningfulRunCount < 3;
 }
 
 function qualitySafetyForWeek(context = {}, options = {}) {
@@ -1530,7 +1557,12 @@ function buildConcurrentPlan(context = {}) {
       equipment: Array.isArray(target.equipment) ? target.equipment : ['barbell', 'dumbbell', 'rack', 'bench'],
       preferredDays: availableDays,
     }, mode);
-  const rawBaseline = finiteNonNegative(history.weeklyMileageBaseline ?? profile.weekly_miles_current, 0, 300);
+  const rawBaseline = finiteNonNegativeOrNull(
+    history.weeklyMileageBaseline
+      ?? history.mileageBaseline?.observedLowerBoundWeeklyMiles
+      ?? profile.weekly_miles_current,
+    300,
+  );
   const baseline = rawBaseline > 0 ? rawBaseline : Math.max(6, raceDistance);
   const weekPhases = phasesForRaceTargets(startDate, weekCount, raceTargets);
   const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history, { ...target, weekPhases });

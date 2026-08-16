@@ -9,6 +9,9 @@ const {
 const importTest = require('../src/routes/import')._test;
 const { normalizeRow, selectExistingRunIdentityMatch } = importTest;
 const { summarizeRecentRunLoad } = require('../src/lib/recentRunLoad');
+const concurrentPlan = require('../src/lib/concurrentPlan');
+const adaptation = require('../src/lib/adaptationEngine');
+const ai = require('../src/services/ai');
 const plansRouter = require('../src/routes/plans');
 
 const MILE_M = 1609.344;
@@ -496,7 +499,8 @@ async function runSmoke() {
       });
       assert.equal(uncertain.progressionEligible, false, state);
       assert.ok(uncertain.weeklyMiles <= 20, `${state}: incomplete history cannot raise the profile baseline`);
-      assert.equal(uncertain.uncertainLoadSafetyHold, true, `${state}: excess observed load remains available only as a conservative safety hold`);
+      assert.equal(uncertain.observedAbovePrescriptionBound, true, `${state}: excess observed load remains an explicit diagnostic signal`);
+      assert.equal(uncertain.uncertainLoadSafetyHold, undefined, `${state}: C2 does not invent a permanent recovery policy`);
     }
   }
 
@@ -611,7 +615,292 @@ async function runSmoke() {
     assert.doesNotMatch(JSON.stringify(context.history.runLoadInput), /cap-correction|cap-run-/);
   }
 
-  console.log('ACTIVITY IDENTITY + LOAD INPUT SMOKE OK (16 groups)');
+  {
+    const incompleteRuns = Array.from({ length: 28 }, (_, index) => run({
+      id: `runtime-run-${index}`,
+      health_source_workout_id: `runtime-provider-${index}`,
+      date: new Date(Date.UTC(2026, 7, 17 - index, 12)).toISOString().slice(0, 10),
+      distance_miles: 1,
+      duration_seconds: 600,
+      health_start_at: new Date(Date.UTC(2026, 7, 17 - index, 12)).toISOString(),
+    }));
+    const incompleteLoad = canonicalizeRunLoadInput({
+      athleteId: ATHLETE_ID,
+      planningInstant: `${PLANNING_DATE}T23:59:59.999Z`,
+      planningDateLocal: PLANNING_DATE,
+      timezone: TIMEZONE,
+      runs: incompleteRuns,
+      providerCoverage: [{ source_system: 'apple_health', modalities: ['running'], status: 'unknown' }],
+    });
+    const noProfileBaseline = plansRouter._test.confidenceAwareMileageBaseline(
+      incompleteLoad.canonical_run_rows,
+      incompleteLoad,
+      { planningDateISO: PLANNING_DATE, profileWeeklyMiles: null },
+    );
+    assert.equal(noProfileBaseline.weeklyMiles, null, 'incomplete rows without an athlete profile never assert a zero baseline');
+    assert.equal(noProfileBaseline.observedLowerBoundWeeklyMiles, 7, '28 observed miles expose a 7 mi/week lower bound');
+    assert.equal(noProfileBaseline.observedWindowDays, 28);
+    assert.equal(noProfileBaseline.observedWindowMiles, 28);
+    assert.equal(noProfileBaseline.progressionEligible, false);
+    assert.equal(noProfileBaseline.uncertainLoadSafetyHold, undefined, 'C2 does not invent a permanent recovery policy from incomplete coverage');
+
+    const unknownDistanceLoad = canonicalizeRunLoadInput({
+      athleteId: ATHLETE_ID,
+      planningInstant: `${PLANNING_DATE}T23:59:59.999Z`,
+      planningDateLocal: PLANNING_DATE,
+      timezone: TIMEZONE,
+      runs: [{
+        id: 'unknown-distance-observation',
+        user_id: ATHLETE_ID,
+        date: PLANNING_DATE,
+        duration_seconds: 1800,
+        health_source: 'apple_health',
+        health_source_workout_id: 'unknown-distance-provider-id',
+        health_start_at: `${PLANNING_DATE}T12:00:00.000Z`,
+      }],
+      providerCoverage: [{ source_system: 'apple_health', modalities: ['running'], status: 'unknown' }],
+    });
+    const unknownDistanceBaseline = plansRouter._test.confidenceAwareMileageBaseline(
+      unknownDistanceLoad.canonical_run_rows,
+      unknownDistanceLoad,
+      { planningDateISO: PLANNING_DATE, profileWeeklyMiles: null },
+    );
+    assert.equal(unknownDistanceBaseline.weeklyMiles, null);
+    assert.equal(unknownDistanceBaseline.observedWindowMiles, null,
+      'an observed workout with unknown distance is not restated as zero observed mileage');
+    assert.equal(unknownDistanceBaseline.observedLowerBoundWeeklyMiles, null);
+
+    const recent = summarizeRecentRunLoad(incompleteLoad.canonical_run_rows, {
+      todayISO: PLANNING_DATE,
+      weeklyBaseline: null,
+      coverageComplete: false,
+    });
+    assert.equal(recent.weeklyBaseline, null, 'acute-load metadata preserves an unknown weekly baseline');
+    assert.equal(recent.sevenDayMiles, 7, 'known acute observations remain visible for safety');
+    assert.equal(recent.loadRatio, null, 'unknown baseline is never divided as zero');
+    const noObservedAcute = summarizeRecentRunLoad([], {
+      todayISO: PLANNING_DATE,
+      weeklyBaseline: null,
+      coverageComplete: false,
+    });
+    assert.equal(noObservedAcute.sevenDayMiles, null, 'no observed rows under incomplete coverage is unknown, not a zero-mile week');
+    assert.equal(noObservedAcute.currentWeek.miles, null);
+
+    const contextWithoutProfileMileage = await plansRouter._test.buildConcurrentContext(ATHLETE_ID, {
+      timezone: TIMEZONE,
+      weekly_miles_current: null,
+      run_days_per_week: 3,
+      lift_days_per_week: 0,
+      comeback_mode: false,
+      injury_notes: null,
+    }, {
+      todayISO: PLANNING_DATE,
+      runDaysPerWeek: 3,
+      liftDaysPerWeek: 0,
+      distanceMiles: 10,
+    }, {
+      async all(sql) {
+        if (sql.includes('FROM runs')) return incompleteRuns.map((row) => ({ ...row }));
+        return [];
+      },
+      async get(sql) {
+        if (sql.includes('FROM health_sync')) {
+          return { synced_at: '2026-08-17T11:00:00.000Z', total_miles_this_week: 7 };
+        }
+        return null;
+      },
+    });
+    assert.equal(contextWithoutProfileMileage.history.runLoadInput.load_input_state, 'UNKNOWN');
+    assert.equal(contextWithoutProfileMileage.history.weeklyMileageBaseline, null);
+    assert.equal(contextWithoutProfileMileage.history.mileageBaseline.observedLowerBoundWeeklyMiles, 7);
+    assert.equal(contextWithoutProfileMileage.history.acuteRunLoad.weeklyBaseline, null);
+    assert.equal(contextWithoutProfileMileage.history.acuteRunLoad.evidenceUse, 'SAFETY_ONLY');
+    assert.equal(contextWithoutProfileMileage.history.adherenceRate, null);
+    assert.equal(contextWithoutProfileMileage.history.missedWorkouts, null);
+
+    const missingContextWithoutProfileMileage = await plansRouter._test.buildConcurrentContext(ATHLETE_ID, {
+      timezone: TIMEZONE,
+      weekly_miles_current: null,
+      run_days_per_week: 3,
+      lift_days_per_week: 0,
+      comeback_mode: false,
+      injury_notes: null,
+    }, {
+      todayISO: PLANNING_DATE,
+      runDaysPerWeek: 3,
+      liftDaysPerWeek: 0,
+      distanceMiles: 10,
+    }, {
+      async all(sql) {
+        if (sql.includes('FROM runs')) return incompleteRuns.map((row) => ({ ...row }));
+        return [];
+      },
+      async get() { return null; },
+    });
+    assert.equal(missingContextWithoutProfileMileage.history.runLoadInput.load_input_state, 'MISSING');
+    assert.equal(missingContextWithoutProfileMileage.history.weeklyMileageBaseline, null);
+    assert.equal(missingContextWithoutProfileMileage.history.mileageBaseline.observedLowerBoundWeeklyMiles, 7);
+
+    const profileBoundContext = await plansRouter._test.buildConcurrentContext(ATHLETE_ID, {
+      timezone: TIMEZONE,
+      weekly_miles_current: 20,
+      run_days_per_week: 3,
+      lift_days_per_week: 0,
+      comeback_mode: false,
+      injury_notes: null,
+    }, {
+      todayISO: PLANNING_DATE,
+      runDaysPerWeek: 3,
+      liftDaysPerWeek: 0,
+      distanceMiles: 10,
+    }, {
+      async all(sql) {
+        if (sql.includes('FROM runs')) return incompleteRuns.map((row) => ({ ...row }));
+        return [];
+      },
+      async get(sql) {
+        return sql.includes('FROM health_sync')
+          ? { synced_at: '2026-08-17T11:00:00.000Z', total_miles_this_week: 7 }
+          : null;
+      },
+    });
+    assert.equal(profileBoundContext.history.runLoadInput.load_input_state, 'UNKNOWN');
+    assert.equal(profileBoundContext.history.weeklyMileageBaseline, 7, 'incomplete observations may bound a profile baseline downward, never upward');
+    assert.equal(profileBoundContext.history.mileageBaseline.profileBoundWeeklyMiles, 20);
+    assert.equal(profileBoundContext.history.mileageBaseline.observedLowerBoundWeeklyMiles, 7);
+
+    const summaryPlan = concurrentPlan.buildConcurrentPlan({
+      profile: {
+        weekly_miles_current: null,
+        run_days_per_week: 3,
+        lift_days_per_week: 0,
+      },
+      target: {
+        startDate: '2026-08-17',
+        weeks: 4,
+        planMode: 'run_only',
+        runDaysPerWeek: 3,
+        liftDaysPerWeek: 0,
+        trainingDays: ['Mon', 'Wed', 'Sun'],
+      },
+      todayISO: PLANNING_DATE,
+      history: contextWithoutProfileMileage.history,
+      recovery: { state: 'unknown', available: false, dataAvailable: false },
+    });
+    assert.equal(summaryPlan.inputSummary.weeklyMileageBaseline, null, 'runtime input summary does not convert unknown mileage to zero');
+    assert.equal(summaryPlan.inputSummary.observedLowerBoundWeeklyMiles, 7);
+    assert.equal(summaryPlan.inputSummary.missedWorkouts, null, 'runtime input summary keeps unknown misses nullable');
+    assert.equal(summaryPlan.inputSummary.adherenceBand, 'unknown');
+
+    let capturedRequest = null;
+    ai._test.setClient({
+      messages: {
+        async create(request) {
+          capturedRequest = request;
+          return { content: [{ text: '{}' }] };
+        },
+      },
+    });
+    try {
+      await ai.generateTrainingPlan({
+        name: 'Synthetic athlete',
+        weekly_miles_current: null,
+        run_days_per_week: 3,
+        lift_days_per_week: 0,
+      }, {
+        startDate: '2026-08-17',
+        weeks: 4,
+        planMode: 'run_only',
+        runDaysPerWeek: 3,
+        liftDaysPerWeek: 0,
+        trainingDays: ['Mon', 'Wed', 'Sun'],
+      }, contextWithoutProfileMileage);
+    } finally {
+      ai._test.resetClient();
+    }
+    assert.equal(capturedRequest.model, 'complex', 'C2 keeps the training-plan model tier unchanged');
+    const prompt = capturedRequest.messages[0].content;
+    assert.match(prompt, /Observed weekly mileage from recent activity: unknown; observed lower bound: 7\.0 mi\/week over 28 days \(incomplete evidence\)/);
+    assert.match(prompt, /Recent adherence: unknown \(insufficient evidence\); missed sessions estimate: unknown \(insufficient evidence\)/);
+    assert.doesNotMatch(prompt, /Recent adherence: 0%|missed sessions estimate: 0(?:\D|$)/, 'nullable completion evidence never becomes a confident zero in the AI prompt');
+
+    const incompleteAge = plansRouter._test.goalBackwardTrainingAge({
+      profile: {},
+      history: { recentRunCount: 28, runLoadInput: { load_input_state: 'UNKNOWN' } },
+    });
+    assert.equal(incompleteAge, 'ESTABLISHED', 'missing interval proof alone does not permanently promote an experienced runner to beginner');
+    assert.deepEqual(plansRouter._test.goalBackwardSafetyState({
+      safety: { activeInjury: false },
+      history: { mileageBaseline: { observedLowerBoundWeeklyMiles: 7, progressionEligible: false } },
+    }), { action: 'NORMAL', scope: [] }, 'C2 exposes uncertainty without inventing a permanent no-intensity policy');
+
+    let capturedAthleteState = null;
+    assert.throws(() => plansRouter._test.computeGoalBackwardShadowDiagnostics({
+      userId: ATHLETE_ID,
+      planningDateLocal: PLANNING_DATE,
+      state: {
+        inputHash: 'sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+        planningInputRevision: 1,
+        target: { trainingDays: ['Mon', 'Wed', 'Sun'] },
+        races: [],
+        planningConstraints: { locks: [], manual_edits: [], lock_revision: 0, edit_revision: 0 },
+        context: contextWithoutProfileMileage,
+        active: null,
+        activePlan: null,
+      },
+      built: { plan: { weeks: [] } },
+    }, {
+      buildDecision(input) {
+        capturedAthleteState = input.athlete_state;
+        throw new Error('C2_ATHLETE_STATE_CAPTURED');
+      },
+    }), /C2_ATHLETE_STATE_CAPTURED/);
+    assert.equal(capturedAthleteState.training_age_class, 'ESTABLISHED');
+    assert.equal(capturedAthleteState.consistency_state, 'UNKNOWN', 'incomplete interval coverage cannot claim completed consistent weeks');
+    assert.equal(capturedAthleteState.safety_action, 'NORMAL');
+    assert.equal(capturedAthleteState.recent_normal_running.status, 'PROVISIONAL');
+    assert.equal(capturedAthleteState.recent_normal_running.load_input_state, 'UNKNOWN');
+    assert.equal(capturedAthleteState.recent_normal_running.confidence, 'INSUFFICIENT');
+    assert.equal(capturedAthleteState.recent_normal_running.load_input_confidence, 'LOW');
+    assert.equal(capturedAthleteState.recent_normal_running.observed_lower_bound_distance_m, Math.round(7 * MILE_M));
+    assert.equal(capturedAthleteState.recent_normal_running.median_distance_m, Math.round(7 * MILE_M));
+
+    const unknownCompletion = adaptation.buildAdaptationProposal({
+      plan: {
+        schemaVersion: 2,
+        planMode: 'run_only',
+        weeks: [{ week: 1, phase: 'build', days: [{
+          day: 'Mon',
+          date: '2026-08-17',
+          sessions: [{
+            id: 'unknown-completion-run',
+            kind: 'run',
+            type: 'quality',
+            workout_type: 'run',
+            title: 'Quality run',
+            intensity: 'Hard',
+            target_zone: 'Zone 4',
+            duration_min: 40,
+            distance_miles: 4,
+          }],
+        }] }],
+      },
+      planningDateISO: PLANNING_DATE,
+      planVersion: 'c2-null-completion',
+      completion: {
+        adherenceRate: null,
+        missedWorkouts: null,
+        missedRuns: null,
+        missedLifts: null,
+        weeklyMileageBaseline: null,
+        freshness: 'unknown',
+      },
+    });
+    assert.equal(unknownCompletion.status, 'keep', 'unknown completion evidence cannot trigger a low-adherence adaptation');
+    assert.doesNotMatch(JSON.stringify(unknownCompletion), /"missedWorkouts":0/, 'adaptation artifacts never restate unknown misses as zero');
+  }
+
+  console.log('ACTIVITY IDENTITY + LOAD INPUT SMOKE OK (17 groups)');
 }
 
 runSmoke().catch((error) => {
