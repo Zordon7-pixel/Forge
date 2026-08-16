@@ -419,8 +419,9 @@ test('Signature UI opens canonical readiness on demand and keeps Coach\'s Daily 
   }
   await expect(readiness.locator('.signature-arc')).toHaveAttribute('aria-hidden', 'true')
   await expect(readiness.locator('button')).toHaveCount(0)
+  await expect(page).toHaveURL('/')
   const readinessRequestsAfterOpenRoute = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
-  expect(readinessRequestsAfterOpenRoute).toBeGreaterThanOrEqual(readinessRequestsBeforeOpen)
+  expect(readinessRequestsAfterOpenRoute, 'Opening readiness reuses the loaded Dashboard and header truth').toBe(readinessRequestsBeforeOpen)
 
   const close = readinessDialog.getByRole('button', { name: 'Close', exact: true })
   await expect(close).toBeFocused()
@@ -464,7 +465,9 @@ test('Signature UI opens canonical readiness on demand and keeps Coach\'s Daily 
 
   await headerReadiness.click()
   await expect(readinessDialog).toBeVisible()
+  await expect(page).toHaveURL('/')
   const readinessRequestsAfterBackdropRoute = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
+  expect(readinessRequestsAfterBackdropRoute, 'Reopening readiness reuses the loaded Dashboard and header truth').toBe(readinessRequestsBeforeOpen)
   await page.locator('[data-readiness-overlay]').click({ position: { x: 4, y: 4 } })
   await expect(readinessDialog).toHaveCount(0)
   await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)

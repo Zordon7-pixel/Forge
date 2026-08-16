@@ -639,7 +639,7 @@ assert.ok(insightsSheetSource.includes("item._type === 'workout'") && insightsSh
 assert.ok(dashboardSource.includes('<RecentActivityCard recentActivity={recentActivity}'), 'Recent Activity remains the visible Dashboard result of ordinary and late successful imports')
 assert.ok(layout.includes('<PullToRefresh onRefreshComplete={refreshAppShell}>'), 'the shared app shell owns the refresh completion')
 assert.ok(layout.includes('<main key={appRefreshKey}'), 'the active screen remounts after HealthKit settles')
-assert.ok(layout.includes('refreshKey={`${location.key}:${appRefreshKey}`}'), 'header readiness refreshes with the active screen')
+assert.ok(layout.includes('refreshKey={`${location.pathname}:${appRefreshKey}`}'), 'header readiness refreshes for pathname navigation and pull-to-refresh')
 assert.ok(layout.includes("/^\\/workout\\/active(?:\\/|$)/"), 'only an active workout is immersive; workout summaries retain pull-to-refresh')
 
 console.log('HEALTH AUTO-SYNC SMOKE OK')

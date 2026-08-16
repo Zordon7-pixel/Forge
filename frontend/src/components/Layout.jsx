@@ -90,7 +90,7 @@ export default function Layout({ children }) {
               <img src="/icon-192.png" alt="Forged Hybrid" className="w-9 h-9 rounded-xl object-cover" />
             </button>
             <HeaderReadinessChip
-              refreshKey={`${location.key}:${appRefreshKey}`}
+              refreshKey={`${location.pathname}:${appRefreshKey}`}
               onOpen={() => navigate('/?readiness=1')}
             />
             <div className="flex shrink-0 items-center gap-2 justify-self-end">
