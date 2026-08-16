@@ -790,7 +790,14 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     edit_revision: planningConstraints.edit_revision,
     constraint_fingerprint: planningConstraints.constraint_fingerprint,
     completion_outcomes: clone(input.completion_outcomes || athleteState.completion_outcomes || []),
-    safety_state: { action: athleteState.safety_action || 'NORMAL', scope: clone(athleteState.safety_scope || []) },
+    safety_state: {
+      action: athleteState.safety_action || 'NORMAL',
+      scope: clone(athleteState.safety_scope || []),
+      ...(Array.isArray(athleteState.safety_reason_codes)
+        ? { reason_codes: clone(athleteState.safety_reason_codes) } : {}),
+      ...(typeof athleteState.safety_receipt_hash === 'string' && athleteState.safety_receipt_hash
+        ? { receipt_hash: athleteState.safety_receipt_hash } : {}),
+    },
     recovery_state: athleteState.recovery_state || 'UNKNOWN',
     evidence_used: clone(input.evidence_used || []),
     stale_evidence: clone(input.stale_evidence || []),

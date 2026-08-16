@@ -2711,6 +2711,8 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       recovery_state: recoveryState,
       safety_action: safetyAction,
       safety_scope: safetyState.scope,
+      safety_reason_codes: safetyState.reason_codes,
+      safety_receipt_hash: safetyState.receipt_hash,
       recent_normal_running: {
         status: recentNormalStatus,
         median_distance_m: recentNormalStatus !== 'INSUFFICIENT'
@@ -3329,13 +3331,40 @@ function prefixedGoalBackwardCandidateHash(value) {
   return hash.startsWith('sha256:') ? hash : `sha256:${hash}`;
 }
 
+function applicableGoalBackwardFeasibility(goalBackwardResult) {
+  const activeGoals = Array.isArray(goalBackwardResult?.decision?.active_goals)
+    ? goalBackwardResult.decision.active_goals : [];
+  const goalFeasibilities = Array.isArray(goalBackwardResult?.decision?.goal_feasibilities)
+    ? goalBackwardResult.decision.goal_feasibilities : [];
+  if (!activeGoals.length || goalFeasibilities.length !== activeGoals.length) return null;
+  const byGoalId = new Map(goalFeasibilities.map((entry) => [String(entry?.goal_id || ''), entry]));
+  const statuses = activeGoals.map((goal) => byGoalId.get(String(goal?.goal_id || ''))?.status || null);
+  if (statuses.some((status) => !['supported', 'unvalidated', 'at_risk'].includes(status))) return null;
+  return statuses.every((status) => status === 'supported') ? 'supported' : 'stretch';
+}
+
 function applicableGoalBackwardPlan(currentPlan, goalBackwardResult) {
   const selected = goalBackwardResult?.selected_candidate;
   const canonicalPlan = selected?.canonical_plan;
+  const overallFeasibility = applicableGoalBackwardFeasibility(goalBackwardResult);
   if (!selected?.validation?.valid || !selected?.canonical_sessions_materialized
-    || !canonicalPlan || !Array.isArray(canonicalPlan.weeks) || canonicalPlan.weeks.length === 0) {
+    || !canonicalPlan || !Array.isArray(canonicalPlan.weeks) || canonicalPlan.weeks.length === 0
+    || !overallFeasibility) {
     return null;
   }
+  const decisionFeasibilityByRaceId = new Map(
+    goalBackwardResult.decision.goal_feasibilities.map((entry) => [String(entry?.race_id || ''), entry]),
+  );
+  const goalFeasibilities = (Array.isArray(currentPlan.goal_feasibilities)
+    ? currentPlan.goal_feasibilities : []).map((entry) => {
+    const decisionFeasibility = decisionFeasibilityByRaceId.get(String(entry?.race_id || ''));
+    return decisionFeasibility ? {
+      ...entry,
+      feasibility: decisionFeasibility.status,
+      reasons: decisionFeasibility.reason_codes || [],
+      next_required_assessment: decisionFeasibility.next_required_assessment || null,
+    } : entry;
+  });
   return {
     ...currentPlan,
     ...canonicalPlan,
@@ -3343,7 +3372,8 @@ function applicableGoalBackwardPlan(currentPlan, goalBackwardResult) {
     engineVersion: currentPlan.engineVersion,
     goal_backward_engine_version: 'goal-backward-coaching-v2.4',
     goal_backward_policy_versions: goalBackwardResult.decision?.policy_versions || {},
-    overall_feasibility: currentPlan.overall_feasibility,
+    overall_feasibility: overallFeasibility,
+    goal_feasibilities: goalFeasibilities,
     reasons: [...new Set([
       ...(Array.isArray(currentPlan.reasons) ? currentPlan.reasons : []),
       ...(Array.isArray(goalBackwardResult.decision?.reason_codes) ? goalBackwardResult.decision.reason_codes : []),
