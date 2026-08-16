@@ -1,8 +1,23 @@
 #!/usr/bin/env node
 
 const assert = require('node:assert/strict');
+const { createPlanningInputMutationRunner } = require('../src/lib/planningRevision');
 
 let adapter = {};
+
+const runPlanningInputMutation = createPlanningInputMutationRunner((userId, mutation) => (
+  adapter.withTransaction((providedTx = {}) => mutation({
+    get: (sql, params) => /FROM users WHERE id=/.test(sql)
+      ? Promise.resolve({ planning_input_revision: 1 })
+      : /UPDATE users[\s\S]*planning_input_revision/.test(sql)
+        ? Promise.resolve({ planning_input_revision: 2 })
+        : providedTx.get ? providedTx.get(sql, params) : adapter.dbGet(sql, params),
+    all: (...args) => providedTx.all ? providedTx.all(...args) : adapter.dbAll(...args),
+    run: (sql, params) => /UPDATE users SET planning_input_revision=/.test(sql)
+      ? Promise.resolve({ changes: 1 })
+      : providedTx.run ? providedTx.run(sql, params) : adapter.dbRun(sql, params),
+  }), { userIds: [userId], requireUserIds: [userId] })
+));
 
 const dbModulePath = require.resolve('../src/db');
 const originalDbModule = require.cache[dbModulePath];
@@ -18,6 +33,7 @@ require.cache[dbModulePath] = {
     dbRun: (...args) => adapter.dbRun(...args),
     withTransaction: (...args) => adapter.withTransaction(...args),
     withUserMutation: (userId, fn) => adapter.withTransaction(fn, { requireUserIds: [userId] }),
+    withPlanningInputMutation: (...args) => runPlanningInputMutation(...args),
     runWithUserContext: (_userId, fn) => fn(),
   },
 };
@@ -167,7 +183,14 @@ async function verifyLegacyRaceLinkRoute(raceLinkHandler) {
   const sharedPlanData = {
     schemaVersion: 2,
     goal: { name: 'Army Ten-Miler', date: '2026-10-11', distanceMiles: 10 },
-    weeks: [],
+    weeks: [{
+      week: 1,
+      days: [{
+        date: '2026-07-20',
+        day: 'Mon',
+        sessions: [{ id: 'template-easy-run-1', kind: 'run', distance_miles: 3 }],
+      }],
+    }],
   };
   const plans = new Map([['template-1', {
     id: 'template-1',
@@ -243,6 +266,12 @@ async function verifyLegacyRaceLinkRoute(raceLinkHandler) {
         plan.plan_data = serialized;
         return { changes: 1 };
       }
+      if (/UPDATE user_plans SET plan_version=plan_version\+1/.test(sql)) {
+        const [userPlanId, userId] = params;
+        assert.equal(userPlanId, assignment.user_plan_id);
+        assert.equal(userId, assignment.user_id);
+        return { changes: 1 };
+      }
       throw new Error(`Unexpected transaction write: ${sql}`);
     },
   };
@@ -289,7 +318,7 @@ async function verifyLegacyRaceLinkRoute(raceLinkHandler) {
       { raceId: 'race-a', name: 'Yonkers Half Marathon', date: '2026-09-20', distanceMiles: 13.1 },
       { raceId: 'race-c', name: 'Army Ten-Miler', date: '2026-10-11', distanceMiles: 10 },
     ],
-    weeks: [],
+    weeks: sharedPlanData.weeks,
   });
   races.set('race-a', { id: 'race-a', user_id: 'user-a', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20', distance_miles: 13.1, location: 'Yonkers, NY', goal_time_seconds: 7200 });
   races.set('race-c', { id: 'race-c', user_id: 'user-a', race_name: 'Army Ten-Miler', race_date: '2026-10-11', distance_miles: 10, location: 'Washington, DC', goal_time_seconds: 5400 });

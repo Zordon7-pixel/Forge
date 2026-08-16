@@ -17,6 +17,8 @@ const { summarizeRecentRunLoad } = require('../lib/recentRunLoad');
 const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
 const { summarizeRecentExercises } = require('../lib/strengthPrescription');
 const { runActivitySql } = require('../lib/runActivity');
+const { summarizeCanonicalActivityWindows } = require('../lib/activityIdentity');
+const { providerCoverageFromHealthRow } = require('../lib/healthCoverage');
 const { allocatePlanSessionRunEvidence, findPlanSessionRunEvidence } = require('../lib/plannedRunMatch');
 const hybridReconciliation = require('../lib/hybridReconciliation');
 const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
@@ -1500,8 +1502,9 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   const sinceDate = addPolicyDays(planningDateISO, -55);
   const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
     all(
-      `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
-              pain_level, post_energy, pace_avg, health_source, created_at,
+      `SELECT id, date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
+              pain_level, post_energy, pace_avg, health_source, health_source_workout_id,
+              health_start_at, health_end_at, created_at,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
               type, watch_activity_type, watch_normalized_type
        FROM runs
@@ -1510,8 +1513,9 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       [userId, sinceDate, planningDateISO]
     ),
     all(
-      `SELECT id, date, distance_miles, duration_seconds, health_source, watch_mode,
-              workout_metrics_json, type, watch_activity_type, watch_normalized_type
+      `SELECT id, date, distance_miles, duration_seconds, health_source, health_source_workout_id,
+              health_start_at, health_end_at, watch_mode, workout_metrics_json,
+              type, watch_activity_type, watch_normalized_type
        FROM runs
        WHERE user_id=? AND date<=? AND distance_miles>0 AND duration_seconds>0 AND ${runActivitySql()}
        ORDER BY date DESC, created_at DESC
@@ -1559,9 +1563,20 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       return null;
     }),
   ]);
+  const canonicalRunResolution = summarizeCanonicalActivityWindows(runs || [], { planningDateISO });
+  const canonicalRuns = canonicalRunResolution.canonical_rows;
+  const canonicalPerformanceRuns = summarizeCanonicalActivityWindows(performanceRuns || [], { planningDateISO }).canonical_rows;
+  const runningCoverage = providerCoverageFromHealthRow(healthRow, {
+    planningInstant: `${planningDateISO}T12:00:00.000Z`,
+    expectedStartLocal: sinceDate,
+    expectedEndLocal: planningDateISO,
+  });
+  const recentNormalSyncState = runningCoverage.complete && canonicalRuns.length === 0
+    ? 'VALID_ZERO'
+    : runningCoverage.sync_state;
   const strengthExposures = completedStrengthExposures(workouts, legacyLifts);
   const activityDates = [
-    ...(runs || []).map((run) => String(run.date || '').slice(0, 10)),
+    ...canonicalRuns.map((run) => String(run.date || '').slice(0, 10)),
     ...strengthExposures.map((exposure) => exposure.date),
   ].filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
   const weeksObserved = activityDates.length
@@ -1585,7 +1600,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     currentWeekStart,
     planningDateISO,
   );
-  const completedSessions = (runs || []).length + strengthExposures.length;
+  const completedSessions = canonicalRuns.length + strengthExposures.length;
   const healthSignals = buildHealthSignals(healthRow || {});
   const healthMetrics = healthSignals.metrics || {};
   const healthFreshness = healthMetrics.freshness || {};
@@ -1614,17 +1629,18 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   if (severeCheckin) recoveryState = 'low';
   else if (cautionCheckin && !['low', 'recovery'].includes(recoveryState)) recoveryState = 'caution';
   if (activeInjury || profile.comeback_mode || String(profile.injury_notes || '').trim()) recoveryState = 'low';
-  const mileageBaseline = concurrentPlan.estimateWeeklyMileageBaseline(runs, {
+  const mileageBaseline = concurrentPlan.estimateWeeklyMileageBaseline(canonicalRuns, {
     planningDateISO,
     profileWeeklyMiles: profile.weekly_miles_current,
+    syncState: recentNormalSyncState,
   });
   const weeklyMileageBaseline = mileageBaseline.weeklyMiles;
-  const acuteRunLoad = summarizeRecentRunLoad(runs, {
+  const acuteRunLoad = summarizeRecentRunLoad(canonicalRuns, {
     todayISO: planningDateISO,
     weeklyBaseline: weeklyMileageBaseline,
     recoveryState,
   });
-  const performanceProfile = concurrentPlan.buildRunPerformanceProfile(performanceRuns, {
+  const performanceProfile = concurrentPlan.buildRunPerformanceProfile(canonicalPerformanceRuns, {
     todayISO: planningDateISO,
     targetDistanceMiles: target.distanceMiles,
   });
@@ -1640,7 +1656,13 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     history: {
       weeklyMileageBaseline,
       mileageBaseline,
-      recentRunCount: (runs || []).length,
+      recentRunCount: canonicalRuns.length,
+      rawRecentRunCount: canonicalRunResolution.raw_row_count,
+      activityIdentityReceipts: canonicalRunResolution.identity_receipts,
+      activityIdentityReceiptCount: canonicalRunResolution.receipt_count,
+      activityIdentityReceiptsTruncated: canonicalRunResolution.receipts_truncated,
+      recentNormalSyncState,
+      recentNormalCoverage: runningCoverage,
       recentLiftCount: strengthExposures.length,
       acuteRunLoad,
       currentWeekStrength,
@@ -2329,6 +2351,9 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const safetyAction = safetyState.action;
   const recentRunCount = Number(state.context?.history?.recentRunCount || 0);
   const weeklyMiles = Number(state.context?.history?.weeklyMileageBaseline || 0);
+  const mileageBaseline = state.context?.history?.mileageBaseline || {};
+  const recentNormalObserved = ['COMPLETE', 'LOW_CONFIDENCE'].includes(mileageBaseline.status)
+    || (!mileageBaseline.status && weeklyMiles > 0);
   const goals = goalBackwardGoalsForState(userId, state);
   const primaryEventDate = goals[0]?.event_local_date || null;
   const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
@@ -2350,8 +2375,16 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       recovery_state: recoveryState,
       safety_action: safetyAction,
       recent_normal_running: {
-        status: weeklyMiles > 0 ? (recentRunCount >= 8 ? 'ESTABLISHED' : 'PROVISIONAL') : 'INSUFFICIENT',
-        median_distance_m: weeklyMiles > 0 ? Math.round(weeklyMiles * 1609.344) : null,
+        status: recentNormalObserved && weeklyMiles > 0
+          ? (recentRunCount >= 8 ? 'ESTABLISHED' : 'PROVISIONAL')
+          : 'INSUFFICIENT',
+        median_distance_m: recentNormalObserved && weeklyMiles > 0 ? Math.round(weeklyMiles * 1609.344) : null,
+        confidence: mileageBaseline.confidence || (recentNormalObserved ? 'MEDIUM' : 'INSUFFICIENT'),
+        sync_state: mileageBaseline.syncState || (recentNormalObserved ? 'COMPLETE' : 'UNKNOWN'),
+        value_state: mileageBaseline.completeZero ? 'VALID_ZERO'
+          : recentNormalObserved && weeklyMiles > 0 ? 'KNOWN' : 'UNKNOWN',
+        windows: mileageBaseline.windows || null,
+        activity_identity_receipts: mileageBaseline.identityReceipts || [],
       },
       available_days: availableLocalDates,
       locks: state.planningConstraints?.locks || [],

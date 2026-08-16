@@ -5,6 +5,13 @@ const { dbGet, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { activityKind } = require('../lib/runActivity');
 const { buildRunImportKeys } = require('../lib/runImportKey');
+const {
+  FUZZY_DISTANCE_CEILING_MILES,
+  IDENTITY_REASON_CODES,
+  activityIdentityMatch,
+  buildActivityIdentityReceipt,
+  privacySafeActivityRef,
+} = require('../lib/activityIdentity');
 const { classifyRouteIntegrity, normalizeDistanceEvidence } = require('../lib/runPostRun');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 const {
@@ -503,14 +510,6 @@ function normalizeRow(raw = {}) {
   };
 }
 
-function startsMatch(existingStart, importedStart) {
-  if (!existingStart || !importedStart) return false;
-  const existingTime = new Date(existingStart).getTime();
-  const importedTime = new Date(importedStart).getTime();
-  if (Number.isNaN(existingTime) || Number.isNaN(importedTime)) return false;
-  return Math.abs(existingTime - importedTime) <= 30 * 60 * 1000;
-}
-
 async function findMatchingForgedRun(db, userId, item, { excludeId = null } = {}) {
   if (
     !isTrustedSensorSummarySource(item.source)
@@ -563,11 +562,11 @@ async function findExistingRun(db, userId, item) {
        FOR UPDATE`,
       [userId, item.source, item.sourceWorkoutId]
     );
-    if (exact) return exact;
+    if (exact) return { run: exact, reasonCode: IDENTITY_REASON_CODES.EXACT };
   }
 
   const forgedMatch = await findMatchingForgedRun(db, userId, item);
-  if (forgedMatch) return forgedMatch;
+  if (forgedMatch) return { run: forgedMatch, reasonCode: null };
 
   const candidates = await db.all(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
@@ -579,19 +578,34 @@ async function findExistingRun(db, userId, item) {
             calories, calories_burned, calories_watch, shoe_id, plan_session_id,
             planned_session_json, workout_metrics_json, workout_metric_streams_json, ai_feedback, ai_feedback_requested_at
      FROM runs
-     WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
+     WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) <= ?
+       AND health_source=?
        AND COALESCE(health_source, '')<>'forged_hybrid'
        AND COALESCE(workout_metrics_json, '') NOT LIKE '%"forged_recording_id"%'
        AND COALESCE(workout_metrics_json, '') NOT LIKE '%"route_source":"forged_phone"%'
      LIMIT 25
      FOR UPDATE`,
-    [userId, item.date, item.distanceMiles]
+    [userId, item.date, item.distanceMiles, FUZZY_DISTANCE_CEILING_MILES, item.source]
   );
   const incomingKind = activityKind({ type: item.runType });
   const sameActivity = candidates.filter((row) => activityKind(row) === incomingKind);
-  return sameActivity.find((row) => startsMatch(row.health_start_at, item.startDate))
-    || sameActivity.find((row) => !row.health_start_at)
-    || null;
+  const identityMatches = sameActivity.map((run) => ({
+    run,
+    reasonCode: activityIdentityMatch(run, item),
+  })).filter((entry) => entry.reasonCode);
+  return identityMatches.sort((left, right) => (
+    left.reasonCode.localeCompare(right.reasonCode)
+    || privacySafeActivityRef(left.run).localeCompare(privacySafeActivityRef(right.run))
+  ))[0] || { run: null, reasonCode: null };
+}
+
+function importIdentityReceipt(existingRun, item, reasonCode, identityReference) {
+  if (!existingRun || !reasonCode) return null;
+  return buildActivityIdentityReceipt({
+    kept: existingRun,
+    suppressed: [{ ...item, identity_reference: identityReference }],
+    reasonCode,
+  });
 }
 
 function importKeysForItem(item) {
@@ -1234,9 +1248,24 @@ async function importItem(db, userId, item) {
       const claimedRun = await findRunById(db, userId, claim.activity_id);
       if (claimedRun) {
         const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, claimedRun, item);
-        if (consolidatedRunId) return { status: 'skipped', runId: consolidatedRunId, changed: true };
-        const runId = await updateExistingRunHealth(db, userId, claimedRun, item);
-        return { status: 'skipped', runId, changed: true };
+        if (consolidatedRunId) return { status: 'skipped', runId: consolidatedRunId, changed: true, identityReceipt: null };
+        const identityReason = activityIdentityMatch(claimedRun, item)
+          || (item.sourceWorkoutId ? IDENTITY_REASON_CODES.EXACT : IDENTITY_REASON_CODES.FUZZY);
+        const fuzzyCollision = identityReason === IDENTITY_REASON_CODES.FUZZY;
+        const runId = fuzzyCollision
+          ? claimedRun.id
+          : await updateExistingRunHealth(db, userId, claimedRun, item);
+        return {
+          status: 'skipped',
+          runId,
+          changed: !fuzzyCollision,
+          identityReceipt: importIdentityReceipt(
+            claimedRun,
+            item,
+            identityReason,
+            claim.sourceKey,
+          ),
+        };
       }
     } else if (claim.activity_kind === 'lift' && claim.activity_id) {
       const claimedLift = await db.get('SELECT id FROM lifts WHERE id=? AND user_id=? LIMIT 1', [claim.activity_id, userId]);
@@ -1246,17 +1275,24 @@ async function importItem(db, userId, item) {
   }
 
   if (item.section === 'run' || item.section === 'activity') {
-    const existing = await findExistingRun(db, userId, item);
+    const existingMatch = await findExistingRun(db, userId, item);
+    const existing = existingMatch.run;
     const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, existing, item);
     if (consolidatedRunId) {
       await finalizeImportClaim(db, userId, claim, 'run', consolidatedRunId);
-      return { status: 'skipped', runId: consolidatedRunId, changed: true };
+      return { status: 'skipped', runId: consolidatedRunId, changed: true, identityReceipt: null };
     }
+    const fuzzyCollision = existing && existingMatch.reasonCode === IDENTITY_REASON_CODES.FUZZY;
     const runId = existing
-      ? await updateExistingRunHealth(db, userId, existing, item)
+      ? fuzzyCollision ? existing.id : await updateExistingRunHealth(db, userId, existing, item)
       : await insertRun(db, userId, item);
     await finalizeImportClaim(db, userId, claim, 'run', runId);
-    return { status: existing ? 'skipped' : 'imported', runId, changed: true };
+    return {
+      status: existing ? 'skipped' : 'imported',
+      runId,
+      changed: !fuzzyCollision,
+      identityReceipt: importIdentityReceipt(existing, item, existingMatch.reasonCode, claim.sourceKey),
+    };
   }
 
   const existingLift = await findExistingLift(db, userId, item.date, item.distanceMiles, item.durationSeconds);
@@ -1270,6 +1306,7 @@ async function importRows(userId, rawRows, {
   updateRunPrs = updateImportedRunPrs,
 } = {}) {
   const errors = [];
+  const identityReceipts = [];
   let imported = 0;
   let skipped = 0;
   const rows = Array.isArray(rawRows) ? rawRows : [];
@@ -1301,6 +1338,7 @@ async function importRows(userId, rawRows, {
       );
       if (outcome.status === 'imported') imported += 1;
       else skipped += 1;
+      if (outcome.identityReceipt) identityReceipts.push(outcome.identityReceipt);
 
     } catch (err) {
       console.error(`[import] row ${i} failed:`, err.message);
@@ -1313,7 +1351,15 @@ async function importRows(userId, rawRows, {
     }
   }
 
-  return { imported, skipped, errors };
+  const boundedIdentityReceipts = identityReceipts.slice(0, 128);
+  return {
+    imported,
+    skipped,
+    errors,
+    identity_receipts: boundedIdentityReceipts,
+    identity_receipt_count: identityReceipts.length,
+    identity_receipts_truncated: identityReceipts.length > boundedIdentityReceipts.length,
+  };
 }
 
 router.post('/health', auth, async (req, res) => {

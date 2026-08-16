@@ -251,7 +251,7 @@ class HealthService {
     return this.getSamples({ ...options, type: 'Workout' })
   }
 
-  async syncToProfile(metrics) {
+  async syncToProfile(metrics, workoutSync = null) {
     if (!metrics) return null
     const { data } = await api.post('/health/sync', {
       steps_today: metrics.stepsToday,
@@ -294,6 +294,13 @@ class HealthService {
       running_ground_contact_time_ms: metrics.runningGroundContactTimeMs,
       running_dynamics_recorded_at: metrics.runningDynamicsRecordedAt,
       metrics_schema_version: hasExpandedNativeAuthorization() ? metrics.metricsSchemaVersion : 1,
+      ...(workoutSync ? {
+        workout_sync_state: workoutSync.state,
+        workout_sync_coverage_start_local: workoutSync.coverageStartLocal,
+        workout_sync_coverage_end_local: workoutSync.coverageEndLocal,
+        workout_sync_observed_at: workoutSync.observedAt,
+        workout_sync_affirmative_complete: workoutSync.affirmativeComplete,
+      } : {}),
     })
     return data
   }
@@ -350,6 +357,17 @@ class HealthService {
         })
       } catch (error) {
         markHealthHistoryTransferPending()
+        try {
+          await this.syncToProfile(result.metrics, {
+            state: 'FAILED',
+            coverageStartLocal: String(history.startDate || '').slice(0, 10) || null,
+            coverageEndLocal: String(history.endDate || '').slice(0, 10) || null,
+            observedAt: new Date().toISOString(),
+            affirmativeComplete: false,
+          })
+        } catch (coverageError) {
+          console.error('[HealthService] failed workout coverage could not be saved:', coverageError?.message || coverageError)
+        }
         throw error
       }
     }
@@ -364,6 +382,15 @@ class HealthService {
       upgradeCommitted = markWorkoutHistoryUpgraded()
     }
     const complete = importComplete && upgradeCommitted
+    const coverageStartLocal = String(history.startDate || '').slice(0, 10) || null
+    const coverageEndLocal = String(history.endDate || '').slice(0, 10) || null
+    await this.syncToProfile(result.metrics, {
+      state: complete ? 'COMPLETE' : 'PARTIAL',
+      coverageStartLocal,
+      coverageEndLocal,
+      observedAt: new Date().toISOString(),
+      affirmativeComplete: Boolean(complete && coverageStartLocal && coverageEndLocal),
+    })
     if (complete) {
       clearHealthHistoryTransferPending()
     } else {

@@ -28,7 +28,15 @@ const TRAINING_TIMESTAMP_FIELDS = [
   'heart_rate_recovery_recorded_at',
   'respiratory_rate_recorded_at',
   'running_dynamics_recorded_at',
+  'workout_sync_observed_at',
 ];
+
+const WORKOUT_SYNC_DATE_FIELDS = [
+  'workout_sync_coverage_start_local',
+  'workout_sync_coverage_end_local',
+];
+
+const WORKOUT_SYNC_STATES = Object.freeze(['COMPLETE', 'PARTIAL', 'FAILED', 'MISSING', 'UNKNOWN']);
 
 function coerceMetric(value, options = {}) {
   const { label, integer = false, min = 0, max = Number.POSITIVE_INFINITY, dropAboveMax = false } = options;
@@ -67,6 +75,17 @@ function coerceTimestamp(value, label) {
   return { value: new Date(timestamp).toISOString() };
 }
 
+function coerceLocalDate(value, label) {
+  if (value === null || value === undefined || value === '') return { value: null };
+  const raw = String(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { error: `${label} must be YYYY-MM-DD` };
+  const parsed = new Date(`${raw}T12:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw) {
+    return { error: `${label} must be YYYY-MM-DD` };
+  }
+  return { value: raw };
+}
+
 function normalizeTrainingMetrics(body = {}) {
   const metrics = {};
   if (Number(body.metrics_schema_version) === 2) metrics.metrics_schema_version = 2;
@@ -80,6 +99,23 @@ function normalizeTrainingMetrics(body = {}) {
     const result = coerceTimestamp(body[field], field);
     if (result.error) return { error: result.error };
     if (result.value !== null) metrics[field] = result.value;
+  }
+
+  for (const field of WORKOUT_SYNC_DATE_FIELDS) {
+    const result = coerceLocalDate(body[field], field);
+    if (result.error) return { error: result.error };
+    if (result.value !== null) metrics[field] = result.value;
+  }
+  if (body.workout_sync_state !== null && body.workout_sync_state !== undefined && body.workout_sync_state !== '') {
+    const state = String(body.workout_sync_state).trim().toUpperCase();
+    if (!WORKOUT_SYNC_STATES.includes(state)) return { error: 'workout_sync_state is invalid' };
+    metrics.workout_sync_state = state;
+  }
+  if (body.workout_sync_affirmative_complete !== null && body.workout_sync_affirmative_complete !== undefined) {
+    if (typeof body.workout_sync_affirmative_complete !== 'boolean') {
+      return { error: 'workout_sync_affirmative_complete must be a boolean' };
+    }
+    metrics.workout_sync_affirmative_complete = body.workout_sync_affirmative_complete;
   }
 
   return { metrics };
@@ -105,6 +141,15 @@ function parseTrainingMetrics(raw) {
   for (const field of TRAINING_TIMESTAMP_FIELDS) {
     if (typeof parsed[field] === 'string') safe[field] = parsed[field];
   }
+  for (const field of WORKOUT_SYNC_DATE_FIELDS) {
+    if (typeof parsed[field] === 'string') safe[field] = parsed[field];
+  }
+  if (WORKOUT_SYNC_STATES.includes(String(parsed.workout_sync_state || '').toUpperCase())) {
+    safe.workout_sync_state = String(parsed.workout_sync_state).toUpperCase();
+  }
+  if (typeof parsed.workout_sync_affirmative_complete === 'boolean') {
+    safe.workout_sync_affirmative_complete = parsed.workout_sync_affirmative_complete;
+  }
   if (Number(parsed.metrics_schema_version) === 2) safe.metrics_schema_version = 2;
   return safe;
 }
@@ -116,6 +161,8 @@ function hydrateHealthRow(row = {}) {
 module.exports = {
   TRAINING_METRIC_SPECS,
   TRAINING_TIMESTAMP_FIELDS,
+  WORKOUT_SYNC_DATE_FIELDS,
+  WORKOUT_SYNC_STATES,
   coerceMetric,
   hydrateHealthRow,
   normalizeTrainingMetrics,

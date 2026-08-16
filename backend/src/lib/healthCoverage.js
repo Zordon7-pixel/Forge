@@ -22,6 +22,7 @@ const CORE_COVERAGE_FIELDS = [
 ];
 
 const STALE_AFTER_MS = 48 * 60 * 60 * 1000;
+const SYNC_STATES = Object.freeze(['COMPLETE', 'PARTIAL', 'FAILED', 'STALE', 'MISSING', 'UNKNOWN', 'VALID_ZERO']);
 const HEALTH_FRESHNESS_WINDOWS_MS = Object.freeze({
   sleep_duration: 36 * 60 * 60 * 1000,
   sleep_quality: 36 * 60 * 60 * 1000,
@@ -86,6 +87,18 @@ function normalizedQualityState(value) {
   return null;
 }
 
+function normalizedSyncState(input, rawStatus, qualityState) {
+  const explicit = String(input.sync_state || input.syncState || '').trim().toUpperCase();
+  if (SYNC_STATES.includes(explicit)) return explicit;
+  if (['complete', 'completed', 'success', 'succeeded'].includes(rawStatus) || input.success === true || qualityState === 'COMPLETE') return 'COMPLETE';
+  if (['failed', 'error', 'timeout'].includes(rawStatus) || input.failed === true || input.success === false || qualityState === 'FAILED_SYNC') return 'FAILED';
+  if (rawStatus === 'stale' || input.stale === true) return 'STALE';
+  if (rawStatus === 'missing' || input.missing === true) return 'MISSING';
+  if (rawStatus === 'unknown' || input.unknown === true) return 'UNKNOWN';
+  if (rawStatus === 'partial' || input.partial === true || qualityState === 'PARTIAL') return 'PARTIAL';
+  return 'UNKNOWN';
+}
+
 function classifyProviderCoverage(input = {}) {
   const sourceSystem = String(input.source_system || input.sourceSystem || 'unknown').trim().toLowerCase().slice(0, 40) || 'unknown';
   const rawModalities = input.modalities || input.modality || [];
@@ -98,15 +111,14 @@ function classifyProviderCoverage(input = {}) {
   const expectedEnd = normalizedLocalDate(input.expected_end_local || input.expectedEndLocal);
   const rawStatus = String(input.status || '').trim().toLowerCase();
   let qualityState = normalizedQualityState(input.quality_state || input.qualityState);
+  let syncState = normalizedSyncState(input, rawStatus, qualityState);
   if (!qualityState) {
-    if (input.failed === true || input.success === false || ['failed', 'error', 'timeout'].includes(rawStatus)) {
+    if (syncState === 'FAILED') {
       qualityState = 'FAILED_SYNC';
-    } else if (input.partial === true || rawStatus === 'partial') {
+    } else if (syncState !== 'COMPLETE') {
       qualityState = 'PARTIAL';
-    } else if (['complete', 'completed', 'success', 'succeeded'].includes(rawStatus) || input.success === true) {
-      qualityState = 'COMPLETE';
     } else {
-      qualityState = 'PARTIAL';
+      qualityState = 'COMPLETE';
     }
   }
   const intervalIncomplete = !coverageStart
@@ -114,10 +126,19 @@ function classifyProviderCoverage(input = {}) {
     || coverageEnd < coverageStart
     || (expectedStart && coverageStart > expectedStart)
     || (expectedEnd && coverageEnd < expectedEnd);
-  if (qualityState === 'COMPLETE' && intervalIncomplete) qualityState = 'PARTIAL';
+  const affirmativeComplete = input.affirmative_complete !== false && (
+    input.affirmative_complete === true
+    || syncState === 'COMPLETE'
+    || qualityState === 'COMPLETE'
+  );
+  if (syncState === 'COMPLETE' && (!affirmativeComplete || intervalIncomplete)) syncState = 'PARTIAL';
+  if (qualityState === 'COMPLETE' && syncState !== 'COMPLETE') qualityState = 'PARTIAL';
   const reasonCodes = [];
-  if (qualityState === 'FAILED_SYNC') reasonCodes.push('FAILED_SYNC');
-  if (qualityState === 'PARTIAL') reasonCodes.push('PARTIAL_SYNC');
+  if (syncState === 'FAILED') reasonCodes.push('FAILED_SYNC');
+  if (syncState === 'PARTIAL') reasonCodes.push('PARTIAL_SYNC');
+  if (syncState === 'STALE') reasonCodes.push('EVIDENCE_STALE');
+  if (syncState === 'MISSING') reasonCodes.push('EVIDENCE_MISSING');
+  if (syncState === 'UNKNOWN') reasonCodes.push('EVIDENCE_UNKNOWN');
   if (qualityState === 'CONFLICT') reasonCodes.push('EVIDENCE_CONFLICT_UNRESOLVED');
   return Object.freeze({
     source_system: sourceSystem,
@@ -127,15 +148,60 @@ function classifyProviderCoverage(input = {}) {
     expected_start_local: expectedStart,
     expected_end_local: expectedEnd,
     quality_state: qualityState,
-    complete: qualityState === 'COMPLETE' && !intervalIncomplete,
+    sync_state: syncState,
+    complete: syncState === 'COMPLETE' && qualityState === 'COMPLETE' && affirmativeComplete && !intervalIncomplete,
+    affirmative_complete: affirmativeComplete,
     reason_codes: Object.freeze(reasonCodes),
+  });
+}
+
+function providerCoverageFromHealthRow(row, {
+  planningInstant = new Date(),
+  expectedStartLocal = null,
+  expectedEndLocal = null,
+} = {}) {
+  if (!row) {
+    return classifyProviderCoverage({
+      source_system: 'apple_health',
+      status: 'missing',
+      modalities: ['running'],
+      expected_start_local: expectedStartLocal,
+      expected_end_local: expectedEndLocal,
+    });
+  }
+  const metrics = parseTrainingMetrics(row.training_metrics_json);
+  let status = String(metrics.workout_sync_state || 'UNKNOWN').toLowerCase();
+  const observedAt = metrics.workout_sync_observed_at || row.synced_at || null;
+  const observedMs = Date.parse(observedAt);
+  const planningMs = new Date(planningInstant).getTime();
+  if (
+    !['missing', 'unknown'].includes(status)
+    && Number.isFinite(observedMs)
+    && Number.isFinite(planningMs)
+    && planningMs >= observedMs
+    && planningMs - observedMs > STALE_AFTER_MS
+  ) status = 'stale';
+  return classifyProviderCoverage({
+    source_system: 'apple_health',
+    status,
+    modalities: ['running'],
+    coverage_start_local: metrics.workout_sync_coverage_start_local,
+    coverage_end_local: metrics.workout_sync_coverage_end_local,
+    expected_start_local: expectedStartLocal,
+    expected_end_local: expectedEndLocal,
+    affirmative_complete: metrics.workout_sync_affirmative_complete === true,
   });
 }
 
 function valueStateForEmptyCoverage(rows = []) {
   const coverage = (Array.isArray(rows) ? rows : []).map(classifyProviderCoverage);
-  if (!coverage.length) return 'UNKNOWN';
-  return coverage.every((row) => row.quality_state === 'COMPLETE' && row.complete === true) ? 'VALID_ZERO' : 'UNKNOWN';
+  if (!coverage.length) return 'MISSING';
+  if (coverage.every((row) => row.sync_state === 'COMPLETE' && row.complete === true)) return 'VALID_ZERO';
+  const states = new Set(coverage.map((row) => row.sync_state));
+  if (states.has('FAILED') || states.has('PARTIAL') || states.has('UNKNOWN')) return 'UNKNOWN';
+  if (states.has('STALE')) return 'STALE';
+  if (states.has('MISSING')) return 'MISSING';
+  return 'UNKNOWN';
 }
 
 function worstCoverageQuality(rows) {
@@ -162,7 +228,7 @@ function modalityCoverage(rows, modality) {
   return Object.freeze({
     eligible,
     quality_state: qualityState,
-    value_state: eligible ? 'VALID_ZERO' : 'UNKNOWN',
+    value_state: eligible ? 'VALID_ZERO' : valueStateForEmptyCoverage(capable),
     source_systems: Object.freeze(capable.map((row) => row.source_system).sort()),
     reason_codes: Object.freeze([...new Set(capable.flatMap((row) => row.reason_codes))].sort()),
   });
@@ -272,9 +338,11 @@ async function getHealthCoverage(userId) {
 module.exports = {
   HEALTH_FRESHNESS_WINDOWS_MS,
   HEALTH_SYNC_SCALAR_FIELDS,
+  SYNC_STATES,
   classifyProviderCoverage,
   getHealthCoverage,
   healthMetricFreshness,
   modalityEligibility,
+  providerCoverageFromHealthRow,
   valueStateForEmptyCoverage,
 };

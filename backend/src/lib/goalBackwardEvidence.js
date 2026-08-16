@@ -9,6 +9,11 @@ const {
 const { canonicalHash, canonicalStringify } = require('./racePlanPolicy');
 const { activityKind } = require('./runActivity');
 const {
+  IDENTITY_REASON_CODES,
+  activityIdentityMatch,
+  canonicalizeActivityRows,
+} = require('./activityIdentity');
+const {
   classifyProviderCoverage,
   healthMetricFreshness,
   modalityEligibility,
@@ -373,8 +378,10 @@ function coverageEvidenceEnvelope(row, athleteId, timezone, planningInstant) {
     received_at: planningInstant.toISOString(),
     athlete_timezone: timezone,
     quality_state: coverage.quality_state,
-    value_state: coverage.complete ? 'KNOWN' : 'UNKNOWN',
-    freshness_class: 'FRESH',
+    value_state: coverage.complete ? 'KNOWN'
+      : coverage.sync_state === 'STALE' ? 'STALE'
+        : coverage.sync_state === 'MISSING' ? 'MISSING' : 'UNKNOWN',
+    freshness_class: coverage.sync_state === 'STALE' ? 'STALE' : 'FRESH',
     supersedes_evidence_id: null,
     linked_session_id: null,
     confidence: coverage.complete ? 'HIGH' : 'INSUFFICIENT',
@@ -528,34 +535,23 @@ function preferredActivity(records) {
 }
 
 function deduplicateActivityRecords(records, corrections) {
-  const groups = [];
-  for (const record of records) {
-    const comparable = {
-      athlete_id: record.envelope.athlete_id,
-      activity_kind: record.envelope.value.activity_kind,
-      observed_at: record.envelope.observed_at,
-      duration_s: record.envelope.value.duration_s,
-      route_points: record.routePoints,
-    };
-    const group = groups.find((candidate) => candidate.some((existing) => {
-      const leftSourceId = existing.envelope.source_activity_id;
-      const sameStableIdentity = leftSourceId && record.envelope.source_activity_id
-        && existing.envelope.source_system === record.envelope.source_system
-        && leftSourceId === record.envelope.source_activity_id;
-      if (sameStableIdentity) return true;
-      return temporalRouteFingerprintMatch({
-        athlete_id: existing.envelope.athlete_id,
-        activity_kind: existing.envelope.value.activity_kind,
-        observed_at: existing.envelope.observed_at,
-        duration_s: existing.envelope.value.duration_s,
-        route_points: existing.routePoints,
-      }, comparable);
-    }));
-    if (group) group.push(record);
-    else groups.push([record]);
-  }
-  return groups.map((group) => {
-    const preferred = preferredActivity(group);
+  const match = (left, right) => activityIdentityMatch(left, right) || (
+    temporalRouteFingerprintMatch({
+      athlete_id: left.envelope.athlete_id,
+      activity_kind: left.envelope.value.activity_kind,
+      observed_at: left.envelope.observed_at,
+      duration_s: left.envelope.value.duration_s,
+      route_points: left.routePoints,
+    }, {
+      athlete_id: right.envelope.athlete_id,
+      activity_kind: right.envelope.value.activity_kind,
+      observed_at: right.envelope.observed_at,
+      duration_s: right.envelope.value.duration_s,
+      route_points: right.routePoints,
+    }) ? IDENTITY_REASON_CODES.CROSS_SOURCE : null
+  );
+  const grouped = canonicalizeActivityRows(records, { match, selectKept: preferredActivity });
+  const canonicalActivities = grouped.canonical_groups.map(({ kept: preferred, rows: group }) => {
     const preferredDistance = preferredActivity(group.filter((record) => record.envelope.value.distance_m !== null)) || preferred;
     const preferredDuration = preferredActivity(group.filter((record) => record.envelope.value.duration_s !== null)) || preferred;
     const distances = group.map((record) => record.envelope.value.distance_m).filter((value) => value !== null);
@@ -568,10 +564,16 @@ function deduplicateActivityRecords(records, corrections) {
     const evidenceIds = group.map((record) => record.envelope.evidence_id).sort();
     const applicableCorrections = evidenceIds.map((id) => corrections.get(id)).filter(Boolean)
       .sort((left, right) => Number(right.revision) - Number(left.revision));
-    const correction = applicableCorrections[0] || null;
-    const resolvedDistance = correction ? correctionValue(correction) : distanceConflict ? null : preferredDistance.envelope.value.distance_m;
+    const correctionIds = applicableCorrections.map((entry) => String(entry.id)).sort();
+    const correctionConflict = applicableCorrections.length > 1 && applicableCorrections
+      .some((entry) => !distanceEquivalent(correctionValue(entry), correctionValue(applicableCorrections[0])));
+    const correction = correctionConflict ? null : applicableCorrections[0] || null;
+    const resolvedDistance = correctionConflict
+      ? null
+      : correction ? correctionValue(correction) : distanceConflict ? null : preferredDistance.envelope.value.distance_m;
     const resolvedDuration = durationConflict ? null : preferredDuration.envelope.value.duration_s;
-    const distanceQualityState = distanceConflict && !correction ? 'CONFLICT' : resolvedDistance === null ? 'PARTIAL' : 'COMPLETE';
+    const distanceQualityState = (correctionConflict || (distanceConflict && !correction))
+      ? 'CONFLICT' : resolvedDistance === null ? 'PARTIAL' : 'COMPLETE';
     const durationQualityState = durationConflict ? 'CONFLICT' : resolvedDuration === null ? 'PARTIAL' : 'COMPLETE';
     const heartRateEvidence = group.map((record) => ({
       evidence_id: record.envelope.evidence_id,
@@ -601,9 +603,11 @@ function deduplicateActivityRecords(records, corrections) {
       duration_quality_state: durationQualityState,
       correction_id: correction?.id || null,
       correction_revision: correction ? Number(correction.revision) : null,
+      correction_ids: correctionIds,
+      manual_correction_conflict: correctionConflict,
       heart_rate_resolution: heartRateResolution,
       reason_codes: [
-        ...(distanceConflict && !correction ? ['EVIDENCE_CONFLICT_UNRESOLVED'] : []),
+        ...((correctionConflict || (distanceConflict && !correction)) ? ['EVIDENCE_CONFLICT_UNRESOLVED'] : []),
         ...(durationConflict ? ['EVIDENCE_CONFLICT_UNRESOLVED'] : []),
         ...(resolvedDistance === null && !distanceConflict ? ['EVIDENCE_MISSING'] : []),
         ...(resolvedDuration === null && !durationConflict ? ['EVIDENCE_MISSING'] : []),
@@ -612,6 +616,7 @@ function deduplicateActivityRecords(records, corrections) {
       ],
     };
   });
+  return { canonicalActivities, identityReceipts: grouped.identity_receipts };
 }
 
 function normalizedProviderCoverage(rows) {
@@ -621,6 +626,18 @@ function normalizedProviderCoverage(rows) {
     || String(left.coverage_end_local || '').localeCompare(String(right.coverage_end_local || ''))
     || canonicalStringify(left.modalities).localeCompare(canonicalStringify(right.modalities))
   ));
+}
+
+function activitySummarySyncState(coverage, runningActivities) {
+  if (!coverage.length) return runningActivities.length ? 'UNKNOWN' : 'MISSING';
+  if (coverage.every((row) => row.sync_state === 'COMPLETE' && row.complete)) {
+    return runningActivities.length ? 'COMPLETE' : 'VALID_ZERO';
+  }
+  const states = new Set(coverage.map((row) => row.sync_state));
+  for (const state of ['FAILED', 'STALE', 'PARTIAL', 'MISSING', 'UNKNOWN']) {
+    if (states.has(state)) return state;
+  }
+  return 'UNKNOWN';
 }
 
 function buildEvidenceSnapshot({
@@ -662,13 +679,15 @@ function buildEvidenceSnapshot({
     String(left.envelope.observed_at || '').localeCompare(String(right.envelope.observed_at || ''))
     || left.envelope.evidence_id.localeCompare(right.envelope.evidence_id)
   ));
-  const canonicalActivities = deduplicateActivityRecords(runRecords, correctionMap)
+  const identityResolution = deduplicateActivityRecords(runRecords, correctionMap);
+  const canonicalActivities = identityResolution.canonicalActivities
     .sort((left, right) => String(left.observed_at || '').localeCompare(String(right.observed_at || ''))
       || left.canonical_activity_id.localeCompare(right.canonical_activity_id));
   const coverage = normalizedProviderCoverage(providerCoverage);
   const coverageEvidence = coverage.map((row) => coverageEvidenceEnvelope(row, scopedAthleteId, timezone, planningAt));
   const runningCoverage = coverage.filter((row) => row.modalities.includes('running'));
   const runningActivities = canonicalActivities.filter((activity) => activity.activity_kind === 'run');
+  const activitySyncState = activitySummarySyncState(runningCoverage, runningActivities);
   const activityValueState = runningActivities.some((activity) => activity.distance_m === null)
     ? 'UNKNOWN'
     : runningActivities.length ? 'KNOWN' : valueStateForEmptyCoverage(runningCoverage);
@@ -686,6 +705,7 @@ function buildEvidenceSnapshot({
   const distanceConflicts = canonicalActivities.filter((activity) => activity.distance_quality_state === 'CONFLICT');
   const durationConflicts = canonicalActivities.filter((activity) => activity.duration_quality_state === 'CONFLICT');
   const heartRateConflicts = canonicalActivities.filter((activity) => activity.heart_rate_resolution.quality_state === 'CONFLICT');
+  const manualCorrectionConflicts = canonicalActivities.filter((activity) => activity.manual_correction_conflict === true);
   const reasonCodes = [...new Set([
     ...coverage.flatMap((row) => row.reason_codes),
     ...canonicalActivities.flatMap((activity) => activity.reason_codes),
@@ -702,6 +722,7 @@ function buildEvidenceSnapshot({
     timezone,
     evidence,
     canonical_activities: canonicalActivities,
+    activity_identity_receipts: identityResolution.identityReceipts,
     included_evidence_ids: [...new Set(evidence.filter((item) => item.quality_state !== 'CORRUPTED').map((item) => item.evidence_id))].sort(),
     excluded_evidence: [
       ...distanceConflicts.flatMap((activity) => activity.evidence_ids.map((evidenceId) => ({
@@ -723,14 +744,23 @@ function buildEvidenceSnapshot({
     stale_evidence_ids: evidence.filter((item) => item.freshness_class === 'STALE').map((item) => item.evidence_id).sort(),
     partial_sync_sources: [...new Set(coverage.filter((row) => row.quality_state === 'PARTIAL').map((row) => row.source_system))].sort(),
     failed_sync_sources: [...new Set(coverage.filter((row) => row.quality_state === 'FAILED_SYNC').map((row) => row.source_system))].sort(),
+    stale_sync_sources: [...new Set(coverage.filter((row) => row.sync_state === 'STALE').map((row) => row.source_system))].sort(),
+    missing_sync_sources: [...new Set(coverage.filter((row) => row.sync_state === 'MISSING').map((row) => row.source_system))].sort(),
+    unknown_sync_sources: [...new Set(coverage.filter((row) => row.sync_state === 'UNKNOWN').map((row) => row.source_system))].sort(),
     unresolved_conflicts: [
       ...distanceConflicts.map((activity) => ({ field: 'distance_m', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
       ...durationConflicts.map((activity) => ({ field: 'duration_s', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
       ...heartRateConflicts.map((activity) => ({ field: 'heart_rate', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
+      ...manualCorrectionConflicts.map((activity) => ({
+        field: 'manual_correction',
+        evidence_ids: activity.evidence_ids,
+        correction_ids: activity.correction_ids,
+        reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED',
+      })),
     ],
     provider_coverage_intervals: coverage,
     modality_eligibility: modalityEligibility(coverage),
-    activity_summary: { value_state: activityValueState, value: activityValue, canonical_unit: 'm' },
+    activity_summary: { sync_state: activitySyncState, value_state: activityValueState, value: activityValue, canonical_unit: 'm' },
     source_row_counts: {
       runs: runRecords.length,
       lifts: Array.isArray(lifts) ? lifts.length : 0,

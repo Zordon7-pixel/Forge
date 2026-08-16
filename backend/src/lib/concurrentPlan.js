@@ -9,6 +9,7 @@ const runWorkoutTaxonomy = require('./runWorkoutTaxonomy');
 const { isRunActivity } = require('./runActivity');
 const { resolveRunSchedule } = require('./runSchedule');
 const { motivationalRunName } = require('../../../shared/runDisplayName.mjs');
+const { summarizeCanonicalActivityWindows } = require('./activityIdentity');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
@@ -309,7 +310,8 @@ function dateDistanceDays(laterValue, earlierValue) {
 function estimateWeeklyMileageBaseline(rows = [], options = {}) {
   const planningDateISO = parseISODate(options.planningDateISO) ? options.planningDateISO : toISODate(new Date());
   const profileWeeklyMiles = finiteNonNegative(options.profileWeeklyMiles, 0, 300);
-  const normalized = (Array.isArray(rows) ? rows : [])
+  const canonical = summarizeCanonicalActivityWindows(rows, { planningDateISO });
+  const normalized = canonical.canonical_rows
     .map((row) => ({
       date: String(row?.date || '').slice(0, 10),
       miles: finiteNonNegative(row?.distance_miles, 0, 500),
@@ -344,13 +346,38 @@ function estimateWeeklyMileageBaseline(rows = [], options = {}) {
     weeklyMiles = Math.min(Math.max(dataAnchor, recentHigh), upperBound);
   }
 
+  const suppliedSyncState = String(options.syncState || '').trim().toUpperCase();
+  const syncState = ['COMPLETE', 'PARTIAL', 'FAILED', 'STALE', 'MISSING', 'UNKNOWN', 'VALID_ZERO'].includes(suppliedSyncState)
+    ? suppliedSyncState
+    : normalized.length ? 'COMPLETE' : 'UNKNOWN';
+  const completeZero = !normalized.length && syncState === 'VALID_ZERO';
+  if (completeZero) weeklyMiles = 0;
+  const status = completeZero
+    ? 'VALID_ZERO'
+    : normalized.length
+      ? syncState === 'COMPLETE' ? 'COMPLETE' : 'LOW_CONFIDENCE'
+      : 'UNKNOWN';
+  const confidence = status === 'COMPLETE' || status === 'VALID_ZERO'
+    ? 'HIGH'
+    : normalized.length ? 'LOW' : 'INSUFFICIENT';
+
   return {
     weeklyMiles: round(weeklyMiles),
     longTermWeeklyMiles: round(longTermWeeklyMiles),
     recent28WeeklyMiles: round(recent28WeeklyMiles),
     recent14WeeklyMiles: round(recent14WeeklyMiles),
     meaningfulRunCount: normalized.length,
-    method: normalized.length ? 'bounded_recent_history' : 'profile_fallback',
+    method: normalized.length ? 'bounded_recent_history' : completeZero ? 'valid_zero' : 'profile_fallback',
+    status,
+    confidence,
+    syncState,
+    completeZero,
+    windows: canonical.windows,
+    rawRunCount: canonical.raw_row_count,
+    canonicalRunCount: canonical.canonical_row_count,
+    identityReceipts: canonical.identity_receipts,
+    identityReceiptCount: canonical.receipt_count,
+    identityReceiptsTruncated: canonical.receipts_truncated,
   };
 }
 
