@@ -574,12 +574,17 @@ function isDemandingRun(session) {
   ));
 }
 
+function recentRunDistanceLabel(run = {}) {
+  const distance = finiteMetric(run.distanceMiles);
+  return distance === null ? 'distance unknown' : `${distance.toFixed(1)} mi`;
+}
+
 function buildRecentRunEvidence(recentRunLoad = {}) {
   const latest = recentRunLoad?.protectiveRun || recentRunLoad?.latestRun;
   const protection = recentRunLoad?.protection;
   if (!latest || !protection?.active) return { evidence: [], driver: false, latest: null, protection: null };
   const details = [
-    `${Number(latest.distanceMiles || 0).toFixed(1)} mi`,
+    recentRunDistanceLabel(latest),
     latest.paceLabel || null,
     latest.durationMinutes ? `${Math.round(Number(latest.durationMinutes))} min` : null,
     latest.avgHeartRate ? `avg HR ${Math.round(Number(latest.avgHeartRate))}` : null,
@@ -1145,7 +1150,7 @@ function replaceLowerBodyAfterRun(session, latestRun) {
     ],
     recovery: ['Skip this optional session if soreness changes normal movement', 'Prioritize carbohydrate, protein, hydration, and sleep'],
     progression: 'Resume normal strength progression after lower-body recovery is normal.',
-    description: `Lower-body loading is deferred after the ${Number(latestRun.distanceMiles || 0).toFixed(1)} mi recent run.`,
+    description: `Lower-body loading is deferred after the recent run (${recentRunDistanceLabel(latestRun)}).`,
     acuteLoadAdjusted: true,
   };
 }
@@ -1155,7 +1160,7 @@ function markUpperBodyOptionalAfterRun(session, latestRun) {
   return {
     ...session,
     title: `Optional ${currentTitle}`,
-    description: `${session.description || 'Upper-body strength.'} Keep this submaximal and skip it if whole-body fatigue or soreness is elevated after the ${Number(latestRun.distanceMiles || 0).toFixed(1)} mi run.`,
+    description: `${session.description || 'Upper-body strength.'} Keep this submaximal and skip it if whole-body fatigue or soreness is elevated after the recent run (${recentRunDistanceLabel(latestRun)}).`,
     acuteLoadAdjusted: true,
   };
 }
@@ -1591,7 +1596,7 @@ function buildAdaptationProposal(input = {}) {
             changes,
             item,
             safetyRestSession(current, 'a run is already logged for today'),
-            `${sessionSummary(item.session)} is removed because the ${Number(recentRun.latest.distanceMiles || 0).toFixed(1)} mi run is already logged today.`
+            `${sessionSummary(item.session)} is removed because a run (${recentRunDistanceLabel(recentRun.latest)}) is already logged today.`
           );
           continue;
         }
@@ -1608,7 +1613,7 @@ function buildAdaptationProposal(input = {}) {
           const after = patchRunForRecovery(
             current,
             'reduce',
-            `Recovery version after the ${Number(recentRun.latest.distanceMiles || 0).toFixed(1)} mi recent run.`,
+            `Recovery version after the recent run (${recentRunDistanceLabel(recentRun.latest)}).`,
             recoveryFloorOptions
           );
           addChange(

@@ -44,6 +44,11 @@ function finiteNonNegativeOrNull(value, maximum = Number.MAX_SAFE_INTEGER) {
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : null;
 }
 
+function recentRunReference(run = {}) {
+  const distance = finiteNonNegativeOrNull(run.distanceMiles, 500);
+  return distance === null ? 'run (distance unknown)' : `${round(distance, 1)} mi run`;
+}
+
 function resolvedGoalTime(target = {}, existingGoal = {}, history = {}) {
   const requestedSeconds = Number(target.goalTimeSeconds ?? target.goal_time_seconds);
   if (Number.isFinite(requestedSeconds) && requestedSeconds > 0) {
@@ -604,13 +609,22 @@ function currentWeekRunSchedule({
     selectedQuota
   );
   const runDays = DAY_ORDER.filter((day) => selectedRunDays.includes(day) || (scheduleRace && day === raceDay));
+  const runActivityExcluded = activityReconciliation?.runMatch === false;
+  const completedMiles = runActivityExcluded
+    ? 0
+    : finiteNonNegativeOrNull(creditedCurrentWeekLoad.miles, 500);
+  const completedKnownDistanceLowerBoundMiles = runActivityExcluded
+    ? 0
+    : finiteNonNegativeOrNull(creditedCurrentWeekLoad.knownDistanceLowerBoundMiles, 500);
 
   return {
     completedRunDates,
     completedMeaningfulRuns,
     completedRunsAppliedToQuota,
     remainingRunQuota,
-    completedMiles: finiteNonNegative(creditedCurrentWeekLoad.miles, 0, 500),
+    completedMiles,
+    completedKnownDistanceLowerBoundMiles,
+    completedMileageCredit: completedMiles ?? completedKnownDistanceLowerBoundMiles ?? 0,
     longRunCompleted: Boolean(creditedCurrentWeekLoad.longRunCompleted),
     eligibleSelectedDays,
     runDays,
@@ -1063,7 +1077,7 @@ function recoveryRunAfterRecentLoad(session, latestRun) {
     steps: ['Keep breathing relaxed', 'Stop if soreness changes your stride'],
     cooldown: ['5 min easy walking', 'Hydrate and refuel'],
     progression: 'Keep the full session within the prescribed time today.',
-    description: `Reduced because a ${round(latestRun.distanceMiles, 1)} mi recent run already created meaningful lower-body load.`,
+    description: `Reduced because a ${recentRunReference(latestRun)} already created meaningful lower-body load.`,
     evidence_refs: trainingEvidence.runEvidenceRefs('recovery'),
     acuteLoadAdjusted: true,
   };
@@ -1085,6 +1099,7 @@ function acuteLoadMetadata(history = {}) {
     latestRun: {
       date: load.latestRun.date,
       distanceMiles: load.latestRun.distanceMiles,
+      distanceKnown: load.latestRun.distanceKnown !== false && load.latestRun.distanceMiles !== null,
       durationMinutes: load.latestRun.durationMinutes,
       paceLabel: load.latestRun.paceLabel,
       avgHeartRate: load.latestRun.avgHeartRate,
@@ -1097,6 +1112,7 @@ function acuteLoadMetadata(history = {}) {
     protectiveRun: protectiveRun ? {
       date: protectiveRun.date,
       distanceMiles: protectiveRun.distanceMiles,
+      distanceKnown: protectiveRun.distanceKnown !== false && protectiveRun.distanceMiles !== null,
       durationMinutes: protectiveRun.durationMinutes,
       paceLabel: protectiveRun.paceLabel,
       avgHeartRate: protectiveRun.avgHeartRate,
@@ -1107,6 +1123,9 @@ function acuteLoadMetadata(history = {}) {
       isHard: Boolean(protectiveRun.isHard),
     } : null,
     sevenDayMiles: load.sevenDayMiles,
+    sevenDayDistanceState: load.sevenDayDistanceState || null,
+    sevenDayKnownDistanceLowerBoundMiles: load.sevenDayKnownDistanceLowerBoundMiles ?? null,
+    sevenDayUnknownDistanceRunCount: load.sevenDayUnknownDistanceRunCount ?? null,
     loadRatio: load.loadRatio,
     currentWeek: load.currentWeek || null,
     protection: load.protection || { active: false },
@@ -1142,7 +1161,7 @@ function applyAcuteRunProtection(plan, context = {}) {
           changed = true;
           weekChanged = true;
           day.status = 'adjusted';
-          day.whyToday = `Your ${round(load.latestRun.distanceMiles, 1)} mi run is already logged for today, so Forged Hybrid did not schedule a second run.`;
+          day.whyToday = `Your ${recentRunReference(load.latestRun)} is already logged for today, so Forged Hybrid did not schedule a second run.`;
           continue;
         }
         if (protection.postRunSevere && dateInRange(day.date, anchorDate, protection.hardRunsThrough)) {
@@ -1157,7 +1176,7 @@ function applyAcuteRunProtection(plan, context = {}) {
           changed = true;
           weekChanged = true;
           day.status = 'adjusted';
-          day.whyToday = `Adjusted after your ${round(anchorRun.distanceMiles, 1)} mi run on ${anchorDate}: hard running is protected through ${protection.hardRunsThrough}.`;
+          day.whyToday = `Adjusted after your ${recentRunReference(anchorRun)} on ${anchorDate}: hard running is protected through ${protection.hardRunsThrough}.`;
           continue;
         }
         rebuilt.push(session);
@@ -1190,7 +1209,7 @@ function applyAcuteRunProtection(plan, context = {}) {
           phase: week.phase,
           context,
         });
-        day.whyToday = `Lower-body strength was moved outside the recovery window from your ${round(anchorRun.distanceMiles, 1)} mi run.`;
+        day.whyToday = `Lower-body strength was moved outside the recovery window from your ${recentRunReference(anchorRun)}.`;
         const laterDay = days[laterUpperDayIndex];
         const upperIndex = laterDay.sessions.findIndex((session) => session.kind === 'lift' && /upper/i.test(String(session.focus || '')));
         laterDay.sessions[upperIndex] = replaceLiftFocus(laterDay.sessions[upperIndex], {
@@ -1202,7 +1221,7 @@ function applyAcuteRunProtection(plan, context = {}) {
           context,
         });
         laterDay.status = 'adjusted';
-        laterDay.whyToday = `Lower-body strength moved here to protect recovery after your ${round(anchorRun.distanceMiles, 1)} mi run.`;
+        laterDay.whyToday = `Lower-body strength moved here to protect recovery after your ${recentRunReference(anchorRun)}.`;
       } else {
         const relocationDayIndex = days.findIndex((candidate, candidateIndex) => (
           candidateIndex > dayIndex
@@ -1220,7 +1239,7 @@ function applyAcuteRunProtection(plan, context = {}) {
             description: `${originalLower.description || 'Lower-body strength.'} Moved outside the recent-run recovery window.`,
             acuteLoadAdjusted: true,
           });
-          day.whyToday = `Lower-body strength moved to ${relocationDay.day} to protect recovery after your ${round(anchorRun.distanceMiles, 1)} mi run.`;
+          day.whyToday = `Lower-body strength moved to ${relocationDay.day} to protect recovery after your ${recentRunReference(anchorRun)}.`;
           relocationDay.status = 'adjusted';
           relocationDay.whyToday = `Lower-body strength moved here to preserve the weekly strength floor outside the recent-run recovery window.`;
         } else {
@@ -1232,7 +1251,7 @@ function applyAcuteRunProtection(plan, context = {}) {
             phase: week.phase,
             context,
           });
-          day.whyToday = `No safe lower-body slot remains this week after your ${round(anchorRun.distanceMiles, 1)} mi run, so this session changed to optional upper-body work.`;
+          day.whyToday = `No safe lower-body slot remains this week after your ${recentRunReference(anchorRun)}, so this session changed to optional upper-body work.`;
         }
       }
       changed = true;
@@ -1246,7 +1265,7 @@ function applyAcuteRunProtection(plan, context = {}) {
       upper.description = `${upper.description} Optional after the recent run: keep this submaximal and skip it if whole-body fatigue or soreness is elevated.`;
       upper.acuteLoadAdjusted = true;
       day.status = 'adjusted';
-      day.whyToday = day.whyToday || `Upper-body strength is optional while you recover from the ${round(anchorRun.distanceMiles, 1)} mi run; lower-body loading stays protected.`;
+      day.whyToday = day.whyToday || `Upper-body strength is optional while you recover from the ${recentRunReference(anchorRun)}; lower-body loading stays protected.`;
       changed = true;
       weekChanged = true;
     }
@@ -1387,6 +1406,9 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     currentWeekStrengthLoad: reconciliation?.strengthMatch === false ? null : history.currentWeekStrength || null,
     ...(reconciliation ? { currentWeekActivityReconciliation: reconciliation } : {}),
     sevenDayRunMiles: acute?.sevenDayMiles ?? null,
+    sevenDayRunDistanceState: acute?.sevenDayDistanceState || null,
+    sevenDayRunKnownDistanceLowerBoundMiles: acute?.sevenDayKnownDistanceLowerBoundMiles ?? null,
+    sevenDayRunUnknownDistanceCount: acute?.sevenDayUnknownDistanceRunCount ?? null,
     recentRunLoadRatio: acute?.loadRatio ?? null,
   };
 }
@@ -1600,7 +1622,7 @@ function buildConcurrentPlan(context = {}) {
     const qualitySafety = qualitySafetyForWeek(context, { weekNumber, weekStart });
     if (currentWeekQuota) weekRunDays = currentWeekQuota.runDays;
     let scheduledMileageTarget = mileageTargets[weekNumber - 1];
-    if (isCurrentWeek) scheduledMileageTarget = Math.max(0, scheduledMileageTarget - currentWeekQuota.completedMiles);
+    if (isCurrentWeek) scheduledMileageTarget = Math.max(0, scheduledMileageTarget - currentWeekQuota.completedMileageCredit);
     const priorScheduledMiles = Number(weeks[weeks.length - 1]?.totalMiles || 0);
     if (phase === 'deload' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.8);
     if (phase === 'taper' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.65);
@@ -1719,7 +1741,10 @@ function buildConcurrentPlan(context = {}) {
       startDate: weekStart,
       totalMiles,
       completedRunsAtGeneration: currentWeekQuota?.completedMeaningfulRuns || 0,
-      completedMilesAtGeneration: isCurrentWeek ? round(currentWeekQuota.completedMiles) : 0,
+      completedMilesAtGeneration: isCurrentWeek ? currentWeekQuota.completedMiles : 0,
+      completedKnownDistanceLowerBoundMilesAtGeneration: isCurrentWeek
+        ? currentWeekQuota.completedKnownDistanceLowerBoundMiles
+        : 0,
       completedStrengthSessionsAtGeneration: completedStrengthSessions,
       completedStrengthLoadAtGeneration: isCurrentWeek ? round(Number(currentWeekStrength?.loadPoints || 0)) : 0,
       ...(currentWeekConstraint ? { currentWeekConstraint } : {}),
@@ -2128,7 +2153,9 @@ function validateConcurrentPlan(candidate, context = {}) {
       }
     }
     const roundedMiles = round(miles);
-    const completedMilesAtGeneration = Math.max(0, Number(week.completedMilesAtGeneration || 0));
+    const completedMilesAtGeneration = finiteNonNegativeOrNull(week.completedMilesAtGeneration, 500)
+      ?? finiteNonNegativeOrNull(week.completedKnownDistanceLowerBoundMilesAtGeneration, 500)
+      ?? 0;
     weekMiles.push(round(roundedMiles + completedMilesAtGeneration));
     if (Math.abs(Number(week.totalMiles) - roundedMiles) > 0.2) errors.push(`${path}.totalMiles must equal scheduled run mileage`);
   });

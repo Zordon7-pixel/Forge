@@ -261,9 +261,19 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const latestRunEffort = latestRun?.effectiveEffort
     ? `, ${latestRun.effortSource === 'user_rated' ? 'rated RPE' : 'calculated effort'} ${Number(latestRun.effectiveEffort)}`
     : '';
+  const latestRunDistance = nullableMetric(latestRun?.distanceMiles, { min: 0, max: 500 });
   const recentRunLine = latestRun
-    ? `${Number(latestRun.distanceMiles || 0).toFixed(1)} miles on ${sanitize(latestRun.date, 10)}${latestRun.durationMinutes ? ` in ${Math.round(Number(latestRun.durationMinutes))} min` : ''}${latestRun.paceLabel ? ` (${sanitize(latestRun.paceLabel, 20)})` : ''}${latestRun.avgHeartRate ? `, avg HR ${Math.round(Number(latestRun.avgHeartRate))}` : ''}${latestRunEffort}`
+    ? `${latestRunDistance === null ? 'distance unknown' : `${latestRunDistance.toFixed(1)} miles`} on ${sanitize(latestRun.date, 10)}${latestRunDistance === null ? ' (incomplete evidence)' : ''}${latestRun.durationMinutes ? ` in ${Math.round(Number(latestRun.durationMinutes))} min` : ''}${latestRun.paceLabel ? ` (${sanitize(latestRun.paceLabel, 20)})` : ''}${latestRun.avgHeartRate ? `, avg HR ${Math.round(Number(latestRun.avgHeartRate))}` : ''}${latestRunEffort}`
     : 'none available';
+  const sevenDayKnownDistanceLowerBoundMiles = nullableMetric(
+    recentRunLoad.sevenDayKnownDistanceLowerBoundMiles,
+    { min: 0, max: 500 },
+  );
+  const sevenDayMilesLine = sevenDayMiles === null
+    ? sevenDayKnownDistanceLowerBoundMiles !== null && sevenDayKnownDistanceLowerBoundMiles > 0
+      ? `unknown (incomplete evidence; known-distance lower bound ${sevenDayKnownDistanceLowerBoundMiles.toFixed(1)} mi)`
+      : 'unknown (incomplete evidence)'
+    : sevenDayMiles.toFixed(1);
   const protection = recentRunLoad.protection || {};
   const healthMetrics = trainingContext?.recovery?.metrics || {};
   const checkin = trainingContext?.checkin || null;
@@ -330,7 +340,7 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
 - Lift days per week: ${frequency.liftDaysPerWeek}${trainingDaysLine}
 - Observed weekly mileage from recent activity: ${observedMileageLine}
 - Recent completed runs/lifts: ${Math.max(0, Number(observed.recentRunCount || 0))}/${Math.max(0, Number(observed.recentLiftCount || 0))}
-- Latest meaningful run: ${recentRunLine}; trailing 7-day miles: ${sevenDayMiles === null ? 'unknown (incomplete evidence)' : sevenDayMiles.toFixed(1)}
+- Latest meaningful run: ${recentRunLine}; trailing 7-day miles: ${sevenDayMilesLine}
 - Recent adherence: ${adherenceLine}; missed sessions estimate: ${missedWorkoutsLine}
 - Current recovery state: ${sanitize(trainingContext?.recovery?.state || 'unknown', 20)}
 - Apple Health recovery: readiness ${readinessMetric ?? 'unknown'}, sleep ${sleepMetric === null ? 'unknown' : `${sleepMetric}h`}${sleepBaselineMetric === null ? '' : ` vs ${sleepBaselineMetric}h baseline`}, HRV ${hrvMetric === null ? 'unknown' : `${hrvMetric}ms`}${hrvBaselineMetric === null ? '' : ` vs ${hrvBaselineMetric}ms baseline`}, resting HR ${restingHrMetric ?? 'unknown'}${restingHrBaselineMetric === null ? '' : ` vs ${restingHrBaselineMetric} baseline`}

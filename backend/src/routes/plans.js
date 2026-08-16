@@ -2224,10 +2224,50 @@ function buildCandidateTrace(state, built) {
   };
 }
 
+function hyroxRecentRunLoadView(acuteRunLoad = {}) {
+  const currentWeek = acuteRunLoad?.currentWeek;
+  if (!currentWeek || currentWeek.miles !== null) return acuteRunLoad;
+  // The legacy HYROX engine needs a finite arithmetic credit. Give it only
+  // the explicitly known lower bound, never a fabricated complete total.
+  const lowerBound = nullableNonNegativeNumber(currentWeek.knownDistanceLowerBoundMiles, 500) ?? 0;
+  return {
+    ...acuteRunLoad,
+    currentWeek: {
+      ...currentWeek,
+      miles: lowerBound,
+    },
+  };
+}
+
+function restoreHyroxIncompleteDistanceTruth(plan, acuteRunLoad = {}) {
+  const currentWeek = acuteRunLoad?.currentWeek;
+  if (!plan || !currentWeek || currentWeek.miles !== null) return plan;
+  const distanceTruth = {
+    distanceState: currentWeek.distanceState || 'INCOMPLETE',
+    knownDistanceLowerBoundMiles: nullableNonNegativeNumber(
+      currentWeek.knownDistanceLowerBoundMiles,
+      500,
+    ),
+    unknownDistanceRunCount: Math.max(0, Number(currentWeek.unknownDistanceRunCount || 0)),
+  };
+  if (plan.inputSummary?.currentWeekRunLoad) {
+    plan.inputSummary.currentWeekRunLoad.miles = null;
+    Object.assign(plan.inputSummary.currentWeekRunLoad, distanceTruth);
+  }
+  for (const week of plan.weeks || []) {
+    if (!week.currentWeekConstraint) continue;
+    week.currentWeekConstraint.completedRunMiles = null;
+    week.currentWeekConstraint.completedKnownDistanceLowerBoundMiles = distanceTruth.knownDistanceLowerBoundMiles;
+    week.currentWeekConstraint.completedRunDistanceState = distanceTruth.distanceState;
+    week.currentWeekConstraint.unknownDistanceRunCount = distanceTruth.unknownDistanceRunCount;
+  }
+  return plan;
+}
+
 function buildDeterministicCandidate(context, options) {
   if (!context?.target?.hyroxEvent) return buildRacePlanCandidate(context, options);
   try {
-    const plan = hyroxPlan.generateHyroxPlan({
+    const plan = restoreHyroxIncompleteDistanceTruth(hyroxPlan.generateHyroxPlan({
       athlete: {
         ...context.profile,
         runDaysPerWeek: context.target.runDaysPerWeek,
@@ -2238,7 +2278,7 @@ function buildDeterministicCandidate(context, options) {
           ?? context.history?.mileageBaseline?.observedLowerBoundWeeklyMiles
           ?? null,
         readiness: context.recovery?.state,
-        recentRunLoad: context.history?.acuteRunLoad,
+        recentRunLoad: hyroxRecentRunLoadView(context.history?.acuteRunLoad),
         currentWeekStrength: context.history?.currentWeekStrength,
       },
       planningLocalDate: options.planningDateLocal,
@@ -2246,7 +2286,7 @@ function buildDeterministicCandidate(context, options) {
       equipment: context.target.hyroxEquipment,
       availableDays: context.target.trainingDays,
       secondaryRace: context.target.secondaryRace,
-    });
+    }), context.history?.acuteRunLoad);
     return { plan, validation: hyroxPlan.validateHyroxPlan(plan) };
   } catch (err) {
     const knownErrors = {
@@ -6324,6 +6364,8 @@ router._test = {
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
   buildDeterministicCandidate,
+  hyroxRecentRunLoadView,
+  restoreHyroxIncompleteDistanceTruth,
   buildConcurrentContext,
   confidenceAwareMileageBaseline,
   goalBackwardSafetyState,

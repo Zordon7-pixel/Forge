@@ -644,6 +644,7 @@ async function findExistingRun(db, userId, item) {
        AND COALESCE(health_source, '')<>'forged_hybrid'
        AND COALESCE(workout_metrics_json, '') NOT LIKE '%"forged_recording_id"%'
        AND COALESCE(workout_metrics_json, '') NOT LIKE '%"route_source":"forged_phone"%'
+     ORDER BY id ASC
      LIMIT 25
      FOR UPDATE`,
     [userId, item.date, item.distanceMiles]
