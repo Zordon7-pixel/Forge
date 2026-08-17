@@ -70,6 +70,46 @@ function checkTimePrescriptionDistanceAuthority() {
     withObservedPace.candidate_material[0].source_session.canonical_distance_derivation,
     'observed_pace_conservative_110_percent_v1',
   );
+  const buildEstimatedTimeCandidate = (durationMin, distanceMiles) => buildGoalBackwardCandidateSkeleton({
+    decision,
+    legacy_road_candidate_material: [{
+      ...legacyMaterial[0], duration_min: durationMin, distance_miles: distanceMiles,
+    }],
+    hybrid_running_projection_pace_s_per_mile: 600,
+    validate: false,
+  });
+  const oneMeterDurationMin = 1 / ((60 / (600 * 1.1)) * 1609.344);
+  const subMeterFixtures = [
+    { durationMin: 0.001, distanceMiles: 6 },
+    { durationMin: 0.05, distanceMiles: 0.0001 },
+    { durationMin: oneMeterDurationMin - 1e-10, distanceMiles: 6 },
+  ];
+  for (const fixture of subMeterFixtures) {
+    const candidate = buildEstimatedTimeCandidate(fixture.durationMin, fixture.distanceMiles);
+    assert.equal(candidate.sessions[0].distance_m, null,
+      'a positive sub-meter estimate remains unknown instead of becoming authoritative zero meters');
+    assert.equal(candidate.candidate_material[0].distance_m, null);
+    assert.equal(Object.hasOwn(
+      candidate.candidate_material[0].source_session, 'canonical_prescribed_distance_m',
+    ), false, 'a rounded-zero estimate has no canonical distance authority');
+    assert.equal(Object.hasOwn(
+      candidate.candidate_material[0].source_session, 'canonical_distance_derivation',
+    ), false, 'a rounded-zero estimate has no canonical derivation stamp');
+  }
+  const oneMeterBoundary = buildEstimatedTimeCandidate(oneMeterDurationMin, 6);
+  assert.equal(oneMeterBoundary.sessions[0].distance_m, 1,
+    'the exact first whole-meter boundary remains a valid conservative prescription');
+  assert.equal(
+    oneMeterBoundary.candidate_material[0].source_session.canonical_distance_derivation,
+    'observed_pace_conservative_110_percent_v1',
+  );
+  const normalOneMinute = buildEstimatedTimeCandidate(1, 6);
+  assert.equal(normalOneMinute.sessions[0].distance_m, 146,
+    'a normal one-minute time prescription remains 146 conservative meters');
+  assert.equal(
+    normalOneMinute.candidate_material[0].source_session.canonical_distance_derivation,
+    'observed_pace_conservative_110_percent_v1',
+  );
   let coercionHookCalls = 0;
   const coercionObject = {};
   Object.defineProperty(coercionObject, Symbol.toPrimitive, {
