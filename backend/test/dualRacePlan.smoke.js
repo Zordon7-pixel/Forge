@@ -1527,6 +1527,38 @@ async function checkHyroxCandidateImmediateAdoption() {
       const row = candidates.get(params[0]);
       return row && row.user_id === params[1] ? { ...row } : null;
     }
+    if (sql.includes('JOIN planning_pipeline_artifacts canonical')
+      && sql.includes("canonical.artifact_kind='canonical_session_set'")) {
+      const candidate = [...candidates.values()].reverse().find((row) => (
+        row.user_id === params[0]
+        && row.applied_user_plan_id === params[1]
+        && row.status === 'applied'
+      ));
+      const artifact = candidate && [...planningArtifacts.values()].find((row) => (
+        row.user_id === params[0]
+        && row.plan_generation_candidate_id === candidate.id
+        && row.artifact_kind === 'canonical_session_set'
+      ));
+      if (!candidate || !artifact) return null;
+      return {
+        artifact_id: artifact.id,
+        artifact_user_id: artifact.user_id,
+        artifact_kind: artifact.artifact_kind,
+        artifact_decision_id: artifact.decision_id,
+        artifact_candidate_id: artifact.plan_generation_candidate_id,
+        artifact_schema_version: artifact.schema_version,
+        artifact_policy_version: artifact.policy_version,
+        artifact_revision: artifact.revision,
+        artifact_content_hash: artifact.content_hash,
+        artifact_payload_json: artifact.payload_json,
+        candidate_id: candidate.id,
+        candidate_decision_id: candidate.decision_id,
+        candidate_selected_hash: candidate.selected_candidate_hash,
+        candidate_material_change_json: candidate.material_change_json,
+        candidate_applied_user_plan_id: candidate.applied_user_plan_id,
+        candidate_status: candidate.status,
+      };
+    }
     if (sql.includes('FROM planning_pipeline_artifacts') && sql.includes("artifact_kind='planning_decision'")) {
       const artifact = planningArtifacts.get(params[0]);
       return artifact && artifact.user_id === params[1] && artifact.decision_id === params[2]
@@ -1717,6 +1749,20 @@ async function checkHyroxCandidateImmediateAdoption() {
       request: { operation: 'remove_race', remove_race_id: 'yonkers' },
       races: [{ id: 'army' }],
     }, { weeks: [] }, [planningDate]), [], 'legacy or identity-free active plans cannot authorize carry-forward');
+    assert.deepEqual(plansRouter._test.canonicalCarryGoalIds({
+      goal_ids: ['goal-army', 'goal-hyrox'],
+      goalIds: ['goal-hyrox', 'goal-army'],
+    }), ['goal-army', 'goal-hyrox'], 'canonical goal-id aliases are independently normalized');
+    for (const hostileGoalBindings of [
+      { goalIds: ['goal-army'] },
+      { goal_ids: ['goal-army'], goalIds: ['goal-hyrox'] },
+      { goal_ids: ['goal-army', 'goal-army'] },
+      { goal_ids: [' goal-army'] },
+      { goal_ids: [new String('goal-army')] },
+    ]) {
+      assert.equal(plansRouter._test.canonicalCarryGoalIds(hostileGoalBindings), null,
+        'missing, conflicting, duplicate, non-primitive, and malformed bindings fail closed');
+    }
     const validCarryState = {
       request: { operation: 'remove_race', remove_race_id: 'yonkers' },
       races: [{ id: 'army' }],
@@ -4037,9 +4083,50 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(roadRemovalReplay.payload.replay, true);
     assert.equal(currentAssignment().id, removalAssignment.id,
       'idempotent removal replay performs no second assignment write');
+    const appliedRemovalCandidate = [...candidates.values()].find((row) => (
+      row.applied_user_plan_id === removalAssignment.id && row.status === 'applied'
+    ));
+    assert.ok(appliedRemovalCandidate);
+    assert.match(
+      JSON.parse(appliedRemovalCandidate.material_change_json).candidate_prescription_hash,
+      /^sha256:[a-f0-9]{64}$/,
+      'bounded apply bindings preserve the exact canonical prescription hash instead of dropping it to null',
+    );
 
-    const postRemovalState = mutationState();
-    const finalHyroxPreview = await invoke(preview, {
+    const carryForwardBaseline = {
+      races: cloneMap(raceRows),
+      plans: cloneMap(trainingPlans),
+      assignments: cloneMap(userPlans),
+      candidates: cloneMap(candidates),
+      artifacts: cloneMap(planningArtifacts),
+    };
+    const restoreCarryForwardBaseline = () => {
+      restoreMap(raceRows, carryForwardBaseline.races);
+      restoreMap(trainingPlans, carryForwardBaseline.plans);
+      restoreMap(userPlans, carryForwardBaseline.assignments);
+      restoreMap(candidates, carryForwardBaseline.candidates);
+      restoreMap(planningArtifacts, carryForwardBaseline.artifacts);
+    };
+    const activeCarryRows = () => {
+      const assignment = currentAssignment();
+      const candidate = [...candidates.values()].find((row) => (
+        row.user_id === ownerId
+          && row.applied_user_plan_id === assignment?.id
+          && row.status === 'applied'
+      ));
+      const artifact = candidate && [...planningArtifacts.values()].find((row) => (
+        row.user_id === ownerId
+          && row.plan_generation_candidate_id === candidate.id
+          && row.artifact_kind === 'canonical_session_set'
+      ));
+      return {
+        assignment,
+        candidate,
+        artifact,
+        planRow: assignment ? trainingPlans.get(assignment.plan_id) : null,
+      };
+    };
+    const goalExpansionRequest = () => invoke(preview, {
       ...roadRequestBase,
       body: {
         ...roadClock,
@@ -4053,6 +4140,141 @@ async function checkHyroxCandidateImmediateAdoption() {
         },
       },
     });
+    const writeCardinality = () => ({
+      races: raceRows.size,
+      raceIds: [...raceRows.keys()].sort(),
+      candidates: candidates.size,
+      artifacts: planningArtifacts.size,
+      plans: trainingPlans.size,
+      assignments: userPlans.size,
+      activeAssignmentId: currentAssignment()?.id || null,
+    });
+    const assertUnauthenticatedCarryRejected = async (label, mutate) => {
+      restoreCarryForwardBaseline();
+      const rows = activeCarryRows();
+      assert.ok(rows.planRow && rows.candidate && rows.artifact, `${label}: canonical source fixture exists`);
+      const hooks = { getter: 0, proxy: 0, coercion: 0 };
+      mutate(rows, hooks);
+      const before = writeCardinality();
+      const response = await goalExpansionRequest();
+      assert.equal(response.statusCode, 409, `${label}: ${JSON.stringify(response.payload)}`);
+      assert.equal(response.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED', label);
+      assert.deepEqual(writeCardinality(), before,
+        `${label}: failure performs zero candidate, artifact, plan, assignment, or race writes`);
+      assert.deepEqual(hooks, { getter: 0, proxy: 0, coercion: 0 },
+        `${label}: authentication executes no hostile getter, Proxy, or coercion hook`);
+    };
+    const mutatePlan = (rows, mutate) => {
+      const plan = JSON.parse(rows.planRow.plan_data);
+      mutate(plan);
+      rows.planRow.plan_data = JSON.stringify(plan);
+      rows.planRow.plan_json = rows.planRow.plan_data;
+    };
+    const mutateCanonicalPayload = (rows, mutate) => {
+      const payload = JSON.parse(rows.artifact.payload_json);
+      mutate(payload);
+      rows.artifact.payload_json = JSON.stringify(payload);
+    };
+    const carriedSessionFrom = (payload) => payload.sessions.find((session) => (
+      ['easy_run', 'recovery_run', 'long_aerobic', 'assessment'].includes(session.workout_family)
+        && Array.isArray(session.goal_ids)
+        && session.goal_ids.length > 0
+        && session.goal_ids.every((goalId) => goalId === 'goal-army')
+    ));
+    await assertUnauthenticatedCarryRejected('hashless plan identity', (rows) => {
+      mutatePlan(rows, (plan) => { delete plan.canonical_session_set_hash; });
+    });
+    await assertUnauthenticatedCarryRejected('mismatched plan content hash', (rows) => {
+      mutatePlan(rows, (plan) => { plan.canonical_session_set_hash = 'c'.repeat(64); });
+    });
+    await assertUnauthenticatedCarryRejected('hashless artifact wrapper', (rows) => {
+      rows.artifact.content_hash = null;
+    });
+    await assertUnauthenticatedCarryRejected('mismatched artifact wrapper hash', (rows) => {
+      rows.artifact.content_hash = `sha256:${'d'.repeat(64)}`;
+    });
+    await assertUnauthenticatedCarryRejected('session content hash mismatch', (rows) => {
+      mutateCanonicalPayload(rows, (payload) => {
+        const session = carriedSessionFrom(payload);
+        assert.ok(session);
+        session.content_hash = 'e'.repeat(64);
+      });
+      rows.artifact.content_hash = candidateLifecycle.prefixedHash(JSON.parse(rows.artifact.payload_json));
+    });
+    await assertUnauthenticatedCarryRejected('session-set content hash mismatch', (rows) => {
+      mutateCanonicalPayload(rows, (payload) => { payload.content_hash = 'a'.repeat(64); });
+      rows.artifact.content_hash = candidateLifecycle.prefixedHash(JSON.parse(rows.artifact.payload_json));
+    });
+    await assertUnauthenticatedCarryRejected('candidate identity hash mismatch', (rows) => {
+      rows.candidate.selected_candidate_hash = `sha256:${'f'.repeat(64)}`;
+    });
+    await assertUnauthenticatedCarryRejected('prescription content hash mismatch', (rows) => {
+      const material = JSON.parse(rows.candidate.material_change_json);
+      material.candidate_prescription_hash = `sha256:${'0'.repeat(64)}`;
+      rows.candidate.material_change_json = JSON.stringify(material);
+    });
+    await assertUnauthenticatedCarryRejected('hashless prescription content', (rows) => {
+      const material = JSON.parse(rows.candidate.material_change_json);
+      material.candidate_prescription_hash = null;
+      rows.candidate.material_change_json = JSON.stringify(material);
+    });
+    await assertUnauthenticatedCarryRejected('conflicting goal-id aliases', (rows) => {
+      mutateCanonicalPayload(rows, (payload) => {
+        const session = carriedSessionFrom(payload);
+        assert.ok(session);
+        session.goalIds = ['goal-hyrox'];
+      });
+    });
+    await assertUnauthenticatedCarryRejected('duplicate canonical goal ids', (rows) => {
+      mutateCanonicalPayload(rows, (payload) => {
+        const session = carriedSessionFrom(payload);
+        assert.ok(session);
+        session.goal_ids = ['goal-army', 'goal-army'];
+      });
+    });
+    await assertUnauthenticatedCarryRejected('foreign goal binding', (rows) => {
+      mutateCanonicalPayload(rows, (payload) => {
+        const session = carriedSessionFrom(payload);
+        assert.ok(session);
+        session.goal_ids = ['goal-foreign'];
+      });
+    });
+    await assertUnauthenticatedCarryRejected('removed goal binding', (rows) => {
+      mutateCanonicalPayload(rows, (payload) => {
+        const session = carriedSessionFrom(payload);
+        assert.ok(session);
+        session.goal_ids = ['goal-yonkers'];
+      });
+    });
+    await assertUnauthenticatedCarryRejected('stale applied candidate linkage', (rows) => {
+      rows.candidate.applied_user_plan_id = 'stale-assignment';
+    });
+    await assertUnauthenticatedCarryRejected('accessor artifact payload', (rows, hooks) => {
+      const payload = {};
+      Object.defineProperty(payload, 'sessions', {
+        enumerable: true,
+        get() { hooks.getter += 1; return []; },
+      });
+      rows.artifact.payload_json = payload;
+    });
+    await assertUnauthenticatedCarryRejected('coercive artifact payload', (rows, hooks) => {
+      rows.artifact.payload_json = {
+        toString() { hooks.coercion += 1; return '{}'; },
+        valueOf() { hooks.coercion += 1; return '{}'; },
+      };
+    });
+    await assertUnauthenticatedCarryRejected('Proxy artifact payload', (rows, hooks) => {
+      rows.artifact.payload_json = new Proxy({}, {
+        get() { hooks.proxy += 1; return undefined; },
+        getOwnPropertyDescriptor() { hooks.proxy += 1; return undefined; },
+        getPrototypeOf() { hooks.proxy += 1; return Object.prototype; },
+        ownKeys() { hooks.proxy += 1; return []; },
+      });
+    });
+    restoreCarryForwardBaseline();
+
+    const postRemovalState = mutationState();
+    const finalHyroxPreview = await goalExpansionRequest();
     if (finalHyroxPreview.statusCode !== 201) {
       assert.equal(mutationState(), postRemovalState,
         'a rejected post-removal HYROX preview writes no candidate, artifact, plan, assignment, or race');

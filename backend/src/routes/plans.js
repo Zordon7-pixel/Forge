@@ -60,8 +60,11 @@ const {
   RACE_PLAN_POLICY_V1,
   acceptPlanningClock,
   addDays: addPolicyDays,
+  canonicalStringify,
   eventPolicyForGoal,
 } = require('../lib/racePlanPolicy');
+const { validateCanonicalSessionSet } = require('../lib/canonicalWorkout');
+const { canonicalPrescriptionHash } = require('../lib/goalBackwardValidators');
 const {
   assertPersistablePlan,
   buildCandidateRejectionRecord,
@@ -260,9 +263,11 @@ function parsePlan(plan) {
     } else {
       parsed = typeof plan?.plan_json === 'string' ? JSON.parse(plan.plan_json) : plan?.plan_json;
     }
-    return Number(parsed?.canonical_workout_schema_version) === 1
-      ? parsed
-      : repairPlanPrescriptions(parsed);
+    const snapshot = ownDataJsonSnapshot(parsed);
+    if (!snapshot) throw new Error('plan payload is not immutable own-data JSON');
+    return snapshot.canonical_workout_schema_version === 1
+      ? snapshot
+      : repairPlanPrescriptions(snapshot);
   } catch (err) {
     console.error('[plans/parsePlan] invalid plan JSON:', err.message);
     return null;
@@ -2238,6 +2243,39 @@ async function loadGoalBackwardPlanningConstraints(tx, userId, planId = null) {
   return normalizePlanningConstraints(rows || [], { athleteId: userId, planId });
 }
 
+async function loadActiveCanonicalCarryForwardSource(tx, userId, active) {
+  const appliedUserPlanId = active?.row?.user_plan_id;
+  if (!appliedUserPlanId || !tx || typeof tx.get !== 'function') return null;
+  return tx.get(
+    `SELECT canonical.id AS artifact_id,
+            canonical.user_id AS artifact_user_id,
+            canonical.artifact_kind,
+            canonical.decision_id AS artifact_decision_id,
+            canonical.plan_generation_candidate_id AS artifact_candidate_id,
+            canonical.schema_version AS artifact_schema_version,
+            canonical.policy_version AS artifact_policy_version,
+            canonical.revision AS artifact_revision,
+            canonical.content_hash AS artifact_content_hash,
+            canonical.payload_json AS artifact_payload_json,
+            candidate.id AS candidate_id,
+            candidate.decision_id AS candidate_decision_id,
+            candidate.selected_candidate_hash AS candidate_selected_hash,
+            candidate.material_change_json AS candidate_material_change_json,
+            candidate.applied_user_plan_id AS candidate_applied_user_plan_id,
+            candidate.status AS candidate_status
+     FROM plan_generation_candidates candidate
+     JOIN planning_pipeline_artifacts canonical
+       ON canonical.user_id=candidate.user_id
+      AND canonical.plan_generation_candidate_id=candidate.id
+      AND canonical.artifact_kind='canonical_session_set'
+     WHERE candidate.user_id=? AND candidate.applied_user_plan_id=?
+       AND candidate.status='applied'
+     ORDER BY candidate.applied_at DESC, canonical.revision DESC, canonical.created_at DESC
+     LIMIT 1`,
+    [userId, appliedUserPlanId],
+  );
+}
+
 async function loadCandidateInputState(userId, request, clock, tx) {
   const profile = await tx.get('SELECT * FROM users WHERE id=?', [userId]);
   if (!profile) throw candidateError(404, 'USER_NOT_FOUND', 'User not found.');
@@ -2258,6 +2296,8 @@ async function loadCandidateInputState(userId, request, clock, tx) {
     includeFuture: true,
     planningDateLocal: clock.planningDateLocal,
   });
+  const activeCanonicalCarryForwardSource = active
+    ? await loadActiveCanonicalCarryForwardSource(tx, userId, active) : null;
   let removalPlanSnapshot = null;
   let removalImpact = null;
   if (request.operation === 'remove_race') {
@@ -2288,6 +2328,7 @@ async function loadCandidateInputState(userId, request, clock, tx) {
   const names = races.map((race) => race.race_name);
   return {
     active,
+    activeCanonicalCarryForwardSource,
     activePlan,
     context,
     inputHash: prefixedHash(snapshot),
@@ -2626,42 +2667,222 @@ function goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, avail
   });
 }
 
-function goalBackwardGoalExpansionCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates) {
-  if (state?.request?.operation === 'remove_race'
-    || activeAppliedPlan?.canonical_workout_schema_version !== 1
-    || !isCanonicalHash(activeAppliedPlan?.canonical_session_set_hash)
-    || !isCanonicalHash(activeAppliedPlan?.selected_candidate_hash)) return [];
-  const currentGoalIds = new Set((state.races || []).map((race) => `goal-${String(race?.id || '')}`));
-  const activeGoals = Array.isArray(activeAppliedPlan.goals) ? activeAppliedPlan.goals : null;
-  if (!currentGoalIds.size || currentGoalIds.has('goal-') || !activeGoals?.length) return [];
+const CANONICAL_SESSION_SET_PAYLOAD_KEYS = Object.freeze([
+  'canonical_workout_schema_version', 'canonical_sessions_materialized',
+  'plan_id', 'plan_revision', 'decision_id', 'decision_hash', 'candidate_id',
+  'candidate_skeleton_hash', 'candidate_hash', 'material_change_baseline_binding_hash',
+  'sessions', 'session_content_hashes', 'derived_totals', 'content_hash',
+]);
+const CANONICAL_SESSION_SET_ARTIFACT_KEYS = new Set([
+  'plan_generation_candidate_ref', ...CANONICAL_SESSION_SET_PAYLOAD_KEYS,
+  'selected_candidate_id', 'selected_candidate_hash',
+]);
+const ACTIVE_CANONICAL_CARRY_SOURCE_KEYS = Object.freeze([
+  'artifact_id', 'artifact_user_id', 'artifact_kind', 'artifact_decision_id',
+  'artifact_candidate_id', 'artifact_schema_version', 'artifact_policy_version',
+  'artifact_revision', 'artifact_content_hash', 'artifact_payload_json',
+  'candidate_id', 'candidate_decision_id', 'candidate_selected_hash',
+  'candidate_material_change_json', 'candidate_applied_user_plan_id', 'candidate_status',
+]);
+
+function exactHashIdentity(value) {
+  return isCanonicalHash(value) ? value.replace(/^sha256:/, '') : null;
+}
+
+function storedOwnJsonSnapshot(value) {
+  try {
+    if (typeof value !== 'string') return null;
+    const parsed = JSON.parse(value);
+    return ownDataJsonSnapshot(parsed);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function ownStoredCanonicalCarrySource(value) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))
+      || Object.getOwnPropertySymbols(value).length) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Object.keys(descriptors);
+    if (keys.length !== ACTIVE_CANONICAL_CARRY_SOURCE_KEYS.length
+      || keys.some((key) => !ACTIVE_CANONICAL_CARRY_SOURCE_KEYS.includes(key))) return null;
+    const source = Object.create(null);
+    for (const key of ACTIVE_CANONICAL_CARRY_SOURCE_KEYS) {
+      const descriptor = descriptors[key];
+      if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) return null;
+      const field = descriptor.value;
+      if (field !== null && !['string', 'number', 'boolean'].includes(typeof field)) return null;
+      source[key] = field;
+    }
+    return Object.freeze(source);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function invalidGoalExpansionCarrySource(reason) {
+  const error = new Error(`Active canonical goal-expansion source is invalid: ${reason}`);
+  error.code = 'GOAL_EXPANSION_CARRY_FORWARD_SOURCE_INVALID';
+  throw error;
+}
+
+function canonicalCarryGoalIds(session) {
+  if (!Object.hasOwn(session, 'goal_ids')) return null;
+  const aliases = ['goal_ids', 'goalIds'].filter((key) => Object.hasOwn(session, key));
+  let normalized = null;
+  for (const alias of aliases) {
+    const values = session[alias];
+    if (!Array.isArray(values) || !values.length
+      || values.some((value) => typeof value !== 'string' || !value || value.trim() !== value)
+      || new Set(values).size !== values.length) return null;
+    const sorted = [...values].sort();
+    if (normalized && canonicalStringify(normalized) !== canonicalStringify(sorted)) return null;
+    normalized = sorted;
+  }
+  return normalized;
+}
+
+function authenticatedGoalExpansionSessionSet({
+  userId,
+  state,
+  activeAppliedPlan,
+  activeSource,
+}) {
+  const plan = ownDataJsonSnapshot(activeAppliedPlan);
+  const source = ownStoredCanonicalCarrySource(activeSource);
+  if (!plan || !source) invalidGoalExpansionCarrySource('OWN_DATA_SNAPSHOT_INVALID');
+  const payload = storedOwnJsonSnapshot(source.artifact_payload_json);
+  const materialChange = storedOwnJsonSnapshot(source.candidate_material_change_json);
+  if (!payload || !materialChange) invalidGoalExpansionCarrySource('ARTIFACT_PAYLOAD_INVALID');
+  const payloadKeys = Object.keys(payload);
+  if (payloadKeys.length !== CANONICAL_SESSION_SET_ARTIFACT_KEYS.size
+    || payloadKeys.some((key) => !CANONICAL_SESSION_SET_ARTIFACT_KEYS.has(key))) {
+    invalidGoalExpansionCarrySource('ARTIFACT_SCHEMA_INVALID');
+  }
+  const sessionSet = Object.fromEntries(CANONICAL_SESSION_SET_PAYLOAD_KEYS.map((key) => [key, payload[key]]));
+  const validation = validateCanonicalSessionSet(sessionSet);
+  const artifactHash = exactHashIdentity(source.artifact_content_hash);
+  const selectedHash = exactHashIdentity(source.candidate_selected_hash);
+  const payloadSelectedHash = exactHashIdentity(payload.selected_candidate_hash);
+  const planSelectedHash = exactHashIdentity(plan.selected_candidate_hash);
+  const planSessionSetHash = exactHashIdentity(plan.canonical_session_set_hash);
+  const expectedPrescriptionHash = exactHashIdentity(materialChange.candidate_prescription_hash);
+  const actualPrescriptionHash = exactHashIdentity(canonicalPrescriptionHash(plan));
+  const activePlanVersion = state.activePlan?.planVersion;
+  const identityChecks = [
+    ['SESSION_SET_INVALID', validation.valid],
+    ['OWNER_ID_INVALID', typeof userId === 'string' && Boolean(userId)],
+    ['ARTIFACT_OWNER_MISMATCH', source.artifact_user_id === userId],
+    ['ARTIFACT_KIND_MISMATCH', source.artifact_kind === 'canonical_session_set'],
+    ['ARTIFACT_ID_INVALID', typeof source.artifact_id === 'string' && Boolean(source.artifact_id)],
+    ['ARTIFACT_SCHEMA_MISMATCH', source.artifact_schema_version === '1'],
+    ['ARTIFACT_POLICY_INVALID', typeof source.artifact_policy_version === 'string'
+      && Boolean(source.artifact_policy_version)],
+    ['ARTIFACT_REVISION_INVALID', Number.isSafeInteger(source.artifact_revision)
+      && source.artifact_revision >= 1],
+    ['CANDIDATE_STATUS_MISMATCH', source.candidate_status === 'applied'],
+    ['ASSIGNMENT_ID_MISMATCH', source.candidate_applied_user_plan_id === state.activePlan?.userPlanId],
+    ['ARTIFACT_CANDIDATE_MISMATCH', source.artifact_candidate_id === source.candidate_id],
+    ['ARTIFACT_DECISION_MISMATCH', source.artifact_decision_id === source.candidate_decision_id
+      && source.artifact_decision_id === sessionSet.decision_id],
+    ['PAYLOAD_CANDIDATE_MISMATCH', exactHashIdentity(payload.plan_generation_candidate_ref)
+      === exactHashIdentity(prefixedHash(source.candidate_id))
+      && payload.selected_candidate_id === sessionSet.candidate_id],
+    ['ARTIFACT_CONTENT_HASH_MISMATCH', artifactHash === exactHashIdentity(prefixedHash(payload))],
+    ['CANDIDATE_HASH_MISSING', Boolean(selectedHash)],
+    ['CANDIDATE_HASH_MISMATCH', selectedHash === payloadSelectedHash
+      && selectedHash === exactHashIdentity(sessionSet.candidate_hash)
+      && selectedHash === planSelectedHash],
+    ['SESSION_SET_HASH_MISMATCH', planSessionSetHash === exactHashIdentity(sessionSet.content_hash)],
+    ['PLAN_SCHEMA_MISMATCH', plan.canonical_workout_schema_version === 1],
+    ['PLAN_IDENTITY_MISMATCH', plan.plan_id === sessionSet.plan_id
+      && plan.plan_revision === sessionSet.plan_revision
+      && plan.plan_revision === activePlanVersion],
+    ['PLAN_DECISION_MISMATCH', plan.decision_id === sessionSet.decision_id
+      && exactHashIdentity(plan.decision_hash) === exactHashIdentity(sessionSet.decision_hash)],
+    ['PLAN_CANDIDATE_MISMATCH', plan.selected_candidate_id === sessionSet.candidate_id],
+    ['PRESCRIPTION_HASH_MISMATCH', Boolean(expectedPrescriptionHash)
+      && expectedPrescriptionHash === actualPrescriptionHash],
+  ];
+  const failedIdentityCheck = identityChecks.find(([, valid]) => !valid)?.[0];
+  if (failedIdentityCheck) invalidGoalExpansionCarrySource(failedIdentityCheck);
+  const reconstructed = planSchema.buildCanonicalPlanFromSessionSet(sessionSet);
+  if (!reconstructed
+    || canonicalStringify(plan.weeks) !== canonicalStringify(reconstructed.weeks)) {
+    invalidGoalExpansionCarrySource('PLAN_SESSION_BYTES_MISMATCH');
+  }
+  return { plan, sessionSet };
+}
+
+function goalBackwardGoalExpansionCarryForwardMaterial(
+  userId,
+  state,
+  activeAppliedPlan,
+  activeSource,
+  availableLocalDates,
+) {
+  if (state?.request?.operation === 'remove_race' || !activeAppliedPlan) return [];
+  const plan = ownDataJsonSnapshot(activeAppliedPlan);
+  if (!plan) invalidGoalExpansionCarrySource('PLAN_SNAPSHOT_INVALID');
+  const declaresCanonicalSource = [
+    plan.canonical_workout_schema_version,
+    plan.canonical_session_set_hash,
+    plan.selected_candidate_hash,
+  ].some((value) => value !== null && value !== undefined);
+  if (!declaresCanonicalSource) return [];
+  const currentGoalIds = new Set((state.races || []).map((race) => (
+    typeof race?.id === 'string' && race.id ? `goal-${race.id}` : null
+  )));
+  const activeGoals = Array.isArray(plan.goals) ? plan.goals : null;
+  if (!currentGoalIds.size || currentGoalIds.has(null) || !activeGoals?.length) {
+    invalidGoalExpansionCarrySource('GOAL_SET_INVALID');
+  }
   const activeGoalIds = activeGoals.map((goal) => {
     if (!goal || typeof goal !== 'object' || Array.isArray(goal)) return null;
-    const raceId = goal.raceId ?? goal.race_id;
-    if (typeof raceId !== 'string' || !raceId.trim()) return null;
-    if (goal.raceId !== null && goal.raceId !== undefined
-      && goal.race_id !== null && goal.race_id !== undefined
-      && goal.raceId !== goal.race_id) return null;
-    return `goal-${raceId.trim()}`;
+    const hasCamel = Object.hasOwn(goal, 'raceId') && goal.raceId !== null && goal.raceId !== undefined;
+    const hasSnake = Object.hasOwn(goal, 'race_id') && goal.race_id !== null && goal.race_id !== undefined;
+    if (!hasCamel && !hasSnake) return null;
+    if (hasCamel && (typeof goal.raceId !== 'string' || !goal.raceId || goal.raceId.trim() !== goal.raceId)) return null;
+    if (hasSnake && (typeof goal.race_id !== 'string' || !goal.race_id || goal.race_id.trim() !== goal.race_id)) return null;
+    if (hasCamel && hasSnake && goal.raceId !== goal.race_id) return null;
+    return `goal-${hasCamel ? goal.raceId : goal.race_id}`;
   });
-  if (activeGoalIds.some((goalId) => goalId === null)) return [];
+  if (activeGoalIds.some((goalId) => goalId === null) || new Set(activeGoalIds).size !== activeGoalIds.length) {
+    invalidGoalExpansionCarrySource('ACTIVE_GOAL_BINDING_INVALID');
+  }
   const retainedGoalIds = new Set(activeGoalIds.filter((goalId) => currentGoalIds.has(goalId)));
   const addsGoal = [...currentGoalIds].some((goalId) => !activeGoalIds.includes(goalId));
-  if (!retainedGoalIds.size || !addsGoal) return [];
-  const acceptedMaterialIds = new Set();
-  // A goal expansion may preserve only canonical aerobic/assessment material
-  // already owned by at least one retained goal. The new decision rebinds the
-  // selected material to its exact current goals; removed or foreign bindings
-  // never cross into the successor.
-  return goalBackwardRemovalMaterial(activeAppliedPlan, availableLocalDates).filter((session) => {
-    if (!goalBackwardRemovalFamily(session)) return false;
-    const id = goalBackwardMaterialId(session);
-    const goalIds = session?.goal_ids ?? session?.goalIds;
-    if (!id || acceptedMaterialIds.has(id)
-      || !Array.isArray(goalIds) || !goalIds.length
-      || goalIds.some((goalId) => typeof goalId !== 'string' || !retainedGoalIds.has(goalId))) return false;
-    acceptedMaterialIds.add(id);
-    return true;
+  if (!addsGoal) return [];
+  if (!retainedGoalIds.size) invalidGoalExpansionCarrySource('NO_RETAINED_GOAL');
+  const { sessionSet } = authenticatedGoalExpansionSessionSet({
+    userId,
+    state,
+    activeAppliedPlan: plan,
+    activeSource,
   });
+  const available = new Set(Array.isArray(availableLocalDates) ? availableLocalDates : []);
+  if (!available.size || [...available].some((date) => !concurrentPlan.isValidISODate(date))) {
+    invalidGoalExpansionCarrySource('PLACEMENT_WINDOW_INVALID');
+  }
+  const acceptedMaterialIds = new Set();
+  const material = [];
+  for (const session of sessionSet.sessions) {
+    if (!available.has(session.scheduled_local_date) || !goalBackwardRemovalFamily(session)) continue;
+    const id = goalBackwardMaterialId(session);
+    const goalIds = canonicalCarryGoalIds(session);
+    if (!id || acceptedMaterialIds.has(id) || !goalIds
+      || goalIds.some((goalId) => !activeGoalIds.includes(goalId))) {
+      invalidGoalExpansionCarrySource('SESSION_BINDING_INVALID');
+    }
+    if (goalIds.some((goalId) => !retainedGoalIds.has(goalId))) continue;
+    const normalized = { ...session, goal_ids: goalIds, date: session.scheduled_local_date };
+    delete normalized.goalIds;
+    acceptedMaterialIds.add(id);
+    material.push(Object.freeze(normalized));
+  }
+  return material;
 }
 
 function assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan) {
@@ -3090,8 +3311,10 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     ? [] : goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates);
   const carriedGoalExpansionMaterial = clusterPolicy?.required === true
     ? [] : goalBackwardGoalExpansionCarryForwardMaterial(
+      userId,
       state,
       activeAppliedPlan,
+      state.activeCanonicalCarryForwardSource,
       availableLocalDates,
     );
   const carriedLifecycleMaterial = [...carriedRemovalMaterial, ...carriedGoalExpansionMaterial];
@@ -7021,6 +7244,7 @@ router._test = {
   confidenceAwareMileageBaseline,
   goalBackwardSafetyState,
   goalBackwardRemovalCarryForwardMaterial,
+  canonicalCarryGoalIds,
   goalBackwardRequiredRunningDoseReceipt,
   goalBackwardRequiredRunningDoseReceiptFromServerValuesForTest,
   goalBackwardTrainingAge,

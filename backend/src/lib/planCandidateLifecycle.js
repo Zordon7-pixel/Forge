@@ -447,6 +447,11 @@ function normalizeHash(value, { requirePrefix = false } = {}) {
   return normalized;
 }
 
+function normalizePrefixedHashIdentity(value) {
+  const normalized = normalizeHash(value);
+  return normalized ? `sha256:${normalized.replace(/^sha256:/, '')}` : null;
+}
+
 function isCanonicalHash(value, { requirePrefix = false } = {}) {
   if (typeof value !== 'string' || value !== value.trim()) return false;
   if (!HASH_PATTERN.test(value)) return false;
@@ -640,7 +645,35 @@ function buildGoalBackwardShadowBindings({
     String(goal.goal_id),
     Math.max(1, Number(goal.source_revision || 1)),
   ]));
-  const materialChange = selectedCandidate?.material_change || { required: false, reason_codes: [] };
+  const rawMaterialChange = cloneJson(
+    selectedCandidate?.material_change || { required: false, reason_codes: [] },
+  );
+  const materialChange = {
+    ...rawMaterialChange,
+    ...(Object.hasOwn(rawMaterialChange, 'active_prescription_hash') ? {
+      active_prescription_hash: normalizePrefixedHashIdentity(rawMaterialChange.active_prescription_hash),
+    } : {}),
+    ...(Object.hasOwn(rawMaterialChange, 'candidate_prescription_hash') ? {
+      candidate_prescription_hash: normalizePrefixedHashIdentity(rawMaterialChange.candidate_prescription_hash),
+    } : {}),
+    ...(Array.isArray(rawMaterialChange.changes) ? {
+      changes: rawMaterialChange.changes.map((change) => ({
+        ...change,
+        ...(Object.hasOwn(change, 'baseline_session_content_hash') ? {
+          baseline_session_content_hash: normalizePrefixedHashIdentity(change.baseline_session_content_hash),
+        } : {}),
+        ...(Object.hasOwn(change, 'candidate_session_content_hash') ? {
+          candidate_session_content_hash: normalizePrefixedHashIdentity(change.candidate_session_content_hash),
+        } : {}),
+        ...(Object.hasOwn(change, 'candidate_hash') ? {
+          candidate_hash: normalizePrefixedHashIdentity(change.candidate_hash),
+        } : {}),
+        ...(Object.hasOwn(change, 'canonical_session_set_hash') ? {
+          canonical_session_set_hash: normalizePrefixedHashIdentity(change.canonical_session_set_hash),
+        } : {}),
+      })),
+    } : {}),
+  };
   const applyBindings = buildGoalBackwardFingerprintBindings(decision, { decisionArtifact });
   const fullMaterialChange = {
     ...cloneJson(materialChange),
@@ -681,11 +714,11 @@ function buildGoalBackwardShadowBindings({
         candidate_plan_revision: change.candidate_plan_revision ?? null,
         baseline_session_revision: change.baseline_session_revision ?? null,
         candidate_session_revision: change.candidate_session_revision ?? null,
-        baseline_session_content_hash: normalizeHash(change.baseline_session_content_hash, { requirePrefix: true }),
-        candidate_session_content_hash: normalizeHash(change.candidate_session_content_hash, { requirePrefix: true }),
+        baseline_session_content_hash: normalizePrefixedHashIdentity(change.baseline_session_content_hash),
+        candidate_session_content_hash: normalizePrefixedHashIdentity(change.candidate_session_content_hash),
         decision_id: boundedIdentifier(String(change.decision_id || '')),
-        candidate_hash: normalizeHash(change.candidate_hash, { requirePrefix: true }),
-        canonical_session_set_hash: normalizeHash(change.canonical_session_set_hash, { requirePrefix: true }),
+        candidate_hash: normalizePrefixedHashIdentity(change.candidate_hash),
+        canonical_session_set_hash: normalizePrefixedHashIdentity(change.canonical_session_set_hash),
         source_fields_truncated: Object.keys(change).some((key) => !compactChangeFields.has(key)),
       };
     });
@@ -697,8 +730,8 @@ function buildGoalBackwardShadowBindings({
       baseline_source: boundedIdentifier(String(materialChange.baseline_source || '')),
       baseline_plan_revision: materialChange.baseline_plan_revision ?? null,
       candidate_plan_revision: materialChange.candidate_plan_revision ?? null,
-      active_prescription_hash: normalizeHash(materialChange.active_prescription_hash, { requirePrefix: true }),
-      candidate_prescription_hash: normalizeHash(materialChange.candidate_prescription_hash, { requirePrefix: true }),
+      active_prescription_hash: normalizePrefixedHashIdentity(materialChange.active_prescription_hash),
+      candidate_prescription_hash: normalizePrefixedHashIdentity(materialChange.candidate_prescription_hash),
       material_change_hash: prefixedHash(materialChange),
       reason_codes: [],
       reason_code_count: sourceReasonCodes.length,
