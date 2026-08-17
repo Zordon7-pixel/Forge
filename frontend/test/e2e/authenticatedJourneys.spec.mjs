@@ -1072,9 +1072,18 @@ test('onboarding persists the athlete profile and generates one plan', async ({ 
   await page.getByPlaceholder('Age').fill('37')
   await page.getByPlaceholder('Weight (lbs)').fill('205')
   for (let step = 1; step < 9; step += 1) await page.getByRole('button', { name: 'Next', exact: true }).click()
+  const completionNavigationRequests = []
+  page.on('request', (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+      completionNavigationRequests.push(new URL(request.url()).pathname)
+    }
+  })
   await page.getByRole('button', { name: 'Finish', exact: true }).click()
 
   await expect(page).toHaveURL(/\/$/)
+  await expect(page.getByRole('button', { name: 'Go Home' })).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('forge_token'))).toBe(onboardedToken)
+  expect(completionNavigationRequests).toEqual(['/'])
   expect(profilePayload).toMatchObject({
     age: 37,
     weight_lbs: 205,

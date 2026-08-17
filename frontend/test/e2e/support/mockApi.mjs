@@ -313,7 +313,11 @@ export async function installAuthenticatedApi(page, options = {}) {
     onboarded: user.onboarded !== false,
   })
 
-  await page.addInitScript((value) => localStorage.setItem('forge_token', value), token)
+  await page.addInitScript(({ seedKey, tokenValue }) => {
+    if (sessionStorage.getItem(seedKey) === '1') return
+    sessionStorage.setItem(seedKey, '1')
+    localStorage.setItem('forge_token', tokenValue)
+  }, { seedKey: 'forge_qa_auth_seeded_v1', tokenValue: token })
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
