@@ -68,6 +68,7 @@ const {
   buildPlanningSnapshot,
   candidateRejectionMatches,
   goalBackwardApplyEnvelopeFromRequest,
+  isCanonicalHash,
   loadCandidateRejectionsForFingerprint,
   normalizePlanningConstraints,
   parseJson: parseCandidateJson,
@@ -2496,14 +2497,55 @@ function goalBackwardCandidateMaterial(plan, availableLocalDates) {
 }
 
 function goalBackwardMaterialId(session) {
-  return String(session?.session_id ?? session?.id ?? '').trim();
+  const value = session?.session_id ?? session?.id;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function goalBackwardRemovalFamily(session) {
+  if (!session || typeof session !== 'object' || Array.isArray(session)) return null;
+  const familyFields = [
+    session.workout_id,
+    session.workout_family,
+    session.sessionType,
+    session.session_type,
+    session.type,
+  ];
+  if (familyFields.some((value) => value !== null && value !== undefined && typeof value !== 'string')) {
+    return null;
+  }
+  const family = legacyGoalBackwardFamily(session);
+  return ['easy_run', 'recovery_run', 'long_aerobic'].includes(family) ? family : null;
+}
+
+function goalBackwardRemovalMaterial(plan, availableLocalDates) {
+  if (!Array.isArray(availableLocalDates) || !availableLocalDates.length
+    || availableLocalDates.some((date) => (
+      typeof date !== 'string' || !concurrentPlan.isValidISODate(date)
+    ))) return [];
+  const available = new Set(availableLocalDates);
+  return (Array.isArray(plan?.weeks) ? plan.weeks : []).flatMap((week) => (
+    (Array.isArray(week?.days) ? week.days : []).flatMap((day) => {
+      const dayDate = typeof day?.date === 'string' && concurrentPlan.isValidISODate(day.date)
+        ? day.date : null;
+      if (!dayDate || !available.has(dayDate)) return [];
+      return (Array.isArray(day.sessions) ? day.sessions : []).flatMap((session) => {
+        if (!session || typeof session !== 'object' || Array.isArray(session)) return [];
+        const explicitSessionDate = session.scheduled_local_date ?? session.date;
+        if (explicitSessionDate !== null && explicitSessionDate !== undefined
+          && (typeof explicitSessionDate !== 'string'
+            || !concurrentPlan.isValidISODate(explicitSessionDate)
+            || explicitSessionDate !== dayDate)) return [];
+        return [{ ...session, date: dayDate }];
+      });
+    })
+  ));
 }
 
 function goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates) {
   if (state?.request?.operation !== 'remove_race'
-    || Number(activeAppliedPlan?.canonical_workout_schema_version) !== 1
-    || !activeAppliedPlan?.canonical_session_set_hash
-    || !activeAppliedPlan?.selected_candidate_hash) return [];
+    || activeAppliedPlan?.canonical_workout_schema_version !== 1
+    || !isCanonicalHash(activeAppliedPlan?.canonical_session_set_hash)
+    || !isCanonicalHash(activeAppliedPlan?.selected_candidate_hash)) return [];
   const retainedGoalIds = new Set((state.races || []).map((race) => `goal-${String(race?.id || '')}`));
   const removedGoalId = `goal-${String(state.request.remove_race_id || '')}`;
   const allowedGoalIds = new Set([...retainedGoalIds, removedGoalId]);
@@ -2512,9 +2554,8 @@ function goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, avail
   // A successor may retain only canonical, goal-shared aerobic material. The
   // new canonical session set rebinds it to the retained decision goals; race-
   // specific quality and material owned only by the removed goal never cross.
-  return goalBackwardCandidateMaterial(activeAppliedPlan, availableLocalDates).filter((session) => {
-    const family = legacyGoalBackwardFamily(session);
-    if (!['easy_run', 'recovery_run', 'long_aerobic'].includes(family)) return false;
+  return goalBackwardRemovalMaterial(activeAppliedPlan, availableLocalDates).filter((session) => {
+    if (!goalBackwardRemovalFamily(session)) return false;
     const id = goalBackwardMaterialId(session);
     const goalIds = session?.goal_ids ?? session?.goalIds;
     if (!id || acceptedMaterialIds.has(id)

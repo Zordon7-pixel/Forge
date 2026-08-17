@@ -1716,6 +1716,46 @@ async function checkHyroxCandidateImmediateAdoption() {
       request: { operation: 'remove_race', remove_race_id: 'yonkers' },
       races: [{ id: 'army' }],
     }, { weeks: [] }, [planningDate]), [], 'legacy or identity-free active plans cannot authorize carry-forward');
+    const validCarryState = {
+      request: { operation: 'remove_race', remove_race_id: 'yonkers' },
+      races: [{ id: 'army' }],
+    };
+    const validCarryPlan = {
+      canonical_workout_schema_version: 1,
+      canonical_session_set_hash: 'a'.repeat(64),
+      selected_candidate_hash: 'b'.repeat(64),
+      weeks: [{ days: [{ date: planningDate, sessions: [
+        { session_id: 'shared-easy', type: 'easy', goal_ids: ['goal-yonkers', 'goal-army'] },
+      ] }] }],
+    };
+    const mutateCarryPlan = (mutate) => {
+      const plan = JSON.parse(JSON.stringify(validCarryPlan));
+      mutate(plan);
+      return plan;
+    };
+    const hostileCarryPlans = [
+      ['string schema', mutateCarryPlan((plan) => { plan.canonical_workout_schema_version = '1'; })],
+      ['array schema', mutateCarryPlan((plan) => { plan.canonical_workout_schema_version = [1]; })],
+      ['object session-set hash', mutateCarryPlan((plan) => { plan.canonical_session_set_hash = { value: 'a'.repeat(64) }; })],
+      ['invalid session-set hash', mutateCarryPlan((plan) => { plan.canonical_session_set_hash = 'not-a-hash'; })],
+      ['object candidate hash', mutateCarryPlan((plan) => { plan.selected_candidate_hash = { value: 'b'.repeat(64) }; })],
+      ['invalid candidate hash', mutateCarryPlan((plan) => { plan.selected_candidate_hash = 'not-a-hash'; })],
+      ['object session id', mutateCarryPlan((plan) => { plan.weeks[0].days[0].sessions[0].session_id = {}; })],
+      ['array session id', mutateCarryPlan((plan) => { plan.weeks[0].days[0].sessions[0].session_id = ['shared-easy']; })],
+      ['object fallback id', mutateCarryPlan((plan) => {
+        delete plan.weeks[0].days[0].sessions[0].session_id;
+        plan.weeks[0].days[0].sessions[0].id = {};
+      })],
+      ['array workout type', mutateCarryPlan((plan) => { plan.weeks[0].days[0].sessions[0].type = ['easy']; })],
+      ['array local date', mutateCarryPlan((plan) => { plan.weeks[0].days[0].date = [planningDate]; })],
+    ];
+    for (const [label, hostilePlan] of hostileCarryPlans) {
+      assert.deepEqual(
+        plansRouter._test.goalBackwardRemovalCarryForwardMaterial(validCarryState, hostilePlan, [planningDate]),
+        [],
+        `${label} cannot authorize canonical removal carry-forward`,
+      );
+    }
     const preview = routeHandler(plansRouter, '/generate-for-races', 'post');
     const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
     const reject = routeHandler(plansRouter, '/candidates/:candidateId/reject', 'post');
@@ -2659,6 +2699,40 @@ async function checkHyroxCandidateImmediateAdoption() {
         ?? session.derived_totals?.distance_m ?? 0)
     ), 0);
     assert.ok(roadCurrentRunningDoseM > 0);
+
+    const activeRoadPlanRow = trainingPlans.get(currentAssignment().plan_id);
+    const validRoadPlanData = activeRoadPlanRow.plan_data;
+    const validRoadPlanJson = activeRoadPlanRow.plan_json;
+    const malformedRoadPlan = JSON.parse(validRoadPlanData);
+    malformedRoadPlan.canonical_workout_schema_version = '1';
+    activeRoadPlanRow.plan_data = JSON.stringify(malformedRoadPlan);
+    activeRoadPlanRow.plan_json = activeRoadPlanRow.plan_data;
+    const stateBeforeMalformedRemoval = {
+      candidates: candidates.size,
+      artifacts: planningArtifacts.size,
+      plans: trainingPlans.size,
+      assignments: userPlans.size,
+      activeAssignment: currentAssignment().id,
+      yonkersOwned: raceRows.has('yonkers'),
+    };
+    const malformedRemovalPreview = await invoke(previewRaceRemoval, {
+      ...sundayRequestBase,
+      params: { id: 'yonkers' },
+      body: { ...sundayClock },
+    });
+    assert.equal(malformedRemovalPreview.statusCode, 409, JSON.stringify(malformedRemovalPreview.payload));
+    assert.equal(malformedRemovalPreview.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED');
+    assert.deepEqual({
+      candidates: candidates.size,
+      artifacts: planningArtifacts.size,
+      plans: trainingPlans.size,
+      assignments: userPlans.size,
+      activeAssignment: currentAssignment().id,
+      yonkersOwned: raceRows.has('yonkers'),
+    }, stateBeforeMalformedRemoval,
+    'a malformed canonical active plan cannot authorize carry-forward or write removal state');
+    activeRoadPlanRow.plan_data = validRoadPlanData;
+    activeRoadPlanRow.plan_json = validRoadPlanJson;
 
     const candidateCountBeforeRoadRemoval = candidates.size;
     const artifactCountBeforeRoadRemoval = planningArtifacts.size;

@@ -447,6 +447,12 @@ function normalizeHash(value, { requirePrefix = false } = {}) {
   return normalized;
 }
 
+function isCanonicalHash(value, { requirePrefix = false } = {}) {
+  if (typeof value !== 'string' || value !== value.trim()) return false;
+  if (!HASH_PATTERN.test(value)) return false;
+  return !requirePrefix || value.startsWith(HASH_PREFIX);
+}
+
 function hashIdentity(value) {
   const normalized = normalizeHash(value);
   return normalized ? normalized.replace(/^sha256:/, '') : null;
@@ -1305,6 +1311,7 @@ module.exports = {
   candidateRejectionMatches,
   findArtifactRedactionViolations,
   goalBackwardApplyEnvelopeFromRequest,
+  isCanonicalHash,
   jsonBytes,
   loadCandidateRejectionsForFingerprint,
   normalizeContext,
