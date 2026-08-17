@@ -3157,13 +3157,14 @@ async function checkHyroxCandidateImmediateAdoption() {
       malformedGoalPlanRow.plan_json = validGoalPlanJson;
     }
 
-    const aliasBindingValue = (alias, raceIds) => (
+    const aliasBindingValue = (alias, raceIds, encoding) => (
       alias === 'goal_ids' || alias === 'goalIds'
-        ? raceIds.map((id) => ` goal-${id} `)
-        : ` ${raceIds[0]} `
+        ? raceIds.map((id) => ` ${encoding === 'canonical' ? `goal-${id}` : id} `)
+        : ` ${encoding === 'canonical' ? `goal-${raceIds[0]}` : raceIds[0]} `
     );
     const configureSemanticDayAgreement = (
-      plan, dayAlias, nestedAlias, bindingFirst, raceIds = ['yonkers'],
+      plan, dayAlias, nestedAlias, dayEncoding, nestedEncoding, bindingFirst,
+      raceIds = ['yonkers'],
     ) => {
       delete plan.canonical_workout_schema_version;
       delete plan.canonical_session_set_hash;
@@ -3186,62 +3187,179 @@ async function checkHyroxCandidateImmediateAdoption() {
       });
       const nestedSession = {
         ...sessions[0],
-        [nestedAlias]: aliasBindingValue(nestedAlias, raceIds),
+        [nestedAlias]: aliasBindingValue(nestedAlias, raceIds, nestedEncoding),
       };
       sessions[0] = bindingFirst
-        ? { [nestedAlias]: aliasBindingValue(nestedAlias, raceIds), ...sessions[0] }
+        ? {
+          [nestedAlias]: aliasBindingValue(nestedAlias, raceIds, nestedEncoding),
+          ...sessions[0],
+        }
         : nestedSession;
       day.sessions = sessions;
       week.days[dayIndex] = bindingFirst
-        ? { [dayAlias]: aliasBindingValue(dayAlias, raceIds), ...day }
-        : { ...day, [dayAlias]: aliasBindingValue(dayAlias, raceIds) };
+        ? { [dayAlias]: aliasBindingValue(dayAlias, raceIds, dayEncoding), ...day }
+        : { ...day, [dayAlias]: aliasBindingValue(dayAlias, raceIds, dayEncoding) };
       return week.days[dayIndex];
     };
-    const dayBindingAliases = ['goal_ids', 'goalIds', 'goalRaceId', 'goal_race_id'];
+    const prefixedRaceCases = [
+      ['goal-setter', 'raw'],
+      ['goal-x', 'canonical'],
+    ];
+    for (const [prefixedRaceId, encoding] of prefixedRaceCases) {
+      const prefixedRace = {
+        ...raceRows.get('army'),
+        id: prefixedRaceId,
+        race_name: `Prefixed ${prefixedRaceId}`,
+        race_date: '2026-12-06',
+        event_local_date: '2026-12-06',
+      };
+      raceRows.set(prefixedRaceId, prefixedRace);
+      const prefixedRacePlan = JSON.parse(validGoalPlanData);
+      configureSemanticDayAgreement(
+        prefixedRacePlan, 'goal_ids', 'goalIds', encoding, encoding, true, [prefixedRaceId],
+      );
+      malformedGoalPlanRow.plan_data = JSON.stringify(prefixedRacePlan);
+      malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
+      const prefixedBefore = {
+        assignmentId: currentAssignment().id,
+        assignmentPlanId: currentAssignment().plan_id,
+        races: raceRows.size,
+        owned: raceRows.has(prefixedRaceId),
+      };
+      const prefixedPreview = await invoke(previewRaceRemoval, {
+        ...roadRequestBase,
+        params: { id: prefixedRaceId },
+        body: { ...roadClock },
+      });
+      assert.equal(prefixedPreview.statusCode, 201,
+        `${prefixedRaceId}: ${JSON.stringify(prefixedPreview.payload)}`);
+      assert.equal(prefixedPreview.payload.requires_apply, true, prefixedRaceId);
+      const prefixedDelete = await invoke(deleteRace, {
+        ...roadRequestBase,
+        params: { id: prefixedRaceId },
+        body: {},
+      });
+      assert.equal(prefixedDelete.statusCode, 409,
+        `${prefixedRaceId}: ${JSON.stringify(prefixedDelete.payload)}`);
+      assert.equal(prefixedDelete.payload.code, 'ACTIVE_PLAN_REBUILD_REQUIRED', prefixedRaceId);
+      assert.deepEqual({
+        assignmentId: currentAssignment().id,
+        assignmentPlanId: currentAssignment().plan_id,
+        races: raceRows.size,
+        owned: raceRows.has(prefixedRaceId),
+      }, prefixedBefore, `${prefixedRaceId} cannot be direct-deleted through prefix collapse`);
+      raceRows.delete(prefixedRaceId);
+    }
+
+    const ambiguousRaceIds = ['setter', 'goal-setter'];
+    for (const [index, ambiguousRaceId] of ambiguousRaceIds.entries()) {
+      raceRows.set(ambiguousRaceId, {
+        ...raceRows.get(index === 0 ? 'yonkers' : 'army'),
+        id: ambiguousRaceId,
+        race_name: `Ambiguous ${ambiguousRaceId}`,
+      });
+    }
+    const ambiguousBindingPlan = JSON.parse(validGoalPlanData);
+    configureSemanticDayAgreement(
+      ambiguousBindingPlan, 'goal_ids', 'goalIds', 'raw', 'raw', true, ['goal-setter'],
+    );
+    ambiguousBindingPlan.goals = ambiguousBindingPlan.goals.map((goal, index) => ({
+      ...goal,
+      raceId: ambiguousRaceIds[index],
+    }));
+    delete ambiguousBindingPlan.goal;
+    malformedGoalPlanRow.plan_data = JSON.stringify(ambiguousBindingPlan);
+    malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
+    const ambiguousBefore = {
+      candidates: candidates.size,
+      artifacts: planningArtifacts.size,
+      plans: trainingPlans.size,
+      assignments: userPlans.size,
+      rejections: rejectionRows.length,
+      activeAssignment: currentAssignment().id,
+      races: raceRows.size,
+      setterOwned: raceRows.has('setter'),
+      goalSetterOwned: raceRows.has('goal-setter'),
+    };
+    const ambiguousPreview = await invoke(previewRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: 'goal-setter' },
+      body: { ...roadClock },
+    });
+    assert.equal(ambiguousPreview.statusCode, 409, JSON.stringify(ambiguousPreview.payload));
+    assert.equal(ambiguousPreview.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED');
+    const ambiguousDelete = await invoke(deleteRace, {
+      ...roadRequestBase,
+      params: { id: 'goal-setter' },
+      body: {},
+    });
+    assert.equal(ambiguousDelete.statusCode, 409, JSON.stringify(ambiguousDelete.payload));
+    assert.equal(ambiguousDelete.payload.code, 'ACTIVE_PLAN_LINKAGE_UNVERIFIED');
+    assert.deepEqual({
+      candidates: candidates.size,
+      artifacts: planningArtifacts.size,
+      plans: trainingPlans.size,
+      assignments: userPlans.size,
+      rejections: rejectionRows.length,
+      activeAssignment: currentAssignment().id,
+      races: raceRows.size,
+      setterOwned: raceRows.has('setter'),
+      goalSetterOwned: raceRows.has('goal-setter'),
+    }, ambiguousBefore, 'an identity matching two distinct known races fails closed with zero writes');
+    raceRows.delete('setter');
+    raceRows.delete('goal-setter');
+
+    const dayBindingAliases = ['goalRaceId', 'goal_race_id', 'goal_ids', 'goalIds'];
+    const nestedBindingAliases = ['goal_ids', 'goalIds', 'goalRaceId', 'goal_race_id'];
     for (const dayAlias of dayBindingAliases) {
-      for (const nestedAlias of dayBindingAliases) {
-        for (const bindingFirst of [true, false]) {
-          const label = `${dayAlias}/${nestedAlias} semantic agreement `
-            + `(${bindingFirst ? 'binding-first' : 'sessions-first'})`;
-          const semanticallyAgreeingPlan = JSON.parse(validGoalPlanData);
-          configureSemanticDayAgreement(
-            semanticallyAgreeingPlan, dayAlias, nestedAlias, bindingFirst,
-          );
-          malformedGoalPlanRow.plan_data = JSON.stringify(semanticallyAgreeingPlan);
-          malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
-          const before = {
-            assignmentId: currentAssignment().id,
-            assignmentPlanId: currentAssignment().plan_id,
-            races: raceRows.size,
-            yonkersOwned: raceRows.has('yonkers'),
-          };
-          const agreeingPreview = await invoke(previewRaceRemoval, {
-            ...roadRequestBase,
-            params: { id: 'yonkers' },
-            body: { ...roadClock },
-          });
-          assert.equal(agreeingPreview.statusCode, 201,
-            `${label}: ${JSON.stringify(agreeingPreview.payload)}`);
-          assert.equal(agreeingPreview.payload.requires_apply, true, label);
-          const agreeingDelete = await invoke(deleteRace, {
-            ...roadRequestBase,
-            params: { id: 'yonkers' },
-            body: {},
-          });
-          assert.equal(agreeingDelete.statusCode, 409,
-            `${label}: ${JSON.stringify(agreeingDelete.payload)}`);
-          assert.equal(agreeingDelete.payload.code, 'ACTIVE_PLAN_REBUILD_REQUIRED', label);
-          assert.deepEqual({
-            assignmentId: currentAssignment().id,
-            assignmentPlanId: currentAssignment().plan_id,
-            races: raceRows.size,
-            yonkersOwned: raceRows.has('yonkers'),
-            activePlanUnchanged: malformedGoalPlanRow.plan_data
-              === JSON.stringify(semanticallyAgreeingPlan),
-          }, {
-            ...before,
-            activePlanUnchanged: true,
-          }, `${label} preserves the active assignment and target race until apply`);
+      for (const nestedAlias of nestedBindingAliases) {
+        for (const dayEncoding of ['canonical', 'raw']) {
+          for (const nestedEncoding of ['canonical', 'raw']) {
+            for (const bindingFirst of [true, false]) {
+              const label = `${dayAlias}:${dayEncoding}/${nestedAlias}:${nestedEncoding} `
+                + `semantic agreement (${bindingFirst ? 'binding-first' : 'sessions-first'})`;
+              const semanticallyAgreeingPlan = JSON.parse(validGoalPlanData);
+              configureSemanticDayAgreement(
+                semanticallyAgreeingPlan, dayAlias, nestedAlias,
+                dayEncoding, nestedEncoding, bindingFirst,
+              );
+              malformedGoalPlanRow.plan_data = JSON.stringify(semanticallyAgreeingPlan);
+              malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
+              const before = {
+                assignmentId: currentAssignment().id,
+                assignmentPlanId: currentAssignment().plan_id,
+                races: raceRows.size,
+                yonkersOwned: raceRows.has('yonkers'),
+              };
+              const agreeingPreview = await invoke(previewRaceRemoval, {
+                ...roadRequestBase,
+                params: { id: 'yonkers' },
+                body: { ...roadClock },
+              });
+              assert.equal(agreeingPreview.statusCode, 201,
+                `${label}: ${JSON.stringify(agreeingPreview.payload)}`);
+              assert.equal(agreeingPreview.payload.requires_apply, true, label);
+              const agreeingDelete = await invoke(deleteRace, {
+                ...roadRequestBase,
+                params: { id: 'yonkers' },
+                body: {},
+              });
+              assert.equal(agreeingDelete.statusCode, 409,
+                `${label}: ${JSON.stringify(agreeingDelete.payload)}`);
+              assert.equal(agreeingDelete.payload.code, 'ACTIVE_PLAN_REBUILD_REQUIRED', label);
+              assert.deepEqual({
+                assignmentId: currentAssignment().id,
+                assignmentPlanId: currentAssignment().plan_id,
+                races: raceRows.size,
+                yonkersOwned: raceRows.has('yonkers'),
+                activePlanUnchanged: malformedGoalPlanRow.plan_data
+                  === JSON.stringify(semanticallyAgreeingPlan),
+              }, {
+                ...before,
+                activePlanUnchanged: true,
+              }, `${label} preserves the active assignment and target race until apply`);
+            }
+          }
         }
       }
     }
@@ -3249,7 +3367,8 @@ async function checkHyroxCandidateImmediateAdoption() {
     for (const bindingFirst of [true, false]) {
       const multiPeerAgreementPlan = JSON.parse(validGoalPlanData);
       configureSemanticDayAgreement(
-        multiPeerAgreementPlan, 'goal_ids', 'goalIds', bindingFirst, ['yonkers', 'army'],
+        multiPeerAgreementPlan, 'goal_ids', 'goalIds', 'canonical', 'raw',
+        bindingFirst, ['yonkers', 'army'],
       );
       assert.deepEqual(
         plansRouter._test.raceRemovalImpact(multiPeerAgreementPlan, 'yonkers'),

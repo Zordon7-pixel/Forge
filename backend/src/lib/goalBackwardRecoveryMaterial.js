@@ -352,11 +352,6 @@ function goalRaceIdsFromRows(rows) {
   return ids;
 }
 
-function canonicalGoalBindingIdentity(value) {
-  return value.startsWith('goal-') && value.length > 'goal-'.length
-    ? value.slice('goal-'.length) : value;
-}
-
 function sessionGoalBindings(session) {
   const sessionRecord = ownDataRecord(session);
   if (!sessionRecord) return null;
@@ -366,10 +361,27 @@ function sessionGoalBindings(session) {
   if (legacyGoalId.value) bindings.push(legacyGoalId.value);
   const canonicalGoalIds = ownStringArrayAlias(sessionRecord, ['goal_ids', 'goalIds']);
   if (!canonicalGoalIds.valid) return null;
-  if (canonicalGoalIds.value) {
-    bindings.push(...canonicalGoalIds.value.map(canonicalGoalBindingIdentity));
-  }
+  if (canonicalGoalIds.value) bindings.push(...canonicalGoalIds.value);
   return bindings;
+}
+
+function semanticSessionBindingIds(bindings, knownRaceIds) {
+  const known = new Set(knownRaceIds);
+  const identities = [];
+  for (const binding of bindings) {
+    const matches = [];
+    if (known.has(binding)) matches.push(binding);
+    if (binding.startsWith('goal-') && binding.length > 'goal-'.length) {
+      const prefixedIdentity = binding.slice('goal-'.length);
+      if (known.has(prefixedIdentity) && !matches.includes(prefixedIdentity)) {
+        matches.push(prefixedIdentity);
+      }
+    }
+    if (matches.length > 1) return null;
+    const identity = matches[0] || binding;
+    if (!identities.includes(identity)) identities.push(identity);
+  }
+  return identities;
 }
 
 function hasOwnSessionBindingAuthority(descriptors) {
@@ -392,7 +404,7 @@ function sessionBindingsFromSessions(container) {
   return bindings;
 }
 
-function sessionBindingsFromDays(container) {
+function sessionBindingsFromDays(container, knownRaceIds) {
   const days = ownArrayValues(container);
   if (!days) return null;
   const bindings = [];
@@ -403,12 +415,16 @@ function sessionBindingsFromDays(container) {
     const sessionsField = ownField(dayRecord, ['sessions']);
     const ownBindings = sessionGoalBindings(day);
     if (!ownBindings) return null;
-    const nestedBindings = sessionsField.present
+    const nestedRawBindings = sessionsField.present
       ? sessionBindingsFromSessions(sessionsField.value) : null;
-    if (sessionsField.present && !nestedBindings) return null;
+    if (sessionsField.present && !nestedRawBindings) return null;
+    const semanticOwnBindings = semanticSessionBindingIds(ownBindings, knownRaceIds);
+    const semanticNestedBindings = sessionsField.present
+      ? semanticSessionBindingIds(nestedRawBindings, knownRaceIds) : null;
+    if (!semanticOwnBindings || (sessionsField.present && !semanticNestedBindings)) return null;
     if (sessionsField.present && hasOwnSessionBindingAuthority(dayRecord)
-      && !sameStringSet(ownBindings, nestedBindings)) return null;
-    bindings.push(...(sessionsField.present ? nestedBindings : ownBindings));
+      && !sameStringSet(semanticOwnBindings, semanticNestedBindings)) return null;
+    bindings.push(...(sessionsField.present ? semanticNestedBindings : semanticOwnBindings));
   }
   return bindings;
 }
@@ -438,6 +454,7 @@ function ownDataRaceRemovalImpact(plan, raceId) {
       || (singularId !== null && !pluralGoalIds.includes(singularId))) return null;
   }
   goalIds.push(...(pluralGoalIds ?? singularGoalIds ?? []));
+  const knownRaceIds = [...new Set([...goalIds, wanted])];
 
   const linkedSessionIds = [];
   const weeksField = ownField(root, ['weeks']);
@@ -451,9 +468,11 @@ function ownDataRaceRemovalImpact(plan, raceId) {
       const daysField = ownField(weekRecord, ['days']);
       const sessionsField = ownField(weekRecord, ['sessions']);
       const dayBindings = daysField.present
-        ? sessionBindingsFromDays(daysField.value) : null;
-      const directBindings = sessionsField.present
+        ? sessionBindingsFromDays(daysField.value, knownRaceIds) : null;
+      const directRawBindings = sessionsField.present
         ? sessionBindingsFromSessions(sessionsField.value) : null;
+      const directBindings = directRawBindings
+        ? semanticSessionBindingIds(directRawBindings, knownRaceIds) : null;
       if ((daysField.present && !dayBindings) || (sessionsField.present && !directBindings)) return null;
       if (daysField.present && sessionsField.present
         && !sameStringSet(dayBindings, directBindings)) return null;
