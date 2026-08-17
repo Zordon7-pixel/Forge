@@ -3042,6 +3042,42 @@ async function checkHyroxCandidateImmediateAdoption() {
       .flatMap((week) => week.days || [])
       .flatMap((day) => day.sessions || [])
       .find((session) => Array.isArray(session.goal_ids) && session.goal_ids.length > 0);
+    const configureDayOwnBinding = (plan, alias, bindingRaceId, bindingFirst = false) => {
+      const armyGoal = plan.goals.find((entry) => entry?.raceId === 'army');
+      assert.ok(armyGoal, 'the day-binding fixture retains its Army peer goal');
+      const normalizedArmyGoal = JSON.parse(JSON.stringify(armyGoal));
+      delete normalizedArmyGoal.race_id;
+      plan.goals = [normalizedArmyGoal];
+      delete plan.goal;
+      for (const session of (plan.weeks || [])
+        .flatMap((week) => week.days || [])
+        .flatMap((day) => day.sessions || [])) {
+        session.goal_ids = ['goal-army'];
+        delete session.goalIds;
+        delete session.goalRaceId;
+        delete session.goal_race_id;
+      }
+      const week = plan.weeks.find((entry) => Array.isArray(entry?.days)
+        && entry.days.some((day) => Array.isArray(day?.sessions) && day.sessions.length > 0));
+      const dayIndex = week.days.findIndex((day) => Array.isArray(day?.sessions)
+        && day.sessions.length > 0);
+      const day = { ...week.days[dayIndex] };
+      delete day.goal_ids;
+      delete day.goalIds;
+      delete day.goalRaceId;
+      delete day.goal_race_id;
+      const value = alias === 'goal_ids' || alias === 'goalIds'
+        ? [`goal-${bindingRaceId}`] : bindingRaceId;
+      week.days[dayIndex] = bindingFirst
+        ? { [alias]: value, ...day }
+        : { ...day, [alias]: value };
+      return week.days[dayIndex];
+    };
+    const dayOwnAliasConflictShapes = ['goal_ids', 'goalIds', 'goalRaceId', 'goal_race_id']
+      .flatMap((alias) => [true, false].map((bindingFirst) => ([
+        `day-own ${alias} conflict (${bindingFirst ? 'binding-first' : 'sessions-first'})`,
+        (plan) => configureDayOwnBinding(plan, alias, 'yonkers', bindingFirst),
+      ])));
     const aliasConflictShapes = [
       ['goal raceId/race_id conflict', (plan) => {
         const goal = plan.goals.find((entry) => entry?.raceId === 'yonkers') || plan.goals[0];
@@ -3064,6 +3100,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         const week = plan.weeks.find((entry) => Array.isArray(entry?.days));
         week.sessions = [{ session_id: 'hidden-week-binding', goal_ids: ['goal-hidden-race'] }];
       }],
+      ...dayOwnAliasConflictShapes,
     ];
     for (const [label, mutate] of aliasConflictShapes) {
       const conflictingPlan = JSON.parse(validGoalPlanData);
@@ -3146,6 +3183,45 @@ async function checkHyroxCandidateImmediateAdoption() {
     });
     assert.equal(agreeingAliasDelete.statusCode, 409, JSON.stringify(agreeingAliasDelete.payload));
     assert.equal(agreeingAliasDelete.payload.code, 'ACTIVE_PLAN_REBUILD_REQUIRED');
+    assert.equal(raceRows.has('yonkers'), true);
+
+    const agreeingDayOwnPlan = JSON.parse(validGoalPlanData);
+    configureDayOwnBinding(agreeingDayOwnPlan, 'goal_ids', 'army', true);
+    assert.deepEqual(
+      plansRouter._test.raceRemovalImpact(agreeingDayOwnPlan, 'army'),
+      { linked: true, remainingRaceIds: [] },
+      'matching day-own and nested-session bindings remain linked regardless of key order',
+    );
+    malformedGoalPlanRow.plan_data = JSON.stringify(agreeingDayOwnPlan);
+    malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
+    const agreeingDayOwnDelete = await invoke(deleteRace, {
+      ...roadRequestBase,
+      params: { id: 'army' },
+      body: {},
+    });
+    assert.equal(agreeingDayOwnDelete.statusCode, 409,
+      JSON.stringify(agreeingDayOwnDelete.payload));
+    assert.equal(agreeingDayOwnDelete.payload.code, 'ACTIVE_PLAN_REBUILD_REQUIRED');
+    assert.equal(raceRows.has('army'), true);
+
+    const singleDayOwnPlan = JSON.parse(validGoalPlanData);
+    const singleDay = configureDayOwnBinding(singleDayOwnPlan, 'goalRaceId', 'yonkers', false);
+    delete singleDay.sessions;
+    assert.deepEqual(
+      plansRouter._test.raceRemovalImpact(singleDayOwnPlan, 'yonkers'),
+      { linked: true, remainingRaceIds: ['army'] },
+      'a day-own binding without a nested sessions container retains its existing authority',
+    );
+    malformedGoalPlanRow.plan_data = JSON.stringify(singleDayOwnPlan);
+    malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
+    const singleDayOwnDelete = await invoke(deleteRace, {
+      ...roadRequestBase,
+      params: { id: 'yonkers' },
+      body: {},
+    });
+    assert.equal(singleDayOwnDelete.statusCode, 409,
+      JSON.stringify(singleDayOwnDelete.payload));
+    assert.equal(singleDayOwnDelete.payload.code, 'ACTIVE_PLAN_REBUILD_REQUIRED');
     assert.equal(raceRows.has('yonkers'), true);
 
     const ordinarySingleAliasPlan = JSON.parse(validGoalPlanData);

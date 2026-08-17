@@ -365,6 +365,13 @@ function sessionGoalBindings(session) {
   return bindings;
 }
 
+function hasOwnSessionBindingAuthority(descriptors) {
+  return ['goalRaceId', 'goal_race_id', 'goal_ids', 'goalIds'].some((key) => (
+    descriptors && Object.hasOwn(descriptors, key)
+      && descriptors[key].value !== null && descriptors[key].value !== undefined
+  ));
+}
+
 function sessionBindingsFromSessions(container) {
   const sessions = ownArrayValues(container);
   if (!sessions) return null;
@@ -387,11 +394,14 @@ function sessionBindingsFromDays(container) {
     const dayRecord = ownDataRecord(day);
     if (!dayRecord) return null;
     const sessionsField = ownField(dayRecord, ['sessions']);
-    const dayBindings = sessionsField.present
-      ? sessionBindingsFromSessions(sessionsField.value)
-      : sessionGoalBindings(day);
-    if (!dayBindings) return null;
-    bindings.push(...dayBindings);
+    const ownBindings = sessionGoalBindings(day);
+    if (!ownBindings) return null;
+    const nestedBindings = sessionsField.present
+      ? sessionBindingsFromSessions(sessionsField.value) : null;
+    if (sessionsField.present && !nestedBindings) return null;
+    if (sessionsField.present && hasOwnSessionBindingAuthority(dayRecord)
+      && !sameStringSet(ownBindings, nestedBindings)) return null;
+    bindings.push(...(sessionsField.present ? nestedBindings : ownBindings));
   }
   return bindings;
 }
