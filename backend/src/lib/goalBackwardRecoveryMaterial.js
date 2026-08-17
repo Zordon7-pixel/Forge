@@ -352,6 +352,11 @@ function goalRaceIdsFromRows(rows) {
   return ids;
 }
 
+function canonicalGoalBindingIdentity(value) {
+  return value.startsWith('goal-') && value.length > 'goal-'.length
+    ? value.slice('goal-'.length) : value;
+}
+
 function sessionGoalBindings(session) {
   const sessionRecord = ownDataRecord(session);
   if (!sessionRecord) return null;
@@ -361,7 +366,9 @@ function sessionGoalBindings(session) {
   if (legacyGoalId.value) bindings.push(legacyGoalId.value);
   const canonicalGoalIds = ownStringArrayAlias(sessionRecord, ['goal_ids', 'goalIds']);
   if (!canonicalGoalIds.valid) return null;
-  if (canonicalGoalIds.value) bindings.push(...canonicalGoalIds.value);
+  if (canonicalGoalIds.value) {
+    bindings.push(...canonicalGoalIds.value.map(canonicalGoalBindingIdentity));
+  }
   return bindings;
 }
 
