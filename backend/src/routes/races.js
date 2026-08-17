@@ -6,6 +6,7 @@ const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const raceCourse = require('../lib/raceCourse');
 const { advancePlanningMutationRevisions, planningInputUnchanged } = require('../lib/planningRevision');
+const { goalBackwardApplyEnvelopeFromRequest } = require('../lib/planCandidateLifecycle');
 const { canonicalStringify } = require('../lib/racePlanPolicy');
 const hyroxStandards = require('../lib/hyroxStandards');
 const { isIanaTimezone } = require('../lib/hyroxPlan');
@@ -740,7 +741,9 @@ router.post('/:id/removal-apply', auth, async (req, res) => {
     if (!candidateId || candidateId.length > 128) {
       return res.status(400).json({ error: 'Removal candidate is required.', code: 'INVALID_CANDIDATE_ID' });
     }
+    const applyEnvelope = goalBackwardApplyEnvelopeFromRequest(req.body, candidateId);
     const applyInput = plansRouter._test.withRequestPlanningClock(req, {
+      ...applyEnvelope,
       candidate_hash: req.body?.candidate_hash,
       choice: req.body?.choice,
       planning_date_local: req.body?.planning_date_local,

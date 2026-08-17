@@ -75,6 +75,8 @@ export async function removeOwnedRace({ api, raceId, planningClock, timeoutMs = 
   const expectedRemainingRaceIds = Array.isArray(data?.removal?.remaining_race_ids)
     ? data.removal.remaining_race_ids.map(String)
     : null
+  const applyBindings = data?.apply_bindings && typeof data.apply_bindings === 'object'
+    && !Array.isArray(data.apply_bindings) ? data.apply_bindings : {}
   let applyResponse
   try {
     applyResponse = await requestWithDeadline(
@@ -83,6 +85,7 @@ export async function removeOwnedRace({ api, raceId, planningClock, timeoutMs = 
         candidate_hash: candidateHash,
         choice: 'train_for_target',
         ...planningClock,
+        ...applyBindings,
       }, config),
       timeoutMs,
       'Race removal apply',
