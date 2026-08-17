@@ -53,11 +53,13 @@ const HARD_VALIDATOR_NAMES = Object.freeze([
   'schema',
   'canonical_session_set',
   'material_review',
+  'material_dose',
   'scope',
   'availability',
   'constraints',
   'roles',
   'required_exposures',
+  'event_role_coverage',
   'cross_modal_ceiling',
   'presentation_floor',
   'safety',
@@ -83,6 +85,30 @@ const EXECUTABLE_SURFACES = Object.freeze([
   'map',
   'warm_up',
 ]);
+const MATERIAL_REDUCTION_REASON_CODES = new Set([
+  'TAPER_VOLUME_REDUCTION',
+  'INJURY_SCOPE',
+  'ILLNESS_RECOVERY',
+  'RECOVERY_VOLUME_REDUCTION',
+  'TRAINING_GAP_REBUILD',
+  'CROSS_MODAL_FATIGUE_LIMIT',
+]);
+const MATERIAL_REDUCTION_SCOPES = new Set([
+  'BLOCK_MULTI_DAY',
+  'TAPER_WINDOW',
+  'TRAINING_GAP_REBUILD',
+  'CROSS_MODAL_LIMIT',
+]);
+const RUN_LIMIT_DIMENSIONS = new Set(['aerobic', 'running_impact']);
+const EVENT_ROLE_FLOORS_V1 = Object.freeze({
+  policy_id: 'event-role-floors-v1',
+  pure_running_quality_work_min: 8,
+  hyrox_specific_duration_min: 20,
+  long_aerobic_duration_min: 45,
+  long_aerobic_ordinary_easy_multiplier: 1.5,
+  long_aerobic_recent_normal_fraction: 0.30,
+  long_aerobic_absolute_distance_m: 5000,
+});
 
 function clone(value) {
   if (value === undefined) return undefined;
@@ -873,6 +899,103 @@ function validateRequiredExposures(sessions, options) {
   return { validator: 'required_exposures', valid: violations.length === 0, violations, reason_codes: violations.map((violation) => violation.code) };
 }
 
+function sessionDurationMinutes(session = {}) {
+  const direct = Number(session.duration_min ?? session.duration_minutes);
+  if (Number.isFinite(direct) && direct >= 0) return direct;
+  const seconds = Number(session.derived_totals?.duration_s ?? session.duration_s);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds / 60 : null;
+}
+
+function validateEventRoleCoverage(sessions, options = {}) {
+  const eventKind = String(options.event_kind ?? options.eventKind ?? '').toUpperCase();
+  const phase = String(options.phase || '').toUpperCase();
+  const trainingAge = String(options.training_age_class ?? options.trainingAgeClass ?? '').toUpperCase();
+  const consistency = String(options.consistency_state ?? options.consistencyState ?? '').toUpperCase();
+  const recovery = String(options.recovery_state ?? options.recoveryState ?? '').toUpperCase();
+  const safetyAction = String(options.safety_action ?? options.safetyAction ?? 'NORMAL').toUpperCase();
+  const blockRestriction = materialRestrictionReceipt(options);
+  const healthyEventSpecific = ['HYROX_SINGLES', 'HYROX_DOUBLES'].includes(eventKind)
+    && phase === 'EVENT_SPECIFIC_DEVELOPMENT'
+    && !['BEGINNER', 'RETURNING'].includes(trainingAge)
+    && !['RETURNING', 'SPARSE_DATA', 'INTERRUPTED'].includes(consistency)
+    && ['READY', 'NORMAL'].includes(recovery)
+    && ['NORMAL', 'MONITOR'].includes(safetyAction)
+    && blockRestriction?.qualifies_weekly_reduction !== true;
+  if (!healthyEventSpecific) {
+    return {
+      validator: 'event_role_coverage', valid: true, violations: [], reason_codes: [], applicable: false,
+    };
+  }
+  const floors = EVENT_ROLE_FLOORS_V1;
+  const pureQualityFamilies = new Set(['threshold_run', 'interval_run', 'race_rhythm_run']);
+  const hyroxFamilies = new Set([
+    'hyrox_station_skill', 'hyrox_station_strength', 'hyrox_compromised',
+    'hyrox_partial_simulation', 'hyrox_full_simulation',
+  ]);
+  const pureQuality = sessions.find((session) => (
+    pureQualityFamilies.has(sessionFamily(session))
+    && qualityWorkMinutes(session) >= floors.pure_running_quality_work_min
+  ));
+  const hyroxSpecific = sessions.find((session) => {
+    const family = sessionFamily(session);
+    if (!hyroxFamilies.has(family)) return false;
+    if (family === 'hyrox_compromised') {
+      return Number(session.run_station_pair_count || 0) >= 2
+        && Number(session.main_work_duration_min || 0) >= floors.hyrox_specific_duration_min;
+    }
+    const duration = sessionDurationMinutes(session);
+    return duration !== null && duration >= floors.hyrox_specific_duration_min;
+  });
+  const recentNormal = validRecentNormalRunning(
+    options.recent_normal_running ?? options.recentNormalRunning ?? {},
+  );
+  const ordinaryEasy = Number(options.median_ordinary_easy_duration_min);
+  const requiredLongDuration = Math.max(
+    floors.long_aerobic_duration_min,
+    Number.isFinite(ordinaryEasy) ? ordinaryEasy * floors.long_aerobic_ordinary_easy_multiplier : 0,
+  );
+  const requiredLongDistance = Math.max(
+    floors.long_aerobic_absolute_distance_m,
+    recentNormal === null ? 0 : recentNormal * floors.long_aerobic_recent_normal_fraction,
+  );
+  const longSessions = sessions.filter((session) => sessionFamily(session) === 'long_aerobic');
+  const meaningfulLong = longSessions.find((session) => {
+    const duration = sessionDurationMinutes(session);
+    const distance = distanceMeters(session);
+    return duration !== null && duration >= requiredLongDuration
+      && distance !== null && distance >= requiredLongDistance;
+  });
+  const violations = [];
+  if (!pureQuality) violations.push({ code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'PURE_RUNNING_QUALITY_ROLE_MISSING' });
+  if (!hyroxSpecific) violations.push({ code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'HYROX_SPECIFIC_ROLE_MISSING' });
+  if (!meaningfulLong) violations.push({
+    code: 'REQUIRED_EXPOSURE_UNPLACEABLE',
+    reason: longSessions.length ? 'LONG_AEROBIC_ROLE_BELOW_FLOOR' : 'LONG_AEROBIC_ROLE_MISSING',
+    minimum_duration_min: roundedDose(requiredLongDuration),
+    minimum_distance_m: roundedDose(requiredLongDistance),
+  });
+  const unplaceable = [...new Set([
+    ...(options.unplaceable_requirement_ids || []),
+    ...(options.required_exposure_ledger?.unplaceable_requirement_ids || []),
+  ].map(String))];
+  if (unplaceable.length) violations.push({
+    code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'EXPLICIT_EVENT_ROLE_CONFLICT', requirement_ids: unplaceable,
+  });
+  return {
+    validator: 'event_role_coverage',
+    valid: violations.length === 0,
+    violations,
+    reason_codes: violations.length ? ['REQUIRED_EXPOSURE_UNPLACEABLE'] : [],
+    applicable: true,
+    receipt: {
+      pure_running_quality_session_id: pureQuality ? sessionId(pureQuality) : null,
+      hyrox_specific_session_id: hyroxSpecific ? sessionId(hyroxSpecific) : null,
+      long_aerobic_session_id: meaningfulLong ? sessionId(meaningfulLong) : null,
+      role_floors: clone(floors),
+    },
+  };
+}
+
 function qualityWorkMinutes(session) {
   const direct = Number(session.quality_work_duration_min ?? session.qualityWorkDurationMinutes);
   if (Number.isFinite(direct)) return direct;
@@ -1026,11 +1149,13 @@ function validateGoalBackwardCandidate(candidate = {}, options = {}) {
     validateCandidateSchema(sessions),
     validateCanonicalMaterialization(candidate, sessions),
     validateMaterialReview(candidate, sessions),
+    validateMaterialDose(sessions, options),
     validateCandidateScope(sessions, options),
     validateAvailability(sessions, options),
     validateConstraints(sessions, options),
     validateRoles(sessions, options),
     validateRequiredExposures(sessions, options),
+    validateEventRoleCoverage(sessions, options),
     validateCrossModalCeiling(options),
     validatePresentationFloor(sessions, options),
     validateSafety(sessions, options),
@@ -1087,6 +1212,173 @@ function aggregateKnownRunningDistance(sessions) {
   const values = sessions.filter((session) => RUNNING_FAMILIES.has(sessionFamily(session))).map(runningDistanceMeters);
   if (values.some((value) => value === null)) return null;
   return values.reduce((sum, value) => sum + value, 0);
+}
+
+function roundedDose(value, digits = 3) {
+  if (!Number.isFinite(value)) return null;
+  const factor = 10 ** digits;
+  return Math.round((value + Number.EPSILON) * factor) / factor;
+}
+
+function validRecentNormalRunning(value = {}) {
+  const status = String(value.status || '').toUpperCase();
+  const syncState = String(value.sync_state ?? value.syncState ?? 'COMPLETE').toUpperCase();
+  const valueState = String(value.value_state ?? value.valueState ?? 'KNOWN').toUpperCase();
+  const baseline = Number(value.median_distance_m ?? value.medianDistanceMeters);
+  return ['ESTABLISHED', 'PROVISIONAL'].includes(status)
+    && !['PARTIAL', 'FAILED', 'FAILED_SYNC', 'STALE', 'MISSING', 'UNKNOWN'].includes(syncState)
+    && valueState === 'KNOWN'
+    && Number.isFinite(baseline)
+    && baseline > 0
+    ? baseline : null;
+}
+
+function doseComparator(source, baseline, candidate) {
+  if (!Number.isFinite(baseline) || baseline <= 0 || !Number.isFinite(candidate)) return null;
+  const absoluteChange = candidate - baseline;
+  const percentageChange = (absoluteChange / baseline) * 100;
+  const threshold = GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running;
+  return {
+    source,
+    baseline_m: roundedDose(baseline),
+    candidate_m: roundedDose(candidate),
+    absolute_change_m: roundedDose(absoluteChange),
+    percentage_change: roundedDose(percentageChange, 2),
+    material_reduction: absoluteChange < 0
+      && Math.abs(absoluteChange) >= threshold.absolute_m
+      && Math.abs(percentageChange) / 100 >= threshold.percentage,
+  };
+}
+
+function validInstant(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const millis = new Date(value).getTime();
+  return Number.isFinite(millis) ? millis : null;
+}
+
+function materialRestrictionReceipt(options = {}) {
+  const supplied = options.dose_restriction ?? options.doseRestriction
+    ?? options.safety_state?.restriction ?? options.safetyState?.restriction ?? null;
+  if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) return null;
+  const restriction = clone(supplied);
+  const scope = String(restriction.scope || '').toUpperCase();
+  const reasonCode = String(restriction.reason_code ?? restriction.reasonCode ?? '').toUpperCase();
+  const evidenceIds = [...new Set((restriction.decisive_evidence_ids
+    ?? restriction.decisiveEvidenceIds ?? []).map(String).filter(Boolean))].sort();
+  const affectedModalities = [...new Set((restriction.affected_modalities
+    ?? restriction.affectedModalities ?? []).map((value) => String(value).toUpperCase()).filter(Boolean))].sort();
+  const startsAt = restriction.starts_at ?? restriction.startsAt ?? null;
+  const expiresAt = restriction.expires_at ?? restriction.expiresAt ?? null;
+  const reevaluateAt = restriction.reevaluate_at ?? restriction.reevaluateAt ?? null;
+  const startsMillis = validInstant(startsAt);
+  const expiresMillis = validInstant(expiresAt);
+  const reevaluateMillis = validInstant(reevaluateAt);
+  const planningMillis = validInstant(options.planning_instant ?? options.planningInstant);
+  const errors = [];
+  if (scope === 'ACUTE_24_48H') errors.push('ACUTE_SCOPE_CANNOT_JUSTIFY_WEEKLY_REDUCTION');
+  else if (!MATERIAL_REDUCTION_SCOPES.has(scope)) errors.push('MULTI_DAY_SCOPE_REQUIRED');
+  if (!MATERIAL_REDUCTION_REASON_CODES.has(reasonCode)) errors.push('QUALIFYING_REASON_CODE_REQUIRED');
+  if (!evidenceIds.length) errors.push('DECISIVE_EVIDENCE_REQUIRED');
+  if (!affectedModalities.includes('RUNNING')) errors.push('RUNNING_MODALITY_SCOPE_REQUIRED');
+  if (startsMillis === null) errors.push('RESTRICTION_START_REQUIRED');
+  if (expiresMillis === null || startsMillis === null || expiresMillis <= startsMillis) {
+    errors.push('VALID_EXPIRY_REQUIRED');
+  }
+  if (reevaluateMillis === null || startsMillis === null || reevaluateMillis < startsMillis
+    || (expiresMillis !== null && reevaluateMillis > expiresMillis)) {
+    errors.push('VALID_REEVALUATION_REQUIRED');
+  }
+  if (planningMillis !== null && expiresMillis !== null && expiresMillis <= planningMillis) {
+    errors.push('RESTRICTION_EXPIRED');
+  }
+  if (planningMillis !== null && reevaluateMillis !== null && reevaluateMillis < planningMillis) {
+    errors.push('REEVALUATION_OVERDUE');
+  }
+  const phase = String(options.phase || '').toUpperCase();
+  const recentStatus = String(
+    options.recent_normal_running?.status ?? options.recentNormalRunning?.status ?? '',
+  ).toUpperCase();
+  const trainingAge = String(options.training_age_class ?? options.trainingAgeClass ?? '').toUpperCase();
+  if (reasonCode === 'TAPER_VOLUME_REDUCTION' && (scope !== 'TAPER_WINDOW' || phase !== 'TAPER_RACE_WEEK')) {
+    errors.push('TAPER_PHASE_SCOPE_MISMATCH');
+  }
+  if (reasonCode === 'TRAINING_GAP_REBUILD' && (
+    scope !== 'TRAINING_GAP_REBUILD'
+    || (recentStatus !== 'TRAINING_GAP' && trainingAge !== 'RETURNING')
+  )) {
+    errors.push('TRAINING_GAP_SCOPE_MISMATCH');
+  }
+  if (['INJURY_SCOPE', 'ILLNESS_RECOVERY', 'RECOVERY_VOLUME_REDUCTION'].includes(reasonCode)
+    && scope !== 'BLOCK_MULTI_DAY') {
+    errors.push('SAFETY_BLOCK_SCOPE_REQUIRED');
+  }
+  const dimensionLedger = Array.isArray(restriction.dimension_ledger)
+    ? restriction.dimension_ledger.map((entry) => ({ ...entry })) : [];
+  if (reasonCode === 'CROSS_MODAL_FATIGUE_LIMIT') {
+    const linkedRunDimension = dimensionLedger.some((entry) => (
+      RUN_LIMIT_DIMENSIONS.has(String(entry.dimension || ''))
+      && String(entry.affected_modality || '').toUpperCase() === 'RUNNING'
+      && Number.isFinite(Number(entry.projected_without_reduction))
+      && Number.isFinite(Number(entry.authorized_ceiling))
+      && Number(entry.projected_without_reduction) > Number(entry.authorized_ceiling)
+    ));
+    if (scope !== 'CROSS_MODAL_LIMIT' || !linkedRunDimension) {
+      errors.push('RUN_DIMENSION_LEDGER_REQUIRED');
+    }
+  }
+  return {
+    scope,
+    reason_code: reasonCode || null,
+    starts_at: startsAt,
+    expires_at: expiresAt,
+    reevaluate_at: reevaluateAt,
+    decisive_evidence_ids: evidenceIds,
+    affected_modalities: affectedModalities,
+    dimension_ledger: dimensionLedger,
+    qualifies_weekly_reduction: errors.length === 0,
+    contract_errors: [...new Set(errors)],
+  };
+}
+
+function validateMaterialDose(sessions, options = {}) {
+  const candidateRunning = aggregateKnownRunningDistance(sessions);
+  const recentNormal = validRecentNormalRunning(
+    options.recent_normal_running ?? options.recentNormalRunning ?? {},
+  );
+  const activePlan = options.active_applied_plan ?? options.activeAppliedPlan ?? null;
+  const comparisonDates = new Set((options.available_local_dates ?? options.availableLocalDates ?? [])
+    .map(dateOnly).filter(Boolean));
+  const activeSessions = activePlan ? sessionsFrom(activePlan).filter((session) => (
+    !comparisonDates.size || comparisonDates.has(sessionLocalDate(session))
+  )) : [];
+  const activeRunning = activePlan ? aggregateKnownRunningDistance(activeSessions) : null;
+  const comparators = {
+    recent_normal: doseComparator('RECENT_NORMAL_RUNNING', recentNormal, candidateRunning),
+    active_plan: doseComparator('ACTIVE_APPLIED_PLAN', activeRunning, candidateRunning),
+  };
+  const materialComparators = Object.values(comparators).filter((entry) => entry?.material_reduction);
+  const qualifyingRestriction = materialRestrictionReceipt(options);
+  const violations = materialComparators.length && qualifyingRestriction?.qualifies_weekly_reduction !== true ? [{
+    code: 'MATERIAL_UNDERTRAINING',
+    reason: 'QUALIFYING_SCOPED_REDUCTION_REQUIRED',
+    comparator_sources: materialComparators.map((entry) => entry.source),
+  }] : [];
+  return deepFreeze({
+    validator: 'material_dose',
+    valid: violations.length === 0,
+    violations,
+    reason_codes: violations.length ? ['MATERIAL_UNDERTRAINING']
+      : materialComparators.length ? [qualifyingRestriction.reason_code] : [],
+    receipt: {
+      policy: {
+        minimum_percentage_reduction: GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running.percentage,
+        minimum_absolute_reduction_m: GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running.absolute_m,
+      },
+      candidate_running_m: roundedDose(candidateRunning),
+      comparators,
+      qualifying_restriction: qualifyingRestriction,
+    },
+  });
 }
 
 function sessionMatchKey(session, index) {
@@ -1530,6 +1822,7 @@ module.exports = {
   canonicalPrescriptionHash,
   classifyInterferencePredicates,
   compareMaterialChange,
+  validateMaterialDose,
   validateGoalBackwardCandidate,
   validateGoalBackwardAdaptationCandidate,
   validateInterference,

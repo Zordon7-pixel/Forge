@@ -976,7 +976,7 @@ function goalBackwardSkeletonIdentity(input = {}) {
       run_station_pair_count: material?.run_station_pair_count ?? null,
     };
   });
-  const materialChange = compareMaterialChange({
+  const materialChange = input.defer_material_change === true ? null : compareMaterialChange({
     active_applied_plan: input.active_applied_plan ?? null,
     candidate: {
       phase: decision.phase,
@@ -1013,6 +1013,12 @@ function buildGoalBackwardCandidateSkeleton(input = {}) {
       consistency_state: input.validation_options?.consistency_state ?? decision.consistency_state,
       recovery_state: input.validation_options?.recovery_state ?? decision.recovery_state,
       safety_action: input.validation_options?.safety_action ?? decision.safety_state?.action,
+      phase: input.validation_options?.phase ?? decision.phase,
+      event_kind: input.validation_options?.event_kind ?? decision.primary_event_kind,
+      recent_normal_running: input.validation_options?.recent_normal_running ?? decision.recent_normal_running,
+      active_applied_plan: input.validation_options?.active_applied_plan ?? input.active_applied_plan,
+      dose_restriction: input.validation_options?.dose_restriction ?? decision.dose_restriction,
+      planning_instant: input.validation_options?.planning_instant ?? input.planning_instant,
       locks: input.validation_options?.locks ?? decision.athlete_locks,
       manual_edits: input.validation_options?.manual_edits ?? decision.manual_edits,
       required_exposure_ledger: decision.due_exposure_ledger,
@@ -1248,14 +1254,16 @@ function enumerateGoalBackwardCandidates(input = {}) {
         placements: placementMap,
         legacy_road_candidate_material: input.legacy_road_candidate_material,
         active_applied_plan: input.active_applied_plan,
+        defer_material_change: true,
       });
       const sessions = identity.sessions;
-      const canonicalPlacement = canonicalStringify(identity);
+      const canonicalPlacement = canonicalStringify(sessions);
       if (seen.has(canonicalPlacement)) return;
       seen.add(canonicalPlacement);
       const interference = validateInterference(sessions, input.validation_options);
       preliminary.push({
         ...identity,
+        placement_map: placementMap,
         canonical_placement: canonicalPlacement,
         preliminary_spacing_violation_count: interference?.violations?.length || 0,
         preliminary_ordering_tuple: orderedSessionTuple({ sessions }),
@@ -1270,11 +1278,16 @@ function enumerateGoalBackwardCandidates(input = {}) {
 
   if (roles.length && placementSets.every((choices) => choices.length)) visit(0, []);
   const retained = preliminary.sort(preliminaryCandidateComparator).slice(0, MAX_GOAL_BACKWARD_CANDIDATES).map((candidate) => {
-    const candidateHash = canonicalHash(Object.fromEntries(Object.entries(candidate).filter(([key]) => ![
-      'canonical_placement', 'preliminary_spacing_violation_count', 'preliminary_ordering_tuple',
-    ].includes(key))));
+    const identity = goalBackwardSkeletonIdentity({
+      decision,
+      placements: candidate.placement_map,
+      legacy_road_candidate_material: input.legacy_road_candidate_material,
+      active_applied_plan: input.active_applied_plan,
+    });
+    const candidateHash = canonicalHash(identity);
     let withCanonical = {
       ...candidate,
+      ...identity,
       candidate_skeleton_id: `candidate-skeleton-${candidateHash.slice(0, 24)}`,
       candidate_hash: candidateHash,
       persisted: false,
@@ -1290,6 +1303,12 @@ function enumerateGoalBackwardCandidates(input = {}) {
     const validation = validateGoalBackwardCandidate(withCanonical, {
       ...input.validation_options,
       workload_evidence: candidateWorkloadEvidence(withCanonical.sessions, input),
+      phase: input.validation_options?.phase ?? decision.phase,
+      event_kind: input.validation_options?.event_kind ?? decision.primary_event_kind,
+      recent_normal_running: input.validation_options?.recent_normal_running ?? decision.recent_normal_running,
+      active_applied_plan: input.validation_options?.active_applied_plan ?? input.active_applied_plan,
+      dose_restriction: input.validation_options?.dose_restriction ?? decision.dose_restriction,
+      planning_instant: input.validation_options?.planning_instant ?? input.planning_instant,
       allowed_requirement_ids: roles.map((role) => String(role.requirement_id)),
       enforce_due_role_scope: true,
       maximum_session_count: maximumSessionCount,
@@ -1325,6 +1344,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
       validation: finalValidation,
     };
     delete withValidation.canonical_placement;
+    delete withValidation.placement_map;
     return immutable({ ...withValidation, ranking_tuple: candidateRankingTuple(withValidation, input) });
   });
   const accepted = retained.filter((candidate) => candidate.validation.valid).sort(compareGoalBackwardCandidateRankings);

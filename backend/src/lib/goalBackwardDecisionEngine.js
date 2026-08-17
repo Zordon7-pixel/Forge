@@ -38,6 +38,75 @@ function dateOnly(value) {
   return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw ? null : raw;
 }
 
+function restrictionInstant(localDate, dayOffset) {
+  const date = addDays(localDate, dayOffset);
+  return date ? `${date}T12:00:00.000Z` : null;
+}
+
+function buildScopedRecoverySafetyState(context = {}, planningDateLocal = null) {
+  const planningDate = dateOnly(planningDateLocal ?? context.todayISO);
+  const recoveryState = String(context.recovery?.state || '').toUpperCase();
+  const flags = new Set((context.checkin?.lifeFlags ?? context.checkin?.life_flags ?? [])
+    .map((value) => String(value).toLowerCase()));
+  const activeInjury = context.safety?.activeInjury === true || flags.has('injured');
+  const illness = flags.has('sick') || flags.has('not_well');
+  const returning = context.safety?.comebackMode === true
+    || String(context.profile?.training_age_class || '').toUpperCase() === 'RETURNING';
+  const recoverySignal = ['LOW', 'RECOVERY', 'CAUTION'].includes(recoveryState);
+  const corroboratedRecovery = recoverySignal && Number(context.checkin?.feeling || 0) === 1;
+  const snapshotEvidenceId = String(
+    context.evidence_snapshot_id ?? context.evidenceSnapshotId ?? '',
+  ).trim();
+  const evidence = (fallback) => [snapshotEvidenceId || fallback];
+  let action = 'NORMAL';
+  let restriction = null;
+  const buildRestriction = (scope, reasonCode, evidenceIds, expiryDays, reevaluateDays = 1) => ({
+    scope,
+    reason_code: reasonCode,
+    starts_at: restrictionInstant(planningDate, 0),
+    expires_at: restrictionInstant(planningDate, expiryDays),
+    reevaluate_at: restrictionInstant(planningDate, reevaluateDays),
+    decisive_evidence_ids: evidenceIds,
+    affected_modalities: ['RUNNING'],
+  });
+  if (activeInjury) {
+    action = 'MODIFY_IMPACT';
+    restriction = buildRestriction(
+      'BLOCK_MULTI_DAY',
+      'INJURY_SCOPE',
+      evidence('evidence-active-injury'),
+      7,
+    );
+  } else if (illness) {
+    action = 'NO_HIGH_INTENSITY';
+    restriction = buildRestriction('BLOCK_MULTI_DAY', 'ILLNESS_RECOVERY', evidence('evidence-checkin-illness'), 7);
+  } else if (returning) {
+    action = 'MONITOR';
+    restriction = buildRestriction('TRAINING_GAP_REBUILD', 'TRAINING_GAP_REBUILD', evidence('evidence-comeback-state'), 7, 2);
+  } else if (corroboratedRecovery) {
+    action = 'MONITOR';
+    restriction = buildRestriction(
+      'BLOCK_MULTI_DAY',
+      'RECOVERY_VOLUME_REDUCTION',
+      evidence('evidence-readiness-and-checkin'),
+      7,
+    );
+  } else if (recoverySignal) {
+    restriction = buildRestriction(
+      'ACUTE_24_48H',
+      'RECOVERY_VOLUME_REDUCTION',
+      evidence('evidence-readiness-recovery'),
+      2,
+    );
+  }
+  return deepFreeze({
+    action,
+    scope: restriction ? ['RUN'] : [],
+    reason_codes: restriction ? [restriction.reason_code] : [],
+    restriction,
+  });
+}
+
 function normalizedPriority(value) {
   const priority = String(value || 'UNSPECIFIED').trim().toUpperCase();
   return Object.hasOwn(PRIORITY_ORDER, priority) ? priority : 'UNSPECIFIED';
@@ -357,7 +426,7 @@ function constrainedPrimary(input = {}) {
   const days = normalizedAvailableDaysCount(input);
   return ['BEGINNER', 'RETURNING'].includes(age)
     || ['RETURNING', 'SPARSE_DATA'].includes(consistency)
-    || recovery === 'CAUTION'
+    || (recovery === 'CAUTION' && input.prospective_block_restriction === true)
     || days <= 4;
 }
 
@@ -475,9 +544,8 @@ function buildDueExposureLedger(input = {}) {
   const reasons = [];
   const safetyAction = String(input.safety_action || 'NORMAL').toUpperCase();
   const clusterBlocked = isMandatoryHyroxCluster && (
-    input.safety_or_recovery_hold === true
+    input.prospective_block_restriction === true
     || ['FULL_REST', 'NO_RUNNING', 'NO_LOWER_BODY', 'NO_HIGH_INTENSITY'].includes(safetyAction)
-    || String(input.recovery_state || '').toUpperCase() === 'RECOVERY'
   );
   if (isMandatoryHyroxCluster) {
     const partial = primary.find((entry) => entry.any_of.includes('hyrox_partial_simulation'));
@@ -490,11 +558,18 @@ function buildDueExposureLedger(input = {}) {
       unplaceable.push(String(partial.requirement_id));
       reasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
     }
+    if (clusterBlocked && long) {
+      unplaceable.push(String(long.requirement_id));
+      reasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
+    }
     if (constrained && long) {
       unplaceable.push(String(long.requirement_id));
       reasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
     }
-    selectedSupporting = supporting.filter((entry) => entry.any_of.includes('hyrox_station_skill'));
+    selectedSupporting = supporting.filter((entry) => (
+      entry.any_of.includes('hyrox_station_skill')
+      || (!constrained && String(entry.requirement_id) === 'hyrox_pure_running_quality')
+    ));
   } else {
     const requiredCount = constrained ? Math.min(1, primary.length) : Math.min(2, primary.length);
     selectedPrimary = primary.slice(0, requiredCount);
@@ -642,6 +717,32 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     event_policy: eventPolicy,
     due_exposure_count: input.due_exposure_count ?? initialDueCount,
   }) : { phase: 'FOUNDATION', days_to_event: null, reason_codes: ['FOUNDATION_ENTRY'] };
+  const suppliedRestriction = clone(athleteState.dose_restriction ?? athleteState.safety_restriction ?? null);
+  const evidenceIds = (input.evidence_used || []).map((entry) => (
+    typeof entry === 'string' ? entry : entry?.evidence_id ?? entry?.id
+  )).map(String).filter(Boolean);
+  const phaseRestriction = phaseDecision.phase === 'TAPER_RACE_WEEK' && primaryGoal?.event_local_date ? {
+    scope: 'TAPER_WINDOW',
+    reason_code: 'TAPER_VOLUME_REDUCTION',
+    starts_at: restrictionInstant(planningDate, 0),
+    expires_at: restrictionInstant(primaryGoal.event_local_date, 1),
+    reevaluate_at: restrictionInstant(planningDate, 1),
+    decisive_evidence_ids: evidenceIds.length ? evidenceIds : [`goal-${primaryGoal.goal_id}`],
+    affected_modalities: ['RUNNING'],
+  } : null;
+  const trainingGapRestriction = !suppliedRestriction && !phaseRestriction
+    && String(athleteState.recent_normal_running?.status || '').toUpperCase() === 'TRAINING_GAP' ? {
+      scope: 'TRAINING_GAP_REBUILD',
+      reason_code: 'TRAINING_GAP_REBUILD',
+      starts_at: restrictionInstant(planningDate, 0),
+      expires_at: restrictionInstant(planningDate, 7),
+      reevaluate_at: restrictionInstant(planningDate, 2),
+      decisive_evidence_ids: evidenceIds.length ? evidenceIds : ['evidence-training-gap-state'],
+      affected_modalities: ['RUNNING'],
+    } : null;
+  const suppliedScope = String(suppliedRestriction?.scope || '').toUpperCase();
+  const doseRestriction = suppliedScope === 'ACUTE_24_48H' && phaseRestriction
+    ? phaseRestriction : suppliedRestriction || phaseRestriction || trainingGapRestriction;
   const availableDays = Array.isArray(athleteState.available_days) ? athleteState.available_days : [];
   const exposureLedger = buildDueExposureLedger({
     ...input,
@@ -652,6 +753,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     consistency_state: athleteState.consistency_state,
     recovery_state: athleteState.recovery_state,
     safety_action: athleteState.safety_action,
+    prospective_block_restriction: doseRestriction?.scope !== 'ACUTE_24_48H' && Boolean(doseRestriction),
     available_days_count: availableDays.length,
   });
   const roleMultiset = buildRoleMultiset({
@@ -714,6 +816,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
       goal.event_local_date ? daysBetween(planningDate, goal.event_local_date) : null,
     ])),
     event_policy_id: eventPolicy?.event_policy_id || null,
+    primary_event_kind: primaryGoal?.event_kind || eventPolicy?.event_kind || null,
     event_policy_overload_dimensions: clone(eventPolicy?.overload_dimensions || []),
     event_policy_overload_allowance_points: clone(eventPolicy?.overload_allowance_points || {}),
     mandatory_hyrox_cluster: exposureLedger.mandatory_hyrox_cluster === true,
@@ -727,6 +830,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
       median: athleteState.recent_normal_running?.median_distance_m ?? null,
       high: athleteState.recent_normal_running?.upper_bound_m ?? null,
     },
+    recent_normal_running: clone(athleteState.recent_normal_running || {}),
     proposed_running_volume_m: input.proposed_running_volume_m === null || input.proposed_running_volume_m === undefined
       ? null : Number(input.proposed_running_volume_m),
     proposed_total_training_stress: clone(input.proposed_total_training_stress || {}),
@@ -741,7 +845,13 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     edit_revision: planningConstraints.edit_revision,
     constraint_fingerprint: planningConstraints.constraint_fingerprint,
     completion_outcomes: clone(input.completion_outcomes || athleteState.completion_outcomes || []),
-    safety_state: { action: athleteState.safety_action || 'NORMAL', scope: clone(athleteState.safety_scope || []) },
+    safety_state: {
+      action: athleteState.safety_action || 'NORMAL',
+      scope: clone(athleteState.safety_scope || []),
+      reason_codes: doseRestriction ? [doseRestriction.reason_code] : [],
+      restriction: clone(doseRestriction),
+    },
+    dose_restriction: clone(doseRestriction),
     recovery_state: athleteState.recovery_state || 'UNKNOWN',
     evidence_used: clone(input.evidence_used || []),
     stale_evidence: clone(input.stale_evidence || []),
@@ -756,6 +866,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
       ...phaseDecision.reason_codes,
       ...exposureLedger.reason_codes,
       ...goalFeasibilities.flatMap((entry) => entry.reason_codes || []),
+      ...(doseRestriction ? [doseRestriction.reason_code] : []),
     ])],
     validator_results: [],
     policy_versions: {
@@ -871,6 +982,7 @@ module.exports = {
   buildHyroxClusterCompletionLedger,
   buildDueExposureLedger,
   buildGoalBackwardPlanningDecision,
+  buildScopedRecoverySafetyState,
   buildRoleMultiset,
   deriveGoalConfidence,
   finalizeGoalBackwardCandidateDecision,

@@ -83,6 +83,7 @@ const REASON_CODE_LABELS = Object.freeze({
   CROSS_MODAL_FATIGUE_LIMIT: 'Keep combined training fatigue within the accepted limit',
   PHASE_SPECIFIC_OVERLOAD: 'Apply the progression for this training phase',
   RECENT_NORMAL_INSUFFICIENT: 'Not enough recent normal training is available',
+  MATERIAL_UNDERTRAINING: 'The proposed week reduces training too far without a qualifying reason',
   HARD_DAY_STACK_TO_PROTECT_RECOVERY: 'Combine hard work to protect a recovery day',
   FOUNDATION_ENTRY: 'Begin the foundation phase',
   DEVELOPMENT_ENTRY: 'Begin the development phase',

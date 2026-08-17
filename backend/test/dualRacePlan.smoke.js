@@ -6,7 +6,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const concurrent = require('../src/lib/concurrentPlan');
 const hyrox = require('../src/lib/hyroxPlan');
-const { aggregateWeeklyStress } = require('../src/lib/goalBackwardLoad');
 const { buildGoalBackwardPlanningDecision } = require('../src/lib/goalBackwardDecisionEngine');
 const { targetRef: goalBackwardTargetRef } = require('../src/lib/betaPlanRollout');
 const adaptation = require('../src/lib/adaptationEngine');
@@ -241,25 +240,15 @@ function checkPartialClusterShadowIntegration(plansRouter) {
     });
     assert.equal(built.plan.hyroxPolicy.partialRaceOrderCluster.valid, true);
     assert.equal(result.decision.mandatory_hyrox_cluster, true);
-    assert.ok(result.selected_candidate, 'the route materializes and selects a valid mandatory cluster-week candidate');
-    assert.equal(result.selected_candidate.validation.valid, true);
-    const selectedStress = aggregateWeeklyStress(result.selected_candidate.sessions).weekly_dimension_sum;
-    assert.equal(selectedStress.every((value, index) => (
-      value <= [16, 14, 12, 6, 6, 10, 12, 10][index]
-    )), true);
-    assert.ok(result.selected_candidate.validation.reason_codes.includes('PHASE_SPECIFIC_OVERLOAD'));
-    const partial = result.selected_candidate.sessions.find((session) => (
-      session.workout_family === 'hyrox_partial_simulation'
-    ));
-    assert.equal(hyrox.validatePartialRaceOrderCluster(partial, {
-      training_age_class: 'ESTABLISHED',
-    }).valid, true);
-    const runningMeters = result.selected_candidate.sessions.reduce((sum, session) => {
-      if (session.workout_family === 'hyrox_partial_simulation') return sum + session.running_distance_m;
-      return ['easy_run', 'long_aerobic'].includes(session.workout_family)
-        ? sum + Number(session.derived_totals?.distance_m || 0) : sum;
-    }, 0);
-    assert.ok(runningMeters >= result.decision.minimum_weekly_demand.running_m);
+    assert.ok(result.decision.role_multiset.some((role) => (
+      role.requirement_id === 'hyrox_pure_running_quality'
+    )), 'a healthy event-specific cluster cannot omit pure-running quality');
+    assert.equal(result.selected_candidate, null,
+      'the legacy cluster week fails closed when it cannot place a fully dosed pure-running quality role');
+    assert.equal(result.candidates.every((candidate) => candidate.validation.valid === false), true);
+    assert.ok(result.rejected_candidates.some((candidate) => (
+      candidate.reason_codes.includes('REQUIRED_EXPOSURE_UNPLACEABLE')
+    )), 'the unplaceable event role is recorded in deterministic rejection receipts');
 
     const unauthorized = plansRouter._test.computeGoalBackwardShadowDiagnostics({
       userId: 'cluster-route-athlete', planningDateLocal: planningDate, built,
@@ -1323,6 +1312,80 @@ async function checkHyroxCandidateImmediateAdoption() {
       headers: { 'x-forged-local-date': planningDate, 'x-forged-timezone-offset-minutes': '240' },
       get(name) { return this.headers[String(name).toLowerCase()]; },
     };
+    const candidateCountBeforeDoseRejection = candidates.size;
+    const artifactCountBeforeDoseRejection = planningArtifacts.size;
+    const trainingPlanCountBeforeDoseRejection = trainingPlans.size;
+    const activePlanBeforeDoseRejection = currentAssignment().id;
+    let rejectedDoseResult = null;
+    await assert.rejects(
+      () => plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+      }, {
+        goalBackwardDependencies: {
+          mode: 'preview',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          enumerateCandidates: ({ decision }) => {
+            const rejected = {
+              candidate_skeleton_id: 'candidate-material-underdose',
+              candidate_hash: 'd'.repeat(64),
+              validation: {
+                valid: false,
+                validator_results: [{
+                  validator: 'material_dose', valid: false,
+                  violations: [{ code: 'MATERIAL_UNDERTRAINING' }],
+                  reason_codes: ['MATERIAL_UNDERTRAINING'],
+                }],
+                violations: [{ code: 'MATERIAL_UNDERTRAINING' }],
+                reason_codes: ['MATERIAL_UNDERTRAINING'],
+              },
+            };
+            rejectedDoseResult = {
+              decision: {
+                ...decision,
+                selected_candidate_id: null,
+                selected_candidate_hash: null,
+                rejected_candidates: [{
+                  candidate_id: rejected.candidate_skeleton_id,
+                  candidate_hash: rejected.candidate_hash,
+                  reason_codes: ['MATERIAL_UNDERTRAINING'],
+                }],
+              },
+              candidates: [rejected],
+              selected_candidate: null,
+              rejected_candidates: [{
+                candidate_id: rejected.candidate_skeleton_id,
+                candidate_hash: rejected.candidate_hash,
+                reason_codes: ['MATERIAL_UNDERTRAINING'],
+              }],
+            };
+            return rejectedDoseResult;
+          },
+        },
+      }),
+      (error) => error?.code === 'GOAL_BACKWARD_GENERATION_FAILED' && error?.status === 409,
+      'a material-undertraining-only candidate set must fail closed before persistence',
+    );
+    assert.equal(rejectedDoseResult?.selected_candidate, null, 'the invalid least-bad candidate is never selected');
+    assert.equal(candidates.size, candidateCountBeforeDoseRejection, 'material rejection persists no candidate');
+    assert.equal(planningArtifacts.size, artifactCountBeforeDoseRejection, 'material rejection persists no artifacts');
+    assert.equal(trainingPlans.size, trainingPlanCountBeforeDoseRejection, 'material rejection persists no plan');
+    assert.equal(currentAssignment().id, activePlanBeforeDoseRejection, 'material rejection leaves the active plan unchanged');
+    const rejectedApply = await invoke(apply, {
+      ...requestBase,
+      params: { candidateId: 'candidate-material-underdose' },
+      body: {
+        ...requestClock,
+        choice: 'train_for_target',
+        candidate_hash: `sha256:${'d'.repeat(64)}`,
+      },
+    });
+    assert.equal(rejectedApply.statusCode, 404, JSON.stringify(rejectedApply.payload));
+    assert.equal(trainingPlans.size, trainingPlanCountBeforeDoseRejection, 'a rejected candidate cannot be applied later');
+    assert.equal(currentAssignment().id, activePlanBeforeDoseRejection, 'rejected apply performs zero active-plan writes');
+
     const candidateCountBeforeForcedFailure = candidates.size;
     const artifactCountBeforeForcedFailure = planningArtifacts.size;
     const activePlanBeforeForcedFailure = currentAssignment().id;

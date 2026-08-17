@@ -101,6 +101,7 @@ function run() {
     'CROSS_MODAL_FATIGUE_LIMIT',
     'PHASE_SPECIFIC_OVERLOAD',
     'RECENT_NORMAL_INSUFFICIENT',
+    'MATERIAL_UNDERTRAINING',
     'HARD_DAY_STACK_TO_PROTECT_RECOVERY',
     'FOUNDATION_ENTRY',
     'DEVELOPMENT_ENTRY',
@@ -157,7 +158,7 @@ function run() {
   ];
   assert.deepEqual(REQUIRED_REASON_CODES, expectedReasonCodes);
   assert.equal(new Set(REQUIRED_REASON_CODES).size, REQUIRED_REASON_CODES.length);
-  assert.equal(REQUIRED_REASON_CODES.length, 69);
+  assert.equal(REQUIRED_REASON_CODES.length, 70);
   assert.deepEqual(REQUIRED_REASON_CODES, Object.values(REASON_CODE_FAMILIES).flat());
   assert.equal(REQUIRED_REASON_CODES.includes('NO_IMPACT'), false, 'migration alias is never persisted');
   assert.deepEqual(REASON_CODE_MIGRATION_ALIASES, { NO_IMPACT: 'MODIFY_IMPACT' });

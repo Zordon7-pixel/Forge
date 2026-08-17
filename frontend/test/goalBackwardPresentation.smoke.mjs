@@ -105,7 +105,7 @@ assertExactMap(contracts.FEASIBILITY_STATUSES, expected.feasibility, feasibility
 assertExactMap(contracts.CANONICAL_UNITS.filter(Boolean), expected.canonicalUnits, canonicalUnitLabel, 'canonical unit')
 assert.equal(canonicalUnitLabel(null), 'Unit unavailable', 'missing canonical units stay honest')
 
-assert.equal(contracts.REQUIRED_REASON_CODES.length, 69, 'reason-code contract retains its expected closed size')
+assert.equal(contracts.REQUIRED_REASON_CODES.length, 70, 'reason-code contract retains its expected closed size')
 for (const code of contracts.REQUIRED_REASON_CODES) {
   assert.equal(Object.hasOwn(goalBackwardPresentationMappings.reasonCodes, code), true, `${code} has an explicit presentation mapping`)
   assert.equal(reasonCodeLabel(code), goalBackwardPresentationMappings.reasonCodes[code], `${code} uses its explicit presentation mapping`)
@@ -114,6 +114,7 @@ for (const code of contracts.REQUIRED_REASON_CODES) {
 
 assert.equal(reasonCodeLabel('RECENT_LOAD_MAINTAIN'), 'Maintain the recent training load')
 assert.equal(reasonCodeLabel('RECENT_LOAD_MAINTAIN', { sentence: true }), 'Maintain the recent training load.')
+assert.equal(reasonCodeLabel('MATERIAL_UNDERTRAINING'), 'The proposed week reduces training too far without a qualifying reason')
 assert.equal(reasonCodeLabel('MATERIAL_CHANGE_REVIEW_REQUIRED'), 'Review required because the plan changed materially')
 assert.equal(reasonCodeLabel('MONITOR_RECOVERY'), 'Monitor recovery')
 assert.equal(reasonCodeLabel('KEY_STIMULUS_REQUIRED'), 'This key training stimulus is required')

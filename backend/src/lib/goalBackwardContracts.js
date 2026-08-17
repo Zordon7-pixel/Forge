@@ -178,6 +178,7 @@ const REQUIRED_REASON_CODES = closed([
   'CROSS_MODAL_FATIGUE_LIMIT',
   'PHASE_SPECIFIC_OVERLOAD',
   'RECENT_NORMAL_INSUFFICIENT',
+  'MATERIAL_UNDERTRAINING',
   'HARD_DAY_STACK_TO_PROTECT_RECOVERY',
   'FOUNDATION_ENTRY',
   'DEVELOPMENT_ENTRY',
@@ -235,13 +236,13 @@ const REQUIRED_REASON_CODES = closed([
 
 const REASON_CODE_FAMILIES = Object.freeze({
   evidence: closed(REQUIRED_REASON_CODES.slice(0, 8)),
-  load: closed(REQUIRED_REASON_CODES.slice(8, 17)),
-  phase: closed(REQUIRED_REASON_CODES.slice(17, 26)),
-  adaptation: closed(REQUIRED_REASON_CODES.slice(26, 33)),
-  safety: closed(REQUIRED_REASON_CODES.slice(33, 44)),
-  target_uncertainty: closed(REQUIRED_REASON_CODES.slice(44, 56)),
-  mutation_constraint: closed(REQUIRED_REASON_CODES.slice(56, 66)),
-  surface_export: closed(REQUIRED_REASON_CODES.slice(66)),
+  load: closed(REQUIRED_REASON_CODES.slice(8, 18)),
+  phase: closed(REQUIRED_REASON_CODES.slice(18, 27)),
+  adaptation: closed(REQUIRED_REASON_CODES.slice(27, 34)),
+  safety: closed(REQUIRED_REASON_CODES.slice(34, 45)),
+  target_uncertainty: closed(REQUIRED_REASON_CODES.slice(45, 57)),
+  mutation_constraint: closed(REQUIRED_REASON_CODES.slice(57, 67)),
+  surface_export: closed(REQUIRED_REASON_CODES.slice(67)),
 });
 const REASON_CODE_MIGRATION_ALIASES = Object.freeze({ NO_IMPACT: 'MODIFY_IMPACT' });
 const REQUIRED_REASON_CODE_SET = new Set(REQUIRED_REASON_CODES);
