@@ -267,6 +267,29 @@ function parsePlan(plan) {
   }
 }
 
+function strictRemovalPlanPayload(planRow, planningDateLocal) {
+  let raw;
+  try {
+    if (planRow?.plan_data !== null && planRow?.plan_data !== undefined) {
+      raw = typeof planRow.plan_data === 'string'
+        ? JSON.parse(planRow.plan_data) : planRow.plan_data;
+    } else {
+      raw = typeof planRow?.plan_json === 'string'
+        ? JSON.parse(planRow.plan_json) : planRow?.plan_json;
+    }
+  } catch (_error) {
+    raw = null;
+  }
+  const observation = runningDistanceObservation(raw, {
+    start: planningDateLocal,
+    end: addPolicyDays(planningDateLocal, 6),
+  });
+  if (observation.state !== 'KNOWN') {
+    throw goalBackwardGenerationFailed('REQUIRED_RUNNING_DOSE_INVALID');
+  }
+  return raw;
+}
+
 function parseJsonValue(raw, fallback) {
   if (raw === null || raw === undefined || raw === '') return fallback;
   if (typeof raw !== 'string') return raw;
@@ -2211,7 +2234,9 @@ async function loadCandidateInputState(userId, request, clock, tx) {
     planningDateLocal: clock.planningDateLocal,
   });
   if (request.operation === 'remove_race') {
-    const impact = active ? raceRemovalImpact(parsePlan(active.row) || {}, request.remove_race_id) : null;
+    const activePlan = active
+      ? strictRemovalPlanPayload(active.row, clock.planningDateLocal) : null;
+    const impact = activePlan ? raceRemovalImpact(activePlan, request.remove_race_id) : null;
     const expected = impact?.remainingRaceIds || [];
     const requested = request.race_ids.slice().sort();
     if (!impact?.linked || JSON.stringify(expected.slice().sort()) !== JSON.stringify(requested)) {
@@ -4339,7 +4364,10 @@ async function previewRaceRemovalForUser(userId, raceId, body = {}) {
     const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, userId]);
     if (!race) throw candidateError(404, 'RACE_NOT_FOUND', 'Race not found.');
     const active = await getActivePlanForUser(userId, tx, { includeFuture: true, planningDateLocal: body.planning_date_local });
-    const impact = active ? raceRemovalImpact(parsePlan(active.row) || {}, raceId) : { linked: false, remainingRaceIds: [] };
+    const activePlan = active
+      ? strictRemovalPlanPayload(active.row, body.planning_date_local) : null;
+    const impact = activePlan
+      ? raceRemovalImpact(activePlan, raceId) : { linked: false, remainingRaceIds: [] };
     return { impact, race };
   });
   if (!state.impact.linked) {

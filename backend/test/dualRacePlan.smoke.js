@@ -2896,31 +2896,58 @@ async function checkHyroxCandidateImmediateAdoption() {
       assert.deepEqual(legacyInspection.required_running_dose_receipt.reason_codes,
         ['REQUIRED_RUNNING_DOSE_CEILED']);
 
-      const malformedDistanceHooks = { coercion: 0, proxy: 0 };
-      const malformedDistanceValues = [
-        ['string', () => '5'],
-        ['array', () => [5]],
-        ['boxed', () => new Number(5)], // eslint-disable-line no-new-wrappers
-        ['coercive', () => ({
-          valueOf() { malformedDistanceHooks.coercion += 1; return 5; },
-          toString() { malformedDistanceHooks.coercion += 1; return '5'; },
-        })],
-        ['proxy', () => new Proxy({}, {
-          get() { malformedDistanceHooks.proxy += 1; return 5; },
-          getOwnPropertyDescriptor() { malformedDistanceHooks.proxy += 1; return undefined; },
-          getPrototypeOf() { malformedDistanceHooks.proxy += 1; return Object.prototype; },
-          ownKeys() { malformedDistanceHooks.proxy += 1; return []; },
-        })],
-        ['object', () => ({ value: 5 })],
-        ['nan', () => NaN],
-        ['negative', () => -1],
-      ];
-      for (const [label, makeValue] of malformedDistanceValues) {
-        const malformedLegacyPlan = JSON.parse(JSON.stringify(legacyRoadPlan));
-        const malformedLegacyRun = (malformedLegacyPlan.weeks || []).flatMap((week) => (
-          (week.days || []).flatMap((day) => day.sessions || [])
-        )).find((session) => typeof session.distance_miles === 'number');
-        malformedLegacyRun.distance_miles = makeValue();
+      const malformedDistanceHooks = { coercion: 0, getter: 0, proxy: 0 };
+      const hostileProxy = (value) => new Proxy(value, {
+        get(target, key, receiver) {
+          malformedDistanceHooks.proxy += 1;
+          return Reflect.get(target, key, receiver);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          malformedDistanceHooks.proxy += 1;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+        getPrototypeOf(target) {
+          malformedDistanceHooks.proxy += 1;
+          return Reflect.getPrototypeOf(target);
+        },
+        ownKeys(target) {
+          malformedDistanceHooks.proxy += 1;
+          return Reflect.ownKeys(target);
+        },
+      });
+      const hostileAccessor = (target, field, value) => {
+        delete target[field];
+        Object.defineProperty(target, field, {
+          enumerable: true,
+          get() { malformedDistanceHooks.getter += 1; return value; },
+        });
+        return target;
+      };
+      class HostileRemovalContainer {}
+      class HostileRemovalList extends Array {}
+      const hostileAccessorList = (values) => {
+        const list = [...values];
+        const first = list[0];
+        Object.defineProperty(list, '0', {
+          configurable: true, enumerable: true,
+          get() { malformedDistanceHooks.getter += 1; return first; },
+        });
+        return list;
+      };
+      const hostileInheritedList = (values) => {
+        const list = [...values];
+        Object.setPrototypeOf(list, Object.create(Array.prototype));
+        return list;
+      };
+      const hostileClassList = (values) => {
+        const list = new HostileRemovalList();
+        list.push(...values);
+        return list;
+      };
+      const legacyRun = (plan) => (plan.weeks || []).flatMap((week) => (
+        (week.days || []).flatMap((day) => day.sessions || [])
+      )).find((session) => typeof session.distance_miles === 'number');
+      const assertInvalidLegacyRemoval = async (label, malformedLegacyPlan) => {
         legacyRoadPlanRow.plan_data = malformedLegacyPlan;
         legacyRoadPlanRow.plan_json = malformedLegacyPlan;
         const stateBeforeMalformedLegacyRemoval = {
@@ -2962,11 +2989,143 @@ async function checkHyroxCandidateImmediateAdoption() {
           activePlanRowUnchanged: true,
           activePlanDataUnchanged: true,
           yonkersOwned: stateBeforeMalformedLegacyRemoval.yonkersOwned,
-        },
-        `${label} legacy distance writes no candidate, artifact, plan, assignment, or race state`);
+        }, `${label} writes no candidate, artifact, plan, assignment, or race state`);
+      };
+      const malformedDistanceValues = [
+        ['string', () => '5'],
+        ['array', () => [5]],
+        ['boxed', () => new Number(5)], // eslint-disable-line no-new-wrappers
+        ['coercive', () => ({
+          valueOf() { malformedDistanceHooks.coercion += 1; return 5; },
+          toString() { malformedDistanceHooks.coercion += 1; return '5'; },
+        })],
+        ['proxy', () => hostileProxy({ value: 5 })],
+        ['object', () => ({ value: 5 })],
+        ['nan', () => NaN],
+        ['negative', () => -1],
+      ];
+      for (const [label, makeValue] of malformedDistanceValues) {
+        const malformedLegacyPlan = JSON.parse(JSON.stringify(legacyRoadPlan));
+        legacyRun(malformedLegacyPlan).distance_miles = makeValue();
+        await assertInvalidLegacyRemoval(`distance ${label}`, malformedLegacyPlan);
       }
-      assert.deepEqual(malformedDistanceHooks, { coercion: 0, proxy: 0 },
-        'the removal route never executes persisted distance coercion hooks');
+      const hostilePlanMutations = [
+        ['derived accessor', (plan) => {
+          const run = legacyRun(plan);
+          delete run.distance_miles;
+          run.derived_totals = hostileAccessor({}, 'distance_m', 8046.72);
+        }],
+        ['derived inherited', (plan) => {
+          const run = legacyRun(plan);
+          delete run.distance_miles;
+          run.derived_totals = Object.create({ distance_m: 8046.72 });
+        }],
+        ['derived class', (plan) => {
+          const run = legacyRun(plan);
+          delete run.distance_miles;
+          run.derived_totals = Object.assign(new HostileRemovalContainer(), { distance_m: 8046.72 });
+        }],
+        ['derived proxy', (plan) => {
+          const run = legacyRun(plan);
+          delete run.distance_miles;
+          run.derived_totals = hostileProxy({ distance_m: 8046.72 });
+        }],
+        ['session accessor', (plan) => hostileAccessor(legacyRun(plan), 'distance_miles', 5)],
+        ['session inherited', (plan) => {
+          const day = plan.weeks[0].days.find((entry) => (entry.sessions || []).includes(legacyRun(plan)));
+          const index = day.sessions.indexOf(legacyRun(plan));
+          const run = day.sessions[index];
+          delete run.distance_miles;
+          day.sessions[index] = Object.assign(Object.create({ distance_miles: 5 }), run);
+        }],
+        ['session class', (plan) => {
+          const day = plan.weeks[0].days.find((entry) => (entry.sessions || []).includes(legacyRun(plan)));
+          const index = day.sessions.indexOf(legacyRun(plan));
+          day.sessions[index] = Object.assign(new HostileRemovalContainer(), day.sessions[index]);
+        }],
+        ['session proxy', (plan) => {
+          const day = plan.weeks[0].days.find((entry) => (entry.sessions || []).includes(legacyRun(plan)));
+          const index = day.sessions.indexOf(legacyRun(plan));
+          day.sessions[index] = hostileProxy(day.sessions[index]);
+        }],
+        ['root weeks accessor', (plan) => hostileAccessor(plan, 'weeks', plan.weeks)],
+        ['root inherited weeks', (plan) => {
+          const weeks = plan.weeks;
+          delete plan.weeks;
+          Object.setPrototypeOf(plan, { weeks });
+        }],
+        ['root class', (plan) => Object.setPrototypeOf(plan, HostileRemovalContainer.prototype)],
+        ['weeks proxy', (plan) => { plan.weeks = hostileProxy(plan.weeks); }],
+        ['weeks accessor index', (plan) => { plan.weeks = hostileAccessorList(plan.weeks); }],
+        ['weeks inherited list', (plan) => { plan.weeks = hostileInheritedList(plan.weeks); }],
+        ['weeks class list', (plan) => { plan.weeks = hostileClassList(plan.weeks); }],
+        ['week proxy', (plan) => { plan.weeks[0] = hostileProxy(plan.weeks[0]); }],
+        ['week days accessor', (plan) => hostileAccessor(plan.weeks[0], 'days', plan.weeks[0].days)],
+        ['week inherited days', (plan) => {
+          const days = plan.weeks[0].days;
+          delete plan.weeks[0].days;
+          Object.setPrototypeOf(plan.weeks[0], { days });
+        }],
+        ['week class', (plan) => Object.setPrototypeOf(plan.weeks[0], HostileRemovalContainer.prototype)],
+        ['days proxy', (plan) => { plan.weeks[0].days = hostileProxy(plan.weeks[0].days); }],
+        ['days accessor index', (plan) => {
+          plan.weeks[0].days = hostileAccessorList(plan.weeks[0].days);
+        }],
+        ['days inherited list', (plan) => {
+          plan.weeks[0].days = hostileInheritedList(plan.weeks[0].days);
+        }],
+        ['days class list', (plan) => {
+          plan.weeks[0].days = hostileClassList(plan.weeks[0].days);
+        }],
+        ['day proxy', (plan) => { plan.weeks[0].days[0] = hostileProxy(plan.weeks[0].days[0]); }],
+        ['day sessions accessor', (plan) => hostileAccessor(
+          plan.weeks[0].days[0], 'sessions', plan.weeks[0].days[0].sessions,
+        )],
+        ['day inherited sessions', (plan) => {
+          const sessions = plan.weeks[0].days[0].sessions;
+          delete plan.weeks[0].days[0].sessions;
+          Object.setPrototypeOf(plan.weeks[0].days[0], { sessions });
+        }],
+        ['day class', (plan) => Object.setPrototypeOf(
+          plan.weeks[0].days[0], HostileRemovalContainer.prototype,
+        )],
+        ['sessions proxy', (plan) => {
+          plan.weeks[0].days[0].sessions = hostileProxy(plan.weeks[0].days[0].sessions);
+        }],
+        ['sessions accessor index', (plan) => {
+          plan.weeks[0].days[0].sessions = hostileAccessorList(plan.weeks[0].days[0].sessions);
+        }],
+        ['sessions inherited list', (plan) => {
+          plan.weeks[0].days[0].sessions = hostileInheritedList(plan.weeks[0].days[0].sessions);
+        }],
+        ['sessions class list', (plan) => {
+          plan.weeks[0].days[0].sessions = hostileClassList(plan.weeks[0].days[0].sessions);
+        }],
+      ];
+      for (const [label, mutate] of hostilePlanMutations) {
+        const malformedLegacyPlan = JSON.parse(JSON.stringify(legacyRoadPlan));
+        mutate(malformedLegacyPlan);
+        await assertInvalidLegacyRemoval(label, malformedLegacyPlan);
+      }
+      const pollutedLegacyPlan = JSON.parse(JSON.stringify(legacyRoadPlan));
+      const pollutedLegacyRun = legacyRun(pollutedLegacyPlan);
+      delete pollutedLegacyRun.distance_miles;
+      pollutedLegacyRun.derived_totals = {};
+      const pollutedDistanceDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, 'distance_m');
+      Object.defineProperty(Object.prototype, 'distance_m', {
+        configurable: true, enumerable: true, value: { value: 8046.72 }, writable: true,
+      });
+      try {
+        await assertInvalidLegacyRemoval('Object.prototype distance pollution', pollutedLegacyPlan);
+      } finally {
+        if (pollutedDistanceDescriptor) {
+          Object.defineProperty(Object.prototype, 'distance_m', pollutedDistanceDescriptor);
+        } else {
+          delete Object.prototype.distance_m;
+        }
+      }
+      assert.deepEqual(malformedDistanceHooks, { coercion: 0, getter: 0, proxy: 0 },
+        'the removal route never executes persisted evidence hooks');
       legacyRoadPlanRow.plan_data = JSON.stringify(legacyRoadPlan);
       legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
 

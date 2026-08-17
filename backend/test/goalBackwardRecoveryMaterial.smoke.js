@@ -1374,6 +1374,152 @@ test('C3-MAT-10', 'persisted running distances require primitive finite nonnegat
   }), { state: 'KNOWN', distance_m: milesToMeters(5), reason: null });
 });
 
+test('C3-MAT-11', 'persisted running containers and derived totals require hook-free own data', () => {
+  const hooks = { getter: 0, proxy: 0 };
+  const validSession = () => ({
+    session_id: 'safe-run',
+    scheduled_local_date: '2026-08-17',
+    workout_family: 'easy_run',
+    distance_miles: 5,
+  });
+  const validWeeks = () => [{ days: [{
+    date: '2026-08-17',
+    sessions: [validSession()],
+  }] }];
+  const observed = (container) => runningDistanceObservation(container, {
+    start: '2026-08-17', end: '2026-08-23',
+  });
+  const proxy = (value) => new Proxy(value, {
+    get(target, key, receiver) {
+      hooks.proxy += 1;
+      return Reflect.get(target, key, receiver);
+    },
+    getOwnPropertyDescriptor(target, key) {
+      hooks.proxy += 1;
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+    getPrototypeOf(target) {
+      hooks.proxy += 1;
+      return Reflect.getPrototypeOf(target);
+    },
+    ownKeys(target) {
+      hooks.proxy += 1;
+      return Reflect.ownKeys(target);
+    },
+  });
+  const accessor = (field, value, other = {}) => {
+    const container = { ...other };
+    Object.defineProperty(container, field, {
+      enumerable: true,
+      get() { hooks.getter += 1; return value; },
+    });
+    return container;
+  };
+  class HostileContainer {
+    constructor(values) { Object.assign(this, values); }
+  }
+  class HostileList extends Array {}
+  const accessorList = (values) => {
+    const list = [...values];
+    const first = list[0];
+    Object.defineProperty(list, '0', {
+      enumerable: true, configurable: true,
+      get() { hooks.getter += 1; return first; },
+    });
+    return list;
+  };
+  const inheritedList = (values) => {
+    const list = [...values];
+    Object.setPrototypeOf(list, Object.create(Array.prototype));
+    return list;
+  };
+  const classList = (values) => {
+    const list = new HostileList();
+    list.push(...values);
+    return list;
+  };
+
+  const derivedAccessor = accessor('distance_m', milesToMeters(5));
+  const sessionDistanceAccessor = accessor('distance_miles', 5, {
+    session_id: 'session-accessor', scheduled_local_date: '2026-08-17', workout_family: 'easy_run',
+  });
+  const inheritedSession = Object.assign(Object.create({ distance_miles: 5 }), {
+    session_id: 'session-inherited', scheduled_local_date: '2026-08-17', workout_family: 'easy_run',
+  });
+  const hostileContainers = [
+    ['derived accessor', { sessions: [{ ...validSession(), distance_miles: undefined, derived_totals: derivedAccessor }] }],
+    ['derived inherited', { sessions: [{
+      ...validSession(), distance_miles: undefined,
+      derived_totals: Object.create({ distance_m: milesToMeters(5) }),
+    }] }],
+    ['derived class', { sessions: [{
+      ...validSession(), distance_miles: undefined,
+      derived_totals: new HostileContainer({ distance_m: milesToMeters(5) }),
+    }] }],
+    ['derived proxy', { sessions: [{
+      ...validSession(), distance_miles: undefined,
+      derived_totals: proxy({ distance_m: milesToMeters(5) }),
+    }] }],
+    ['session accessor', { sessions: [sessionDistanceAccessor] }],
+    ['session inherited', { sessions: [inheritedSession] }],
+    ['session class', { sessions: [new HostileContainer(validSession())] }],
+    ['session proxy', { sessions: [proxy(validSession())] }],
+    ['root weeks accessor', accessor('weeks', validWeeks())],
+    ['root inherited', Object.create({ weeks: validWeeks() })],
+    ['root class', new HostileContainer({ weeks: validWeeks() })],
+    ['weeks proxy', { weeks: proxy(validWeeks()) }],
+    ['weeks accessor index', { weeks: accessorList(validWeeks()) }],
+    ['weeks inherited list', { weeks: inheritedList(validWeeks()) }],
+    ['weeks class list', { weeks: classList(validWeeks()) }],
+    ['week proxy', { weeks: [proxy(validWeeks()[0])] }],
+    ['week days accessor', { weeks: [accessor('days', validWeeks()[0].days)] }],
+    ['week inherited', { weeks: [Object.create({ days: validWeeks()[0].days })] }],
+    ['week class', { weeks: [new HostileContainer({ days: validWeeks()[0].days })] }],
+    ['days proxy', { weeks: [{ days: proxy(validWeeks()[0].days) }] }],
+    ['days accessor index', { weeks: [{ days: accessorList(validWeeks()[0].days) }] }],
+    ['days inherited list', { weeks: [{ days: inheritedList(validWeeks()[0].days) }] }],
+    ['days class list', { weeks: [{ days: classList(validWeeks()[0].days) }] }],
+    ['day proxy', { weeks: [{ days: [proxy(validWeeks()[0].days[0])] }] }],
+    ['day sessions accessor', { weeks: [{ days: [accessor('sessions', [validSession()], {
+      date: '2026-08-17',
+    })] }] }],
+    ['day inherited', { weeks: [{ days: [Object.create({
+      date: '2026-08-17', sessions: [validSession()],
+    })] }] }],
+    ['day class', { weeks: [{ days: [new HostileContainer({
+      date: '2026-08-17', sessions: [validSession()],
+    })] }] }],
+    ['sessions proxy', { sessions: proxy([validSession()]) }],
+    ['sessions accessor index', { sessions: accessorList([validSession()]) }],
+    ['sessions inherited list', { sessions: inheritedList([validSession()]) }],
+    ['sessions class list', { sessions: classList([validSession()]) }],
+  ];
+  for (const [label, container] of hostileContainers) {
+    const observation = observed(container);
+    assert.equal(observation.state, 'UNKNOWN', label);
+    assert.equal(observation.distance_m, null, label);
+    assert.equal(observation.reason, 'RUNNING_DISTANCE_MALFORMED', label);
+  }
+  assert.deepEqual(hooks, { getter: 0, proxy: 0 },
+    'container normalization executes no getter or Proxy trap');
+
+  const pollutedDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, 'distance_m');
+  Object.defineProperty(Object.prototype, 'distance_m', {
+    configurable: true, enumerable: true, value: { value: milesToMeters(5) }, writable: true,
+  });
+  try {
+    const polluted = observed({ sessions: [{
+      ...validSession(), distance_miles: undefined, derived_totals: {},
+    }] });
+    assert.equal(polluted.state, 'UNKNOWN');
+    assert.equal(polluted.distance_m, null);
+    assert.equal(polluted.reason, 'RUNNING_DISTANCE_UNKNOWN');
+  } finally {
+    if (pollutedDescriptor) Object.defineProperty(Object.prototype, 'distance_m', pollutedDescriptor);
+    else delete Object.prototype.distance_m;
+  }
+});
+
 test('C3-UNKNOWN-01', 'unknown load cannot become zero or authorize either increase or reduction', () => {
   const receipt = evaluateMaterialDose(materialInput({ recentNormalMiles: null, activePlanMiles: null }));
   assert.equal(receipt.valid, false);

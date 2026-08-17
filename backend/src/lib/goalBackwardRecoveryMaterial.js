@@ -3,6 +3,7 @@ const {
   addDays,
   canonicalHash,
 } = require('./racePlanPolicy');
+const { types: { isProxy } } = require('node:util');
 
 const RUNNING_FAMILIES = new Set([
   'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run', 'interval_run',
@@ -170,19 +171,7 @@ function evidenceRefs(values) {
 }
 
 function sessionsFrom(container = {}) {
-  if (Array.isArray(container)) return container;
-  if (Array.isArray(container.sessions)) return container.sessions;
-  return (container.weeks || []).flatMap((week) => (
-    (week.days || week.sessions || []).flatMap((day) => (
-      Array.isArray(day.sessions)
-        ? day.sessions.map((session) => ({
-          ...session,
-          scheduled_local_date: session.scheduled_local_date ?? session.date
-            ?? day.scheduled_local_date ?? day.date ?? null,
-        }))
-        : [day]
-    ))
-  ));
+  return normalizedSessionRecords(container) || [];
 }
 
 function sessionFamily(session = {}) {
@@ -202,20 +191,136 @@ function primitiveDistance(value, multiplier = 1) {
   return { state: 'KNOWN', distance_m: value * multiplier };
 }
 
-function distanceObservation(session = {}) {
-  const observations = [
-    session.running_distance_m,
-    session.distance_m,
-    session.distanceMeters,
-  ].map((value) => primitiveDistance(value));
-  const derivedTotals = session.derived_totals;
-  if (derivedTotals !== null && derivedTotals !== undefined) {
-    if (!derivedTotals || typeof derivedTotals !== 'object' || Array.isArray(derivedTotals)) {
-      return { state: 'MALFORMED', distance_m: null };
-    }
-    observations.push(primitiveDistance(derivedTotals.distance_m));
+function ownDataRecord(value) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || isProxy(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(descriptors).some((key) => (
+      typeof key !== 'string'
+        || !Object.hasOwn(descriptors[key], 'value')
+    ))) return null;
+    return descriptors;
+  } catch (_error) {
+    return null;
   }
-  observations.push(...[session.distance_miles, session.distanceMiles]
+}
+
+function ownArrayValues(value, maximumLength = 4096) {
+  try {
+    if (!Array.isArray(value) || isProxy(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+      return null;
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const length = Object.hasOwn(descriptors, 'length') ? descriptors.length.value : null;
+    if (!Number.isSafeInteger(length) || length < 0 || length > maximumLength) return null;
+    const allowedKeys = new Set(['length', ...Array.from({ length }, (_, index) => String(index))]);
+    if (Reflect.ownKeys(descriptors).some((key) => (
+      typeof key !== 'string'
+        || !allowedKeys.has(key)
+        || !Object.hasOwn(descriptors[key], 'value')
+    ))) return null;
+    const result = [];
+    for (let index = 0; index < length; index += 1) {
+      const key = String(index);
+      if (!Object.hasOwn(descriptors, key)) return null;
+      const descriptor = descriptors[key];
+      if (!Object.hasOwn(descriptor, 'value')) return null;
+      result.push(descriptor.value);
+    }
+    return result;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function ownField(descriptors, keys) {
+  for (const key of keys) {
+    if (descriptors && Object.hasOwn(descriptors, key)) {
+      return { present: true, value: descriptors[key].value };
+    }
+  }
+  return { present: false, value: undefined };
+}
+
+function clonedOwnDataRecord(value, fallbackDate = null) {
+  const descriptors = ownDataRecord(value);
+  if (!descriptors) return null;
+  const cloned = Object.create(null);
+  for (const key of Object.keys(descriptors)) cloned[key] = descriptors[key].value;
+  if (!Object.hasOwn(cloned, 'scheduled_local_date') && !Object.hasOwn(cloned, 'date')) {
+    cloned.scheduled_local_date = fallbackDate;
+  }
+  return Object.freeze(cloned);
+}
+
+function normalizedSessionRecords(container) {
+  const directArray = ownArrayValues(container);
+  if (directArray) {
+    const sessions = directArray.map((session) => clonedOwnDataRecord(session));
+    return sessions.every(Boolean) ? sessions : null;
+  }
+  const root = ownDataRecord(container);
+  if (!root) return null;
+  const directSessions = ownField(root, ['sessions']);
+  if (directSessions.present) {
+    const values = ownArrayValues(directSessions.value);
+    if (!values) return null;
+    const sessions = values.map((session) => clonedOwnDataRecord(session));
+    return sessions.every(Boolean) ? sessions : null;
+  }
+  const weeksField = ownField(root, ['weeks']);
+  if (!weeksField.present) return [];
+  const weeks = ownArrayValues(weeksField.value);
+  if (!weeks) return null;
+  const sessions = [];
+  for (const week of weeks) {
+    const weekRecord = ownDataRecord(week);
+    if (!weekRecord) return null;
+    const daysField = ownField(weekRecord, ['days', 'sessions']);
+    if (!daysField.present) continue;
+    const days = ownArrayValues(daysField.value);
+    if (!days) return null;
+    for (const day of days) {
+      const dayRecord = ownDataRecord(day);
+      if (!dayRecord) return null;
+      const fallbackDateField = ownField(dayRecord, ['scheduled_local_date', 'date']);
+      const daySessions = ownField(dayRecord, ['sessions']);
+      if (!daySessions.present) {
+        const cloned = clonedOwnDataRecord(day);
+        if (!cloned) return null;
+        sessions.push(cloned);
+        continue;
+      }
+      const values = ownArrayValues(daySessions.value);
+      if (!values) return null;
+      for (const session of values) {
+        const cloned = clonedOwnDataRecord(session, fallbackDateField.value ?? null);
+        if (!cloned) return null;
+        sessions.push(cloned);
+      }
+    }
+  }
+  return sessions;
+}
+
+function distanceObservation(descriptors) {
+  const observations = [
+    ownField(descriptors, ['running_distance_m']).value,
+    ownField(descriptors, ['distance_m']).value,
+    ownField(descriptors, ['distanceMeters']).value,
+  ].map((value) => primitiveDistance(value));
+  const derivedTotals = ownField(descriptors, ['derived_totals']).value;
+  if (derivedTotals !== null && derivedTotals !== undefined) {
+    const derivedDescriptors = ownDataRecord(derivedTotals);
+    if (!derivedDescriptors) return { state: 'MALFORMED', distance_m: null };
+    observations.push(primitiveDistance(ownField(derivedDescriptors, ['distance_m']).value));
+  }
+  observations.push(...[
+    ownField(descriptors, ['distance_miles']).value,
+    ownField(descriptors, ['distanceMiles']).value,
+  ]
     .map((value) => primitiveDistance(value, 1609.344)));
   if (observations.some((observation) => observation.state === 'MALFORMED')) {
     return { state: 'MALFORMED', distance_m: null };
@@ -225,6 +330,76 @@ function distanceObservation(session = {}) {
   return { state: 'MISSING', distance_m: null };
 }
 
+function normalizedDistanceSession(session, fallbackDate = null) {
+  const descriptors = ownDataRecord(session);
+  if (!descriptors) return null;
+  const familyField = ownField(descriptors, ['workout_family', 'workoutFamily', 'family']);
+  if (familyField.present && typeof familyField.value !== 'string') return null;
+  const sessionDate = ownField(descriptors, ['scheduled_local_date', 'date']);
+  const sourceDate = sessionDate.present ? sessionDate.value : fallbackDate;
+  const date = sourceDate === null || sourceDate === undefined || typeof sourceDate === 'string'
+    ? sourceDate : null;
+  return Object.freeze({
+    family: familyField.present ? familyField.value : '',
+    date: date ?? null,
+    distance: distanceObservation(descriptors),
+  });
+}
+
+function normalizedRunningSessions(container) {
+  const directArray = ownArrayValues(container);
+  if (directArray) {
+    const sessions = directArray.map((session) => normalizedDistanceSession(session));
+    return sessions.every(Boolean) ? sessions : null;
+  }
+  const root = ownDataRecord(container);
+  if (!root) return null;
+  const directSessions = ownField(root, ['sessions']);
+  if (directSessions.present) {
+    const values = ownArrayValues(directSessions.value);
+    if (!values) return null;
+    const sessions = values.map((session) => normalizedDistanceSession(session));
+    return sessions.every(Boolean) ? sessions : null;
+  }
+  const weeksField = ownField(root, ['weeks']);
+  if (!weeksField.present) return [];
+  const weeks = ownArrayValues(weeksField.value);
+  if (!weeks) return null;
+  const sessions = [];
+  for (const week of weeks) {
+    const weekRecord = ownDataRecord(week);
+    if (!weekRecord) return null;
+    const daysField = ownField(weekRecord, ['days', 'sessions']);
+    if (!daysField.present) continue;
+    const days = ownArrayValues(daysField.value);
+    if (!days) return null;
+    for (const day of days) {
+      const dayRecord = ownDataRecord(day);
+      if (!dayRecord) return null;
+      const fallbackDateField = ownField(dayRecord, ['scheduled_local_date', 'date']);
+      const daySessions = ownField(dayRecord, ['sessions']);
+      if (!daySessions.present) {
+        const normalized = normalizedDistanceSession(day);
+        if (!normalized) return null;
+        sessions.push(normalized);
+        continue;
+      }
+      const values = ownArrayValues(daySessions.value);
+      if (!values) return null;
+      for (const session of values) {
+        const fallbackDate = fallbackDateField.value === null
+          || fallbackDateField.value === undefined
+          || typeof fallbackDateField.value === 'string'
+          ? fallbackDateField.value : null;
+        const normalized = normalizedDistanceSession(session, fallbackDate);
+        if (!normalized) return null;
+        sessions.push(normalized);
+      }
+    }
+  }
+  return sessions;
+}
+
 function runningDistanceObservation(container = {}, options = {}) {
   const start = dateOnly(options.start);
   const end = dateOnly(options.end);
@@ -232,17 +407,21 @@ function runningDistanceObservation(container = {}, options = {}) {
   if (windowRequested && (!start || !end || start > end)) {
     return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_WINDOW_UNKNOWN' };
   }
+  const sessions = normalizedRunningSessions(container);
+  if (!sessions) {
+    return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DISTANCE_MALFORMED' };
+  }
   const running = [];
-  for (const session of sessionsFrom(container)) {
-    if (!RUNNING_FAMILIES.has(sessionFamily(session))) continue;
-    const date = dateOnly(session.scheduled_local_date ?? session.date);
+  for (const session of sessions) {
+    if (!RUNNING_FAMILIES.has(session.family)) continue;
+    const date = dateOnly(session.date);
     if (windowRequested && !date) {
       return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DATE_UNKNOWN' };
     }
     if ((start && date < start) || (end && date > end)) continue;
     running.push(session);
   }
-  const distances = running.map(distanceObservation);
+  const distances = running.map((session) => session.distance);
   if (distances.some((distance) => distance.state === 'MALFORMED')) {
     return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DISTANCE_MALFORMED' };
   }
