@@ -2495,6 +2495,37 @@ function goalBackwardCandidateMaterial(plan, availableLocalDates) {
   ));
 }
 
+function goalBackwardMaterialId(session) {
+  return String(session?.session_id ?? session?.id ?? '').trim();
+}
+
+function goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates) {
+  if (state?.request?.operation !== 'remove_race'
+    || Number(activeAppliedPlan?.canonical_workout_schema_version) !== 1
+    || !activeAppliedPlan?.canonical_session_set_hash
+    || !activeAppliedPlan?.selected_candidate_hash) return [];
+  const retainedGoalIds = new Set((state.races || []).map((race) => `goal-${String(race?.id || '')}`));
+  const removedGoalId = `goal-${String(state.request.remove_race_id || '')}`;
+  const allowedGoalIds = new Set([...retainedGoalIds, removedGoalId]);
+  if (!retainedGoalIds.size || removedGoalId === 'goal-') return [];
+  const acceptedMaterialIds = new Set();
+  // A successor may retain only canonical, goal-shared aerobic material. The
+  // new canonical session set rebinds it to the retained decision goals; race-
+  // specific quality and material owned only by the removed goal never cross.
+  return goalBackwardCandidateMaterial(activeAppliedPlan, availableLocalDates).filter((session) => {
+    const family = legacyGoalBackwardFamily(session);
+    if (!['easy_run', 'recovery_run', 'long_aerobic'].includes(family)) return false;
+    const id = goalBackwardMaterialId(session);
+    const goalIds = session?.goal_ids ?? session?.goalIds;
+    if (!id || acceptedMaterialIds.has(id)
+      || !Array.isArray(goalIds) || !goalIds.length
+      || goalIds.some((goalId) => typeof goalId !== 'string' || !allowedGoalIds.has(goalId))
+      || !goalIds.some((goalId) => retainedGoalIds.has(goalId))) return false;
+    acceptedMaterialIds.add(id);
+    return true;
+  });
+}
+
 function goalBackwardMaterialRunningMeters(session) {
   const direct = Number(session?.distance_m ?? session?.distanceMeters);
   if (Number.isFinite(direct) && direct >= 0) return direct;
@@ -2766,12 +2797,25 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     ] : [],
   };
   let decision = buildDecision(decisionInput);
+  const activeAppliedPlan = state.active ? {
+    ...parsePlan(state.active.row),
+    plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
+  } : null;
   const boundedCandidateMaterial = clusterPolicy?.required === true && selectedClusterWeek
     ? goalBackwardCandidateMaterial({ weeks: [selectedClusterWeek] }, availableLocalDates)
     : goalBackwardCandidateMaterial(built.plan, availableLocalDates);
-  const candidateMaterial = boundedCandidateMaterial.length
+  const baseCandidateMaterial = boundedCandidateMaterial.length
     ? boundedCandidateMaterial
     : goalBackwardCandidateMaterial(built.plan, null);
+  const carriedRemovalMaterial = clusterPolicy?.required === true
+    ? [] : goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates);
+  const carriedRemovalMaterialIds = new Set(carriedRemovalMaterial.map(goalBackwardMaterialId));
+  const candidateMaterial = [
+    ...carriedRemovalMaterial,
+    ...baseCandidateMaterial.filter((session) => (
+      !carriedRemovalMaterialIds.has(goalBackwardMaterialId(session))
+    )),
+  ];
   if (clusterPolicy?.required !== true) {
     const supportingStimuli = goalBackwardSupportingStimuli(
       candidateMaterial,
@@ -2828,10 +2872,6 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       .map((entry) => entry.normal_ceiling),
     authorized_ceiling_vector: crossModalReductionEvidence.dimension_ledger.dimensions
       .map((entry) => entry.authorized_ceiling),
-  } : null;
-  const activeAppliedPlan = state.active ? {
-    ...parsePlan(state.active.row),
-    plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
   } : null;
   const result = enumerateCandidates({
     decision,
@@ -6635,6 +6675,7 @@ router._test = {
   buildConcurrentContext,
   confidenceAwareMileageBaseline,
   goalBackwardSafetyState,
+  goalBackwardRemovalCarryForwardMaterial,
   goalBackwardTrainingAge,
   buildCanonicalSurfaceManifest,
   buildGoalBackwardArtifacts,

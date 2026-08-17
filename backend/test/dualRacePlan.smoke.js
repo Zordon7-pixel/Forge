@@ -1695,6 +1695,27 @@ async function checkHyroxCandidateImmediateAdoption() {
   try {
     const plansRouter = require('../src/routes/plans');
     const racesRouter = require('../src/routes/races');
+    const carryForwardProbe = plansRouter._test.goalBackwardRemovalCarryForwardMaterial({
+      request: { operation: 'remove_race', remove_race_id: 'yonkers' },
+      races: [{ id: 'army' }],
+    }, {
+      canonical_workout_schema_version: 1,
+      canonical_session_set_hash: 'a'.repeat(64),
+      selected_candidate_hash: 'b'.repeat(64),
+      weeks: [{ days: [{ date: planningDate, sessions: [
+        { session_id: 'shared-easy', type: 'easy', goal_ids: ['goal-yonkers', 'goal-army'] },
+        { session_id: 'shared-long', type: 'long', goal_ids: ['goal-army'] },
+        { session_id: 'removed-only', type: 'easy', goal_ids: ['goal-yonkers'] },
+        { session_id: 'race-specific', type: 'threshold', goal_ids: ['goal-yonkers', 'goal-army'] },
+        { session_id: 'stale-binding', type: 'easy', goal_ids: ['goal-army', 'goal-ghost'] },
+      ] }] }],
+    }, [planningDate]);
+    assert.deepEqual(carryForwardProbe.map((session) => session.session_id), ['shared-easy', 'shared-long'],
+      'only canonical aerobic material explicitly shared with retained goals can cross removal');
+    assert.deepEqual(plansRouter._test.goalBackwardRemovalCarryForwardMaterial({
+      request: { operation: 'remove_race', remove_race_id: 'yonkers' },
+      races: [{ id: 'army' }],
+    }, { weeks: [] }, [planningDate]), [], 'legacy or identity-free active plans cannot authorize carry-forward');
     const preview = routeHandler(plansRouter, '/generate-for-races', 'post');
     const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
     const reject = routeHandler(plansRouter, '/candidates/:candidateId/reject', 'post');
@@ -2629,6 +2650,104 @@ async function checkHyroxCandidateImmediateAdoption() {
     });
     assert.equal(roadReplay.statusCode, 200, JSON.stringify(roadReplay.payload));
     assert.equal(roadReplay.payload.replay, true);
+
+    const roadCurrentSessions = (roadCurrent.payload.plan.plan_data.weeks || []).flatMap((week) => (
+      (week.days || []).flatMap((day) => day.sessions || [])
+    ));
+    const roadCurrentRunningDoseM = roadCurrentSessions.reduce((sum, session) => (
+      sum + Number(session.running_distance_m ?? session.distance_m
+        ?? session.derived_totals?.distance_m ?? 0)
+    ), 0);
+    assert.ok(roadCurrentRunningDoseM > 0);
+
+    const candidateCountBeforeRoadRemoval = candidates.size;
+    const artifactCountBeforeRoadRemoval = planningArtifacts.size;
+    const activeBeforeRoadRemoval = currentAssignment().id;
+    const yonkersRemovalPreview = await invoke(previewRaceRemoval, {
+      ...sundayRequestBase,
+      params: { id: 'yonkers' },
+      body: { ...sundayClock },
+    });
+    if (yonkersRemovalPreview.statusCode !== 201) {
+      assert.equal(currentAssignment().id, activeBeforeRoadRemoval,
+        'a rejected removal preview cannot mutate the active assignment');
+      assert.equal(candidates.size, candidateCountBeforeRoadRemoval,
+        'a rejected removal preview cannot persist a misleading candidate');
+      assert.equal(planningArtifacts.size, artifactCountBeforeRoadRemoval,
+        'a rejected removal preview cannot persist candidate artifacts');
+      assert.equal(raceRows.has('yonkers'), true,
+        'a rejected removal preview cannot delete the owned race');
+    }
+    assert.equal(yonkersRemovalPreview.statusCode, 201, JSON.stringify(yonkersRemovalPreview.payload));
+    assert.equal(yonkersRemovalPreview.payload.impact, 'active_plan_rebuild');
+    assert.deepEqual(yonkersRemovalPreview.payload.removal, {
+      race_id: 'yonkers',
+      remaining_race_ids: ['army'],
+    });
+    assert.equal(currentAssignment().id, activeBeforeRoadRemoval,
+      'removal preview cannot mutate the active assignment');
+    assert.equal(candidates.size, candidateCountBeforeRoadRemoval + 1,
+      'successful removal preview persists exactly one reviewed successor');
+    assert.ok(planningArtifacts.size > artifactCountBeforeRoadRemoval,
+      'successful removal preview persists its exact goal-backward artifacts');
+    const removalPlan = yonkersRemovalPreview.payload.plan.plan_data;
+    const removalSessions = (removalPlan.weeks || []).flatMap((week) => (
+      (week.days || []).flatMap((day) => day.sessions || [])
+    ));
+    assert.deepEqual(removalPlan.goals.map((goal) => goal.raceId), ['army']);
+    assert.ok(removalSessions.length > 0);
+    assert.ok(removalSessions.every((session) => (
+      Array.isArray(session.goal_ids)
+        && session.goal_ids.length === 1
+        && session.goal_ids[0] === 'goal-army'
+    )), 'the successor rebinds every retained canonical session to the Army goal alone');
+    assert.ok(removalSessions.reduce((sum, session) => (
+      sum + Number(session.running_distance_m ?? session.distance_m
+        ?? session.derived_totals?.distance_m ?? 0)
+    ), 0) >= roadCurrentRunningDoseM,
+    'the successor preserves the exact reviewed applied running dose');
+    assert.equal(raceRows.has('yonkers'), true, 'preview performs zero race writes');
+
+    const roadRemovalApplyBody = {
+      ...sundayClock,
+      candidate_id: yonkersRemovalPreview.payload.candidate_id,
+      candidate_hash: yonkersRemovalPreview.payload.candidate_hash,
+      choice: 'train_for_target',
+      ...yonkersRemovalPreview.payload.apply_bindings,
+    };
+    const removalApplyResult = await invoke(applyRaceRemoval, {
+      ...sundayRequestBase,
+      params: { id: 'yonkers' },
+      body: roadRemovalApplyBody,
+    });
+    assert.equal(removalApplyResult.statusCode, 200, JSON.stringify(removalApplyResult.payload));
+    assert.equal(raceRows.has('yonkers'), false, 'apply atomically removes the exact owned race');
+    const removalAssignment = currentAssignment();
+    assert.notEqual(removalAssignment.id, activeBeforeRoadRemoval);
+    const removalCurrent = await invoke(readMyPlan, { ...sundayRequestBase, body: {} });
+    assert.equal(removalCurrent.statusCode, 200, JSON.stringify(removalCurrent.payload));
+    assert.deepEqual(removalCurrent.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['army']);
+    const removedBindingPaths = [];
+    const findRemovedBindings = (value, path = 'response') => {
+      if (typeof value === 'string' && value.includes('goal-yonkers')) removedBindingPaths.push(path);
+      else if (Array.isArray(value)) value.forEach((entry, index) => findRemovedBindings(entry, `${path}[${index}]`));
+      else if (value && typeof value === 'object') Object.entries(value).forEach(([key, entry]) => (
+        findRemovedBindings(entry, `${path}.${key}`)
+      ));
+    };
+    findRemovedBindings(removalCurrent.payload.plan.plan_data, 'current_plan');
+    assert.deepEqual(removedBindingPaths, [],
+      'the authoritative successor contains no removed goal binding');
+
+    const roadRemovalReplay = await invoke(applyRaceRemoval, {
+      ...sundayRequestBase,
+      params: { id: 'yonkers' },
+      body: roadRemovalApplyBody,
+    });
+    assert.equal(roadRemovalReplay.statusCode, 200, JSON.stringify(roadRemovalReplay.payload));
+    assert.equal(roadRemovalReplay.payload.replay, true);
+    assert.equal(currentAssignment().id, removalAssignment.id,
+      'idempotent removal replay performs no second assignment write');
   } finally {
     global.Date = RealDate;
     hyrox.generateHyroxPlan = originalGenerateHyroxPlan;
