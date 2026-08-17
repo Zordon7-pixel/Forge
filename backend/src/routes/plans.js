@@ -2626,6 +2626,44 @@ function goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, avail
   });
 }
 
+function goalBackwardGoalExpansionCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates) {
+  if (state?.request?.operation === 'remove_race'
+    || activeAppliedPlan?.canonical_workout_schema_version !== 1
+    || !isCanonicalHash(activeAppliedPlan?.canonical_session_set_hash)
+    || !isCanonicalHash(activeAppliedPlan?.selected_candidate_hash)) return [];
+  const currentGoalIds = new Set((state.races || []).map((race) => `goal-${String(race?.id || '')}`));
+  const activeGoals = Array.isArray(activeAppliedPlan.goals) ? activeAppliedPlan.goals : null;
+  if (!currentGoalIds.size || currentGoalIds.has('goal-') || !activeGoals?.length) return [];
+  const activeGoalIds = activeGoals.map((goal) => {
+    if (!goal || typeof goal !== 'object' || Array.isArray(goal)) return null;
+    const raceId = goal.raceId ?? goal.race_id;
+    if (typeof raceId !== 'string' || !raceId.trim()) return null;
+    if (goal.raceId !== null && goal.raceId !== undefined
+      && goal.race_id !== null && goal.race_id !== undefined
+      && goal.raceId !== goal.race_id) return null;
+    return `goal-${raceId.trim()}`;
+  });
+  if (activeGoalIds.some((goalId) => goalId === null)) return [];
+  const retainedGoalIds = new Set(activeGoalIds.filter((goalId) => currentGoalIds.has(goalId)));
+  const addsGoal = [...currentGoalIds].some((goalId) => !activeGoalIds.includes(goalId));
+  if (!retainedGoalIds.size || !addsGoal) return [];
+  const acceptedMaterialIds = new Set();
+  // A goal expansion may preserve only canonical aerobic/assessment material
+  // already owned by at least one retained goal. The new decision rebinds the
+  // selected material to its exact current goals; removed or foreign bindings
+  // never cross into the successor.
+  return goalBackwardRemovalMaterial(activeAppliedPlan, availableLocalDates).filter((session) => {
+    if (!goalBackwardRemovalFamily(session)) return false;
+    const id = goalBackwardMaterialId(session);
+    const goalIds = session?.goal_ids ?? session?.goalIds;
+    if (!id || acceptedMaterialIds.has(id)
+      || !Array.isArray(goalIds) || !goalIds.length
+      || goalIds.some((goalId) => typeof goalId !== 'string' || !retainedGoalIds.has(goalId))) return false;
+    acceptedMaterialIds.add(id);
+    return true;
+  });
+}
+
 function assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan) {
   if (state?.request?.operation !== 'remove_race' || !activeAppliedPlan) return true;
   const declaresCanonicalSource = [
@@ -3050,11 +3088,18 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     : goalBackwardCandidateMaterial(built.plan, null);
   const carriedRemovalMaterial = clusterPolicy?.required === true
     ? [] : goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates);
-  const carriedRemovalMaterialIds = new Set(carriedRemovalMaterial.map(goalBackwardMaterialId));
+  const carriedGoalExpansionMaterial = clusterPolicy?.required === true
+    ? [] : goalBackwardGoalExpansionCarryForwardMaterial(
+      state,
+      activeAppliedPlan,
+      availableLocalDates,
+    );
+  const carriedLifecycleMaterial = [...carriedRemovalMaterial, ...carriedGoalExpansionMaterial];
+  const carriedLifecycleMaterialIds = new Set(carriedLifecycleMaterial.map(goalBackwardMaterialId));
   const candidateMaterial = [
-    ...carriedRemovalMaterial,
+    ...carriedLifecycleMaterial,
     ...baseCandidateMaterial.filter((session) => (
-      !carriedRemovalMaterialIds.has(goalBackwardMaterialId(session))
+      !carriedLifecycleMaterialIds.has(goalBackwardMaterialId(session))
     )),
   ];
   let requiredRunningDoseReceipt = null;

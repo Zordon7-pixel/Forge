@@ -4037,6 +4037,93 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(roadRemovalReplay.payload.replay, true);
     assert.equal(currentAssignment().id, removalAssignment.id,
       'idempotent removal replay performs no second assignment write');
+
+    const postRemovalState = mutationState();
+    const finalHyroxPreview = await invoke(preview, {
+      ...roadRequestBase,
+      body: {
+        ...roadClock,
+        race_ids: ['hyrox', 'army'],
+        target: {
+          trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+          runDaysPerWeek: 4,
+          liftDaysPerWeek: 0,
+          planMode: 'hyrox_build',
+          liftingEnabled: false,
+        },
+      },
+    });
+    if (finalHyroxPreview.statusCode !== 201) {
+      assert.equal(mutationState(), postRemovalState,
+        'a rejected post-removal HYROX preview writes no candidate, artifact, plan, assignment, or race');
+    }
+    assert.equal(finalHyroxPreview.statusCode, 201, JSON.stringify(finalHyroxPreview.payload));
+    assert.equal(finalHyroxPreview.payload.requires_apply, true);
+    assert.deepEqual(finalHyroxPreview.payload.plan.plan_data.goals.map((goal) => goal.raceId), [
+      'hyrox', 'army',
+    ]);
+    assert.equal(finalHyroxPreview.payload.plan.plan_data.goals.some((goal) => (
+      goal.raceId === 'yonkers'
+    )), false);
+    const finalHyroxGoal = finalHyroxPreview.payload.plan.plan_data.goals[0];
+    assert.equal(finalHyroxGoal.eventLocalDate, '2026-09-06');
+    assert.equal(finalHyroxGoal.division, 'doubles');
+    assert.equal(finalHyroxGoal.category, 'men');
+    assert.ok(['supported', 'stretch'].includes(
+      finalHyroxPreview.payload.plan.plan_data.overall_feasibility,
+    ));
+    assert.equal(
+      canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data),
+      25319,
+      'the post-removal goal update preserves the active 23,990m floor and the 25,267m observed lower bound',
+    );
+    assert.ok(canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data)
+      >= roadCurrentRunningDoseM,
+    'the post-removal goal update cannot reduce the exact reviewed active dose');
+    assert.ok(canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data)
+      > historicalCollapsedDoseM,
+    'the exact post-removal HYROX plus road preview cannot surface the historical collapsed dose');
+    const finalPreviewText = JSON.stringify(finalHyroxPreview.payload.plan.plan_data);
+    assert.equal(finalPreviewText.includes('goal-yonkers'), false,
+      'the final reviewed candidate contains no removed goal binding');
+    assert.equal(/reset run/i.test(finalPreviewText), false,
+      'the final reviewed candidate cannot reintroduce the historical token Reset Run');
+
+    const finalHyroxApplyBody = {
+      ...roadClock,
+      choice: 'train_for_target',
+      candidate_hash: finalHyroxPreview.payload.candidate_hash,
+      ...finalHyroxPreview.payload.apply_bindings,
+    };
+    const finalHyroxApply = await invoke(apply, {
+      ...roadRequestBase,
+      params: { candidateId: finalHyroxPreview.payload.candidate_id },
+      body: finalHyroxApplyBody,
+    });
+    assert.equal(finalHyroxApply.statusCode, 200, JSON.stringify(finalHyroxApply.payload));
+    const finalHyroxCurrent = await invoke(readMyPlan, { ...roadRequestBase, body: {} });
+    assert.equal(finalHyroxCurrent.statusCode, 200, JSON.stringify(finalHyroxCurrent.payload));
+    assert.equal(finalHyroxCurrent.payload.user_plan.id, finalHyroxApply.payload.user_plan_id);
+    assert.deepEqual(finalHyroxCurrent.payload.plan.plan_data.goals.map((goal) => goal.raceId), [
+      'hyrox', 'army',
+    ]);
+    assert.equal(raceRows.has('yonkers'), false);
+    assert.equal(finalHyroxCurrent.payload.plan.plan_data.goals[0].division, 'doubles');
+    assert.equal(finalHyroxCurrent.payload.plan.plan_data.goals[0].category, 'men');
+    assert.equal(
+      canonicalPlanRunningMeters(finalHyroxCurrent.payload.plan.plan_data),
+      canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data),
+      'the final authoritative plan retains the exact reviewed post-removal running dose',
+    );
+    const finalHyroxReplay = await invoke(apply, {
+      ...roadRequestBase,
+      params: { candidateId: finalHyroxPreview.payload.candidate_id },
+      body: finalHyroxApplyBody,
+    });
+    assert.equal(finalHyroxReplay.statusCode, 200, JSON.stringify(finalHyroxReplay.payload));
+    assert.equal(finalHyroxReplay.payload.replay, true);
+    assert.equal(currentAssignment().id, finalHyroxApply.payload.user_plan_id,
+      'the final candidate replay cannot create a duplicate assignment');
   } finally {
     global.Date = RealDate;
     hyrox.generateHyroxPlan = originalGenerateHyroxPlan;
