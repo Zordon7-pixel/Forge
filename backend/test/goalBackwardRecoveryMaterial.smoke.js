@@ -1573,6 +1573,31 @@ test('C3-MAT-12', 'benign null evidence falls through aliases without erasing au
   }, 'a present malformed authority still fails closed after benign null aliases');
 });
 
+test('C3-MAT-13', 'null week and day placeholders preserve peer evidence while malformed entries fail closed', () => {
+  const window = { start: '2026-08-17', end: '2026-08-23' };
+  const validDay = {
+    date: '2026-08-19',
+    sessions: [{
+      session_id: 'peer-run',
+      workout_family: 'easy_run',
+      distance_miles: 5,
+    }],
+  };
+  const expected = { state: 'KNOWN', distance_m: milesToMeters(5), reason: null };
+  assert.deepEqual(runningDistanceObservation({
+    weeks: [null, { days: [null, validDay] }],
+  }, window), expected, 'benign null placeholders do not erase the valid peer run');
+
+  for (const [label, plan] of [
+    ['malformed non-null week', { weeks: ['invalid-week', { days: [validDay] }] }],
+    ['malformed non-null day', { weeks: [{ days: [42, validDay] }] }],
+  ]) {
+    assert.deepEqual(runningDistanceObservation(plan, window), {
+      state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DISTANCE_MALFORMED',
+    }, label);
+  }
+});
+
 test('C3-UNKNOWN-01', 'unknown load cannot become zero or authorize either increase or reduction', () => {
   const receipt = evaluateMaterialDose(materialInput({ recentNormalMiles: null, activePlanMiles: null }));
   assert.equal(receipt.valid, false);

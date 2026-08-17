@@ -269,7 +269,7 @@ function parsePlan(plan) {
   }
 }
 
-function strictRemovalPlanSnapshot(planRow, planningDateLocal, raceId) {
+function persistedPlanPayload(planRow) {
   let raw;
   try {
     if (planRow?.plan_data !== null && planRow?.plan_data !== undefined) {
@@ -282,6 +282,11 @@ function strictRemovalPlanSnapshot(planRow, planningDateLocal, raceId) {
   } catch (_error) {
     raw = null;
   }
+  return raw;
+}
+
+function strictRemovalPlanSnapshot(planRow, planningDateLocal, raceId) {
+  const raw = persistedPlanPayload(planRow);
   const impact = ownDataRaceRemovalImpact(raw, raceId);
   if (!impact) {
     throw goalBackwardGenerationFailed('REQUIRED_RUNNING_DOSE_INVALID');
@@ -4348,8 +4353,13 @@ function assertCandidatePlanningDateCurrent(row, now = new Date()) {
 }
 
 function raceRemovalImpact(plan = {}, raceId) {
-  return ownDataRaceRemovalImpact(plan, typeof raceId === 'string' ? raceId : '')
-    || { linked: false, remainingRaceIds: [] };
+  const impact = ownDataRaceRemovalImpact(plan, typeof raceId === 'string' ? raceId : '');
+  return impact || Object.freeze({
+    rejected: true,
+    linked: null,
+    remainingRaceIds: Object.freeze([]),
+    reason_code: 'RACE_REMOVAL_LINKAGE_INVALID',
+  });
 }
 
 async function raceRemovalImpactForUser(userId, raceId, tx) {
@@ -4357,7 +4367,9 @@ async function raceRemovalImpactForUser(userId, raceId, tx) {
     includeFuture: true,
     normalizePersistedIdentities: false,
   });
-  return active ? raceRemovalImpact(parsePlan(active.row) || {}, raceId) : { linked: false, remainingRaceIds: [] };
+  return active
+    ? raceRemovalImpact(persistedPlanPayload(active.row), raceId)
+    : Object.freeze({ linked: false, remainingRaceIds: Object.freeze([]) });
 }
 
 function raceRemovalCandidateRequest(raceId, remainingRaceIds, body = {}) {

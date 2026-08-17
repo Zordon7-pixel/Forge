@@ -844,12 +844,21 @@ router.delete('/:id', auth, async (req, res) => {
       );
       if (!race) return planningInputUnchanged({ notFound: true });
       const impact = await plansRouter._test.raceRemovalImpactForUser(req.user.id, req.params.id, tx);
+      if (impact?.rejected === true || typeof impact?.linked !== 'boolean') {
+        return planningInputUnchanged({ linkageUnverified: true });
+      }
       if (impact.linked) return planningInputUnchanged({ rebuildRequired: true });
       const result = await tx.run('DELETE FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       if (!result.changes) throw new Error('Owned race deletion failed');
       return { ok: true };
     });
     if (mutation.notFound) return res.status(404).json({ error: 'Race not found', code: 'RACE_NOT_FOUND' });
+    if (mutation.linkageUnverified) {
+      return res.status(409).json({
+        error: 'The active plan race bindings could not be verified. Preview removal again before deleting this race.',
+        code: 'ACTIVE_PLAN_LINKAGE_UNVERIFIED',
+      });
+    }
     if (mutation.rebuildRequired) {
       return res.status(409).json({
         error: 'Preview and apply the active-plan rebuild before removing this race.',

@@ -1314,7 +1314,9 @@ function nextSessionRevision(input, skeleton) {
   const activeSessions = Array.isArray(input.active_applied_plan?.sessions)
     ? input.active_applied_plan.sessions
     : (input.active_applied_plan?.weeks || []).flatMap((week) => (
-      (week.days || week.sessions || []).flatMap((day) => Array.isArray(day.sessions) ? day.sessions : [day])
+      week === null ? [] : (week.days || week.sessions || []).flatMap((day) => (
+        day === null ? [] : Array.isArray(day.sessions) ? day.sessions : [day]
+      ))
     ));
   const active = activeSessions.find((session) => String(session.session_id ?? session.id) === String(skeleton.session_id));
   return active && positiveRevision(active.session_revision) ? active.session_revision + 1 : 1;

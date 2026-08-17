@@ -1847,6 +1847,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     const readMyPlan = routeHandler(plansRouter, '/my', 'get');
     const previewRaceRemoval = routeHandler(racesRouter, '/:id/removal-preview', 'post');
     const applyRaceRemoval = routeHandler(racesRouter, '/:id/removal-apply', 'post');
+    const deleteRace = routeHandler(racesRouter, '/:id', 'delete');
     const requestClock = {
       planning_date_local: planningDate,
       timezone_offset_minutes: 240,
@@ -2830,6 +2831,77 @@ async function checkHyroxCandidateImmediateAdoption() {
         ?? session.derived_totals?.distance_m ?? 0)
     ), 0);
     assert.ok(roadCurrentRunningDoseM > 0);
+    assert.ok(roadCurrentSessions.some((session) => (
+      Array.isArray(session.goal_ids) && session.goal_ids.includes('goal-yonkers')
+    )), 'the active canonical calendar contains an explicit Yonkers session binding');
+
+    const malformedGoalPlanRow = trainingPlans.get(currentAssignment().plan_id);
+    const validGoalPlanData = malformedGoalPlanRow.plan_data;
+    const validGoalPlanJson = malformedGoalPlanRow.plan_json;
+    const malformedGoalShapes = [
+      ['null goal entry', [null]],
+      ['numeric race id', [{ raceId: 42 }]],
+      ['blank race id', [{ raceId: '' }]],
+      ['primitive goal entry', ['yonkers']],
+      ['array goal entry', [['yonkers']]],
+    ];
+    for (const [label, goals] of malformedGoalShapes) {
+      const malformedGoalPlan = JSON.parse(validGoalPlanData);
+      malformedGoalPlan.goals = goals;
+      malformedGoalPlanRow.plan_data = JSON.stringify(malformedGoalPlan);
+      malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
+      const before = {
+        candidates: candidates.size,
+        artifacts: planningArtifacts.size,
+        plans: trainingPlans.size,
+        assignments: userPlans.size,
+        activeAssignment: currentAssignment().id,
+        races: raceRows.size,
+        raceOwned: raceRows.has('yonkers'),
+        planData: malformedGoalPlanRow.plan_data,
+      };
+      const malformedPreview = await invoke(previewRaceRemoval, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: { ...roadClock },
+      });
+      assert.equal(malformedPreview.statusCode, 409, label);
+      assert.equal(malformedPreview.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED', label);
+      const malformedDelete = await invoke(deleteRace, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: {},
+      });
+      assert.equal(malformedDelete.statusCode, 409, label);
+      assert.equal(malformedDelete.payload.code, 'ACTIVE_PLAN_LINKAGE_UNVERIFIED', label);
+      assert.deepEqual({
+        candidates: candidates.size,
+        artifacts: planningArtifacts.size,
+        plans: trainingPlans.size,
+        assignments: userPlans.size,
+        activeAssignment: currentAssignment().id,
+        races: raceRows.size,
+        raceOwned: raceRows.has('yonkers'),
+        planUnchanged: malformedGoalPlanRow.plan_data === before.planData,
+        stillBound: JSON.parse(malformedGoalPlanRow.plan_data).weeks
+          .flatMap((week) => (week?.days || []))
+          .flatMap((day) => (day?.sessions || []))
+          .some((session) => Array.isArray(session?.goal_ids)
+            && session.goal_ids.includes('goal-yonkers')),
+      }, {
+        candidates: before.candidates,
+        artifacts: before.artifacts,
+        plans: before.plans,
+        assignments: before.assignments,
+        activeAssignment: before.activeAssignment,
+        races: before.races,
+        raceOwned: true,
+        planUnchanged: true,
+        stillBound: true,
+      }, `${label} cannot delete or orphan the bound race`);
+      malformedGoalPlanRow.plan_data = validGoalPlanData;
+      malformedGoalPlanRow.plan_json = validGoalPlanJson;
+    }
 
     const legacyRemovalBaseline = {
       profile: clone(profile),
@@ -3228,6 +3300,8 @@ async function checkHyroxCandidateImmediateAdoption() {
         date: '2026-08-23',
         sessions: null,
       });
+      legacyRoadPlan.weeks.unshift(null);
+      legacyRoadPlan.weeks[1].days.unshift(null);
       legacyRoadPlanRow.plan_data = JSON.stringify(legacyRoadPlan);
       legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
 

@@ -142,7 +142,9 @@ function sessionsFrom(container = {}) {
   if (Array.isArray(container)) return container;
   if (Array.isArray(container.sessions)) return container.sessions;
   return (container.weeks || []).flatMap((week) => (
+    week === null ? [] :
     (week.days || week.sessions || []).flatMap((day) => (
+      day === null ? [] :
       Array.isArray(day.sessions)
         ? day.sessions.map((session) => ({ ...session, scheduled_local_date: sessionLocalDate(session) || sessionLocalDate(day) }))
         : [{ ...day, scheduled_local_date: sessionLocalDate(day) }]

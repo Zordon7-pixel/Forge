@@ -319,8 +319,8 @@ function ownDataRaceRemovalImpact(plan, raceId) {
     const descriptors = ownDataRecord(goal);
     if (!descriptors) return null;
     const goalId = ownStringAlias(descriptors, ['raceId', 'race_id']);
-    if (!goalId.valid) return null;
-    if (goalId.value && !goalIds.includes(goalId.value)) goalIds.push(goalId.value);
+    if (!goalId.valid || !goalId.value) return null;
+    if (!goalIds.includes(goalId.value)) goalIds.push(goalId.value);
   }
 
   const linkedSessionIds = [];
@@ -350,12 +350,22 @@ function ownDataRaceRemovalImpact(plan, raceId) {
           const sessionGoalId = ownStringAlias(sessionRecord, ['goalRaceId', 'goal_race_id']);
           if (!sessionGoalId.valid) return null;
           if (sessionGoalId.value) linkedSessionIds.push(sessionGoalId.value);
+          const canonicalGoalIdsField = ownField(sessionRecord, ['goal_ids', 'goalIds']);
+          if (canonicalGoalIdsField.present) {
+            const canonicalGoalIds = ownArrayValues(canonicalGoalIdsField.value, 64);
+            if (!canonicalGoalIds || canonicalGoalIds.some((id) => (
+              typeof id !== 'string' || !id.trim() || id.length > 256
+            ))) return null;
+            linkedSessionIds.push(...canonicalGoalIds.map((id) => id.trim()));
+          }
         }
       }
     }
   }
   return Object.freeze({
-    linked: goalIds.includes(wanted) || linkedSessionIds.includes(wanted),
+    linked: goalIds.includes(wanted)
+      || linkedSessionIds.includes(wanted)
+      || linkedSessionIds.includes(`goal-${wanted}`),
     remainingRaceIds: Object.freeze(goalIds.filter((id) => id !== wanted)),
   });
 }
@@ -392,6 +402,7 @@ function normalizedSessionRecords(container) {
   if (!weeks) return null;
   const sessions = [];
   for (const week of weeks) {
+    if (week === null) continue;
     const weekRecord = ownDataRecord(week);
     if (!weekRecord) return null;
     const daysField = ownField(weekRecord, ['days', 'sessions']);
@@ -399,6 +410,7 @@ function normalizedSessionRecords(container) {
     const days = ownArrayValues(daysField.value);
     if (!days) return null;
     for (const day of days) {
+      if (day === null) continue;
       const dayRecord = ownDataRecord(day);
       if (!dayRecord) return null;
       const fallbackDateField = ownField(dayRecord, ['scheduled_local_date', 'date']);
@@ -494,6 +506,7 @@ function normalizedRunningSessions(container) {
   if (!weeks) return null;
   const sessions = [];
   for (const week of weeks) {
+    if (week === null) continue;
     const weekRecord = ownDataRecord(week);
     if (!weekRecord) return null;
     const daysField = ownField(weekRecord, ['days', 'sessions']);
@@ -501,6 +514,7 @@ function normalizedRunningSessions(container) {
     const days = ownArrayValues(daysField.value);
     if (!days) return null;
     for (const day of days) {
+      if (day === null) continue;
       const dayRecord = ownDataRecord(day);
       if (!dayRecord) return null;
       const fallbackDateField = ownField(dayRecord, ['scheduled_local_date', 'date']);
