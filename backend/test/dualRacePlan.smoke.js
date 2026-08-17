@@ -1361,8 +1361,10 @@ async function checkDedicatedRouteBoundary() {
 async function checkHyroxCandidateImmediateAdoption() {
   const dbModulePath = require.resolve('../src/db');
   const plansRoutePath = require.resolve('../src/routes/plans');
+  const racesRoutePath = require.resolve('../src/routes/races');
   const originalDb = require.cache[dbModulePath];
   const originalPlansRoute = require.cache[plansRoutePath];
+  const originalRacesRoute = require.cache[racesRoutePath];
   const RealDate = global.Date;
   const originalGenerateHyroxPlan = hyrox.generateHyroxPlan;
   const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
@@ -1659,6 +1661,12 @@ async function checkHyroxCandidateImmediateAdoption() {
       profile.preferred_workout_days = params[1];
       return { changes: 1 };
     }
+    if (sql.includes('DELETE FROM race_events WHERE id=? AND user_id=?')) {
+      const race = raceRows.get(params[0]);
+      if (!race || race.user_id !== params[1]) return { changes: 0 };
+      raceRows.delete(params[0]);
+      return { changes: 1 };
+    }
     return { changes: 1 };
   }
 
@@ -1682,13 +1690,17 @@ async function checkHyroxCandidateImmediateAdoption() {
   };
   global.Date = FixedDate;
   delete require.cache[plansRoutePath];
+  delete require.cache[racesRoutePath];
 
   try {
     const plansRouter = require('../src/routes/plans');
+    const racesRouter = require('../src/routes/races');
     const preview = routeHandler(plansRouter, '/generate-for-races', 'post');
     const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
     const reject = routeHandler(plansRouter, '/candidates/:candidateId/reject', 'post');
     const readMyPlan = routeHandler(plansRouter, '/my', 'get');
+    const previewRaceRemoval = routeHandler(racesRouter, '/:id/removal-preview', 'post');
+    const applyRaceRemoval = routeHandler(racesRouter, '/:id/removal-apply', 'post');
     const requestClock = {
       planning_date_local: planningDate,
       timezone_offset_minutes: 240,
@@ -2313,6 +2325,114 @@ async function checkHyroxCandidateImmediateAdoption() {
     );
     assert.notEqual(immediate.payload.user_plan.id, 'assignment-hyrox', 'the predecessor is not returned on the accepted local date');
 
+    const clone = (value) => JSON.parse(JSON.stringify(value));
+    const cloneMap = (map) => new Map([...map.entries()].map(([key, value]) => [key, clone(value)]));
+    const restoreMap = (target, snapshot) => {
+      target.clear();
+      for (const [key, value] of snapshot.entries()) target.set(key, clone(value));
+    };
+    const removalBaseline = {
+      profile: clone(profile),
+      races: cloneMap(raceRows),
+      plans: cloneMap(trainingPlans),
+      assignments: cloneMap(userPlans),
+      candidates: cloneMap(candidates),
+      artifacts: cloneMap(planningArtifacts),
+      rejections: clone(rejectionRows),
+    };
+    const mutationState = () => JSON.stringify({
+      races: [...raceRows.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      plans: [...trainingPlans.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      assignments: [...userPlans.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      candidates: [...candidates.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      artifacts: [...planningArtifacts.entries()].sort(([left], [right]) => left.localeCompare(right)),
+    });
+    const previewRemoval = async () => {
+      const result = await invoke(previewRaceRemoval, {
+        ...requestBase,
+        params: { id: 'army' },
+        body: requestClock,
+      });
+      assert.equal(result.statusCode, 201, JSON.stringify(result.payload));
+      return result;
+    };
+    const applyRemoval = (previewResult, { raceId = 'army', userId = ownerId } = {}) => (
+      invoke(applyRaceRemoval, {
+        ...requestBase,
+        user: { id: userId },
+        params: { id: raceId },
+        body: {
+          ...requestClock,
+          candidate_id: previewResult.payload.candidate_id,
+          candidate_hash: previewResult.payload.candidate_hash,
+          choice: 'train_for_target',
+          ...previewResult.payload.apply_bindings,
+        },
+      })
+    );
+
+    let removalPreview = await previewRemoval();
+    currentAssignment().plan_version += 1;
+    let beforeRejectedApply = mutationState();
+    let rejectedRemoval = await applyRemoval(removalPreview);
+    assert.equal(rejectedRemoval.statusCode, 409, JSON.stringify(rejectedRemoval.payload));
+    assert.equal(rejectedRemoval.payload.code, 'ACTIVE_PLAN_REVISION_CHANGED');
+    assert.equal(mutationState(), beforeRejectedApply,
+      'an active-plan revision rejection writes no candidate, artifact, assignment, plan, or race state');
+    currentAssignment().plan_version -= 1;
+
+    removalPreview = await previewRemoval();
+    raceRows.get('hyrox').goal_revision += 1;
+    beforeRejectedApply = mutationState();
+    rejectedRemoval = await applyRemoval(removalPreview);
+    assert.equal(rejectedRemoval.statusCode, 409, JSON.stringify(rejectedRemoval.payload));
+    assert.equal(rejectedRemoval.payload.code, 'RACE_REVISION_CHANGED');
+    assert.equal(mutationState(), beforeRejectedApply,
+      'a race-revision rejection writes no candidate, artifact, assignment, plan, or race state');
+    raceRows.get('hyrox').goal_revision -= 1;
+
+    removalPreview = await previewRemoval();
+    beforeRejectedApply = mutationState();
+    rejectedRemoval = await applyRemoval(removalPreview, { raceId: 'hyrox' });
+    assert.equal(rejectedRemoval.statusCode, 409, JSON.stringify(rejectedRemoval.payload));
+    assert.equal(rejectedRemoval.payload.code, 'CANDIDATE_RACE_MISMATCH');
+    assert.equal(mutationState(), beforeRejectedApply,
+      'a candidate transplanted to another race writes no candidate, artifact, assignment, plan, or race state');
+
+    const foreignOwner = '22222222-2222-4222-8222-222222222222';
+    beforeRejectedApply = mutationState();
+    rejectedRemoval = await applyRemoval(removalPreview, { userId: foreignOwner });
+    assert.equal(rejectedRemoval.statusCode, 404, JSON.stringify(rejectedRemoval.payload));
+    assert.equal(rejectedRemoval.payload.code, 'CANDIDATE_NOT_FOUND');
+    assert.equal(mutationState(), beforeRejectedApply,
+      'a candidate transplanted to another owner writes no candidate, artifact, assignment, plan, or race state');
+
+    removalPreview = await previewRemoval();
+    const artifactCountBeforeRemoval = planningArtifacts.size;
+    const removalApply = await applyRemoval(removalPreview);
+    assert.equal(removalApply.statusCode, 200, JSON.stringify(removalApply.payload));
+    assert.equal(candidates.get(removalPreview.payload.candidate_id).status, 'applied');
+    assert.equal(raceRows.has('army'), false, 'the exact owned race is removed in the successful transaction');
+    assert.equal(currentAssignment().id, removalApply.payload.user_plan_id,
+      'the replacement assignment is authoritative immediately');
+    assert.equal(planningArtifacts.size, artifactCountBeforeRemoval,
+      'apply reuses the preview artifacts without rewriting them');
+    const afterFirstRemovalApply = mutationState();
+    const removalReplay = await applyRemoval(removalPreview);
+    assert.equal(removalReplay.statusCode, 200, JSON.stringify(removalReplay.payload));
+    assert.equal(removalReplay.payload.replay, true);
+    assert.equal(mutationState(), afterFirstRemovalApply,
+      'double apply replays the receipt without a second candidate, artifact, assignment, plan, or race write');
+
+    Object.keys(profile).forEach((key) => delete profile[key]);
+    Object.assign(profile, clone(removalBaseline.profile));
+    restoreMap(raceRows, removalBaseline.races);
+    restoreMap(trainingPlans, removalBaseline.plans);
+    restoreMap(userPlans, removalBaseline.assignments);
+    restoreMap(candidates, removalBaseline.candidates);
+    restoreMap(planningArtifacts, removalBaseline.artifacts);
+    rejectionRows.splice(0, rejectionRows.length, ...clone(removalBaseline.rejections));
+
     const combinedPlan = immediate.payload.plan.plan_data;
     assert.equal(combinedPlan.inputSummary.currentWeekRunLoad.runCount, 1);
     assert.deepEqual(combinedPlan.inputSummary.currentWeekRunLoad.runDates, [planningDate]);
@@ -2517,7 +2637,9 @@ async function checkHyroxCandidateImmediateAdoption() {
     if (previousAudience === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
     else process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE = previousAudience;
     delete require.cache[plansRoutePath];
+    delete require.cache[racesRoutePath];
     if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;
+    if (originalRacesRoute) require.cache[racesRoutePath] = originalRacesRoute;
     if (originalDb) require.cache[dbModulePath] = originalDb;
     else delete require.cache[dbModulePath];
   }

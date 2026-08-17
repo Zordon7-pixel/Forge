@@ -67,6 +67,10 @@ const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 
           candidate_id: 'candidate-1',
           candidate_hash: 'sha256:owned',
           removal: { remaining_race_ids: ['army'] },
+          apply_bindings: {
+            candidate_revision: 1,
+            decision_id: 'decision-1',
+          },
         } }
       }
       return { data: { ok: true } }
@@ -82,6 +86,8 @@ const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 
     candidate_hash: 'sha256:owned',
     choice: 'train_for_target',
     ...clock,
+    candidate_revision: 1,
+    decision_id: 'decision-1',
   })
   assert.equal(calls.some((call) => call.path.includes('/plans/candidates/')), false)
 }
