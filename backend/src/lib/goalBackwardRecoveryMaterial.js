@@ -319,8 +319,8 @@ function ownDataRaceRemovalImpact(plan, raceId) {
     const descriptors = ownDataRecord(goal);
     if (!descriptors) return null;
     const goalId = ownStringAlias(descriptors, ['raceId', 'race_id']);
-    if (!goalId.valid || !goalId.value) return null;
-    if (!goalIds.includes(goalId.value)) goalIds.push(goalId.value);
+    if (!goalId.valid) return null;
+    if (goalId.value && !goalIds.includes(goalId.value)) goalIds.push(goalId.value);
   }
 
   const linkedSessionIds = [];

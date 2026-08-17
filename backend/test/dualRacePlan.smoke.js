@@ -2835,6 +2835,123 @@ async function checkHyroxCandidateImmediateAdoption() {
       Array.isArray(session.goal_ids) && session.goal_ids.includes('goal-yonkers')
     )), 'the active canonical calendar contains an explicit Yonkers session binding');
 
+    const noRaceGoalPlan = concurrent.buildConcurrentPlan({
+      todayISO: roadClock.planning_date_local,
+      profile: {
+        weekly_miles_current: 12,
+        run_days_per_week: 3,
+        lift_days_per_week: 0,
+        preferred_workout_days: ['Mon', 'Wed', 'Sat'],
+      },
+      target: {
+        weeks: 4,
+        startDate: roadClock.planning_date_local,
+        planMode: 'run_only',
+        trainingDays: ['Mon', 'Wed', 'Sat'],
+        runDaysPerWeek: 3,
+        liftingEnabled: false,
+      },
+      history: {
+        weeklyMileageBaseline: 12,
+        recentRunCount: 6,
+        acuteRunLoad: { available: false, protection: { active: false } },
+      },
+      recovery: { state: 'normal', available: false },
+    });
+    assert.equal(noRaceGoalPlan.goal.kind, 'training_block');
+    assert.equal(noRaceGoalPlan.goal.raceId, null);
+    assert.equal(noRaceGoalPlan.goals, undefined,
+      'the deterministic generator emits a singular, intentionally race-less training goal');
+    const noRaceGoalPlanRow = trainingPlans.get(currentAssignment().plan_id);
+    const priorNoRaceGoalPlanData = noRaceGoalPlanRow.plan_data;
+    const priorNoRaceGoalPlanJson = noRaceGoalPlanRow.plan_json;
+    const unrelatedBlockRace = {
+      id: 'unrelated-block-race', user_id: ownerId, race_name: 'Unrelated Road Race',
+      race_date: '2026-11-15', event_local_date: '2026-11-15',
+      event_timezone: 'America/New_York', event_kind: 'run_race',
+      event_revision: 1, goal_revision: 1, distance_miles: 10,
+      goal_time_seconds: null,
+    };
+    noRaceGoalPlanRow.plan_data = JSON.stringify(noRaceGoalPlan);
+    noRaceGoalPlanRow.plan_json = noRaceGoalPlanRow.plan_data;
+    raceRows.set(unrelatedBlockRace.id, unrelatedBlockRace);
+    const noRacePreviewState = {
+      candidates: candidates.size,
+      artifacts: planningArtifacts.size,
+      plans: trainingPlans.size,
+      assignments: userPlans.size,
+    };
+    const noRaceGoalPreview = await invoke(previewRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: unrelatedBlockRace.id },
+      body: { ...roadClock },
+    });
+    assert.equal(noRaceGoalPreview.statusCode, 200, JSON.stringify(noRaceGoalPreview.payload));
+    assert.deepEqual(noRaceGoalPreview.payload, {
+      requires_apply: false,
+      impact: 'direct_remove',
+      race: { id: unrelatedBlockRace.id, name: unrelatedBlockRace.race_name },
+    }, 'a generated training-block goal carries no race linkage');
+    assert.deepEqual({
+      candidates: candidates.size,
+      artifacts: planningArtifacts.size,
+      plans: trainingPlans.size,
+      assignments: userPlans.size,
+    }, noRacePreviewState, 'unrelated removal preview performs zero plan writes');
+    const noRaceGoalDelete = await invoke(deleteRace, {
+      ...roadRequestBase,
+      params: { id: unrelatedBlockRace.id },
+      body: {},
+    });
+    assert.equal(noRaceGoalDelete.statusCode, 200, JSON.stringify(noRaceGoalDelete.payload));
+    assert.equal(raceRows.has(unrelatedBlockRace.id), false,
+      'the unrelated owned race is deleted without rewriting the training block');
+
+    const absentRaceBindingPlan = JSON.parse(JSON.stringify(noRaceGoalPlan));
+    delete absentRaceBindingPlan.goal.raceId;
+    noRaceGoalPlanRow.plan_data = JSON.stringify(absentRaceBindingPlan);
+    noRaceGoalPlanRow.plan_json = noRaceGoalPlanRow.plan_data;
+    raceRows.set(unrelatedBlockRace.id, unrelatedBlockRace);
+    const absentRaceBindingPreview = await invoke(previewRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: unrelatedBlockRace.id },
+      body: { ...roadClock },
+    });
+    assert.equal(absentRaceBindingPreview.statusCode, 200,
+      JSON.stringify(absentRaceBindingPreview.payload));
+    assert.equal(absentRaceBindingPreview.payload.requires_apply, false);
+    const absentRaceBindingDelete = await invoke(deleteRace, {
+      ...roadRequestBase,
+      params: { id: unrelatedBlockRace.id },
+      body: {},
+    });
+    assert.equal(absentRaceBindingDelete.statusCode, 200,
+      JSON.stringify(absentRaceBindingDelete.payload));
+    assert.equal(raceRows.has(unrelatedBlockRace.id), false,
+      'an absent race binding has the same benign training-goal semantics as explicit null');
+
+    const sessionBoundNoRaceGoalPlan = JSON.parse(JSON.stringify(noRaceGoalPlan));
+    const sessionBoundNoRaceGoalSession = sessionBoundNoRaceGoalPlan.weeks
+      .flatMap((week) => week.days)
+      .flatMap((day) => day.sessions)
+      .find(Boolean);
+    sessionBoundNoRaceGoalSession.goal_ids = [`goal-${unrelatedBlockRace.id}`];
+    noRaceGoalPlanRow.plan_data = JSON.stringify(sessionBoundNoRaceGoalPlan);
+    noRaceGoalPlanRow.plan_json = noRaceGoalPlanRow.plan_data;
+    raceRows.set(unrelatedBlockRace.id, unrelatedBlockRace);
+    const sessionBoundDelete = await invoke(deleteRace, {
+      ...roadRequestBase,
+      params: { id: unrelatedBlockRace.id },
+      body: {},
+    });
+    assert.equal(sessionBoundDelete.statusCode, 409, JSON.stringify(sessionBoundDelete.payload));
+    assert.equal(sessionBoundDelete.payload.code, 'ACTIVE_PLAN_REBUILD_REQUIRED');
+    assert.equal(raceRows.has(unrelatedBlockRace.id), true,
+      'a canonical session binding remains fail-closed even when the goal itself has no race');
+    raceRows.delete(unrelatedBlockRace.id);
+    noRaceGoalPlanRow.plan_data = priorNoRaceGoalPlanData;
+    noRaceGoalPlanRow.plan_json = priorNoRaceGoalPlanJson;
+
     const malformedGoalPlanRow = trainingPlans.get(currentAssignment().plan_id);
     const validGoalPlanData = malformedGoalPlanRow.plan_data;
     const validGoalPlanJson = malformedGoalPlanRow.plan_json;
