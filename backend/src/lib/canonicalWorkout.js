@@ -1109,8 +1109,12 @@ function evidenceIdsForMaterial(source, decision) {
   return [...new Set(entries)].sort();
 }
 
+function canonicalRoadContributorFamily(family) {
+  return family === 'assessment' ? 'interval_run' : family;
+}
+
 function targetForStep({ family, durationS = null, distanceM = null, repetitions = null, input, source }) {
-  const targetFamily = family === 'assessment' ? 'interval_run' : family;
+  const targetFamily = canonicalRoadContributorFamily(family);
   const sourceEvidenceIds = evidenceIdsForMaterial(source, input.decision);
   const result = buildCanonicalMaterialTarget({
     ...(input.target_context || {}),
@@ -1249,7 +1253,7 @@ function materializeRoadGeneralSteps(family, source, input) {
     }))];
   }
   if (QUALITY_RUN_FAMILIES.has(family)) return materializeQualityRunSteps(family, source, input);
-  const contributorFamily = family === 'assessment' ? 'interval_run' : family;
+  const contributorFamily = canonicalRoadContributorFamily(family);
   const distance = prescribedDistanceMeters(source);
   const effectiveDuration = duration ?? (distance === null ? minimumRunDurationSeconds(family, input) : null);
   const target = targetForStep({
@@ -1763,6 +1767,7 @@ module.exports = {
   buildCanonicalSession,
   buildCanonicalHyroxEventState,
   buildPartialRaceOrderCluster,
+  canonicalRoadContributorFamily,
   canonicalSessionSetHash,
   canonicalWorkoutHash,
   deriveAssessmentStressVector: (steps) => resolveStressVector('assessment', {

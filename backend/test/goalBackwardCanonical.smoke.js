@@ -11,6 +11,7 @@ const {
 } = require('../src/lib/goalBackwardContracts');
 const {
   buildCanonicalSession,
+  canonicalRoadContributorFamily,
   canonicalWorkoutHash,
   deriveCanonicalTotals,
   materializeCanonicalSessionSet,
@@ -153,6 +154,8 @@ test('CANON-FAMILY-01', 'machine-readable work steps reject a conflicting declar
 });
 
 test('CANON-04', 'assessment stress is the element-wise maximum with the event-specific floor', () => {
+  assert.equal(canonicalRoadContributorFamily('assessment'), 'interval_run');
+  assert.equal(canonicalRoadContributorFamily('easy_run'), 'easy_run');
   const assessment = buildCanonicalSession(intervalSession({
     session_id: 'session-assessment-1',
     role: 'ASSESSMENT',

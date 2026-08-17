@@ -37,7 +37,10 @@ const {
   validateGoalBackwardCandidate,
   validateInterference,
 } = require('./goalBackwardValidators');
-const { materializeCanonicalSessionSet } = require('./canonicalWorkout');
+const {
+  canonicalRoadContributorFamily,
+  materializeCanonicalSessionSet,
+} = require('./canonicalWorkout');
 const { buildCanonicalPlanFromSessionSet } = require('./planSchema');
 const {
   buildCrossModalDoseLedger,
@@ -1114,7 +1117,7 @@ function goalBackwardSkeletonIdentity(input = {}) {
       role: role.role,
       workout_family: workoutFamily,
       ...(workoutFamily === 'assessment'
-        ? { contributing_work_families: ['interval_run'] } : {}),
+        ? { contributing_work_families: [canonicalRoadContributorFamily(workoutFamily)] } : {}),
       candidate_families: [...(role.any_of || [])],
       scheduled_local_date: placement.scheduled_local_date,
       scheduled_start_at: placement.scheduled_start_at,

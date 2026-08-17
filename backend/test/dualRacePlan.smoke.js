@@ -16,6 +16,7 @@ const {
 } = require('../src/lib/racePlanCandidateEngine');
 const { targetRef: goalBackwardTargetRef } = require('../src/lib/betaPlanRollout');
 const candidateLifecycle = require('../src/lib/planCandidateLifecycle');
+const { canonicalRoadContributorFamily } = require('../src/lib/canonicalWorkout');
 const { buildDecisionArtifactDiagnosticBundle } = require('../src/lib/racePlanDiagnostics');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
@@ -1756,6 +1757,37 @@ async function checkHyroxCandidateImmediateAdoption() {
         `${label} cannot authorize canonical removal carry-forward`,
       );
     }
+    const fractionalRequiredDose = plansRouter._test.goalBackwardRequiredRunningDoseReceipt({
+      minimum_weekly_demand_m: 22852.685,
+      material_preservation_m: null,
+      removal_active_plan_m: null,
+    });
+    assert.deepEqual({ ...fractionalRequiredDose, receipt_hash: undefined }, {
+      schema_version: 1,
+      valid: true,
+      integralization_method: 'CEIL_TO_WHOLE_METER',
+      raw_required_running_m: 22852.685,
+      required_running_m: 22853,
+      source_fields: ['minimum_weekly_demand_m'],
+      reason_codes: ['REQUIRED_RUNNING_DOSE_CEILED'],
+      receipt_hash: undefined,
+    });
+    assert.match(fractionalRequiredDose.receipt_hash, /^sha256:[a-f0-9]{64}$/);
+    const exactRequiredDose = plansRouter._test.goalBackwardRequiredRunningDoseReceipt({
+      minimum_weekly_demand_m: 22853,
+    });
+    assert.equal(exactRequiredDose.required_running_m, 22853);
+    assert.deepEqual(exactRequiredDose.reason_codes, []);
+    for (const invalidValue of ['22852.685', [22852.685], NaN, -1, Number.MAX_SAFE_INTEGER + 1]) {
+      const invalidRequiredDose = plansRouter._test.goalBackwardRequiredRunningDoseReceipt({
+        removal_active_plan_m: invalidValue,
+      });
+      assert.equal(invalidRequiredDose.valid, false);
+      assert.equal(invalidRequiredDose.raw_required_running_m, null);
+      assert.equal(invalidRequiredDose.required_running_m, null);
+      assert.deepEqual(invalidRequiredDose.reason_codes, ['REQUIRED_RUNNING_DOSE_INVALID']);
+      assert.match(invalidRequiredDose.receipt_hash, /^sha256:[a-f0-9]{64}$/);
+    }
     const preview = routeHandler(plansRouter, '/generate-for-races', 'post');
     const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
     const reject = routeHandler(plansRouter, '/candidates/:candidateId/reject', 'post');
@@ -2674,8 +2706,9 @@ async function checkHyroxCandidateImmediateAdoption() {
       'h3-w1-thu-run', 'h3-w1-sun-run', 'h3-w1-tue-run', 'h3-w1-sat-run',
     ], 'enumeration cannot substitute a shorter compatible session after the dose decision');
     const roadAssessment = roadSelected.sessions.find((session) => session.workout_family === 'assessment');
-    assert.deepEqual(roadAssessment?.contributing_work_families, ['interval_run']);
-    assert.deepEqual(roadAssessment?.steps.map((step) => step.workout_family), ['interval_run']);
+    const assessmentContributor = canonicalRoadContributorFamily('assessment');
+    assert.deepEqual(roadAssessment?.contributing_work_families, [assessmentContributor]);
+    assert.deepEqual(roadAssessment?.steps.map((step) => step.workout_family), [assessmentContributor]);
     const roadMaterialDose = roadSelected.validation.validator_results.find((entry) => (
       entry.validator === 'material_dose'
     ));
@@ -2744,6 +2777,132 @@ async function checkHyroxCandidateImmediateAdoption() {
         ?? session.derived_totals?.distance_m ?? 0)
     ), 0);
     assert.ok(roadCurrentRunningDoseM > 0);
+
+    const legacyRemovalBaseline = {
+      profile: clone(profile),
+      races: cloneMap(raceRows),
+      plans: cloneMap(trainingPlans),
+      assignments: cloneMap(userPlans),
+      candidates: cloneMap(candidates),
+      artifacts: cloneMap(planningArtifacts),
+      rejections: clone(rejectionRows),
+    };
+    try {
+      const legacyRoadPlanRow = trainingPlans.get(currentAssignment().plan_id);
+      const legacyRoadPlan = JSON.parse(legacyRoadPlanRow.plan_data);
+      delete legacyRoadPlan.canonical_workout_schema_version;
+      delete legacyRoadPlan.canonical_session_set_hash;
+      delete legacyRoadPlan.selected_candidate_hash;
+      const legacyRunningSessions = (legacyRoadPlan.weeks || []).flatMap((week) => (
+        (week.days || []).flatMap((day) => (day.sessions || []).filter((session) => (
+          ['recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
+            'interval_run', 'race_rhythm_run', 'assessment', 'race'].includes(session.workout_family)
+        )))
+      ));
+      assert.ok(legacyRunningSessions.length > 1);
+      const legacyTargetRunningM = 22852.685;
+      let allocatedLegacyM = 0;
+      legacyRunningSessions.forEach((session, index) => {
+        const originalM = Number(session.running_distance_m ?? session.distance_m
+          ?? session.derived_totals?.distance_m ?? 0);
+        const scaledM = index === legacyRunningSessions.length - 1
+          ? legacyTargetRunningM - allocatedLegacyM
+          : Math.round(((originalM / roadCurrentRunningDoseM) * legacyTargetRunningM) * 1000) / 1000;
+        allocatedLegacyM += scaledM;
+        session.distance_miles = scaledM / 1609.344;
+        delete session.running_distance_m;
+        delete session.distance_m;
+        delete session.distanceMeters;
+        if (session.derived_totals) {
+          delete session.derived_totals.distance_m;
+          delete session.derived_totals.work_distance_m;
+        }
+      });
+      legacyRoadPlanRow.plan_data = JSON.stringify(legacyRoadPlan);
+      legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
+
+      let legacyInspection = null;
+      const legacyReadOnly = await plansRouter._test.previewPlanForUser(ownerId, {
+        ...roadClock,
+        operation: 'remove_race',
+        remove_race_id: 'yonkers',
+        race_ids: ['army'],
+      }, {
+        store: false,
+        goalBackwardDependencies: {
+          mode: 'on',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          inspectDecision: (result) => { legacyInspection = result; },
+        },
+      });
+      assert.ok(legacyReadOnly.plan);
+      assert.equal(legacyInspection.required_running_dose_receipt.raw_required_running_m,
+        legacyTargetRunningM);
+      assert.equal(legacyInspection.required_running_dose_receipt.required_running_m, 22853);
+      assert.deepEqual(legacyInspection.required_running_dose_receipt.reason_codes,
+        ['REQUIRED_RUNNING_DOSE_CEILED']);
+
+      const malformedLegacyPlan = JSON.parse(legacyRoadPlanRow.plan_data);
+      const malformedLegacyRun = (malformedLegacyPlan.weeks || []).flatMap((week) => (
+        (week.days || []).flatMap((day) => day.sessions || [])
+      )).find((session) => typeof session.distance_miles === 'number');
+      malformedLegacyRun.distance_miles = { value: malformedLegacyRun.distance_miles };
+      legacyRoadPlanRow.plan_data = JSON.stringify(malformedLegacyPlan);
+      legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
+      const stateBeforeMalformedLegacyRemoval = mutationState();
+      const malformedLegacyRemoval = await invoke(previewRaceRemoval, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: { ...roadClock },
+      });
+      assert.equal(malformedLegacyRemoval.statusCode, 409, JSON.stringify(malformedLegacyRemoval.payload));
+      assert.equal(malformedLegacyRemoval.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED');
+      assert.equal(mutationState(), stateBeforeMalformedLegacyRemoval,
+        'an invalid legacy miles-only running observation writes no removal state');
+      legacyRoadPlanRow.plan_data = JSON.stringify(legacyRoadPlan);
+      legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
+
+      const legacyRemovalPreview = await invoke(previewRaceRemoval, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: { ...roadClock },
+      });
+      assert.equal(legacyRemovalPreview.statusCode, 201, JSON.stringify(legacyRemovalPreview.payload));
+      assert.equal(raceRows.has('yonkers'), true);
+      const legacyRemovalApplyBody = {
+        ...roadClock,
+        candidate_id: legacyRemovalPreview.payload.candidate_id,
+        candidate_hash: legacyRemovalPreview.payload.candidate_hash,
+        choice: 'train_for_target',
+        ...legacyRemovalPreview.payload.apply_bindings,
+      };
+      const legacyRemovalApply = await invoke(applyRaceRemoval, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: legacyRemovalApplyBody,
+      });
+      assert.equal(legacyRemovalApply.statusCode, 200, JSON.stringify(legacyRemovalApply.payload));
+      assert.equal(raceRows.has('yonkers'), false);
+      const legacyRemovalCurrent = await invoke(readMyPlan, { ...roadRequestBase, body: {} });
+      assert.deepEqual(legacyRemovalCurrent.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['army']);
+      const legacyRemovalReplay = await invoke(applyRaceRemoval, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: legacyRemovalApplyBody,
+      });
+      assert.equal(legacyRemovalReplay.statusCode, 200, JSON.stringify(legacyRemovalReplay.payload));
+      assert.equal(legacyRemovalReplay.payload.replay, true);
+    } finally {
+      Object.keys(profile).forEach((key) => delete profile[key]);
+      Object.assign(profile, clone(legacyRemovalBaseline.profile));
+      restoreMap(raceRows, legacyRemovalBaseline.races);
+      restoreMap(trainingPlans, legacyRemovalBaseline.plans);
+      restoreMap(userPlans, legacyRemovalBaseline.assignments);
+      restoreMap(candidates, legacyRemovalBaseline.candidates);
+      restoreMap(planningArtifacts, legacyRemovalBaseline.artifacts);
+      rejectionRows.splice(0, rejectionRows.length, ...clone(legacyRemovalBaseline.rejections));
+    }
 
     const activeRoadPlanRow = trainingPlans.get(currentAssignment().plan_id);
     const validRoadPlanData = activeRoadPlanRow.plan_data;

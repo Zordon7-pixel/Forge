@@ -2608,6 +2608,37 @@ function goalBackwardSupportRequirement(primaryRoles, family) {
   return primaryRoles[0]?.requirement_id || null;
 }
 
+function goalBackwardRequiredRunningDoseReceipt(input = {}) {
+  const sources = [
+    ['minimum_weekly_demand_m', input?.minimum_weekly_demand_m],
+    ['material_preservation_m', input?.material_preservation_m],
+    ['removal_active_plan_m', input?.removal_active_plan_m],
+  ];
+  const provided = sources.filter(([, value]) => value !== null && value !== undefined);
+  const sourceFields = provided.map(([field]) => field);
+  const invalid = provided.some(([, value]) => (
+    typeof value !== 'number' || !Number.isFinite(value) || value < 0
+      || value > Number.MAX_SAFE_INTEGER
+  ));
+  const rawRequiredRunningM = invalid
+    ? null : Math.max(0, ...provided.map(([, value]) => value));
+  const requiredRunningM = rawRequiredRunningM === null ? null : Math.ceil(rawRequiredRunningM);
+  const valid = Number.isSafeInteger(requiredRunningM) && requiredRunningM >= 0;
+  const reasonCodes = !valid
+    ? ['REQUIRED_RUNNING_DOSE_INVALID']
+    : requiredRunningM !== rawRequiredRunningM ? ['REQUIRED_RUNNING_DOSE_CEILED'] : [];
+  const receipt = {
+    schema_version: 1,
+    valid,
+    integralization_method: 'CEIL_TO_WHOLE_METER',
+    raw_required_running_m: valid ? rawRequiredRunningM : null,
+    required_running_m: valid ? requiredRunningM : null,
+    source_fields: Object.freeze(sourceFields),
+    reason_codes: Object.freeze(reasonCodes),
+  };
+  return Object.freeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
+}
+
 function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumRunningM, options = {}) {
   const primary = (Array.isArray(primaryRoles) ? primaryRoles : [])
     .filter((role) => role.role === 'PRIMARY_KEY');
@@ -2887,6 +2918,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       !carriedRemovalMaterialIds.has(goalBackwardMaterialId(session))
     )),
   ];
+  let requiredRunningDoseReceipt = null;
   if (clusterPolicy?.required !== true) {
     const projectionPaceSecondsPerMile =
       state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile ?? null;
@@ -2907,12 +2939,21 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         observedLowerBoundWeeklyMiles === null
           ? null : Math.round(observedLowerBoundWeeklyMiles * 1609.344),
       ]) : null;
-    const requiredRunningM = Math.max(
-      Number(decision.minimum_weekly_demand?.running_m) || 0,
-      Number(materialPreservationMinimumRunningM) || 0,
-      state?.request?.operation === 'remove_race' && activeRunningObservation?.state === 'KNOWN'
-        ? Number(activeRunningObservation.distance_m) || 0 : 0,
-    );
+    requiredRunningDoseReceipt = goalBackwardRequiredRunningDoseReceipt({
+      minimum_weekly_demand_m: decision.minimum_weekly_demand?.running_m ?? null,
+      material_preservation_m: materialPreservationMinimumRunningM,
+      removal_active_plan_m:
+        state?.request?.operation === 'remove_race' && activeRunningObservation?.state === 'KNOWN'
+          ? activeRunningObservation.distance_m : null,
+    });
+    if (!requiredRunningDoseReceipt.valid) {
+      const error = new Error('Required running dose could not be normalized safely.');
+      error.code = 'REQUIRED_RUNNING_DOSE_INVALID';
+      error.details = requiredRunningDoseReceipt;
+      error.required_running_dose_receipt = requiredRunningDoseReceipt;
+      throw error;
+    }
+    const requiredRunningM = requiredRunningDoseReceipt.required_running_m;
     const supportCandidateMaterial = canonicalRoadCandidateMaterial(
       candidateMaterial,
       projectionPaceSecondsPerMile,
@@ -3028,8 +3069,11 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         ? crossModalReductionEvidence.decisive_evidence_ids : [],
     },
   });
-  if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(result);
-  return result;
+  const inspectedResult = requiredRunningDoseReceipt
+    ? { ...result, required_running_dose_receipt: requiredRunningDoseReceipt }
+    : result;
+  if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(inspectedResult);
+  return inspectedResult;
 }
 
 function buildGoalBackwardArtifacts(input = {}) {
@@ -6782,6 +6826,7 @@ router._test = {
   confidenceAwareMileageBaseline,
   goalBackwardSafetyState,
   goalBackwardRemovalCarryForwardMaterial,
+  goalBackwardRequiredRunningDoseReceipt,
   goalBackwardTrainingAge,
   buildCanonicalSurfaceManifest,
   buildGoalBackwardArtifacts,
