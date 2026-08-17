@@ -238,10 +238,126 @@ function ownArrayValues(value, maximumLength = 4096) {
 function ownField(descriptors, keys) {
   for (const key of keys) {
     if (descriptors && Object.hasOwn(descriptors, key)) {
-      return { present: true, value: descriptors[key].value };
+      const value = descriptors[key].value;
+      if (value === null || value === undefined) continue;
+      return { present: true, value };
     }
   }
   return { present: false, value: undefined };
+}
+
+const INVALID_OWN_DATA_JSON = Symbol('INVALID_OWN_DATA_JSON');
+
+function ownDataJsonSnapshot(value, options = {}) {
+  const maximumDepth = Number.isSafeInteger(options.maximumDepth)
+    ? Math.min(64, Math.max(1, options.maximumDepth)) : 48;
+  const maximumNodes = Number.isSafeInteger(options.maximumNodes)
+    ? Math.min(50000, Math.max(1, options.maximumNodes)) : 20000;
+  const seen = new WeakSet();
+  let nodeCount = 0;
+
+  function snapshot(current, depth) {
+    nodeCount += 1;
+    if (nodeCount > maximumNodes || depth > maximumDepth) return INVALID_OWN_DATA_JSON;
+    if (current === null || typeof current === 'string' || typeof current === 'boolean') return current;
+    if (typeof current === 'number') {
+      return Number.isFinite(current) ? current : INVALID_OWN_DATA_JSON;
+    }
+    if (!current || typeof current !== 'object' || seen.has(current)) return INVALID_OWN_DATA_JSON;
+    seen.add(current);
+
+    const arrayValues = ownArrayValues(current);
+    if (arrayValues) {
+      const output = [];
+      for (const entry of arrayValues) {
+        const normalized = snapshot(entry, depth + 1);
+        if (normalized === INVALID_OWN_DATA_JSON) return INVALID_OWN_DATA_JSON;
+        output.push(normalized);
+      }
+      return Object.freeze(output);
+    }
+
+    const descriptors = ownDataRecord(current);
+    if (!descriptors) return INVALID_OWN_DATA_JSON;
+    const output = Object.create(null);
+    for (const key of Object.keys(descriptors)) {
+      const descriptor = descriptors[key];
+      if (descriptor.enumerable !== true) return INVALID_OWN_DATA_JSON;
+      const normalized = snapshot(descriptor.value, depth + 1);
+      if (normalized === INVALID_OWN_DATA_JSON) return INVALID_OWN_DATA_JSON;
+      output[key] = normalized;
+    }
+    return Object.freeze(output);
+  }
+
+  const normalized = snapshot(value, 0);
+  return normalized === INVALID_OWN_DATA_JSON ? null : normalized;
+}
+
+function ownStringAlias(descriptors, keys) {
+  const field = ownField(descriptors, keys);
+  if (!field.present) return { valid: true, value: null };
+  if (typeof field.value !== 'string' || !field.value.trim()) return { valid: false, value: null };
+  return { valid: true, value: field.value.trim() };
+}
+
+function ownDataRaceRemovalImpact(plan, raceId) {
+  const root = ownDataRecord(plan);
+  if (!root || typeof raceId !== 'string' || !raceId.trim()) return null;
+  const wanted = raceId.trim();
+  const goalIds = [];
+  const goalsField = ownField(root, ['goals']);
+  const goalField = ownField(root, ['goal']);
+  let goalRows = [];
+  if (goalsField.present) {
+    goalRows = ownArrayValues(goalsField.value);
+    if (!goalRows) return null;
+  } else if (goalField.present) {
+    goalRows = [goalField.value];
+  }
+  for (const goal of goalRows) {
+    const descriptors = ownDataRecord(goal);
+    if (!descriptors) return null;
+    const goalId = ownStringAlias(descriptors, ['raceId', 'race_id']);
+    if (!goalId.valid) return null;
+    if (goalId.value && !goalIds.includes(goalId.value)) goalIds.push(goalId.value);
+  }
+
+  const linkedSessionIds = [];
+  const weeksField = ownField(root, ['weeks']);
+  if (weeksField.present) {
+    const weeks = ownArrayValues(weeksField.value);
+    if (!weeks) return null;
+    for (const week of weeks) {
+      if (week === null) continue;
+      const weekRecord = ownDataRecord(week);
+      if (!weekRecord) return null;
+      const daysField = ownField(weekRecord, ['days', 'sessions']);
+      if (!daysField.present) continue;
+      const days = ownArrayValues(daysField.value);
+      if (!days) return null;
+      for (const day of days) {
+        if (day === null) continue;
+        const dayRecord = ownDataRecord(day);
+        if (!dayRecord) return null;
+        const sessionsField = ownField(dayRecord, ['sessions']);
+        const sessions = sessionsField.present ? ownArrayValues(sessionsField.value) : [day];
+        if (!sessions) return null;
+        for (const session of sessions) {
+          if (session === null) continue;
+          const sessionRecord = ownDataRecord(session);
+          if (!sessionRecord) return null;
+          const sessionGoalId = ownStringAlias(sessionRecord, ['goalRaceId', 'goal_race_id']);
+          if (!sessionGoalId.valid) return null;
+          if (sessionGoalId.value) linkedSessionIds.push(sessionGoalId.value);
+        }
+      }
+    }
+  }
+  return Object.freeze({
+    linked: goalIds.includes(wanted) || linkedSessionIds.includes(wanted),
+    remainingRaceIds: Object.freeze(goalIds.filter((id) => id !== wanted)),
+  });
 }
 
 function clonedOwnDataRecord(value, fallbackDate = null) {
@@ -315,7 +431,10 @@ function distanceObservation(descriptors) {
   if (derivedTotals !== null && derivedTotals !== undefined) {
     const derivedDescriptors = ownDataRecord(derivedTotals);
     if (!derivedDescriptors) return { state: 'MALFORMED', distance_m: null };
-    observations.push(primitiveDistance(ownField(derivedDescriptors, ['distance_m']).value));
+    const derivedDistance = ownField(derivedDescriptors, ['distance_m']);
+    observations.push(derivedDistance.present
+      ? primitiveDistance(derivedDistance.value)
+      : { state: 'UNKNOWN', distance_m: null });
   }
   observations.push(...[
     ownField(descriptors, ['distance_miles']).value,
@@ -327,10 +446,18 @@ function distanceObservation(descriptors) {
   }
   const known = observations.find((observation) => observation.state === 'KNOWN');
   if (known) return known;
+  if (observations.some((observation) => observation.state === 'UNKNOWN')) {
+    return { state: 'UNKNOWN', distance_m: null };
+  }
   return { state: 'MISSING', distance_m: null };
 }
 
 function normalizedDistanceSession(session, fallbackDate = null) {
+  if (session === null || session === undefined) {
+    return Object.freeze({
+      family: '', date: null, distance: { state: 'MISSING', distance_m: null },
+    });
+  }
   const descriptors = ownDataRecord(session);
   if (!descriptors) return null;
   const familyField = ownField(descriptors, ['workout_family', 'workoutFamily', 'family']);
@@ -414,6 +541,7 @@ function runningDistanceObservation(container = {}, options = {}) {
   const running = [];
   for (const session of sessions) {
     if (!RUNNING_FAMILIES.has(session.family)) continue;
+    if (session.distance.state === 'MISSING') continue;
     const date = dateOnly(session.date);
     if (windowRequested && !date) {
       return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DATE_UNKNOWN' };
@@ -1200,6 +1328,8 @@ module.exports = {
   minimumRunningDoseWithoutMaterialReduction,
   normalizeCrossModalReductionEvidence,
   normalizeScope,
+  ownDataJsonSnapshot,
+  ownDataRaceRemovalImpact,
   runningDistanceObservation,
   validateDevelopmentRoleDose,
 };

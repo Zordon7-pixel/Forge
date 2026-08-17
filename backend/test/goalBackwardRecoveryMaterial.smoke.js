@@ -1520,6 +1520,59 @@ test('C3-MAT-11', 'persisted running containers and derived totals require hook-
   }
 });
 
+test('C3-MAT-12', 'benign null evidence falls through aliases without erasing authoritative dose', () => {
+  const window = { start: '2026-08-17', end: '2026-08-23' };
+  assert.deepEqual(runningDistanceObservation({ weeks: null }, window), {
+    state: 'KNOWN', distance_m: 0, reason: null,
+  }, 'a null weeks container carries no distance authority');
+  assert.deepEqual(runningDistanceObservation({ sessions: null }, window), {
+    state: 'KNOWN', distance_m: 0, reason: null,
+  }, 'a null sessions container carries no distance authority');
+  assert.deepEqual(runningDistanceObservation({ sessions: [{
+    session_id: 'non-running-null-family',
+    scheduled_local_date: '2026-08-17',
+    workout_family: null,
+    duration_min: 35,
+  }, {
+    session_id: 'running-no-distance-authority',
+    scheduled_local_date: '2026-08-18',
+    workout_family: 'easy_run',
+    duration_min: 25,
+  }] }, window), {
+    state: 'KNOWN', distance_m: 0, reason: null,
+  }, 'records without distance authority do not poison the surrounding evidence container');
+
+  assert.deepEqual(runningDistanceObservation({
+    sessions: null,
+    weeks: [{ days: [{
+      date: '2026-08-19',
+      sessions: [{
+        session_id: 'alias-fallthrough-run',
+        scheduled_local_date: null,
+        workout_family: null,
+        workoutFamily: 'easy_run',
+        distance_miles: null,
+        distanceMiles: 5,
+      }],
+    }, {
+      date: '2026-08-20',
+      sessions: null,
+    }] }],
+  }, window), {
+    state: 'KNOWN', distance_m: milesToMeters(5), reason: null,
+  }, 'null aliases and session dates fall through to authoritative aliases and the day date');
+
+  assert.deepEqual(runningDistanceObservation({ sessions: [{
+    session_id: 'malformed-after-null-alias',
+    scheduled_local_date: '2026-08-17',
+    workout_family: 'easy_run',
+    distance_miles: null,
+    distanceMiles: '5',
+  }] }, window), {
+    state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DISTANCE_MALFORMED',
+  }, 'a present malformed authority still fails closed after benign null aliases');
+});
+
 test('C3-UNKNOWN-01', 'unknown load cannot become zero or authorize either increase or reduction', () => {
   const receipt = evaluateMaterialDose(materialInput({ recentNormalMiles: null, activePlanMiles: null }));
   assert.equal(receipt.valid, false);

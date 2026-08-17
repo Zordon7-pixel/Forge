@@ -42,6 +42,8 @@ const {
   deriveScopedRecoveryState,
   minimumRunningDoseWithoutMaterialReduction,
   normalizeCrossModalReductionEvidence,
+  ownDataJsonSnapshot,
+  ownDataRaceRemovalImpact,
   runningDistanceObservation,
 } = require('../lib/goalBackwardRecoveryMaterial');
 const {
@@ -267,7 +269,7 @@ function parsePlan(plan) {
   }
 }
 
-function strictRemovalPlanPayload(planRow, planningDateLocal) {
+function strictRemovalPlanSnapshot(planRow, planningDateLocal, raceId) {
   let raw;
   try {
     if (planRow?.plan_data !== null && planRow?.plan_data !== undefined) {
@@ -280,14 +282,32 @@ function strictRemovalPlanPayload(planRow, planningDateLocal) {
   } catch (_error) {
     raw = null;
   }
-  const observation = runningDistanceObservation(raw, {
+  const impact = ownDataRaceRemovalImpact(raw, raceId);
+  if (!impact) {
+    throw goalBackwardGenerationFailed('REQUIRED_RUNNING_DOSE_INVALID');
+  }
+  if (!impact.linked) {
+    return Object.freeze({ plan: null, impact, running_observation: null });
+  }
+  const plan = ownDataJsonSnapshot(raw);
+  const normalizedImpact = plan ? ownDataRaceRemovalImpact(plan, raceId) : null;
+  if (!plan || !normalizedImpact
+    || normalizedImpact.linked !== impact.linked
+    || JSON.stringify(normalizedImpact.remainingRaceIds) !== JSON.stringify(impact.remainingRaceIds)) {
+    throw goalBackwardGenerationFailed('REQUIRED_RUNNING_DOSE_INVALID');
+  }
+  const observation = runningDistanceObservation(plan, {
     start: planningDateLocal,
     end: addPolicyDays(planningDateLocal, 6),
   });
   if (observation.state !== 'KNOWN') {
     throw goalBackwardGenerationFailed('REQUIRED_RUNNING_DOSE_INVALID');
   }
-  return raw;
+  return Object.freeze({
+    plan,
+    impact,
+    running_observation: Object.freeze({ ...observation }),
+  });
 }
 
 function parseJsonValue(raw, fallback) {
@@ -2233,13 +2253,16 @@ async function loadCandidateInputState(userId, request, clock, tx) {
     includeFuture: true,
     planningDateLocal: clock.planningDateLocal,
   });
+  let removalPlanSnapshot = null;
+  let removalImpact = null;
   if (request.operation === 'remove_race') {
-    const activePlan = active
-      ? strictRemovalPlanPayload(active.row, clock.planningDateLocal) : null;
-    const impact = activePlan ? raceRemovalImpact(activePlan, request.remove_race_id) : null;
-    const expected = impact?.remainingRaceIds || [];
+    const removalSnapshot = active
+      ? strictRemovalPlanSnapshot(active.row, clock.planningDateLocal, request.remove_race_id) : null;
+    removalPlanSnapshot = removalSnapshot?.plan || null;
+    removalImpact = removalSnapshot?.impact || null;
+    const expected = removalImpact?.remainingRaceIds || [];
     const requested = request.race_ids.slice().sort();
-    if (!impact?.linked || JSON.stringify(expected.slice().sort()) !== JSON.stringify(requested)) {
+    if (!removalImpact?.linked || JSON.stringify(expected.slice().sort()) !== JSON.stringify(requested)) {
       throw candidateError(409, 'REMOVAL_IMPACT_CHANGED', 'The active-plan race goals changed. Preview removal again.');
     }
   }
@@ -2273,6 +2296,8 @@ async function loadCandidateInputState(userId, request, clock, tx) {
     planningInputRevision: Number(profile.planning_input_revision || 0),
     planningConstraints,
     races,
+    removalImpact,
+    removalPlanSnapshot,
     removalRace,
     request,
     snapshot,
@@ -3000,8 +3025,11 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     ] : [],
   };
   let decision = buildDecision(decisionInput);
-  const activeAppliedPlan = state.active ? {
-    ...parsePlan(state.active.row),
+  const stableActivePlan = state.request?.operation === 'remove_race'
+    ? state.removalPlanSnapshot
+    : (state.active ? parsePlan(state.active.row) : null);
+  const activeAppliedPlan = state.active && stableActivePlan ? {
+    ...stableActivePlan,
     plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
   } : null;
   if (!assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan)) {
@@ -3999,7 +4027,8 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       ...response,
       diagnostics: {
         active_plan: initial.activePlan,
-        active_plan_data: initial.active ? parsePlan(initial.active.row) : null,
+        active_plan_data: initial.removalPlanSnapshot
+          || (initial.active ? parsePlan(initial.active.row) : null),
         snapshot: normalized.snapshot,
         trace: normalized.trace,
       },
@@ -4319,26 +4348,8 @@ function assertCandidatePlanningDateCurrent(row, now = new Date()) {
 }
 
 function raceRemovalImpact(plan = {}, raceId) {
-  const goalRows = Array.isArray(plan.goals) ? plan.goals : [plan.goal].filter(Boolean);
-  const goalIds = [...new Set(goalRows
-    .map((goal) => {
-      const value = typeof goal?.raceId === 'string' ? goal.raceId : goal?.race_id;
-      return typeof value === 'string' ? value.trim() : '';
-    })
-    .filter(Boolean))];
-  const sessionIds = (plan.weeks || []).flatMap((week) => planSchema.getDayEntries(week))
-    .flatMap((day) => (Array.isArray(day?.sessions) ? day.sessions : [day]))
-    .map((session) => {
-      const value = typeof session?.goalRaceId === 'string'
-        ? session.goalRaceId : session?.goal_race_id;
-      return typeof value === 'string' ? value.trim() : '';
-    })
-    .filter(Boolean);
-  const wanted = String(raceId || '');
-  return {
-    linked: goalIds.includes(wanted) || sessionIds.includes(wanted),
-    remainingRaceIds: goalIds.filter((id) => id !== wanted),
-  };
+  return ownDataRaceRemovalImpact(plan, typeof raceId === 'string' ? raceId : '')
+    || { linked: false, remainingRaceIds: [] };
 }
 
 async function raceRemovalImpactForUser(userId, raceId, tx) {
@@ -4364,10 +4375,9 @@ async function previewRaceRemovalForUser(userId, raceId, body = {}) {
     const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, userId]);
     if (!race) throw candidateError(404, 'RACE_NOT_FOUND', 'Race not found.');
     const active = await getActivePlanForUser(userId, tx, { includeFuture: true, planningDateLocal: body.planning_date_local });
-    const activePlan = active
-      ? strictRemovalPlanPayload(active.row, body.planning_date_local) : null;
-    const impact = activePlan
-      ? raceRemovalImpact(activePlan, raceId) : { linked: false, remainingRaceIds: [] };
+    const removalSnapshot = active
+      ? strictRemovalPlanSnapshot(active.row, body.planning_date_local, raceId) : null;
+    const impact = removalSnapshot?.impact || { linked: false, remainingRaceIds: [] };
     return { impact, race };
   });
   if (!state.impact.linked) {

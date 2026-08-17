@@ -2991,6 +2991,60 @@ async function checkHyroxCandidateImmediateAdoption() {
           yonkersOwned: stateBeforeMalformedLegacyRemoval.yonkersOwned,
         }, `${label} writes no candidate, artifact, plan, assignment, or race state`);
       };
+
+      raceRows.set('unrelated', {
+        id: 'unrelated', user_id: ownerId, race_name: 'Unrelated road race',
+        race_date: '2026-12-06', event_local_date: '2026-12-06',
+        event_timezone: 'America/New_York', event_kind: 'run_race',
+        event_revision: 1, goal_revision: 1, distance_miles: 6.2,
+        goal_time_seconds: 3300,
+      });
+      const unrelatedTimeOnlyPlan = JSON.parse(JSON.stringify(legacyRoadPlan));
+      (unrelatedTimeOnlyPlan.weeks || []).forEach((week) => {
+        (week.days || []).forEach((day) => {
+          (day.sessions || []).forEach((session) => {
+            if (!['recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
+              'interval_run', 'race_rhythm_run', 'assessment', 'race']
+              .includes(session.workout_family)) return;
+            session.distance_miles = null;
+            delete session.running_distance_m;
+            delete session.distance_m;
+            delete session.distanceMeters;
+            if (session.derived_totals) {
+              delete session.derived_totals.distance_m;
+              delete session.derived_totals.work_distance_m;
+            }
+          });
+        });
+      });
+      legacyRoadPlanRow.plan_data = JSON.stringify(unrelatedTimeOnlyPlan);
+      legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
+      const unrelatedRemovalBefore = {
+        candidates: candidates.size,
+        artifacts: planningArtifacts.size,
+        plans: trainingPlans.size,
+        assignments: userPlans.size,
+        raceOwned: raceRows.has('unrelated'),
+      };
+      const unrelatedRemoval = await plansRouter._test.previewRaceRemovalForUser(
+        ownerId, 'unrelated', { ...roadClock },
+      );
+      assert.deepEqual(unrelatedRemoval, {
+        requires_apply: false,
+        impact: 'direct_remove',
+        race: { id: 'unrelated', name: 'Unrelated road race' },
+      }, 'an unrelated direct removal does not require running-dose evidence for a rebuild');
+      assert.deepEqual({
+        candidates: candidates.size,
+        artifacts: planningArtifacts.size,
+        plans: trainingPlans.size,
+        assignments: userPlans.size,
+        raceOwned: raceRows.has('unrelated'),
+      }, unrelatedRemovalBefore, 'direct-remove preview writes no candidate, artifact, plan, assignment, or race');
+      raceRows.delete('unrelated');
+      legacyRoadPlanRow.plan_data = JSON.stringify(legacyRoadPlan);
+      legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
+
       const malformedDistanceValues = [
         ['string', () => '5'],
         ['array', () => [5]],
@@ -3047,6 +3101,30 @@ async function checkHyroxCandidateImmediateAdoption() {
           const day = plan.weeks[0].days.find((entry) => (entry.sessions || []).includes(legacyRun(plan)));
           const index = day.sessions.indexOf(legacyRun(plan));
           day.sessions[index] = hostileProxy(day.sessions[index]);
+        }],
+        ['root goals accessor', (plan) => hostileAccessor(plan, 'goals', plan.goals)],
+        ['goals proxy', (plan) => { plan.goals = hostileProxy(plan.goals); }],
+        ['goal proxy', (plan) => { plan.goals[0] = hostileProxy(plan.goals[0]); }],
+        ['root singular goal accessor', (plan) => {
+          const goal = plan.goals[0];
+          delete plan.goals;
+          hostileAccessor(plan, 'goal', goal);
+        }],
+        ['singular goal proxy', (plan) => {
+          const goal = plan.goals[0];
+          delete plan.goals;
+          plan.goal = hostileProxy(goal);
+        }],
+        ['unstable goals accessor', (plan) => {
+          const goals = plan.goals;
+          delete plan.goals;
+          Object.defineProperty(plan, 'goals', {
+            enumerable: true,
+            get() {
+              malformedDistanceHooks.getter += 1;
+              return malformedDistanceHooks.getter % 2 ? goals : [];
+            },
+          });
         }],
         ['root weeks accessor', (plan) => hostileAccessor(plan, 'weeks', plan.weeks)],
         ['root inherited weeks', (plan) => {
@@ -3126,6 +3204,30 @@ async function checkHyroxCandidateImmediateAdoption() {
       }
       assert.deepEqual(malformedDistanceHooks, { coercion: 0, getter: 0, proxy: 0 },
         'the removal route never executes persisted evidence hooks');
+
+      const aliasRun = legacyRun(legacyRoadPlan);
+      const aliasDistanceMiles = aliasRun.distance_miles;
+      aliasRun.workoutFamily = aliasRun.workout_family;
+      aliasRun.workout_family = null;
+      aliasRun.distanceMiles = aliasDistanceMiles;
+      aliasRun.distance_miles = null;
+      aliasRun.scheduled_local_date = null;
+      const benignDay = legacyRoadPlan.weeks[0].days[0];
+      benignDay.sessions.push({
+        session_id: 'benign-non-running-null-family',
+        scheduled_local_date: benignDay.date,
+        workout_family: null,
+        duration_min: 20,
+      }, {
+        session_id: 'benign-running-no-distance-authority',
+        scheduled_local_date: benignDay.date,
+        workout_family: 'easy_run',
+        duration_min: 15,
+      });
+      legacyRoadPlan.weeks[0].days.push({
+        date: '2026-08-23',
+        sessions: null,
+      });
       legacyRoadPlanRow.plan_data = JSON.stringify(legacyRoadPlan);
       legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
 
