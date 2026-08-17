@@ -917,12 +917,8 @@ function legacyGoalBackwardFamily(session = {}) {
 }
 
 function finiteCandidateMaterialNumber(...values) {
-  const value = values.find((candidate) => (
-    candidate !== null && candidate !== undefined
-      && !(typeof candidate === 'string' && candidate.trim() === '')
-  ));
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
+  const value = values.find((candidate) => candidate !== null && candidate !== undefined);
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function roadCandidateMaterial(source) {
@@ -987,6 +983,25 @@ function goalBackwardSkeletonIdentity(input = {}) {
   const usedMaterialIds = new Set();
   const hybridProjectionPace = finiteCandidateMaterialNumber(input.hybrid_running_projection_pace_s_per_mile);
   const hybridProjectionPaceAvailable = hybridProjectionPace >= 180 && hybridProjectionPace <= 2400;
+  if (hybridProjectionPaceAvailable) {
+    for (const material of materials) {
+      const source = material.source_session || {};
+      const durationMin = finiteCandidateMaterialNumber(material.duration_min);
+      const displayedMiles = finiteCandidateMaterialNumber(material.distance_miles);
+      if (String(source.prescription_basis || '').toLowerCase() !== 'time'
+        || source.distance_is_estimate !== true || !(durationMin > 0) || !(displayedMiles > 0)) continue;
+      const conservativePaceSecondsPerMile = hybridProjectionPace * 1.1;
+      const timeBoundMiles = (durationMin * 60) / conservativePaceSecondsPerMile;
+      const prescribedDistanceM = Math.floor(Math.min(displayedMiles, timeBoundMiles) * 1609.344);
+      if (prescribedDistanceM <= 0) continue;
+      material.distance_m = prescribedDistanceM;
+      material.source_session = {
+        ...source,
+        canonical_prescribed_distance_m: prescribedDistanceM,
+        canonical_distance_derivation: 'observed_pace_conservative_110_percent_v1',
+      };
+    }
+  }
   const assignedMaterials = decision.role_multiset.map((role) => {
     const material = materials.find((entry) => (
       !usedMaterialIds.has(entry.material_id) && (role.any_of || []).includes(entry.workout_family)

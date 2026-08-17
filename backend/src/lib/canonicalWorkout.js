@@ -1155,6 +1155,11 @@ function minimumRunDurationSeconds(family, input) {
 }
 
 function prescribedDistanceMeters(source = {}) {
+  const canonicalPrescribed = boundedInteger(source.canonical_prescribed_distance_m);
+  if (canonicalPrescribed !== null
+    && source.canonical_distance_derivation === 'observed_pace_conservative_110_percent_v1'
+    && String(source.prescription_basis || '').toLowerCase() === 'time'
+    && source.distance_is_estimate === true) return canonicalPrescribed;
   const direct = boundedInteger(source.distance_m);
   if (direct !== null && source.distance_is_estimate !== true) return direct;
   if (source.distance_miles === null || source.distance_miles === undefined

@@ -2711,6 +2711,8 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       recovery_state: recoveryState,
       safety_action: safetyAction,
       safety_scope: safetyState.scope,
+      safety_reason_codes: safetyState.reason_codes,
+      safety_receipt_hash: safetyState.receipt_hash,
       recent_normal_running: {
         status: recentNormalStatus,
         median_distance_m: recentNormalStatus !== 'INSUFFICIENT'
@@ -3329,11 +3331,150 @@ function prefixedGoalBackwardCandidateHash(value) {
   return hash.startsWith('sha256:') ? hash : `sha256:${hash}`;
 }
 
+function exactGoalBindingId(value) {
+  return typeof value === 'string' && value.trim() === value && value.length > 0 ? value : null;
+}
+
+function exactAliasedGoalBinding(row, names) {
+  let resolved = null;
+  for (const name of names) {
+    if (!Object.prototype.hasOwnProperty.call(row, name)) continue;
+    const value = exactGoalBindingId(row[name]);
+    if (!value || (resolved !== null && value !== resolved)) return null;
+    resolved = value;
+  }
+  return resolved;
+}
+
+function exactOptionalGoalBinding(row, names, expected) {
+  for (const name of names) {
+    if (!Object.prototype.hasOwnProperty.call(row, name)
+      || row[name] === null || row[name] === undefined) continue;
+    if (typeof expected === 'number') {
+      if (typeof row[name] !== 'number' || !Number.isSafeInteger(row[name]) || row[name] !== expected) return false;
+    } else if (exactGoalBindingId(row[name]) !== expected) return false;
+  }
+  return true;
+}
+
+function applicableGoalBackwardFeasibility(currentPlan, goalBackwardResult) {
+  const activeGoals = Array.isArray(goalBackwardResult?.decision?.active_goals)
+    ? goalBackwardResult.decision.active_goals : [];
+  const decisionFeasibilities = Array.isArray(goalBackwardResult?.decision?.goal_feasibilities)
+    ? goalBackwardResult.decision.goal_feasibilities : [];
+  const planGoals = Array.isArray(currentPlan?.goals) ? currentPlan.goals : [];
+  const planFeasibilities = Array.isArray(currentPlan?.goal_feasibilities)
+    ? currentPlan.goal_feasibilities : [];
+  const ownedAthleteId = exactGoalBindingId(goalBackwardResult?.decision?.athlete_id);
+  const count = activeGoals.length;
+  if (!ownedAthleteId || !count || decisionFeasibilities.length !== count
+    || planGoals.length !== count || planFeasibilities.length !== count) return null;
+
+  const activeByGoalId = new Map();
+  const activeByRaceId = new Map();
+  let decisionAthleteId = null;
+  for (const goal of activeGoals) {
+    if (!goal || typeof goal !== 'object' || Array.isArray(goal)) return null;
+    const goalId = exactGoalBindingId(goal.goal_id);
+    const raceId = exactGoalBindingId(goal.race_id);
+    const athleteId = exactGoalBindingId(goal.athlete_id);
+    const eventRevision = goal.event_revision;
+    const goalRevision = goal.source_revision;
+    if (!goalId || !raceId || athleteId !== ownedAthleteId
+      || typeof eventRevision !== 'number' || !Number.isSafeInteger(eventRevision) || eventRevision < 1
+      || typeof goalRevision !== 'number' || !Number.isSafeInteger(goalRevision) || goalRevision < 1
+      || activeByGoalId.has(goalId) || activeByRaceId.has(raceId)) return null;
+    if (decisionAthleteId !== null && athleteId !== decisionAthleteId) return null;
+    decisionAthleteId = athleteId;
+    const binding = { athleteId, eventRevision, goal, goalId, goalRevision, raceId };
+    activeByGoalId.set(goalId, binding);
+    activeByRaceId.set(raceId, binding);
+  }
+
+  const decisionByRaceId = new Map();
+  for (const entry of decisionFeasibilities) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const goalId = exactGoalBindingId(entry.goal_id);
+    const raceId = exactGoalBindingId(entry.race_id);
+    const binding = goalId ? activeByGoalId.get(goalId) : null;
+    if (!binding || binding.raceId !== raceId || decisionByRaceId.has(raceId)
+      || !['supported', 'unvalidated', 'at_risk'].includes(entry.status)) return null;
+    decisionByRaceId.set(raceId, entry);
+  }
+  if (decisionByRaceId.size !== count) return null;
+
+  const seenPlanGoals = new Set();
+  for (const goal of planGoals) {
+    if (!goal || typeof goal !== 'object' || Array.isArray(goal)) return null;
+    const raceId = exactAliasedGoalBinding(goal, ['raceId', 'race_id']);
+    const binding = raceId ? activeByRaceId.get(raceId) : null;
+    if (!binding || seenPlanGoals.has(raceId)
+      || !exactOptionalGoalBinding(goal, ['goal_id', 'goalId'], binding.goalId)
+      || !exactOptionalGoalBinding(goal, ['athlete_id', 'athleteId', 'user_id', 'userId'], binding.athleteId)
+      || !exactOptionalGoalBinding(goal, ['event_revision', 'eventRevision'], binding.eventRevision)
+      || !exactOptionalGoalBinding(
+        goal, ['source_revision', 'goal_revision', 'goalRevision'], binding.goalRevision,
+      )) return null;
+    seenPlanGoals.add(raceId);
+  }
+
+  if (currentPlan.goal !== null && currentPlan.goal !== undefined) {
+    const goal = currentPlan.goal;
+    const raceId = goal && !Array.isArray(goal) && typeof goal === 'object'
+      ? exactAliasedGoalBinding(goal, ['raceId', 'race_id']) : null;
+    const binding = raceId ? activeByRaceId.get(raceId) : null;
+    if (!binding
+      || !exactOptionalGoalBinding(goal, ['goal_id', 'goalId'], binding.goalId)
+      || !exactOptionalGoalBinding(goal, ['athlete_id', 'athleteId', 'user_id', 'userId'], binding.athleteId)
+      || !exactOptionalGoalBinding(goal, ['event_revision', 'eventRevision'], binding.eventRevision)
+      || !exactOptionalGoalBinding(
+        goal, ['source_revision', 'goal_revision', 'goalRevision'], binding.goalRevision,
+      )) return null;
+  }
+
+  const seenPlanFeasibilities = new Set();
+  const mappedGoalFeasibilities = [];
+  for (const entry of planFeasibilities) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const raceId = exactAliasedGoalBinding(entry, ['race_id', 'raceId']);
+    const binding = raceId ? activeByRaceId.get(raceId) : null;
+    const decisionEntry = raceId ? decisionByRaceId.get(raceId) : null;
+    if (!binding || !decisionEntry || seenPlanFeasibilities.has(raceId)
+      || !['supported', 'stretch', 'unsafe', 'unvalidated', 'at_risk'].includes(entry.feasibility)
+      || !exactOptionalGoalBinding(entry, ['goal_id', 'goalId'], binding.goalId)
+      || !exactOptionalGoalBinding(entry, ['athlete_id', 'athleteId', 'user_id', 'userId'], binding.athleteId)
+      || !exactOptionalGoalBinding(entry, ['event_revision', 'eventRevision'], binding.eventRevision)
+      || !exactOptionalGoalBinding(
+        entry, ['source_revision', 'goal_revision', 'goalRevision'], binding.goalRevision,
+      )) return null;
+    seenPlanFeasibilities.add(raceId);
+    mappedGoalFeasibilities.push({
+      ...entry,
+      legacy_feasibility: entry.feasibility,
+      legacy_reasons: Array.isArray(entry.reasons) ? entry.reasons : [],
+      feasibility: decisionEntry.status,
+      reasons: [...new Set([
+        ...(Array.isArray(entry.reasons) ? entry.reasons : []),
+        ...(Array.isArray(decisionEntry.reason_codes) ? decisionEntry.reason_codes : []),
+      ])],
+      next_required_assessment: decisionEntry.next_required_assessment || null,
+    });
+  }
+  if (seenPlanGoals.size !== count || seenPlanFeasibilities.size !== count) return null;
+  const statuses = [...decisionByRaceId.values()].map((entry) => entry.status);
+  return {
+    goalFeasibilities: mappedGoalFeasibilities,
+    overallFeasibility: statuses.every((status) => status === 'supported') ? 'supported' : 'stretch',
+  };
+}
+
 function applicableGoalBackwardPlan(currentPlan, goalBackwardResult) {
   const selected = goalBackwardResult?.selected_candidate;
   const canonicalPlan = selected?.canonical_plan;
+  const feasibility = applicableGoalBackwardFeasibility(currentPlan, goalBackwardResult);
   if (!selected?.validation?.valid || !selected?.canonical_sessions_materialized
-    || !canonicalPlan || !Array.isArray(canonicalPlan.weeks) || canonicalPlan.weeks.length === 0) {
+    || !canonicalPlan || !Array.isArray(canonicalPlan.weeks) || canonicalPlan.weeks.length === 0
+    || !feasibility) {
     return null;
   }
   return {
@@ -3343,7 +3484,8 @@ function applicableGoalBackwardPlan(currentPlan, goalBackwardResult) {
     engineVersion: currentPlan.engineVersion,
     goal_backward_engine_version: 'goal-backward-coaching-v2.4',
     goal_backward_policy_versions: goalBackwardResult.decision?.policy_versions || {},
-    overall_feasibility: currentPlan.overall_feasibility,
+    overall_feasibility: feasibility.overallFeasibility,
+    goal_feasibilities: feasibility.goalFeasibilities,
     reasons: [...new Set([
       ...(Array.isArray(currentPlan.reasons) ? currentPlan.reasons : []),
       ...(Array.isArray(goalBackwardResult.decision?.reason_codes) ? goalBackwardResult.decision.reason_codes : []),
