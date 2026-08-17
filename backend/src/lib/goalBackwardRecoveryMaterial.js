@@ -690,6 +690,22 @@ function comparatorReceipt(source, baselineRunning, options = {}) {
   };
 }
 
+function minimumRunningDoseWithoutMaterialReduction(baselineRunningValues = []) {
+  const policy = GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running;
+  const boundaries = (Array.isArray(baselineRunningValues) ? baselineRunningValues : [])
+    .filter((baseline) => typeof baseline === 'number' && Number.isFinite(baseline) && baseline > 0)
+    .map((baseline) => Math.min(
+      baseline - policy.absolute_m,
+      baseline * (1 - policy.percentage),
+    ))
+    .filter((boundary) => Number.isFinite(boundary) && boundary >= 0);
+  if (!boundaries.length) return null;
+  // Material reduction uses inclusive boundaries. Candidate material is
+  // expressed in whole metres, so the first unqualified whole-metre dose is
+  // one metre above the strictest applicable boundary.
+  return Math.floor(Math.max(...boundaries)) + 1;
+}
+
 function scopeCoversCandidate(scope, input, { requireMaterialAuthorization = true } = {}) {
   if (!scope || scope.scope_kind !== 'BLOCK'
     || (requireMaterialAuthorization && scope.authorizes_material_reduction !== true)) return false;
@@ -977,7 +993,9 @@ module.exports = {
   deriveMaterialReductionScope,
   deriveScopedRecoveryState,
   evaluateMaterialDose,
+  minimumRunningDoseWithoutMaterialReduction,
   normalizeCrossModalReductionEvidence,
   normalizeScope,
+  runningDistanceObservation,
   validateDevelopmentRoleDose,
 };

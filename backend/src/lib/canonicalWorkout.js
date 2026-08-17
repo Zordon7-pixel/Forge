@@ -598,8 +598,11 @@ function assertCanonicalSession(session) {
 
 function buildCanonicalSession(input = {}) {
   const source = clone(input) || {};
+  const assessmentContributors = source.workout_family === 'assessment'
+    ? contributingFamilies(source.steps) : null;
   const session = {
     ...source,
+    ...(assessmentContributors ? { contributing_work_families: assessmentContributors } : {}),
     canonical_workout_schema_version: CANONICAL_WORKOUT_SCHEMA_VERSION,
     stress_taxonomy_version: STRESS_TAXONOMY_VERSION,
     stress_vector: deriveStressVector(source),

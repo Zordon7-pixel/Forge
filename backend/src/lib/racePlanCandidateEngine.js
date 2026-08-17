@@ -963,6 +963,31 @@ function roadCandidateMaterial(source) {
   });
 }
 
+function canonicalRoadCandidateMaterial(source, hybridProjectionPaceSecondsPerMile = null) {
+  const materials = roadCandidateMaterial(source);
+  const hybridProjectionPace = finiteCandidateMaterialNumber(hybridProjectionPaceSecondsPerMile);
+  const hybridProjectionPaceAvailable = hybridProjectionPace >= 180 && hybridProjectionPace <= 2400;
+  if (!hybridProjectionPaceAvailable) return materials;
+  for (const material of materials) {
+    const candidateSource = material.source_session || {};
+    const durationMin = finiteCandidateMaterialNumber(material.duration_min);
+    const displayedMiles = finiteCandidateMaterialNumber(material.distance_miles);
+    if (String(candidateSource.prescription_basis || '').toLowerCase() !== 'time'
+      || candidateSource.distance_is_estimate !== true || !(durationMin > 0) || !(displayedMiles > 0)) continue;
+    const conservativePaceSecondsPerMile = hybridProjectionPace * 1.1;
+    const timeBoundMiles = (durationMin * 60) / conservativePaceSecondsPerMile;
+    const prescribedDistanceM = Math.floor(Math.min(displayedMiles, timeBoundMiles) * 1609.344);
+    if (prescribedDistanceM <= 0) continue;
+    material.distance_m = prescribedDistanceM;
+    material.source_session = {
+      ...candidateSource,
+      canonical_prescribed_distance_m: prescribedDistanceM,
+      canonical_distance_derivation: 'observed_pace_conservative_110_percent_v1',
+    };
+  }
+  return materials;
+}
+
 function placementFor(placements, requirementId) {
   const placement = placements?.[requirementId];
   if (typeof placement === 'string') return { scheduled_local_date: validLocalDate(placement), scheduled_start_at: null, workout_family: null };
@@ -979,32 +1004,20 @@ function goalBackwardSkeletonIdentity(input = {}) {
   if (!decision || !decision.decision_id || !Array.isArray(decision.role_multiset)) {
     throw new Error('an immutable PlanningDecision with a role multiset is required');
   }
-  const materials = roadCandidateMaterial(input.legacy_road_candidate_material || []);
-  const usedMaterialIds = new Set();
   const hybridProjectionPace = finiteCandidateMaterialNumber(input.hybrid_running_projection_pace_s_per_mile);
+  const materials = canonicalRoadCandidateMaterial(
+    input.legacy_road_candidate_material || [],
+    hybridProjectionPace,
+  );
+  const usedMaterialIds = new Set();
   const hybridProjectionPaceAvailable = hybridProjectionPace >= 180 && hybridProjectionPace <= 2400;
-  if (hybridProjectionPaceAvailable) {
-    for (const material of materials) {
-      const source = material.source_session || {};
-      const durationMin = finiteCandidateMaterialNumber(material.duration_min);
-      const displayedMiles = finiteCandidateMaterialNumber(material.distance_miles);
-      if (String(source.prescription_basis || '').toLowerCase() !== 'time'
-        || source.distance_is_estimate !== true || !(durationMin > 0) || !(displayedMiles > 0)) continue;
-      const conservativePaceSecondsPerMile = hybridProjectionPace * 1.1;
-      const timeBoundMiles = (durationMin * 60) / conservativePaceSecondsPerMile;
-      const prescribedDistanceM = Math.floor(Math.min(displayedMiles, timeBoundMiles) * 1609.344);
-      if (prescribedDistanceM <= 0) continue;
-      material.distance_m = prescribedDistanceM;
-      material.source_session = {
-        ...source,
-        canonical_prescribed_distance_m: prescribedDistanceM,
-        canonical_distance_derivation: 'observed_pace_conservative_110_percent_v1',
-      };
-    }
-  }
   const assignedMaterials = decision.role_multiset.map((role) => {
+    const boundMaterialId = typeof role.candidate_material_id === 'string'
+      ? role.candidate_material_id.trim() : '';
     const material = materials.find((entry) => (
-      !usedMaterialIds.has(entry.material_id) && (role.any_of || []).includes(entry.workout_family)
+      !usedMaterialIds.has(entry.material_id)
+        && (!boundMaterialId || entry.material_id === boundMaterialId)
+        && (role.any_of || []).includes(entry.workout_family)
     ));
     if (material) usedMaterialIds.add(material.material_id);
     return material || null;
@@ -1093,12 +1106,15 @@ function goalBackwardSkeletonIdentity(input = {}) {
     const material = assignedMaterials[index];
     const projectedRunningMaterial = material?.projection_source_material_ids?.length ? material : null;
     const placement = placementFor(input.placements, role.requirement_id);
+    const workoutFamily = placement.workout_family || material?.workout_family || role.any_of?.[0] || null;
     return {
       skeleton_session_id: String(material?.material_id || `skeleton-${role.requirement_id}-${index + 1}`),
       session_id: String(material?.material_id || `skeleton-${role.requirement_id}-${index + 1}`),
       requirement_id: role.requirement_id,
       role: role.role,
-      workout_family: placement.workout_family || material?.workout_family || role.any_of?.[0] || null,
+      workout_family: workoutFamily,
+      ...(workoutFamily === 'assessment'
+        ? { contributing_work_families: ['interval_run'] } : {}),
       candidate_families: [...(role.any_of || [])],
       scheduled_local_date: placement.scheduled_local_date,
       scheduled_start_at: placement.scheduled_start_at,
@@ -1658,6 +1674,7 @@ module.exports = {
   MAX_GOAL_BACKWARD_SEARCH_NODES,
   applyPlanningCurve,
   buildGoalBackwardCandidateSkeleton,
+  canonicalRoadCandidateMaterial,
   materializeGoalBackwardCandidate,
   buildRacePlanCandidate,
   candidateRankingTuple,

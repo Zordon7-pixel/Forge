@@ -6,6 +6,7 @@ const {
   deriveMaterialReductionScope,
   deriveScopedRecoveryState,
   evaluateMaterialDose,
+  minimumRunningDoseWithoutMaterialReduction,
   normalizeCrossModalReductionEvidence,
   normalizeScope,
 } = require('../src/lib/goalBackwardRecoveryMaterial');
@@ -1317,6 +1318,15 @@ test('C3-MAT-08', 'a within-bound candidate emits no false maintain reduction re
   assert.equal(receipt.valid, true);
   assert.equal(receipt.dose_state, 'WITHIN_MATERIAL_BOUND');
   assert.deepEqual(receipt.reason_codes, []);
+});
+
+test('C3-MAT-09', 'support enumeration uses the first whole-metre dose outside every material-reduction boundary', () => {
+  assert.equal(minimumRunningDoseWithoutMaterialReduction([25267]), 22049);
+  assert.equal(minimumRunningDoseWithoutMaterialReduction([10000, 25267]), 22049,
+    'the strictest comparator controls the preservation floor deterministically');
+  assert.equal(minimumRunningDoseWithoutMaterialReduction([null, undefined, 0]), null);
+  assert.equal(minimumRunningDoseWithoutMaterialReduction(['25267', [25267], true]), null);
+  assert.equal(minimumRunningDoseWithoutMaterialReduction('25267'), null);
 });
 
 test('C3-UNKNOWN-01', 'unknown load cannot become zero or authorize either increase or reduction', () => {

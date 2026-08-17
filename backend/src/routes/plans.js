@@ -26,6 +26,7 @@ const { planningInputUnchanged } = require('../lib/planningRevision');
 const { localDateForOffset } = require('../lib/requestPlanningDate');
 const {
   buildRacePlanCandidate,
+  canonicalRoadCandidateMaterial,
   enumerateGoalBackwardCandidates,
   legacyGoalBackwardFamily,
   semanticCandidateErrors,
@@ -39,7 +40,9 @@ const { canonicalizeRunLoadInput } = require('../lib/goalBackwardEvidence');
 const {
   deriveMaterialReductionScope,
   deriveScopedRecoveryState,
+  minimumRunningDoseWithoutMaterialReduction,
   normalizeCrossModalReductionEvidence,
+  runningDistanceObservation,
 } = require('../lib/goalBackwardRecoveryMaterial');
 const {
   buildGoalBackwardReleaseTelemetry,
@@ -2514,7 +2517,7 @@ function goalBackwardRemovalFamily(session) {
     return null;
   }
   const family = legacyGoalBackwardFamily(session);
-  return ['easy_run', 'recovery_run', 'long_aerobic'].includes(family) ? family : null;
+  return ['easy_run', 'recovery_run', 'long_aerobic', 'assessment'].includes(family) ? family : null;
 }
 
 function goalBackwardRemovalMaterial(plan, availableLocalDates) {
@@ -2551,9 +2554,10 @@ function goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, avail
   const allowedGoalIds = new Set([...retainedGoalIds, removedGoalId]);
   if (!retainedGoalIds.size || removedGoalId === 'goal-') return [];
   const acceptedMaterialIds = new Set();
-  // A successor may retain only canonical, goal-shared aerobic material. The
-  // new canonical session set rebinds it to the retained decision goals; race-
-  // specific quality and material owned only by the removed goal never cross.
+  // A successor may retain only canonical, goal-shared aerobic or assessment
+  // material. The new canonical session set rebinds it to the retained
+  // decision goals; race-specific quality and material owned only by the
+  // removed goal never cross.
   return goalBackwardRemovalMaterial(activeAppliedPlan, availableLocalDates).filter((session) => {
     if (!goalBackwardRemovalFamily(session)) return false;
     const id = goalBackwardMaterialId(session);
@@ -2567,10 +2571,23 @@ function goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, avail
   });
 }
 
+function assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan) {
+  if (state?.request?.operation !== 'remove_race' || !activeAppliedPlan) return true;
+  const declaresCanonicalSource = [
+    activeAppliedPlan.canonical_workout_schema_version,
+    activeAppliedPlan.canonical_session_set_hash,
+    activeAppliedPlan.selected_candidate_hash,
+  ].some((value) => value !== null && value !== undefined);
+  if (!declaresCanonicalSource) return true;
+  return activeAppliedPlan.canonical_workout_schema_version === 1
+    && isCanonicalHash(activeAppliedPlan.canonical_session_set_hash)
+    && isCanonicalHash(activeAppliedPlan.selected_candidate_hash);
+}
+
 function goalBackwardMaterialRunningMeters(session) {
-  const direct = Number(session?.distance_m ?? session?.distanceMeters);
+  const direct = session?.distance_m ?? session?.distanceMeters;
   if (Number.isFinite(direct) && direct >= 0) return direct;
-  const miles = Number(session?.distance_miles ?? session?.distanceMiles);
+  const miles = session?.distance_miles ?? session?.distanceMiles;
   return Number.isFinite(miles) && miles >= 0 ? Math.round(miles * 1609.344) : 0;
 }
 
@@ -2628,7 +2645,14 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
       ? directDuration
       : projectionPaceAvailable && runningM > 0
         ? (runningM / 1609.344) * projectionPace / 60 : null;
-    return { durationMin, family, index, runningM, sourceFamily };
+    return {
+      durationMin,
+      family,
+      index,
+      materialId: goalBackwardMaterialId(session),
+      runningM,
+      sourceFamily,
+    };
   }).filter((entry) => (
     !usedMaterialIndexes.has(entry.index) && entry.family && entry.runningM > 0
   )).sort((left, right) => (
@@ -2640,7 +2664,7 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
   const exactRunningMaterial = availableRunningMaterial.filter((entry) => (
     !GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(entry.sourceFamily)
   ));
-  for (const { durationMin, family, runningM } of exactRunningMaterial) {
+  for (const { durationMin, family, materialId, runningM } of exactRunningMaterial) {
     if (!Number.isSafeInteger(requiredRunningM) || requiredRunningM < 0
       || selectedRunningM >= requiredRunningM || supporting.length >= maximumSupportingCount) continue;
     const familyPresentationFloorMin = family === 'long_aerobic'
@@ -2651,6 +2675,7 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
       requirement_id: `current-candidate-support-${supporting.length + 1}`,
       any_of: [family],
       role: 'SUPPORTING',
+      ...(materialId ? { candidate_material_id: materialId } : {}),
       ...(supportsRequirementId ? { supports_requirement_id: supportsRequirementId } : {}),
     });
     selectedRunningM += runningM;
@@ -2842,6 +2867,11 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     ...parsePlan(state.active.row),
     plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
   } : null;
+  if (!assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan)) {
+    const error = new Error('The active canonical plan cannot authorize removal carry-forward.');
+    error.code = 'REMOVAL_CARRY_FORWARD_SOURCE_INVALID';
+    throw error;
+  }
   const boundedCandidateMaterial = clusterPolicy?.required === true && selectedClusterWeek
     ? goalBackwardCandidateMaterial({ weeks: [selectedClusterWeek] }, availableLocalDates)
     : goalBackwardCandidateMaterial(built.plan, availableLocalDates);
@@ -2858,14 +2888,49 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     )),
   ];
   if (clusterPolicy?.required !== true) {
-    const supportingStimuli = goalBackwardSupportingStimuli(
+    const projectionPaceSecondsPerMile =
+      state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile ?? null;
+    const validRecentNormalComparator = ['ESTABLISHED', 'PROVISIONAL', 'TRAINING_GAP']
+      .includes(String(decisionInput.athlete_state.recent_normal_running.status || '').toUpperCase())
+      && ['HIGH', 'MEDIUM', 'LOW'].includes(String(
+        decisionInput.athlete_state.recent_normal_running.confidence || ''
+      ).toUpperCase())
+      ? decisionInput.athlete_state.recent_normal_running.median_distance_m : null;
+    const activeRunningObservation = activeAppliedPlan ? runningDistanceObservation(activeAppliedPlan, {
+      start: planningDateLocal,
+      end: addPolicyDays(planningDateLocal, 6),
+    }) : null;
+    const materialPreservationMinimumRunningM = hasCanonicalLoadContract
+      ? minimumRunningDoseWithoutMaterialReduction([
+        validRecentNormalComparator,
+        activeRunningObservation?.state === 'KNOWN' ? activeRunningObservation.distance_m : null,
+        observedLowerBoundWeeklyMiles === null
+          ? null : Math.round(observedLowerBoundWeeklyMiles * 1609.344),
+      ]) : null;
+    const requiredRunningM = Math.max(
+      Number(decision.minimum_weekly_demand?.running_m) || 0,
+      Number(materialPreservationMinimumRunningM) || 0,
+      state?.request?.operation === 'remove_race' && activeRunningObservation?.state === 'KNOWN'
+        ? Number(activeRunningObservation.distance_m) || 0 : 0,
+    );
+    const supportCandidateMaterial = canonicalRoadCandidateMaterial(
       candidateMaterial,
+      projectionPaceSecondsPerMile,
+    ).map((material) => ({
+      ...material.source_session,
+      session_id: material.material_id,
+      workout_family: material.workout_family,
+      duration_min: material.duration_min,
+      distance_m: material.distance_m,
+      distance_miles: material.distance_miles,
+    }));
+    const supportingStimuli = goalBackwardSupportingStimuli(
+      supportCandidateMaterial,
       decision.role_multiset,
-      decision.minimum_weekly_demand?.running_m,
+      requiredRunningM,
       {
         availableDaysCount: availableLocalDates.length,
-        projectionPaceSecondsPerMile:
-          state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile ?? null,
+        projectionPaceSecondsPerMile,
         trainingAgeClass,
       },
     );

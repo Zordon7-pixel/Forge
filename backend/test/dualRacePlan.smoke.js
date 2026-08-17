@@ -2605,13 +2605,13 @@ async function checkHyroxCandidateImmediateAdoption() {
         created_at: day.toISOString(),
       });
     }
-    fixedNowIso = '2026-08-16T16:00:00.000Z';
-    const sundayClock = { planning_date_local: '2026-08-16', timezone_offset_minutes: 240 };
-    const sundayRequestBase = {
+    fixedNowIso = '2026-08-17T16:00:00.000Z';
+    const roadClock = { planning_date_local: '2026-08-17', timezone_offset_minutes: 240 };
+    const roadRequestBase = {
       ...requestBase,
-      query: { date: sundayClock.planning_date_local },
+      query: { date: roadClock.planning_date_local },
       headers: {
-        'x-forged-local-date': sundayClock.planning_date_local,
+        'x-forged-local-date': roadClock.planning_date_local,
         'x-forged-timezone-offset-minutes': '240',
       },
     };
@@ -2619,7 +2619,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     let roadInspectionError = null;
     try {
       await plansRouter._test.previewPlanForUser(ownerId, {
-        ...sundayClock,
+        ...roadClock,
         race_ids: ['yonkers', 'army'],
         target: {
           trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
@@ -2641,15 +2641,60 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(roadInspectionError, null, JSON.stringify({
       error: roadInspectionError && { code: roadInspectionError.code, message: roadInspectionError.message },
       phase: roadInspection?.decision?.phase,
+      search: roadInspection?.search_diagnostics,
       roles: roadInspection?.decision?.role_multiset,
+      material: roadInspection?.candidates?.[0]?.candidate_material?.map((entry) => ({
+        id: entry.material_id,
+        family: entry.workout_family,
+        date: entry.legacy_scheduled_local_date,
+        duration: entry.duration_min,
+        meters: entry.distance_m,
+        miles: entry.distance_miles,
+      })),
+      failedValidators: roadInspection?.candidates?.[0]?.validation?.validator_results
+        ?.filter((entry) => entry.valid === false)
+        .map((entry) => ({ validator: entry.validator, violations: entry.violations })),
       sessions: roadInspection?.candidates?.[0]?.sessions,
       violations: roadInspection?.candidates?.map((candidate) => candidate.validation.violations),
     }));
     assert.ok(roadInspection?.selected_candidate);
+    const roadSelected = roadInspection.selected_candidate;
+    const roadSelectedRunningDoseM = roadSelected.sessions.reduce((sum, session) => (
+      sum + (['recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
+        'interval_run', 'race_rhythm_run', 'assessment', 'race'].includes(session.workout_family)
+        ? Number(session.derived_totals?.distance_m || 0) : 0)
+    ), 0);
+    assert.equal(roadSelectedRunningDoseM, 23990,
+      'the Monday route keeps the exact canonical four-session dose instead of stopping on inflated display miles');
+    assert.deepEqual(roadInspection.decision.role_multiset.filter((role) => role.role === 'SUPPORTING')
+      .map((role) => role.candidate_material_id), [
+      'h3-w1-sun-run', 'h3-w1-tue-run', 'h3-w1-sat-run',
+    ], 'each supporting role is bound to the exact server-selected source material');
+    assert.deepEqual(roadSelected.skeleton_sessions.map((session) => session.candidate_material_id), [
+      'h3-w1-thu-run', 'h3-w1-sun-run', 'h3-w1-tue-run', 'h3-w1-sat-run',
+    ], 'enumeration cannot substitute a shorter compatible session after the dose decision');
+    const roadAssessment = roadSelected.sessions.find((session) => session.workout_family === 'assessment');
+    assert.deepEqual(roadAssessment?.contributing_work_families, ['interval_run']);
+    assert.deepEqual(roadAssessment?.steps.map((step) => step.workout_family), ['interval_run']);
+    const roadMaterialDose = roadSelected.validation.validator_results.find((entry) => (
+      entry.validator === 'material_dose'
+    ));
+    assert.equal(roadMaterialDose.valid, true);
+    assert.equal(roadMaterialDose.receipt.candidate_running_m, 23990);
+    const observedLowerBoundComparator = roadMaterialDose.receipt.comparators.find((entry) => (
+      entry.source === 'OBSERVED_LOWER_BOUND'
+    ));
+    assert.equal(observedLowerBoundComparator.baseline_running_m, 25267);
+    assert.equal(observedLowerBoundComparator.delta_m, -1277);
+    assert.equal(observedLowerBoundComparator.delta_percentage, -5.05);
+    assert.equal(observedLowerBoundComparator.material_reduction, false);
+    assert.equal(roadSelected.validation.validator_results.find((entry) => (
+      entry.validator === 'presentation_floor'
+    )).valid, true);
     const roadPreview = await invoke(preview, {
-      ...sundayRequestBase,
+      ...roadRequestBase,
       body: {
-        ...sundayClock,
+        ...roadClock,
         race_ids: ['yonkers', 'army'],
         target: {
           trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
@@ -2667,24 +2712,24 @@ async function checkHyroxCandidateImmediateAdoption() {
         && entry.legacy_reasons.every((reason) => entry.reasons.includes(reason))
     )), 'v2.4 stretch truth retains the exact bound legacy goal risks without treating them as support');
     const roadApplyBody = {
-      ...sundayClock,
+      ...roadClock,
       choice: 'train_for_target',
       candidate_hash: roadPreview.payload.candidate_hash,
       ...roadPreview.payload.apply_bindings,
     };
     const roadApply = await invoke(apply, {
-      ...sundayRequestBase,
+      ...roadRequestBase,
       params: { candidateId: roadPreview.payload.candidate_id },
       body: roadApplyBody,
     });
     assert.equal(roadApply.statusCode, 200, JSON.stringify(roadApply.payload));
-    const roadCurrent = await invoke(readMyPlan, { ...sundayRequestBase, body: {} });
+    const roadCurrent = await invoke(readMyPlan, { ...roadRequestBase, body: {} });
     assert.equal(roadCurrent.statusCode, 200, JSON.stringify(roadCurrent.payload));
     assert.deepEqual(roadCurrent.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['yonkers', 'army']);
     assert.equal(roadCurrent.payload.plan.plan_data.goals.some((goal) => goal.raceId === 'hyrox'), false,
       'the authoritative road-only replacement contains no stale HYROX goal');
     const roadReplay = await invoke(apply, {
-      ...sundayRequestBase,
+      ...roadRequestBase,
       params: { candidateId: roadPreview.payload.candidate_id },
       body: roadApplyBody,
     });
@@ -2716,9 +2761,9 @@ async function checkHyroxCandidateImmediateAdoption() {
       yonkersOwned: raceRows.has('yonkers'),
     };
     const malformedRemovalPreview = await invoke(previewRaceRemoval, {
-      ...sundayRequestBase,
+      ...roadRequestBase,
       params: { id: 'yonkers' },
-      body: { ...sundayClock },
+      body: { ...roadClock },
     });
     assert.equal(malformedRemovalPreview.statusCode, 409, JSON.stringify(malformedRemovalPreview.payload));
     assert.equal(malformedRemovalPreview.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED');
@@ -2738,9 +2783,9 @@ async function checkHyroxCandidateImmediateAdoption() {
     const artifactCountBeforeRoadRemoval = planningArtifacts.size;
     const activeBeforeRoadRemoval = currentAssignment().id;
     const yonkersRemovalPreview = await invoke(previewRaceRemoval, {
-      ...sundayRequestBase,
+      ...roadRequestBase,
       params: { id: 'yonkers' },
-      body: { ...sundayClock },
+      body: { ...roadClock },
     });
     if (yonkersRemovalPreview.statusCode !== 201) {
       assert.equal(currentAssignment().id, activeBeforeRoadRemoval,
@@ -2775,22 +2820,23 @@ async function checkHyroxCandidateImmediateAdoption() {
         && session.goal_ids.length === 1
         && session.goal_ids[0] === 'goal-army'
     )), 'the successor rebinds every retained canonical session to the Army goal alone');
-    assert.ok(removalSessions.reduce((sum, session) => (
+    const removalRunningDoseM = removalSessions.reduce((sum, session) => (
       sum + Number(session.running_distance_m ?? session.distance_m
         ?? session.derived_totals?.distance_m ?? 0)
-    ), 0) >= roadCurrentRunningDoseM,
-    'the successor preserves the exact reviewed applied running dose');
+    ), 0);
+    assert.ok(removalRunningDoseM >= roadCurrentRunningDoseM,
+      `the successor preserves the exact reviewed applied running dose (${removalRunningDoseM} >= ${roadCurrentRunningDoseM})`);
     assert.equal(raceRows.has('yonkers'), true, 'preview performs zero race writes');
 
     const roadRemovalApplyBody = {
-      ...sundayClock,
+      ...roadClock,
       candidate_id: yonkersRemovalPreview.payload.candidate_id,
       candidate_hash: yonkersRemovalPreview.payload.candidate_hash,
       choice: 'train_for_target',
       ...yonkersRemovalPreview.payload.apply_bindings,
     };
     const removalApplyResult = await invoke(applyRaceRemoval, {
-      ...sundayRequestBase,
+      ...roadRequestBase,
       params: { id: 'yonkers' },
       body: roadRemovalApplyBody,
     });
@@ -2798,7 +2844,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(raceRows.has('yonkers'), false, 'apply atomically removes the exact owned race');
     const removalAssignment = currentAssignment();
     assert.notEqual(removalAssignment.id, activeBeforeRoadRemoval);
-    const removalCurrent = await invoke(readMyPlan, { ...sundayRequestBase, body: {} });
+    const removalCurrent = await invoke(readMyPlan, { ...roadRequestBase, body: {} });
     assert.equal(removalCurrent.statusCode, 200, JSON.stringify(removalCurrent.payload));
     assert.deepEqual(removalCurrent.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['army']);
     const removedBindingPaths = [];
@@ -2814,7 +2860,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       'the authoritative successor contains no removed goal binding');
 
     const roadRemovalReplay = await invoke(applyRaceRemoval, {
-      ...sundayRequestBase,
+      ...roadRequestBase,
       params: { id: 'yonkers' },
       body: roadRemovalApplyBody,
     });

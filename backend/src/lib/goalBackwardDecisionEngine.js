@@ -425,6 +425,8 @@ function copiedExposure(exposure, overrides = {}) {
     any_of: [...(exposure.any_of || [])],
     role: exposure.role || 'PRIMARY_KEY',
     scheduled_local_date: null,
+    ...(typeof exposure.candidate_material_id === 'string' && exposure.candidate_material_id.trim()
+      ? { candidate_material_id: exposure.candidate_material_id.trim() } : {}),
     ...(exposure.supports_requirement_id
       ? { supports_requirement_id: String(exposure.supports_requirement_id) } : {}),
     ...overrides,
