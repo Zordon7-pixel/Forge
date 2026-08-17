@@ -295,10 +295,105 @@ function ownDataJsonSnapshot(value, options = {}) {
 }
 
 function ownStringAlias(descriptors, keys) {
-  const field = ownField(descriptors, keys);
-  if (!field.present) return { valid: true, value: null };
-  if (typeof field.value !== 'string' || !field.value.trim()) return { valid: false, value: null };
-  return { valid: true, value: field.value.trim() };
+  let resolved = null;
+  for (const key of keys) {
+    if (!descriptors || !Object.hasOwn(descriptors, key)) continue;
+    const value = descriptors[key].value;
+    if (value === null || value === undefined) continue;
+    if (typeof value !== 'string' || !value.trim() || value.length > 256) {
+      return { valid: false, value: null };
+    }
+    const normalized = value.trim();
+    if (resolved !== null && normalized !== resolved) return { valid: false, value: null };
+    resolved = normalized;
+  }
+  return { valid: true, value: resolved };
+}
+
+function sameStringSet(left, right) {
+  const normalizedLeft = [...new Set(left)].sort();
+  const normalizedRight = [...new Set(right)].sort();
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+function ownStringArrayAlias(descriptors, keys) {
+  let resolved = null;
+  for (const key of keys) {
+    if (!descriptors || !Object.hasOwn(descriptors, key)) continue;
+    const value = descriptors[key].value;
+    if (value === null || value === undefined) continue;
+    const values = ownArrayValues(value, 64);
+    if (!values) return { valid: false, value: null };
+    const normalized = values.map((id) => (
+      typeof id === 'string' && id.trim() && id.length <= 256 ? id.trim() : null
+    ));
+    if (normalized.some((id) => id === null)
+      || new Set(normalized).size !== normalized.length) {
+      return { valid: false, value: null };
+    }
+    if (resolved !== null && !sameStringSet(resolved, normalized)) {
+      return { valid: false, value: null };
+    }
+    resolved = normalized;
+  }
+  return { valid: true, value: resolved };
+}
+
+function goalRaceIdsFromRows(rows) {
+  const ids = [];
+  for (const goal of rows) {
+    const descriptors = ownDataRecord(goal);
+    if (!descriptors) return null;
+    const goalId = ownStringAlias(descriptors, ['raceId', 'race_id']);
+    if (!goalId.valid) return null;
+    if (goalId.value && !ids.includes(goalId.value)) ids.push(goalId.value);
+  }
+  return ids;
+}
+
+function sessionGoalBindings(session) {
+  const sessionRecord = ownDataRecord(session);
+  if (!sessionRecord) return null;
+  const bindings = [];
+  const legacyGoalId = ownStringAlias(sessionRecord, ['goalRaceId', 'goal_race_id']);
+  if (!legacyGoalId.valid) return null;
+  if (legacyGoalId.value) bindings.push(legacyGoalId.value);
+  const canonicalGoalIds = ownStringArrayAlias(sessionRecord, ['goal_ids', 'goalIds']);
+  if (!canonicalGoalIds.valid) return null;
+  if (canonicalGoalIds.value) bindings.push(...canonicalGoalIds.value);
+  return bindings;
+}
+
+function sessionBindingsFromSessions(container) {
+  const sessions = ownArrayValues(container);
+  if (!sessions) return null;
+  const bindings = [];
+  for (const session of sessions) {
+    if (session === null) continue;
+    const sessionBindings = sessionGoalBindings(session);
+    if (!sessionBindings) return null;
+    bindings.push(...sessionBindings);
+  }
+  return bindings;
+}
+
+function sessionBindingsFromDays(container) {
+  const days = ownArrayValues(container);
+  if (!days) return null;
+  const bindings = [];
+  for (const day of days) {
+    if (day === null) continue;
+    const dayRecord = ownDataRecord(day);
+    if (!dayRecord) return null;
+    const sessionsField = ownField(dayRecord, ['sessions']);
+    const dayBindings = sessionsField.present
+      ? sessionBindingsFromSessions(sessionsField.value)
+      : sessionGoalBindings(day);
+    if (!dayBindings) return null;
+    bindings.push(...dayBindings);
+  }
+  return bindings;
 }
 
 function ownDataRaceRemovalImpact(plan, raceId) {
@@ -308,20 +403,24 @@ function ownDataRaceRemovalImpact(plan, raceId) {
   const goalIds = [];
   const goalsField = ownField(root, ['goals']);
   const goalField = ownField(root, ['goal']);
-  let goalRows = [];
+  let pluralGoalIds = null;
+  let singularGoalIds = null;
   if (goalsField.present) {
-    goalRows = ownArrayValues(goalsField.value);
-    if (!goalRows) return null;
-  } else if (goalField.present) {
-    goalRows = [goalField.value];
+    const rows = ownArrayValues(goalsField.value);
+    if (!rows) return null;
+    pluralGoalIds = goalRaceIdsFromRows(rows);
+    if (!pluralGoalIds) return null;
   }
-  for (const goal of goalRows) {
-    const descriptors = ownDataRecord(goal);
-    if (!descriptors) return null;
-    const goalId = ownStringAlias(descriptors, ['raceId', 'race_id']);
-    if (!goalId.valid) return null;
-    if (goalId.value && !goalIds.includes(goalId.value)) goalIds.push(goalId.value);
+  if (goalField.present) {
+    singularGoalIds = goalRaceIdsFromRows([goalField.value]);
+    if (!singularGoalIds) return null;
   }
+  if (pluralGoalIds !== null && singularGoalIds !== null) {
+    const singularId = singularGoalIds[0] || null;
+    if ((singularId === null && pluralGoalIds.length > 0)
+      || (singularId !== null && !pluralGoalIds.includes(singularId))) return null;
+  }
+  goalIds.push(...(pluralGoalIds ?? singularGoalIds ?? []));
 
   const linkedSessionIds = [];
   const weeksField = ownField(root, ['weeks']);
@@ -332,33 +431,18 @@ function ownDataRaceRemovalImpact(plan, raceId) {
       if (week === null) continue;
       const weekRecord = ownDataRecord(week);
       if (!weekRecord) return null;
-      const daysField = ownField(weekRecord, ['days', 'sessions']);
-      if (!daysField.present) continue;
-      const days = ownArrayValues(daysField.value);
-      if (!days) return null;
-      for (const day of days) {
-        if (day === null) continue;
-        const dayRecord = ownDataRecord(day);
-        if (!dayRecord) return null;
-        const sessionsField = ownField(dayRecord, ['sessions']);
-        const sessions = sessionsField.present ? ownArrayValues(sessionsField.value) : [day];
-        if (!sessions) return null;
-        for (const session of sessions) {
-          if (session === null) continue;
-          const sessionRecord = ownDataRecord(session);
-          if (!sessionRecord) return null;
-          const sessionGoalId = ownStringAlias(sessionRecord, ['goalRaceId', 'goal_race_id']);
-          if (!sessionGoalId.valid) return null;
-          if (sessionGoalId.value) linkedSessionIds.push(sessionGoalId.value);
-          const canonicalGoalIdsField = ownField(sessionRecord, ['goal_ids', 'goalIds']);
-          if (canonicalGoalIdsField.present) {
-            const canonicalGoalIds = ownArrayValues(canonicalGoalIdsField.value, 64);
-            if (!canonicalGoalIds || canonicalGoalIds.some((id) => (
-              typeof id !== 'string' || !id.trim() || id.length > 256
-            ))) return null;
-            linkedSessionIds.push(...canonicalGoalIds.map((id) => id.trim()));
-          }
-        }
+      const daysField = ownField(weekRecord, ['days']);
+      const sessionsField = ownField(weekRecord, ['sessions']);
+      const dayBindings = daysField.present
+        ? sessionBindingsFromDays(daysField.value) : null;
+      const directBindings = sessionsField.present
+        ? sessionBindingsFromSessions(sessionsField.value) : null;
+      if ((daysField.present && !dayBindings) || (sessionsField.present && !directBindings)) return null;
+      if (daysField.present && sessionsField.present
+        && !sameStringSet(dayBindings, directBindings)) return null;
+      if (dayBindings) linkedSessionIds.push(...dayBindings);
+      if (!daysField.present && directBindings) {
+        linkedSessionIds.push(...directBindings);
       }
     }
   }

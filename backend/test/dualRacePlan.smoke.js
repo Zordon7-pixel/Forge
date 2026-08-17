@@ -2862,9 +2862,6 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(noRaceGoalPlan.goal.raceId, null);
     assert.equal(noRaceGoalPlan.goals, undefined,
       'the deterministic generator emits a singular, intentionally race-less training goal');
-    const noRaceGoalPlanRow = trainingPlans.get(currentAssignment().plan_id);
-    const priorNoRaceGoalPlanData = noRaceGoalPlanRow.plan_data;
-    const priorNoRaceGoalPlanJson = noRaceGoalPlanRow.plan_json;
     const unrelatedBlockRace = {
       id: 'unrelated-block-race', user_id: ownerId, race_name: 'Unrelated Road Race',
       race_date: '2026-11-15', event_local_date: '2026-11-15',
@@ -2872,8 +2869,26 @@ async function checkHyroxCandidateImmediateAdoption() {
       event_revision: 1, goal_revision: 1, distance_miles: 10,
       goal_time_seconds: null,
     };
+    assert.deepEqual(
+      plansRouter._test.raceRemovalImpact(noRaceGoalPlan, unrelatedBlockRace.id),
+      { linked: false, remainingRaceIds: [] },
+      'the exported removal authority directly classifies a generated race-less goal as unrelated',
+    );
+    const noRaceGoalAssignment = currentAssignment();
+    assert.ok(noRaceGoalAssignment?.id,
+      'the route exercise starts with an active assignment rather than a vacuous no-plan state');
+    const noRaceGoalPlanRow = trainingPlans.get(noRaceGoalAssignment.plan_id);
+    assert.ok(noRaceGoalPlanRow,
+      'the active assignment resolves to the persisted plan row replaced by the generated fixture');
+    const priorNoRaceGoalPlanData = noRaceGoalPlanRow.plan_data;
+    const priorNoRaceGoalPlanJson = noRaceGoalPlanRow.plan_json;
     noRaceGoalPlanRow.plan_data = JSON.stringify(noRaceGoalPlan);
     noRaceGoalPlanRow.plan_json = noRaceGoalPlanRow.plan_data;
+    assert.equal(currentAssignment().id, noRaceGoalAssignment.id);
+    assert.equal(currentAssignment().plan_id, noRaceGoalPlanRow.id);
+    assert.equal(trainingPlans.get(currentAssignment().plan_id).plan_data,
+      JSON.stringify(noRaceGoalPlan),
+      'the exported preview and DELETE read the installed generated plan through the active assignment');
     raceRows.set(unrelatedBlockRace.id, unrelatedBlockRace);
     const noRacePreviewState = {
       candidates: candidates.size,
@@ -2972,6 +2987,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         artifacts: planningArtifacts.size,
         plans: trainingPlans.size,
         assignments: userPlans.size,
+        rejections: rejectionRows.length,
         activeAssignment: currentAssignment().id,
         races: raceRows.size,
         raceOwned: raceRows.has('yonkers'),
@@ -2996,6 +3012,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         artifacts: planningArtifacts.size,
         plans: trainingPlans.size,
         assignments: userPlans.size,
+        rejections: rejectionRows.length,
         activeAssignment: currentAssignment().id,
         races: raceRows.size,
         raceOwned: raceRows.has('yonkers'),
@@ -3010,6 +3027,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         artifacts: before.artifacts,
         plans: before.plans,
         assignments: before.assignments,
+        rejections: before.rejections,
         activeAssignment: before.activeAssignment,
         races: before.races,
         raceOwned: true,
@@ -3019,6 +3037,125 @@ async function checkHyroxCandidateImmediateAdoption() {
       malformedGoalPlanRow.plan_data = validGoalPlanData;
       malformedGoalPlanRow.plan_json = validGoalPlanJson;
     }
+
+    const findBoundSession = (plan) => (plan.weeks || [])
+      .flatMap((week) => week.days || [])
+      .flatMap((day) => day.sessions || [])
+      .find((session) => Array.isArray(session.goal_ids) && session.goal_ids.length > 0);
+    const aliasConflictShapes = [
+      ['goal raceId/race_id conflict', (plan) => {
+        const goal = plan.goals.find((entry) => entry?.raceId === 'yonkers') || plan.goals[0];
+        goal.race_id = goal.raceId === 'yonkers' ? 'army' : 'yonkers';
+      }],
+      ['goals/goal container conflict', (plan) => {
+        plan.goal = { kind: 'race', raceId: 'hidden-conflicting-race' };
+      }],
+      ['session goalRaceId/goal_race_id conflict', (plan) => {
+        const session = findBoundSession(plan);
+        session.goalRaceId = 'yonkers';
+        session.goal_race_id = 'army';
+      }],
+      ['session goal_ids/goalIds conflict', (plan) => {
+        const session = findBoundSession(plan);
+        session.goal_ids = ['goal-yonkers'];
+        session.goalIds = ['goal-army'];
+      }],
+      ['week days/sessions container conflict', (plan) => {
+        const week = plan.weeks.find((entry) => Array.isArray(entry?.days));
+        week.sessions = [{ session_id: 'hidden-week-binding', goal_ids: ['goal-hidden-race'] }];
+      }],
+    ];
+    for (const [label, mutate] of aliasConflictShapes) {
+      const conflictingPlan = JSON.parse(validGoalPlanData);
+      mutate(conflictingPlan);
+      malformedGoalPlanRow.plan_data = JSON.stringify(conflictingPlan);
+      malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
+      const before = {
+        candidates: candidates.size,
+        artifacts: planningArtifacts.size,
+        plans: trainingPlans.size,
+        assignments: userPlans.size,
+        rejections: rejectionRows.length,
+        activeAssignment: currentAssignment().id,
+        races: raceRows.size,
+        raceOwned: raceRows.has('yonkers'),
+        planData: malformedGoalPlanRow.plan_data,
+      };
+      const conflictingPreview = await invoke(previewRaceRemoval, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: { ...roadClock },
+      });
+      assert.equal(conflictingPreview.statusCode, 409, label);
+      assert.equal(conflictingPreview.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED', label);
+      const conflictingDelete = await invoke(deleteRace, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: {},
+      });
+      assert.equal(conflictingDelete.statusCode, 409, label);
+      assert.equal(conflictingDelete.payload.code, 'ACTIVE_PLAN_LINKAGE_UNVERIFIED', label);
+      assert.deepEqual({
+        candidates: candidates.size,
+        artifacts: planningArtifacts.size,
+        plans: trainingPlans.size,
+        assignments: userPlans.size,
+        rejections: rejectionRows.length,
+        activeAssignment: currentAssignment().id,
+        races: raceRows.size,
+        raceOwned: raceRows.has('yonkers'),
+        planUnchanged: malformedGoalPlanRow.plan_data === before.planData,
+      }, {
+        candidates: before.candidates,
+        artifacts: before.artifacts,
+        plans: before.plans,
+        assignments: before.assignments,
+        rejections: before.rejections,
+        activeAssignment: before.activeAssignment,
+        races: before.races,
+        raceOwned: true,
+        planUnchanged: true,
+      }, `${label} cannot hide the target binding or mutate removal state`);
+      malformedGoalPlanRow.plan_data = validGoalPlanData;
+      malformedGoalPlanRow.plan_json = validGoalPlanJson;
+    }
+
+    const agreeingAliasPlan = JSON.parse(validGoalPlanData);
+    const agreeingGoal = agreeingAliasPlan.goals.find((entry) => entry?.raceId === 'yonkers')
+      || agreeingAliasPlan.goals[0];
+    agreeingGoal.race_id = agreeingGoal.raceId;
+    agreeingAliasPlan.goal = JSON.parse(JSON.stringify(agreeingGoal));
+    const agreeingSession = findBoundSession(agreeingAliasPlan);
+    agreeingSession.goalRaceId = 'yonkers';
+    agreeingSession.goal_race_id = 'yonkers';
+    agreeingSession.goalIds = [...agreeingSession.goal_ids];
+    const agreeingWeek = agreeingAliasPlan.weeks.find((entry) => Array.isArray(entry?.days));
+    agreeingWeek.sessions = agreeingWeek.days.flatMap((day) => day.sessions || [])
+      .map((session) => JSON.parse(JSON.stringify(session)));
+    assert.deepEqual(
+      plansRouter._test.raceRemovalImpact(agreeingAliasPlan, 'yonkers'),
+      { linked: true, remainingRaceIds: ['army'] },
+      'simultaneously supplied aliases and containers remain valid when their bindings agree',
+    );
+    malformedGoalPlanRow.plan_data = JSON.stringify(agreeingAliasPlan);
+    malformedGoalPlanRow.plan_json = malformedGoalPlanRow.plan_data;
+    const agreeingAliasDelete = await invoke(deleteRace, {
+      ...roadRequestBase,
+      params: { id: 'yonkers' },
+      body: {},
+    });
+    assert.equal(agreeingAliasDelete.statusCode, 409, JSON.stringify(agreeingAliasDelete.payload));
+    assert.equal(agreeingAliasDelete.payload.code, 'ACTIVE_PLAN_REBUILD_REQUIRED');
+    assert.equal(raceRows.has('yonkers'), true);
+
+    const ordinarySingleAliasPlan = JSON.parse(validGoalPlanData);
+    assert.deepEqual(
+      plansRouter._test.raceRemovalImpact(ordinarySingleAliasPlan, 'yonkers'),
+      { linked: true, remainingRaceIds: ['army'] },
+      'ordinary single-alias canonical plans retain their existing linked classification',
+    );
+    malformedGoalPlanRow.plan_data = validGoalPlanData;
+    malformedGoalPlanRow.plan_json = validGoalPlanJson;
 
     const legacyRemovalBaseline = {
       profile: clone(profile),
