@@ -9,6 +9,7 @@ const {
   minimumRunningDoseWithoutMaterialReduction,
   normalizeCrossModalReductionEvidence,
   normalizeScope,
+  runningDistanceObservation,
 } = require('../src/lib/goalBackwardRecoveryMaterial');
 const { buildGoalBackwardPlanningDecision } = require('../src/lib/goalBackwardDecisionEngine');
 const { validateGoalBackwardCandidate } = require('../src/lib/goalBackwardValidators');
@@ -1327,6 +1328,50 @@ test('C3-MAT-09', 'support enumeration uses the first whole-metre dose outside e
   assert.equal(minimumRunningDoseWithoutMaterialReduction([null, undefined, 0]), null);
   assert.equal(minimumRunningDoseWithoutMaterialReduction(['25267', [25267], true]), null);
   assert.equal(minimumRunningDoseWithoutMaterialReduction('25267'), null);
+});
+
+test('C3-MAT-10', 'persisted running distances require primitive finite nonnegative authority', () => {
+  const hooks = { coercion: 0, proxy: 0 };
+  const coercive = {
+    valueOf() { hooks.coercion += 1; return 5; },
+    toString() { hooks.coercion += 1; return '5'; },
+  };
+  const proxied = new Proxy({}, {
+    get() { hooks.proxy += 1; return 5; },
+    getOwnPropertyDescriptor() { hooks.proxy += 1; return undefined; },
+    getPrototypeOf() { hooks.proxy += 1; return Object.prototype; },
+    ownKeys() { hooks.proxy += 1; return []; },
+  });
+  for (const [label, value] of [
+    ['string', '5'],
+    ['array', [5]],
+    ['boxed', new Number(5)], // eslint-disable-line no-new-wrappers
+    ['coercive', coercive],
+    ['proxy', proxied],
+    ['object', { value: 5 }],
+    ['nan', NaN],
+    ['negative', -1],
+  ]) {
+    const observation = runningDistanceObservation({ sessions: [{
+      session_id: `hostile-${label}`,
+      scheduled_local_date: '2026-08-17',
+      workout_family: 'easy_run',
+      distance_miles: value,
+    }, {
+      session_id: `known-lower-${label}`,
+      scheduled_local_date: '2026-08-18',
+      workout_family: 'easy_run',
+      distance_m: 1000,
+    }] }, { start: '2026-08-17', end: '2026-08-23' });
+    assert.equal(observation.state, 'UNKNOWN', label);
+    assert.equal(observation.distance_m, null, label);
+    assert.equal(observation.reason, 'RUNNING_DISTANCE_MALFORMED', label);
+  }
+  assert.deepEqual(hooks, { coercion: 0, proxy: 0 },
+    'distance classification never executes value coercion or Proxy traps');
+  assert.deepEqual(runningDistanceObservation({ sessions: [runSession('primitive-five', 5)] }, {
+    start: '2026-08-17', end: '2026-08-23',
+  }), { state: 'KNOWN', distance_m: milesToMeters(5), reason: null });
 });
 
 test('C3-UNKNOWN-01', 'unknown load cannot become zero or authorize either increase or reduction', () => {

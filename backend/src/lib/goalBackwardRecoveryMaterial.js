@@ -193,14 +193,36 @@ function sessionRole(session = {}) {
   return String(session.role ?? session.session_role ?? session.sessionRole ?? '').toUpperCase();
 }
 
-function distanceMeters(session = {}) {
-  const direct = finiteNonnegative(
-    session.running_distance_m ?? session.distance_m ?? session.distanceMeters
-    ?? session.derived_totals?.distance_m,
-  );
-  if (direct !== null) return direct;
-  const miles = finiteNonnegative(session.distance_miles ?? session.distanceMiles);
-  return miles === null ? null : miles * 1609.344;
+function primitiveDistance(value, multiplier = 1) {
+  if (value === null || value === undefined) return { state: 'MISSING', distance_m: null };
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0
+    || value > Number.MAX_SAFE_INTEGER / multiplier) {
+    return { state: 'MALFORMED', distance_m: null };
+  }
+  return { state: 'KNOWN', distance_m: value * multiplier };
+}
+
+function distanceObservation(session = {}) {
+  const observations = [
+    session.running_distance_m,
+    session.distance_m,
+    session.distanceMeters,
+  ].map((value) => primitiveDistance(value));
+  const derivedTotals = session.derived_totals;
+  if (derivedTotals !== null && derivedTotals !== undefined) {
+    if (!derivedTotals || typeof derivedTotals !== 'object' || Array.isArray(derivedTotals)) {
+      return { state: 'MALFORMED', distance_m: null };
+    }
+    observations.push(primitiveDistance(derivedTotals.distance_m));
+  }
+  observations.push(...[session.distance_miles, session.distanceMiles]
+    .map((value) => primitiveDistance(value, 1609.344)));
+  if (observations.some((observation) => observation.state === 'MALFORMED')) {
+    return { state: 'MALFORMED', distance_m: null };
+  }
+  const known = observations.find((observation) => observation.state === 'KNOWN');
+  if (known) return known;
+  return { state: 'MISSING', distance_m: null };
 }
 
 function runningDistanceObservation(container = {}, options = {}) {
@@ -220,13 +242,16 @@ function runningDistanceObservation(container = {}, options = {}) {
     if ((start && date < start) || (end && date > end)) continue;
     running.push(session);
   }
-  const distances = running.map(distanceMeters);
-  if (distances.some((distance) => distance === null)) {
+  const distances = running.map(distanceObservation);
+  if (distances.some((distance) => distance.state === 'MALFORMED')) {
+    return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DISTANCE_MALFORMED' };
+  }
+  if (distances.some((distance) => distance.state !== 'KNOWN')) {
     return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DISTANCE_UNKNOWN' };
   }
   return {
     state: 'KNOWN',
-    distance_m: round(distances.reduce((sum, distance) => sum + distance, 0), 3),
+    distance_m: round(distances.reduce((sum, distance) => sum + distance.distance_m, 0), 3),
     reason: null,
   };
 }

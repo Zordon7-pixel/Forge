@@ -1757,11 +1757,52 @@ async function checkHyroxCandidateImmediateAdoption() {
         `${label} cannot authorize canonical removal carry-forward`,
       );
     }
-    const fractionalRequiredDose = plansRouter._test.goalBackwardRequiredRunningDoseReceipt({
-      minimum_weekly_demand_m: 22852.685,
-      material_preservation_m: null,
-      removal_active_plan_m: null,
+    const requiredDoseBoundary = plansRouter._test.goalBackwardRequiredRunningDoseReceipt;
+    const boundaryHooks = { getter: 0, proxy: 0 };
+    const accessorContainer = {};
+    Object.defineProperty(accessorContainer, 'minimum_weekly_demand_m', {
+      enumerable: true,
+      get() { boundaryHooks.getter += 1; return 13; },
     });
+    const inheritedContainer = Object.create({ minimum_weekly_demand_m: 13 });
+    const proxiedContainer = new Proxy({ minimum_weekly_demand_m: 13 }, {
+      get() { boundaryHooks.proxy += 1; return 13; },
+      getOwnPropertyDescriptor() { boundaryHooks.proxy += 1; return undefined; },
+      getPrototypeOf() { boundaryHooks.proxy += 1; return Object.prototype; },
+      has() { boundaryHooks.proxy += 1; return true; },
+      ownKeys() { boundaryHooks.proxy += 1; return ['minimum_weekly_demand_m']; },
+    });
+    const revocableContainer = Proxy.revocable({ minimum_weekly_demand_m: 13 }, {});
+    revocableContainer.revoke();
+    const symbolContainer = { minimum_weekly_demand_m: 13, [Symbol('hostile')]: 5 };
+    const nullPrototypeContainer = Object.assign(Object.create(null), { minimum_weekly_demand_m: 13 });
+    for (const hostileContainer of [
+      { minimum_weekly_demand_m: 13 },
+      accessorContainer,
+      inheritedContainer,
+      proxiedContainer,
+      revocableContainer.proxy,
+      { minimum_weekly_demand_m: 13, unexpected: true },
+      symbolContainer,
+      nullPrototypeContainer,
+      Object.assign([], { minimum_weekly_demand_m: 13 }),
+      null,
+      '13',
+    ]) {
+      const closedReceipt = requiredDoseBoundary(hostileContainer);
+      assert.equal(closedReceipt.valid, false);
+      assert.deepEqual(closedReceipt.reason_codes, [
+        'REQUIRED_RUNNING_DOSE_INVALID',
+        'REQUIRED_RUNNING_DOSE_INPUT_UNTRUSTED',
+      ]);
+    }
+    assert.deepEqual(boundaryHooks, { getter: 0, proxy: 0 },
+      'the closed helper boundary executes no getters or Proxy traps');
+
+    const fractionalRequiredDose = plansRouter._test
+      .goalBackwardRequiredRunningDoseReceiptFromServerValuesForTest(
+        22852.685, null, null, 'NOT_APPLICABLE', null,
+      );
     assert.deepEqual({ ...fractionalRequiredDose, receipt_hash: undefined }, {
       schema_version: 1,
       valid: true,
@@ -1769,25 +1810,37 @@ async function checkHyroxCandidateImmediateAdoption() {
       raw_required_running_m: 22852.685,
       required_running_m: 22853,
       source_fields: ['minimum_weekly_demand_m'],
+      removal_active_plan_state: 'NOT_APPLICABLE',
+      removal_active_plan_reason: null,
       reason_codes: ['REQUIRED_RUNNING_DOSE_CEILED'],
       receipt_hash: undefined,
     });
     assert.match(fractionalRequiredDose.receipt_hash, /^sha256:[a-f0-9]{64}$/);
-    const exactRequiredDose = plansRouter._test.goalBackwardRequiredRunningDoseReceipt({
-      minimum_weekly_demand_m: 22853,
-    });
+    const exactRequiredDose = plansRouter._test
+      .goalBackwardRequiredRunningDoseReceiptFromServerValuesForTest(
+        22853, null, null, 'NOT_APPLICABLE', null,
+      );
     assert.equal(exactRequiredDose.required_running_m, 22853);
     assert.deepEqual(exactRequiredDose.reason_codes, []);
     for (const invalidValue of ['22852.685', [22852.685], NaN, -1, Number.MAX_SAFE_INTEGER + 1]) {
-      const invalidRequiredDose = plansRouter._test.goalBackwardRequiredRunningDoseReceipt({
-        removal_active_plan_m: invalidValue,
-      });
+      const invalidRequiredDose = plansRouter._test
+        .goalBackwardRequiredRunningDoseReceiptFromServerValuesForTest(
+          null, null, invalidValue, 'KNOWN', null,
+        );
       assert.equal(invalidRequiredDose.valid, false);
       assert.equal(invalidRequiredDose.raw_required_running_m, null);
       assert.equal(invalidRequiredDose.required_running_m, null);
       assert.deepEqual(invalidRequiredDose.reason_codes, ['REQUIRED_RUNNING_DOSE_INVALID']);
       assert.match(invalidRequiredDose.receipt_hash, /^sha256:[a-f0-9]{64}$/);
     }
+    const unknownActiveRemovalDose = plansRouter._test
+      .goalBackwardRequiredRunningDoseReceiptFromServerValuesForTest(
+        1000, 1000, null, 'UNKNOWN', 'RUNNING_DISTANCE_MALFORMED',
+      );
+    assert.equal(unknownActiveRemovalDose.valid, false);
+    assert.equal(unknownActiveRemovalDose.required_running_m, null);
+    assert.ok(unknownActiveRemovalDose.reason_codes.includes('REQUIRED_RUNNING_DOSE_INVALID'));
+    assert.ok(unknownActiveRemovalDose.reason_codes.includes('REMOVAL_ACTIVE_PLAN_RUNNING_DISTANCE_MALFORMED'));
     const preview = routeHandler(plansRouter, '/generate-for-races', 'post');
     const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
     const reject = routeHandler(plansRouter, '/candidates/:candidateId/reject', 'post');
@@ -2843,23 +2896,77 @@ async function checkHyroxCandidateImmediateAdoption() {
       assert.deepEqual(legacyInspection.required_running_dose_receipt.reason_codes,
         ['REQUIRED_RUNNING_DOSE_CEILED']);
 
-      const malformedLegacyPlan = JSON.parse(legacyRoadPlanRow.plan_data);
-      const malformedLegacyRun = (malformedLegacyPlan.weeks || []).flatMap((week) => (
-        (week.days || []).flatMap((day) => day.sessions || [])
-      )).find((session) => typeof session.distance_miles === 'number');
-      malformedLegacyRun.distance_miles = { value: malformedLegacyRun.distance_miles };
-      legacyRoadPlanRow.plan_data = JSON.stringify(malformedLegacyPlan);
-      legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
-      const stateBeforeMalformedLegacyRemoval = mutationState();
-      const malformedLegacyRemoval = await invoke(previewRaceRemoval, {
-        ...roadRequestBase,
-        params: { id: 'yonkers' },
-        body: { ...roadClock },
-      });
-      assert.equal(malformedLegacyRemoval.statusCode, 409, JSON.stringify(malformedLegacyRemoval.payload));
-      assert.equal(malformedLegacyRemoval.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED');
-      assert.equal(mutationState(), stateBeforeMalformedLegacyRemoval,
-        'an invalid legacy miles-only running observation writes no removal state');
+      const malformedDistanceHooks = { coercion: 0, proxy: 0 };
+      const malformedDistanceValues = [
+        ['string', () => '5'],
+        ['array', () => [5]],
+        ['boxed', () => new Number(5)], // eslint-disable-line no-new-wrappers
+        ['coercive', () => ({
+          valueOf() { malformedDistanceHooks.coercion += 1; return 5; },
+          toString() { malformedDistanceHooks.coercion += 1; return '5'; },
+        })],
+        ['proxy', () => new Proxy({}, {
+          get() { malformedDistanceHooks.proxy += 1; return 5; },
+          getOwnPropertyDescriptor() { malformedDistanceHooks.proxy += 1; return undefined; },
+          getPrototypeOf() { malformedDistanceHooks.proxy += 1; return Object.prototype; },
+          ownKeys() { malformedDistanceHooks.proxy += 1; return []; },
+        })],
+        ['object', () => ({ value: 5 })],
+        ['nan', () => NaN],
+        ['negative', () => -1],
+      ];
+      for (const [label, makeValue] of malformedDistanceValues) {
+        const malformedLegacyPlan = JSON.parse(JSON.stringify(legacyRoadPlan));
+        const malformedLegacyRun = (malformedLegacyPlan.weeks || []).flatMap((week) => (
+          (week.days || []).flatMap((day) => day.sessions || [])
+        )).find((session) => typeof session.distance_miles === 'number');
+        malformedLegacyRun.distance_miles = makeValue();
+        legacyRoadPlanRow.plan_data = malformedLegacyPlan;
+        legacyRoadPlanRow.plan_json = malformedLegacyPlan;
+        const stateBeforeMalformedLegacyRemoval = {
+          candidates: candidates.size,
+          artifacts: planningArtifacts.size,
+          plans: trainingPlans.size,
+          assignments: userPlans.size,
+          activeAssignment: currentAssignment().id,
+          activePlanRow: trainingPlans.get(currentAssignment().plan_id),
+          activePlanData: trainingPlans.get(currentAssignment().plan_id).plan_data,
+          yonkersOwned: raceRows.has('yonkers'),
+        };
+        let malformedLegacyError = null;
+        try {
+          await plansRouter._test.previewRaceRemovalForUser(ownerId, 'yonkers', { ...roadClock });
+        } catch (error) {
+          malformedLegacyError = error;
+        }
+        assert.equal(malformedLegacyError?.code, 'GOAL_BACKWARD_GENERATION_FAILED', label);
+        assert.equal(malformedLegacyError?.details?.reason_code, 'REQUIRED_RUNNING_DOSE_INVALID', label);
+        assert.deepEqual({
+          candidates: candidates.size,
+          artifacts: planningArtifacts.size,
+          plans: trainingPlans.size,
+          assignments: userPlans.size,
+          activeAssignment: currentAssignment().id,
+          activePlanRowUnchanged:
+            trainingPlans.get(currentAssignment().plan_id) === stateBeforeMalformedLegacyRemoval.activePlanRow,
+          activePlanDataUnchanged:
+            trainingPlans.get(currentAssignment().plan_id).plan_data
+              === stateBeforeMalformedLegacyRemoval.activePlanData,
+          yonkersOwned: raceRows.has('yonkers'),
+        }, {
+          candidates: stateBeforeMalformedLegacyRemoval.candidates,
+          artifacts: stateBeforeMalformedLegacyRemoval.artifacts,
+          plans: stateBeforeMalformedLegacyRemoval.plans,
+          assignments: stateBeforeMalformedLegacyRemoval.assignments,
+          activeAssignment: stateBeforeMalformedLegacyRemoval.activeAssignment,
+          activePlanRowUnchanged: true,
+          activePlanDataUnchanged: true,
+          yonkersOwned: stateBeforeMalformedLegacyRemoval.yonkersOwned,
+        },
+        `${label} legacy distance writes no candidate, artifact, plan, assignment, or race state`);
+      }
+      assert.deepEqual(malformedDistanceHooks, { coercion: 0, proxy: 0 },
+        'the removal route never executes persisted distance coercion hooks');
       legacyRoadPlanRow.plan_data = JSON.stringify(legacyRoadPlan);
       legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
 

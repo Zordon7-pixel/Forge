@@ -2608,20 +2608,95 @@ function goalBackwardSupportRequirement(primaryRoles, family) {
   return primaryRoles[0]?.requirement_id || null;
 }
 
-function goalBackwardRequiredRunningDoseReceipt(input = {}) {
+const goalBackwardRequiredRunningDoseSnapshots = new WeakSet();
+
+function goalBackwardRequiredRunningDoseSnapshot(
+  minimumWeeklyDemandM,
+  materialPreservationM,
+  removalActivePlanM,
+  removalActivePlanState = 'NOT_APPLICABLE',
+  removalActivePlanReason = null,
+) {
+  const snapshot = Object.create(null);
+  Object.defineProperties(snapshot, {
+    minimum_weekly_demand_m: { value: minimumWeeklyDemandM, enumerable: true },
+    material_preservation_m: { value: materialPreservationM, enumerable: true },
+    removal_active_plan_m: { value: removalActivePlanM, enumerable: true },
+    removal_active_plan_state: { value: removalActivePlanState, enumerable: true },
+    removal_active_plan_reason: { value: removalActivePlanReason, enumerable: true },
+  });
+  Object.freeze(snapshot);
+  goalBackwardRequiredRunningDoseSnapshots.add(snapshot);
+  return snapshot;
+}
+
+function invalidRequiredRunningDoseReceipt(reasonCodes, removalState = 'UNTRUSTED', removalReason = null) {
+  const receipt = {
+    schema_version: 1,
+    valid: false,
+    integralization_method: 'CEIL_TO_WHOLE_METER',
+    raw_required_running_m: null,
+    required_running_m: null,
+    source_fields: Object.freeze([]),
+    removal_active_plan_state: removalState,
+    removal_active_plan_reason: removalReason,
+    reason_codes: Object.freeze([...reasonCodes]),
+  };
+  return Object.freeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
+}
+
+function goalBackwardRequiredRunningDoseReceipt(input) {
+  let trusted = false;
+  try {
+    trusted = typeof input === 'object'
+      && input !== null
+      && goalBackwardRequiredRunningDoseSnapshots.has(input);
+  } catch {
+    trusted = false;
+  }
+  if (!trusted) {
+    return invalidRequiredRunningDoseReceipt([
+      'REQUIRED_RUNNING_DOSE_INVALID',
+      'REQUIRED_RUNNING_DOSE_INPUT_UNTRUSTED',
+    ]);
+  }
   const sources = [
-    ['minimum_weekly_demand_m', input?.minimum_weekly_demand_m],
-    ['material_preservation_m', input?.material_preservation_m],
-    ['removal_active_plan_m', input?.removal_active_plan_m],
+    ['minimum_weekly_demand_m', input.minimum_weekly_demand_m],
+    ['material_preservation_m', input.material_preservation_m],
+    ['removal_active_plan_m', input.removal_active_plan_m],
   ];
   const provided = sources.filter(([, value]) => value !== null && value !== undefined);
   const sourceFields = provided.map(([field]) => field);
-  const invalid = provided.some(([, value]) => (
+  const invalidSource = provided.some(([, value]) => (
     typeof value !== 'number' || !Number.isFinite(value) || value < 0
       || value > Number.MAX_SAFE_INTEGER
   ));
-  const rawRequiredRunningM = invalid
-    ? null : Math.max(0, ...provided.map(([, value]) => value));
+  const removalState = input.removal_active_plan_state;
+  const removalReason = input.removal_active_plan_reason;
+  const removalStateValid = ['NOT_APPLICABLE', 'KNOWN', 'UNKNOWN'].includes(removalState);
+  const removalContractInvalid = !removalStateValid
+    || (removalState === 'KNOWN' && (
+      input.removal_active_plan_m === null || input.removal_active_plan_m === undefined
+        || removalReason !== null
+    ))
+    || (removalState === 'NOT_APPLICABLE' && (
+      (input.removal_active_plan_m !== null && input.removal_active_plan_m !== undefined)
+        || removalReason !== null
+    ));
+  const removalUnknown = removalState === 'UNKNOWN';
+  const invalid = invalidSource || removalContractInvalid || removalUnknown;
+  if (invalid) {
+    const reasonCodes = ['REQUIRED_RUNNING_DOSE_INVALID'];
+    if (removalUnknown) {
+      reasonCodes.push(removalReason === 'RUNNING_DISTANCE_MALFORMED'
+        ? 'REMOVAL_ACTIVE_PLAN_RUNNING_DISTANCE_MALFORMED'
+        : 'REMOVAL_ACTIVE_PLAN_RUNNING_DISTANCE_UNKNOWN');
+    } else if (removalContractInvalid) {
+      reasonCodes.push('REMOVAL_ACTIVE_PLAN_RUNNING_DISTANCE_CONTRACT_INVALID');
+    }
+    return invalidRequiredRunningDoseReceipt(reasonCodes, removalState, removalReason);
+  }
+  const rawRequiredRunningM = Math.max(0, ...provided.map(([, value]) => value));
   const requiredRunningM = rawRequiredRunningM === null ? null : Math.ceil(rawRequiredRunningM);
   const valid = Number.isSafeInteger(requiredRunningM) && requiredRunningM >= 0;
   const reasonCodes = !valid
@@ -2634,9 +2709,15 @@ function goalBackwardRequiredRunningDoseReceipt(input = {}) {
     raw_required_running_m: valid ? rawRequiredRunningM : null,
     required_running_m: valid ? requiredRunningM : null,
     source_fields: Object.freeze(sourceFields),
+    removal_active_plan_state: removalState,
+    removal_active_plan_reason: removalReason,
     reason_codes: Object.freeze(reasonCodes),
   };
   return Object.freeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
+}
+
+function goalBackwardRequiredRunningDoseReceiptFromServerValuesForTest(...values) {
+  return goalBackwardRequiredRunningDoseReceipt(goalBackwardRequiredRunningDoseSnapshot(...values));
 }
 
 function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumRunningM, options = {}) {
@@ -2939,13 +3020,19 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         observedLowerBoundWeeklyMiles === null
           ? null : Math.round(observedLowerBoundWeeklyMiles * 1609.344),
       ]) : null;
-    requiredRunningDoseReceipt = goalBackwardRequiredRunningDoseReceipt({
-      minimum_weekly_demand_m: decision.minimum_weekly_demand?.running_m ?? null,
-      material_preservation_m: materialPreservationMinimumRunningM,
-      removal_active_plan_m:
-        state?.request?.operation === 'remove_race' && activeRunningObservation?.state === 'KNOWN'
+    const activeRemovalSourceRequired = state?.request?.operation === 'remove_race'
+      && Boolean(activeAppliedPlan);
+    requiredRunningDoseReceipt = goalBackwardRequiredRunningDoseReceipt(
+      goalBackwardRequiredRunningDoseSnapshot(
+        decision.minimum_weekly_demand?.running_m ?? null,
+        materialPreservationMinimumRunningM,
+        activeRemovalSourceRequired && activeRunningObservation?.state === 'KNOWN'
           ? activeRunningObservation.distance_m : null,
-    });
+        activeRemovalSourceRequired
+          ? (activeRunningObservation?.state || 'UNKNOWN') : 'NOT_APPLICABLE',
+        activeRemovalSourceRequired ? (activeRunningObservation?.reason || null) : null,
+      ),
+    );
     if (!requiredRunningDoseReceipt.valid) {
       const error = new Error('Required running dose could not be normalized safely.');
       error.code = 'REQUIRED_RUNNING_DOSE_INVALID';
@@ -3708,12 +3795,14 @@ function isRevisionedGoalBackedRequest(userId, state, request = state?.request) 
   ));
 }
 
-function goalBackwardGenerationFailed() {
+function goalBackwardGenerationFailed(reasonCode = 'CANDIDATE_NOT_SELECTED') {
+  const boundedReasonCode = reasonCode === 'REQUIRED_RUNNING_DOSE_INVALID'
+    ? reasonCode : 'CANDIDATE_NOT_SELECTED';
   return candidateError(
     409,
     'GOAL_BACKWARD_GENERATION_FAILED',
     'The goal-backed plan could not be completed. No candidate was saved; review the goal or training inputs and preview again.',
-    { reason_code: 'CANDIDATE_NOT_SELECTED' },
+    { reason_code: boundedReasonCode },
   );
 }
 
@@ -3800,6 +3889,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     goalBackwardMode = 'off';
   }
   let goalBackwardShadow = null;
+  let goalBackwardFailure = null;
   await maybeComputeGoalBackwardShadowDiagnostics({
     mode: goalBackwardMode,
     response,
@@ -3813,6 +3903,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
         }, goalBackwardDependencies);
       } catch (error) {
         goalBackwardShadow = null;
+        goalBackwardFailure = error;
         if (typeof goalBackwardDependencies.inspectFailure === 'function') goalBackwardDependencies.inspectFailure(error);
       }
     },
@@ -3828,7 +3919,9 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       surfaceCapability: 'BLOCKED',
       sink: goalBackwardDependencies.telemetrySink,
     });
-    if (['preview', 'on'].includes(goalBackwardMode)) throw goalBackwardGenerationFailed();
+    if (['preview', 'on'].includes(goalBackwardMode)) {
+      throw goalBackwardGenerationFailed(goalBackwardFailure?.code);
+    }
   }
   if (['preview', 'on'].includes(goalBackwardMode)) {
     const applicablePlan = applicableGoalBackwardPlan(normalized.plan, goalBackwardShadow);
@@ -4203,11 +4296,18 @@ function assertCandidatePlanningDateCurrent(row, now = new Date()) {
 function raceRemovalImpact(plan = {}, raceId) {
   const goalRows = Array.isArray(plan.goals) ? plan.goals : [plan.goal].filter(Boolean);
   const goalIds = [...new Set(goalRows
-    .map((goal) => String(goal?.raceId || goal?.race_id || '').trim())
+    .map((goal) => {
+      const value = typeof goal?.raceId === 'string' ? goal.raceId : goal?.race_id;
+      return typeof value === 'string' ? value.trim() : '';
+    })
     .filter(Boolean))];
   const sessionIds = (plan.weeks || []).flatMap((week) => planSchema.getDayEntries(week))
-    .flatMap((day) => planSchema.daySessions(day))
-    .map((session) => String(session.goalRaceId || session.goal_race_id || '').trim())
+    .flatMap((day) => (Array.isArray(day?.sessions) ? day.sessions : [day]))
+    .map((session) => {
+      const value = typeof session?.goalRaceId === 'string'
+        ? session.goalRaceId : session?.goal_race_id;
+      return typeof value === 'string' ? value.trim() : '';
+    })
     .filter(Boolean);
   const wanted = String(raceId || '');
   return {
@@ -6827,6 +6927,7 @@ router._test = {
   goalBackwardSafetyState,
   goalBackwardRemovalCarryForwardMaterial,
   goalBackwardRequiredRunningDoseReceipt,
+  goalBackwardRequiredRunningDoseReceiptFromServerValuesForTest,
   goalBackwardTrainingAge,
   buildCanonicalSurfaceManifest,
   buildGoalBackwardArtifacts,
