@@ -1482,6 +1482,12 @@ async function checkHyroxCandidateImmediateAdoption() {
   const planningArtifacts = new Map();
   const rejectionRows = [];
   let fixedNowIso = '2026-08-14T16:00:00.000Z';
+  let databaseJsonShape = 'serialized';
+
+  function databaseJsonValue(value) {
+    return databaseJsonShape === 'postgres' && typeof value === 'string'
+      ? JSON.parse(value) : value;
+  }
 
   class FixedDate extends RealDate {
     constructor(...args) {
@@ -1540,6 +1546,8 @@ async function checkHyroxCandidateImmediateAdoption() {
         && row.artifact_kind === 'canonical_session_set'
       ));
       if (!candidate || !artifact) return null;
+      const assignment = userPlans.get(candidate.applied_user_plan_id);
+      if (!assignment || assignment.status !== 'active') return null;
       return {
         artifact_id: artifact.id,
         artifact_user_id: artifact.user_id,
@@ -1550,13 +1558,18 @@ async function checkHyroxCandidateImmediateAdoption() {
         artifact_policy_version: artifact.policy_version,
         artifact_revision: artifact.revision,
         artifact_content_hash: artifact.content_hash,
-        artifact_payload_json: artifact.payload_json,
+        artifact_payload_json: databaseJsonValue(artifact.payload_json),
         candidate_id: candidate.id,
         candidate_decision_id: candidate.decision_id,
         candidate_selected_hash: candidate.selected_candidate_hash,
-        candidate_material_change_json: candidate.material_change_json,
+        candidate_material_change_json: databaseJsonValue(candidate.material_change_json),
         candidate_applied_user_plan_id: candidate.applied_user_plan_id,
         candidate_status: candidate.status,
+        assignment_id: assignment.id,
+        assignment_user_id: assignment.user_id,
+        assignment_plan_id: assignment.plan_id,
+        assignment_plan_revision: assignment.plan_version,
+        assignment_status: assignment.status,
       };
     }
     if (sql.includes('FROM planning_pipeline_artifacts') && sql.includes("artifact_kind='planning_decision'")) {
@@ -4140,6 +4153,19 @@ async function checkHyroxCandidateImmediateAdoption() {
         },
       },
     });
+    const serializedCarryPreview = await goalExpansionRequest();
+    assert.equal(serializedCarryPreview.statusCode, 201,
+      `serialized JSON storage remains supported: ${JSON.stringify(serializedCarryPreview.payload)}`);
+    restoreCarryForwardBaseline();
+    databaseJsonShape = 'postgres';
+    const postgresCarrySource = await get(
+      "SELECT joined JSONB source FROM plan_generation_candidates candidate JOIN planning_pipeline_artifacts canonical ON canonical.artifact_kind='canonical_session_set'",
+      [ownerId, currentAssignment().id],
+    );
+    assert.equal(Object.getPrototypeOf(postgresCarrySource.artifact_payload_json), Object.prototype,
+      'the route fixture reproduces node-postgres JSONB object rows');
+    assert.equal(Object.getPrototypeOf(postgresCarrySource.candidate_material_change_json), Object.prototype,
+      'the material-change fixture reproduces node-postgres JSONB object rows');
     const writeCardinality = () => ({
       races: raceRows.size,
       raceIds: [...raceRows.keys()].sort(),
@@ -4249,6 +4275,9 @@ async function checkHyroxCandidateImmediateAdoption() {
     await assertUnauthenticatedCarryRejected('stale applied candidate linkage', (rows) => {
       rows.candidate.applied_user_plan_id = 'stale-assignment';
     });
+    await assertUnauthenticatedCarryRejected('stale independent assignment revision', (rows) => {
+      rows.assignment.plan_version += 1;
+    });
     await assertUnauthenticatedCarryRejected('accessor artifact payload', (rows, hooks) => {
       const payload = {};
       Object.defineProperty(payload, 'sessions', {
@@ -4265,6 +4294,22 @@ async function checkHyroxCandidateImmediateAdoption() {
     });
     await assertUnauthenticatedCarryRejected('Proxy artifact payload', (rows, hooks) => {
       rows.artifact.payload_json = new Proxy({}, {
+        get() { hooks.proxy += 1; return undefined; },
+        getOwnPropertyDescriptor() { hooks.proxy += 1; return undefined; },
+        getPrototypeOf() { hooks.proxy += 1; return Object.prototype; },
+        ownKeys() { hooks.proxy += 1; return []; },
+      });
+    });
+    await assertUnauthenticatedCarryRejected('accessor material-change JSONB', (rows, hooks) => {
+      const material = {};
+      Object.defineProperty(material, 'candidate_prescription_hash', {
+        enumerable: true,
+        get() { hooks.getter += 1; return `sha256:${'a'.repeat(64)}`; },
+      });
+      rows.candidate.material_change_json = material;
+    });
+    await assertUnauthenticatedCarryRejected('Proxy material-change JSONB', (rows, hooks) => {
+      rows.candidate.material_change_json = new Proxy({}, {
         get() { hooks.proxy += 1; return undefined; },
         getOwnPropertyDescriptor() { hooks.proxy += 1; return undefined; },
         getPrototypeOf() { hooks.proxy += 1; return Object.prototype; },

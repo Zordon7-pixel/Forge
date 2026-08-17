@@ -2260,14 +2260,22 @@ async function loadActiveCanonicalCarryForwardSource(tx, userId, active) {
             candidate.selected_candidate_hash AS candidate_selected_hash,
             candidate.material_change_json AS candidate_material_change_json,
             candidate.applied_user_plan_id AS candidate_applied_user_plan_id,
-            candidate.status AS candidate_status
+            candidate.status AS candidate_status,
+            assignment.id AS assignment_id,
+            assignment.user_id AS assignment_user_id,
+            assignment.plan_id AS assignment_plan_id,
+            assignment.plan_version AS assignment_plan_revision,
+            assignment.status AS assignment_status
      FROM plan_generation_candidates candidate
      JOIN planning_pipeline_artifacts canonical
        ON canonical.user_id=candidate.user_id
       AND canonical.plan_generation_candidate_id=candidate.id
       AND canonical.artifact_kind='canonical_session_set'
+     JOIN user_plans assignment
+       ON assignment.id=candidate.applied_user_plan_id
+      AND assignment.user_id=candidate.user_id
      WHERE candidate.user_id=? AND candidate.applied_user_plan_id=?
-       AND candidate.status='applied'
+       AND candidate.status='applied' AND assignment.status='active'
      ORDER BY candidate.applied_at DESC, canonical.revision DESC, canonical.created_at DESC
      LIMIT 1`,
     [userId, appliedUserPlanId],
@@ -2681,6 +2689,11 @@ const ACTIVE_CANONICAL_CARRY_SOURCE_KEYS = Object.freeze([
   'artifact_revision', 'artifact_content_hash', 'artifact_payload_json',
   'candidate_id', 'candidate_decision_id', 'candidate_selected_hash',
   'candidate_material_change_json', 'candidate_applied_user_plan_id', 'candidate_status',
+  'assignment_id', 'assignment_user_id', 'assignment_plan_id',
+  'assignment_plan_revision', 'assignment_status',
+]);
+const ACTIVE_CANONICAL_CARRY_JSON_KEYS = new Set([
+  'artifact_payload_json', 'candidate_material_change_json',
 ]);
 
 function exactHashIdentity(value) {
@@ -2689,8 +2702,7 @@ function exactHashIdentity(value) {
 
 function storedOwnJsonSnapshot(value) {
   try {
-    if (typeof value !== 'string') return null;
-    const parsed = JSON.parse(value);
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
     return ownDataJsonSnapshot(parsed);
   } catch (_error) {
     return null;
@@ -2699,18 +2711,21 @@ function storedOwnJsonSnapshot(value) {
 
 function ownStoredCanonicalCarrySource(value) {
   try {
-    if (!value || typeof value !== 'object' || Array.isArray(value)
-      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))
-      || Object.getOwnPropertySymbols(value).length) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Object.keys(descriptors);
+    const snapshot = ownDataJsonSnapshot(value, { maximumDepth: 64, maximumNodes: 50000 });
+    if (!snapshot || Array.isArray(snapshot)) return null;
+    const keys = Object.keys(snapshot);
     if (keys.length !== ACTIVE_CANONICAL_CARRY_SOURCE_KEYS.length
       || keys.some((key) => !ACTIVE_CANONICAL_CARRY_SOURCE_KEYS.includes(key))) return null;
     const source = Object.create(null);
     for (const key of ACTIVE_CANONICAL_CARRY_SOURCE_KEYS) {
-      const descriptor = descriptors[key];
-      if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) return null;
-      const field = descriptor.value;
+      if (!Object.hasOwn(snapshot, key)) return null;
+      const field = snapshot[key];
+      if (ACTIVE_CANONICAL_CARRY_JSON_KEYS.has(key)) {
+        const json = storedOwnJsonSnapshot(field);
+        if (!json || Array.isArray(json)) return null;
+        source[key] = json;
+        continue;
+      }
       if (field !== null && !['string', 'number', 'boolean'].includes(typeof field)) return null;
       source[key] = field;
     }
@@ -2768,7 +2783,7 @@ function authenticatedGoalExpansionSessionSet({
   const planSessionSetHash = exactHashIdentity(plan.canonical_session_set_hash);
   const expectedPrescriptionHash = exactHashIdentity(materialChange.candidate_prescription_hash);
   const actualPrescriptionHash = exactHashIdentity(canonicalPrescriptionHash(plan));
-  const activePlanVersion = state.activePlan?.planVersion;
+  const assignmentPlanRevision = source.assignment_plan_revision;
   const identityChecks = [
     ['SESSION_SET_INVALID', validation.valid],
     ['OWNER_ID_INVALID', typeof userId === 'string' && Boolean(userId)],
@@ -2781,7 +2796,13 @@ function authenticatedGoalExpansionSessionSet({
     ['ARTIFACT_REVISION_INVALID', Number.isSafeInteger(source.artifact_revision)
       && source.artifact_revision >= 1],
     ['CANDIDATE_STATUS_MISMATCH', source.candidate_status === 'applied'],
-    ['ASSIGNMENT_ID_MISMATCH', source.candidate_applied_user_plan_id === state.activePlan?.userPlanId],
+    ['ASSIGNMENT_ID_MISMATCH', source.assignment_id === source.candidate_applied_user_plan_id
+      && source.assignment_id === state.activePlan?.userPlanId],
+    ['ASSIGNMENT_OWNER_MISMATCH', source.assignment_user_id === userId],
+    ['ASSIGNMENT_PLAN_MISMATCH', source.assignment_plan_id === state.activePlan?.trainingPlanId],
+    ['ASSIGNMENT_STATUS_MISMATCH', source.assignment_status === 'active'],
+    ['ASSIGNMENT_REVISION_INVALID', Number.isSafeInteger(assignmentPlanRevision)
+      && assignmentPlanRevision >= 1],
     ['ARTIFACT_CANDIDATE_MISMATCH', source.artifact_candidate_id === source.candidate_id],
     ['ARTIFACT_DECISION_MISMATCH', source.artifact_decision_id === source.candidate_decision_id
       && source.artifact_decision_id === sessionSet.decision_id],
@@ -2797,7 +2818,8 @@ function authenticatedGoalExpansionSessionSet({
     ['PLAN_SCHEMA_MISMATCH', plan.canonical_workout_schema_version === 1],
     ['PLAN_IDENTITY_MISMATCH', plan.plan_id === sessionSet.plan_id
       && plan.plan_revision === sessionSet.plan_revision
-      && plan.plan_revision === activePlanVersion],
+      && plan.plan_revision === assignmentPlanRevision
+      && plan.plan_revision === state.activePlan?.planVersion],
     ['PLAN_DECISION_MISMATCH', plan.decision_id === sessionSet.decision_id
       && exactHashIdentity(plan.decision_hash) === exactHashIdentity(sessionSet.decision_hash)],
     ['PLAN_CANDIDATE_MISMATCH', plan.selected_candidate_id === sessionSet.candidate_id],
