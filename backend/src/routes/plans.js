@@ -263,11 +263,9 @@ function parsePlan(plan) {
     } else {
       parsed = typeof plan?.plan_json === 'string' ? JSON.parse(plan.plan_json) : plan?.plan_json;
     }
-    const snapshot = ownDataJsonSnapshot(parsed);
-    if (!snapshot) throw new Error('plan payload is not immutable own-data JSON');
-    return snapshot.canonical_workout_schema_version === 1
-      ? snapshot
-      : repairPlanPrescriptions(snapshot);
+    return Number(parsed?.canonical_workout_schema_version) === 1
+      ? parsed
+      : repairPlanPrescriptions(parsed);
   } catch (err) {
     console.error('[plans/parsePlan] invalid plan JSON:', err.message);
     return null;
