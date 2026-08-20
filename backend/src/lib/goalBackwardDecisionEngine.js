@@ -438,7 +438,11 @@ function buildDueExposureLedger(input = {}) {
   const phase = String(input.phase || '').toUpperCase();
   if (!policy || !Object.hasOwn(policy.required_exposure_ledger || {}, phase)) {
     const foundation = phase === 'FOUNDATION'
-      ? [copiedExposure({ requirement_id: 'foundation_aerobic_consistency', any_of: ['easy_run'], role: 'PRIMARY_KEY' })]
+      ? [copiedExposure({
+        requirement_id: 'foundation_aerobic_consistency',
+        any_of: ['easy_run', 'recovery_run'],
+        role: 'PRIMARY_KEY',
+      })]
       : [];
     const sharpening = phase === 'TAPER_RACE_WEEK' && policy?.required_exposure_ledger?.SHARPENING?.[0]
       ? [copiedExposure({

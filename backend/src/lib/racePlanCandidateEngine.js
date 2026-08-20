@@ -36,6 +36,7 @@ const {
   compareMaterialChange,
   validateGoalBackwardCandidate,
   validateInterference,
+  validatePresentationFloor,
 } = require('./goalBackwardValidators');
 const {
   canonicalRoadContributorFamily,
@@ -48,7 +49,7 @@ const {
 } = require('./goalBackwardRecoveryMaterial');
 
 const MAX_GOAL_BACKWARD_CANDIDATES = 64;
-const MAX_GOAL_BACKWARD_SEARCH_FRONTIER = 128;
+const MAX_GOAL_BACKWARD_SEARCH_FRONTIER = 256;
 const MAX_GOAL_BACKWARD_SEARCH_NODES = 65536;
 const MAX_GOAL_BACKWARD_ROLE_COUNT = 14;
 const MAX_GOAL_BACKWARD_AVAILABLE_DATES = 14;
@@ -924,6 +925,43 @@ function finiteCandidateMaterialNumber(...values) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function recentNormalRunningMinutesPerWeek(options = {}) {
+  const direct = finiteCandidateMaterialNumber(options.recent_normal_running_minutes_per_week);
+  if (direct !== null && direct >= 0) return direct;
+  const medianDurationSeconds = finiteCandidateMaterialNumber(
+    options.recent_normal_running?.median_duration_s,
+  );
+  return medianDurationSeconds !== null && medianDurationSeconds >= 0
+    ? medianDurationSeconds / 60 : null;
+}
+
+function executableFoundationRecoveryDurationMinutes(sourceDuration, options = {}) {
+  const duration = finiteCandidateMaterialNumber(sourceDuration);
+  if (duration === null || duration < 0) return duration;
+  return [...new Set([duration, 15, 20])]
+    .filter((candidate) => candidate >= duration)
+    .sort((left, right) => left - right)
+    .find((candidate) => validatePresentationFloor([{
+      workout_family: 'recovery_run',
+      duration_min: candidate,
+    }], options).valid) ?? duration;
+}
+
+function preferredMaterialFamilyForFloor(session, decision, options = {}) {
+  const sourceFamily = session.material_source === 'CURRENT_HYBRID_RUNNING_COMPONENT'
+    ? 'easy_run' : session.material_source_workout_family;
+  if (decision.phase !== 'FOUNDATION' || sourceFamily !== 'easy_run') return sourceFamily;
+  const easyFloor = validatePresentationFloor([
+    { ...session, workout_family: 'easy_run' },
+  ], options);
+  const recoveryFloor = validatePresentationFloor([{
+    ...session,
+    workout_family: 'recovery_run',
+    duration_min: executableFoundationRecoveryDurationMinutes(session.duration_min, options),
+  }], options);
+  return !easyFloor.valid && recoveryFloor.valid ? 'recovery_run' : sourceFamily;
+}
+
 function roadCandidateMaterial(source) {
   return legacyCandidateMaterialEntries(source).map((session, index) => {
     const durationMin = finiteCandidateMaterialNumber(session.duration_min, session.durationMin);
@@ -1110,6 +1148,12 @@ function goalBackwardSkeletonIdentity(input = {}) {
     const projectedRunningMaterial = material?.projection_source_material_ids?.length ? material : null;
     const placement = placementFor(input.placements, role.requirement_id);
     const workoutFamily = placement.workout_family || material?.workout_family || role.any_of?.[0] || null;
+    const durationMin = decision.phase === 'FOUNDATION' && workoutFamily === 'recovery_run'
+      ? executableFoundationRecoveryDurationMinutes(
+        material?.duration_min,
+        input.presentation_floor_options,
+      )
+      : material?.duration_min ?? null;
     return {
       skeleton_session_id: String(material?.material_id || `skeleton-${role.requirement_id}-${index + 1}`),
       session_id: String(material?.material_id || `skeleton-${role.requirement_id}-${index + 1}`),
@@ -1128,7 +1172,7 @@ function goalBackwardSkeletonIdentity(input = {}) {
         : material ? 'CURRENT_ROAD_SESSION_CONSTRUCTOR_OUTPUT' : 'EVENT_POLICY_ROLE',
       material_source_workout_family: material?.workout_family || null,
       projection_source_material_ids: projectedRunningMaterial?.projection_source_material_ids || [],
-      duration_min: material?.duration_min ?? null,
+      duration_min: durationMin,
       distance_m: material?.distance_m ?? null,
       distance_miles: material?.distance_miles ?? null,
       quality_work_duration_min: material?.quality_work_duration_min ?? null,
@@ -1270,7 +1314,9 @@ function orderedSessionTuple(candidate) {
 }
 
 function preliminaryCandidateComparator(left, right) {
-  return left.preliminary_material_mismatch_count - right.preliminary_material_mismatch_count
+  return left.preliminary_presentation_floor_violation_count
+      - right.preliminary_presentation_floor_violation_count
+    || left.preliminary_material_mismatch_count - right.preliminary_material_mismatch_count
     || left.preliminary_spacing_violation_count - right.preliminary_spacing_violation_count
     || canonicalStringify(left.preliminary_ordering_tuple).localeCompare(canonicalStringify(right.preliminary_ordering_tuple))
     || left.canonical_placement.localeCompare(right.canonical_placement);
@@ -1449,6 +1495,19 @@ function enumerateGoalBackwardCandidates(input = {}) {
     || requestedMaximumSessionCount > MAX_GOAL_BACKWARD_ROLE_COUNT
     || roles.some((role) => new Set((role.any_of || []).map(String).filter(Boolean)).size
       > MAX_GOAL_BACKWARD_FAMILIES_PER_ROLE);
+  const presentationFloorPaceSecondsPerMile = input.hybrid_running_projection_pace_s_per_mile
+    ?? input.validation_options?.presentation_floor_pace_s_per_mile
+    ?? input.validation_options?.presentationFloorPaceSecondsPerMile;
+  const recentNormalRunningMinutes = recentNormalRunningMinutesPerWeek(input.validation_options);
+  const presentationFloorOptions = {
+    ...input.validation_options,
+    training_age_class: input.validation_options?.training_age_class
+      ?? decision.training_age_class,
+    ...(recentNormalRunningMinutes !== null ? {
+      recent_normal_running_minutes_per_week: recentNormalRunningMinutes,
+    } : {}),
+    presentation_floor_pace_s_per_mile: presentationFloorPaceSecondsPerMile,
+  };
   const materialIdentity = !inputBounded && !roleCapacityExceeded
     ? goalBackwardSkeletonIdentity({
       decision,
@@ -1456,11 +1515,11 @@ function enumerateGoalBackwardCandidates(input = {}) {
       legacy_road_candidate_material: input.legacy_road_candidate_material,
       active_applied_plan: input.active_applied_plan,
       hybrid_running_projection_pace_s_per_mile: input.hybrid_running_projection_pace_s_per_mile,
+      presentation_floor_options: presentationFloorOptions,
     }) : { sessions: [] };
   const preferredMaterialFamilyByRequirement = new Map(materialIdentity.sessions.map((session) => [
     String(session.requirement_id),
-    session.material_source === 'CURRENT_HYBRID_RUNNING_COMPONENT'
-      ? 'easy_run' : session.material_source_workout_family,
+    preferredMaterialFamilyForFloor(session, decision, presentationFloorOptions),
   ]));
   const placementSets = roles.map((role) => rolePlacementChoices(
     role,
@@ -1507,15 +1566,19 @@ function enumerateGoalBackwardCandidates(input = {}) {
         legacy_road_candidate_material: input.legacy_road_candidate_material,
         active_applied_plan: input.active_applied_plan,
         hybrid_running_projection_pace_s_per_mile: input.hybrid_running_projection_pace_s_per_mile,
+        presentation_floor_options: presentationFloorOptions,
       });
       const sessions = identity.sessions;
       const canonicalPlacement = canonicalStringify(identity);
       if (seen.has(canonicalPlacement)) return;
       seen.add(canonicalPlacement);
       const interference = validateInterference(sessions, input.validation_options);
+      const presentationFloor = validatePresentationFloor(sessions, presentationFloorOptions);
       preliminary.push({
         ...identity,
         canonical_placement: canonicalPlacement,
+        preliminary_presentation_floor_violation_count:
+          presentationFloor?.violations?.length || 0,
         preliminary_material_mismatch_count: sessions.filter((session) => (
           session.material_source === 'CURRENT_ROAD_SESSION_CONSTRUCTOR_OUTPUT'
             && session.material_source_workout_family
@@ -1529,6 +1592,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
   const retained = preliminary.sort(preliminaryCandidateComparator).slice(0, MAX_GOAL_BACKWARD_CANDIDATES).map((candidate) => {
     const candidateHash = canonicalHash(Object.fromEntries(Object.entries(candidate).filter(([key]) => ![
       'canonical_placement', 'preliminary_material_mismatch_count',
+      'preliminary_presentation_floor_violation_count',
       'preliminary_spacing_violation_count', 'preliminary_ordering_tuple',
     ].includes(key))));
     let withCanonical = {
@@ -1540,7 +1604,10 @@ function enumerateGoalBackwardCandidates(input = {}) {
     let materializationError = null;
     if (input.materialize_canonical !== false) {
       try {
-        withCanonical = materializeGoalBackwardCandidate(withCanonical, input);
+        withCanonical = materializeGoalBackwardCandidate(withCanonical, {
+          ...input,
+          validation_options: presentationFloorOptions,
+        });
       } catch (error) {
         materializationError = error;
       }
@@ -1568,7 +1635,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
       cross_modal_reduction_evidence: input.validation_options?.cross_modal_reduction_evidence ?? null,
     } : null;
     const validation = validateGoalBackwardCandidate(withCanonical, {
-      ...input.validation_options,
+      ...presentationFloorOptions,
       workload_evidence: workloadEvidence,
       safety_scope: input.validation_options?.safety_scope ?? decision.safety_state?.scope,
       material_dose: materialDose,
@@ -1613,6 +1680,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
     };
     delete withValidation.canonical_placement;
     delete withValidation.preliminary_material_mismatch_count;
+    delete withValidation.preliminary_presentation_floor_violation_count;
     delete withValidation.preliminary_spacing_violation_count;
     delete withValidation.preliminary_ordering_tuple;
     return immutable({ ...withValidation, ranking_tuple: candidateRankingTuple(withValidation, input) });
@@ -1626,7 +1694,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
     : inputBounded ? 'CANDIDATE_SEARCH_INPUT_LIMIT_EXCEEDED'
       : roleCapacityExceeded ? 'CANDIDATE_ROLE_COUNT_EXCEEDS_AVAILABLE_DAYS'
         : placementChoicesTruncated ? 'CANDIDATE_PLACEMENT_CHOICES_TRUNCATED_32'
-          : frontierTrimmed ? 'CANDIDATE_SEARCH_FRONTIER_TRUNCATED_128'
+          : frontierTrimmed ? `CANDIDATE_SEARCH_FRONTIER_TRUNCATED_${MAX_GOAL_BACKWARD_SEARCH_FRONTIER}`
           : preliminary.length > MAX_GOAL_BACKWARD_CANDIDATES
             ? 'CANDIDATE_ENUMERATION_TRUNCATED_64' : null;
   const searchDiagnostics = immutable({

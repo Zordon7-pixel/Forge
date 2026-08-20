@@ -102,11 +102,16 @@ Batch 3 status (2026-08-14): `patched`; the three-command gate passes locally. I
 - [ ] Heat/dew point/altitude/terrain/surface triggers switch authority to effort and retain fresh complete environment provenance
 - [ ] Explanation numbers are restricted to canonical facts and attaching explanation copy leaves the prescription hash unchanged
 - [ ] Recovery, easy, long, quality, HYROX compromised, and strength floors reject token work without a named beginner/rehab exception
+- [ ] Distance-only floor proof requires a primitive bounded observed pace and a conservative faster-side calculation; explicit short duration targets still fail
+- [ ] FOUNDATION may emit a canonical recovery-run fallback only at its applicable minimum dose, with matching title/family and no fabricated exception or protocol
+- [ ] Synthetic 3/5/7-day low-volume established and developing/provisional replays select deterministically within the bounded frontier, while a genuine token session remains rejected
+- [ ] Production-shaped HYROX plus Army preview and HYROX removal with an Army-only rebuild both produce hard-valid applicable candidates
 
 Run the Phase 2B-1 gate:
 
 ```sh
 node backend/test/goalBackwardCanonical.smoke.js
+node backend/test/goalBackwardGoalFloorRecovery.smoke.js
 node backend/test/goalBackwardTargets.smoke.js
 node backend/test/forgedHybridH1.smoke.js
 node backend/test/racePlanQuality.smoke.js

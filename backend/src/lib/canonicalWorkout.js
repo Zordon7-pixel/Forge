@@ -1305,7 +1305,16 @@ function materializeHyroxStationSteps(family, source, input) {
 function sourceMaterialFor(candidate, skeleton) {
   const materials = Array.isArray(candidate.candidate_material) ? candidate.candidate_material : [];
   const material = materials.find((entry) => String(entry.material_id) === String(skeleton.candidate_material_id));
-  return clone(material?.source_session || material || skeleton) || {};
+  const source = clone(material?.source_session || material || skeleton) || {};
+  for (const field of [
+    'duration_min', 'distance_m', 'distance_miles', 'quality_work_duration_min',
+    'main_work_duration_min', 'run_station_pair_count',
+  ]) {
+    if (typeof skeleton[field] === 'number' && Number.isFinite(skeleton[field])) {
+      source[field] = skeleton[field];
+    }
+  }
+  return source;
 }
 
 function nextSessionRevision(input, skeleton) {
@@ -1346,6 +1355,10 @@ function materializeCanonicalSession(input = {}) {
   const sourceReasons = Array.isArray(source.reason_codes) ? source.reason_codes : [];
   const purposeReasonCodes = [...new Set([phaseReason, ...sourceReasons]
     .map((code) => normalizeReasonCode(code)).filter(Boolean))];
+  const sourceFamily = String(skeleton.material_source_workout_family || '');
+  const title = sourceFamily && sourceFamily !== family
+    ? FAMILY_TITLES[family]
+    : source.title || FAMILY_TITLES[family] || family;
   const canonicalInput = {
     session_id: sessionId,
     session_revision: nextSessionRevision(input, skeleton),
@@ -1356,7 +1369,7 @@ function materializeCanonicalSession(input = {}) {
     phase: decision.phase,
     role: String(skeleton.role || '').toUpperCase(),
     workout_family: family,
-    title: String(source.title || FAMILY_TITLES[family] || family),
+    title: String(title),
     purpose_reason_codes: purposeReasonCodes,
     scheduled_local_date: skeleton.scheduled_local_date,
     timezone: String(input.timezone || decision.timezone || 'UTC'),

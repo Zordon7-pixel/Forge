@@ -56,7 +56,7 @@
         "event_policy_id": "road_5k_v1",
         "phase": "FOUNDATION",
         "primary_count": 1,
-        "primary_families": ["easy_run"],
+        "primary_families": ["easy_run", "recovery_run"],
         "target_authority_level": 4,
         "target_rpe_range": {
           "minimum": 2,

@@ -90,6 +90,9 @@ const EXECUTABLE_SURFACES = Object.freeze([
   'map',
   'warm_up',
 ]);
+const PRESENTATION_FLOOR_PACE_MIN_S_PER_MILE = 180;
+const PRESENTATION_FLOOR_PACE_MAX_S_PER_MILE = 2400;
+const PRESENTATION_FLOOR_FAST_BOUND_FACTOR = 0.9;
 
 function clone(value) {
   if (value === undefined) return undefined;
@@ -909,17 +912,84 @@ function validateRequiredExposures(sessions, options) {
   return { validator: 'required_exposures', valid: violations.length === 0, violations, reason_codes: violations.map((violation) => violation.code) };
 }
 
-function qualityWorkMinutes(session) {
-  const direct = Number(session.quality_work_duration_min ?? session.qualityWorkDurationMinutes);
-  if (Number.isFinite(direct)) return direct;
-  const canonical = Number(session.derived_totals?.work_duration_s);
-  if (Number.isFinite(canonical)) return canonical / 60;
-  const seconds = (session.steps || []).filter((step) => String(step.step_role ?? step.role ?? '').toUpperCase() === 'WORK')
-    .reduce((sum, step) => sum + Number(step.duration_s || step.duration_seconds || 0) * Number(step.repetitions || 1), 0);
-  return seconds / 60;
+function primitiveFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function validatePresentationFloor(sessions, options) {
+function presentationFloorPaceSecondsPerMile(options = {}) {
+  const pace = primitiveFiniteNumber(
+    options.presentation_floor_pace_s_per_mile
+      ?? options.presentationFloorPaceSecondsPerMile,
+  );
+  return pace !== null
+    && pace >= PRESENTATION_FLOOR_PACE_MIN_S_PER_MILE
+    && pace <= PRESENTATION_FLOOR_PACE_MAX_S_PER_MILE ? pace : null;
+}
+
+function canonicalTargetHas(session, field, { workOnly = false } = {}) {
+  return flattenedCanonicalSteps(session.steps).some(({ step }) => (
+    (!workOnly || String(step.step_role ?? step.role ?? '').toUpperCase() === 'WORK')
+      && step.target && Object.hasOwn(step.target, field)
+  ));
+}
+
+function equivalentMinutesFromDistance(distanceM, options = {}) {
+  const distance = primitiveFiniteNumber(distanceM);
+  const pace = presentationFloorPaceSecondsPerMile(options);
+  if (distance === null || distance <= 0 || pace === null) return null;
+  // A floor is a minimum-dose proof, so use the faster side of the bounded
+  // observed-pace witness. This cannot turn a short distance into a passing
+  // duration merely by assuming the athlete moves unusually slowly.
+  return ((distance / 1609.344) * (pace * PRESENTATION_FLOOR_FAST_BOUND_FACTOR)) / 60;
+}
+
+function sessionDurationMinutes(session, options = {}) {
+  const canonical = session.canonical_workout_schema_version === 1;
+  if (canonical && canonicalTargetHas(session, 'duration_s')) {
+    const seconds = primitiveFiniteNumber(session.derived_totals?.duration_s);
+    return seconds === null ? null : seconds / 60;
+  }
+  for (const value of [session.duration_min, session.duration_minutes]) {
+    const minutes = primitiveFiniteNumber(value);
+    if (minutes !== null) return minutes;
+  }
+  for (const value of [session.duration_s, session.duration_seconds]) {
+    const seconds = primitiveFiniteNumber(value);
+    if (seconds !== null) return seconds / 60;
+  }
+  const derivedSeconds = primitiveFiniteNumber(session.derived_totals?.duration_s);
+  if (derivedSeconds !== null && derivedSeconds > 0) return derivedSeconds / 60;
+  return equivalentMinutesFromDistance(distanceMeters(session), options) ?? 0;
+}
+
+function qualityWorkMinutes(session, options = {}) {
+  for (const value of [session.quality_work_duration_min, session.qualityWorkDurationMinutes]) {
+    const direct = primitiveFiniteNumber(value);
+    if (direct !== null) return direct;
+  }
+  const canonical = session.canonical_workout_schema_version === 1;
+  const canonicalWorkDuration = primitiveFiniteNumber(session.derived_totals?.work_duration_s);
+  if (canonical && canonicalTargetHas(session, 'duration_s', { workOnly: true })) {
+    return canonicalWorkDuration === null ? 0 : canonicalWorkDuration / 60;
+  }
+  if (canonicalWorkDuration !== null && canonicalWorkDuration > 0) return canonicalWorkDuration / 60;
+  const workSteps = flattenedCanonicalSteps(session.steps).filter(({ step }) => (
+    String(step.step_role ?? step.role ?? '').toUpperCase() === 'WORK'
+  ));
+  const seconds = workSteps.reduce((sum, { step, multiplier }) => {
+    const duration = primitiveFiniteNumber(step.duration_s ?? step.duration_seconds);
+    return sum + (duration === null ? 0 : duration * multiplier);
+  }, 0);
+  if (seconds > 0) return seconds / 60;
+  const workDistance = primitiveFiniteNumber(session.derived_totals?.work_distance_m)
+    ?? workSteps.reduce((sum, { step, multiplier }) => {
+      const distance = primitiveFiniteNumber(step.target?.distance_m ?? step.distance_m);
+      return sum + (distance === null ? 0 : distance * multiplier);
+    }, 0);
+  return equivalentMinutesFromDistance(workDistance, options) ?? 0;
+}
+
+function validatePresentationFloor(sessions, options = {}) {
   const violations = [];
   const age = String(options.training_age_class || '').toUpperCase();
   const beginner = age === 'BEGINNER';
@@ -928,15 +998,14 @@ function validatePresentationFloor(sessions, options) {
   const ordinaryEasy = Number(options.median_ordinary_easy_duration_min);
   sessions.forEach((session, index) => {
     const family = sessionFamily(session);
-    const durationSeconds = session.derived_totals?.duration_s ?? session.duration_s ?? 0;
-    const duration = Number(session.duration_min ?? session.duration_minutes ?? (Number(durationSeconds) / 60));
+    const duration = sessionDurationMinutes(session, options);
     let below = false;
     if (family === 'recovery_run') below = duration < (beginner || (Number.isFinite(weeklyMinutes) && weeklyMinutes < 60) ? 15 : 20);
     else if (family === 'easy_run') below = duration < (beginner || returning ? 20 : 25);
     else if (family === 'long_aerobic' && options.beginner_time_on_feet_policy !== true) {
       below = duration < 30 || (Number.isFinite(ordinaryEasy) && duration < ordinaryEasy * 1.5);
     } else if (['threshold_run', 'interval_run', 'race_rhythm_run'].includes(family)) {
-      below = qualityWorkMinutes(session) < 8;
+      below = qualityWorkMinutes(session, options) < 8;
     } else if (family === 'hyrox_compromised') {
       below = Number(session.run_station_pair_count || 0) < 2 || Number(session.main_work_duration_min || 0) < 20;
     } else if (['strength_lower', 'strength_upper', 'strength_full_body'].includes(family)
@@ -1596,4 +1665,5 @@ module.exports = {
   validateGoalBackwardAdaptationCandidate,
   validateInterference,
   validatePartialRaceOrderClusterExposure,
+  validatePresentationFloor,
 };

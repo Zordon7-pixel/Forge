@@ -195,11 +195,15 @@ Compatibility and authority anchors:
 - Material environment differences make effort authoritative. Pace may remain only as a non-binding reference, and the condition evidence/reason is retained.
 - Athlete explanations are downstream copy. A number absent from the canonical explanation facts is rejected, and attaching explanation copy cannot change the prescription hash.
 - Training-class presentation floors reject token sessions unless `BELOW_PRESENTATION_FLOOR_EXCEPTION` names a beginner or rehab protocol.
+- A distance-only canonical run can prove a duration floor only from a primitive observed pace in the bounded 180–2400 seconds/mile range, using the conservative 90% faster-side bound; an explicit duration remains authoritative.
+- FOUNDATION search may preserve an easy-run source dose as a truthful recovery-run prescription and raise an explicit short dose only to the applicable recovery floor. The canonical family/title/dose must reflect the change, and no exception marker is manufactured.
+- Candidate enumeration retains a deterministic 256-entry frontier, prioritizes presentation-floor viability before material-family similarity, and remains subject to the unchanged 65,536 expanded-node ceiling and all hard validators.
 
 Phase 2B-1 gate:
 
 ```sh
 node backend/test/goalBackwardCanonical.smoke.js
+node backend/test/goalBackwardGoalFloorRecovery.smoke.js
 node backend/test/goalBackwardTargets.smoke.js
 node backend/test/forgedHybridH1.smoke.js
 node backend/test/racePlanQuality.smoke.js
