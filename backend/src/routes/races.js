@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { types: utilTypes } = require('node:util');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const { dbGet, dbAll, withPlanningInputMutation } = require('../db');
@@ -13,6 +14,25 @@ const { isIanaTimezone } = require('../lib/hyroxPlan');
 const plansRouter = require('./plans');
 
 const PLAN_RESET_CONFIRMATION = 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE';
+
+function isExactPlanResetConfirmation(body) {
+  try {
+    if (!body || typeof body !== 'object' || Array.isArray(body) || utilTypes.isProxy(body)) {
+      return false;
+    }
+    if (Object.getPrototypeOf(body) !== Object.prototype) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(body);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.length !== 1 || keys[0] !== 'confirmation') return false;
+    const confirmation = descriptors.confirmation;
+    return confirmation.enumerable === true
+      && Object.hasOwn(confirmation, 'value')
+      && typeof confirmation.value === 'string'
+      && confirmation.value === PLAN_RESET_CONFIRMATION;
+  } catch (_error) {
+    return false;
+  }
+}
 
 // GPX uploads are held in memory only; raw coordinates are never persisted.
 const gpxUpload = multer({
@@ -770,9 +790,7 @@ router.post('/:id/removal-apply', auth, async (req, res) => {
 });
 
 router.post('/:id/removal-reset', auth, async (req, res) => {
-  const body = req.body;
-  if (!body || typeof body !== 'object' || Array.isArray(body)
-    || Object.keys(body).length !== 1 || body.confirmation !== PLAN_RESET_CONFIRMATION) {
+  if (!isExactPlanResetConfirmation(req.body)) {
     return res.status(400).json({
       error: 'Type the exact confirmation before clearing the active plan and removing this race.',
       code: 'INVALID_REMOVAL_RESET_CONFIRMATION',

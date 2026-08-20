@@ -4,6 +4,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const jwt = require('jsonwebtoken');
 const concurrent = require('../src/lib/concurrentPlan');
 const hyrox = require('../src/lib/hyroxPlan');
 const { aggregateWeeklyStress } = require('../src/lib/goalBackwardLoad');
@@ -653,6 +654,27 @@ function checkPartialClusterShadowIntegration(plansRouter) {
 function routeHandler(router, routePath, method) {
   const layer = router.stack.find((item) => item.route?.path === routePath && item.route?.methods?.[method]);
   return layer?.route?.stack?.at(-1)?.handle;
+}
+
+async function invokeRegisteredRoute(router, routePath, method, req) {
+  const layer = router.stack.find((item) => item.route?.path === routePath && item.route?.methods?.[method]);
+  const handlers = layer?.route?.stack?.map((item) => item.handle) || [];
+  assert.ok(handlers.length, `registered ${method.toUpperCase()} ${routePath} route exists`);
+  let statusCode = 200;
+  let payload = null;
+  const res = {
+    status(code) { statusCode = code; return this; },
+    json(value) { payload = value; return this; },
+  };
+  let index = 0;
+  const dispatch = async (error) => {
+    if (error) throw error;
+    const handler = handlers[index++];
+    if (!handler) return undefined;
+    return handler.length >= 3 ? handler(req, res, dispatch) : handler(req, res);
+  };
+  await dispatch();
+  return { statusCode, payload };
 }
 
 async function invoke(handler, req) {
@@ -1372,15 +1394,19 @@ async function checkDedicatedRouteBoundary() {
 
 async function checkHyroxCandidateImmediateAdoption() {
   const dbModulePath = require.resolve('../src/db');
+  const authModulePath = require.resolve('../src/middleware/auth');
   const plansRoutePath = require.resolve('../src/routes/plans');
   const racesRoutePath = require.resolve('../src/routes/races');
   const originalDb = require.cache[dbModulePath];
+  const originalAuth = require.cache[authModulePath];
   const originalPlansRoute = require.cache[plansRoutePath];
   const originalRacesRoute = require.cache[racesRoutePath];
   const RealDate = global.Date;
   const originalGenerateHyroxPlan = hyrox.generateHyroxPlan;
   const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
   const previousAudience = process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
+  const previousJwtSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'forge-reset-confirmation-test-secret';
   process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
   const ownerId = '11111111-1111-4111-8111-111111111111';
   const planningDate = '2026-08-14';
@@ -1493,6 +1519,7 @@ async function checkHyroxCandidateImmediateAdoption() {
   const planningArtifacts = new Map();
   const rejectionRows = [];
   let transactionWriteCount = 0;
+  let directDatabaseCallCount = 0;
   let failResetRaceDelete = false;
   let fixedNowIso = '2026-08-14T16:00:00.000Z';
   let databaseJsonShape = 'serialized';
@@ -1769,9 +1796,10 @@ async function checkHyroxCandidateImmediateAdoption() {
 
   const tx = { get, all, run: runStatement };
   const mockDb = {
-    dbGet: get,
-    dbAll: all,
-    dbRun: runStatement,
+    dbGet: async (...args) => { directDatabaseCallCount += 1; return get(...args); },
+    dbAll: async (...args) => { directDatabaseCallCount += 1; return all(...args); },
+    dbRun: async (...args) => { directDatabaseCallCount += 1; return runStatement(...args); },
+    runWithUserContext: (_userId, fn) => fn(),
     withUserMutation: async (_userId, fn) => fn(tx),
     withPlanningInputMutation: async (_userId, fn) => {
       const rollbackSnapshot = {
@@ -1807,6 +1835,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     id: dbModulePath, filename: dbModulePath, loaded: true, exports: mockDb, children: [], paths: [],
   };
   global.Date = FixedDate;
+  delete require.cache[authModulePath];
   delete require.cache[plansRoutePath];
   delete require.cache[racesRoutePath];
 
@@ -4251,6 +4280,151 @@ async function checkHyroxCandidateImmediateAdoption() {
     };
     const invalidResetBaseline = mutationState();
     const writesBeforeMissingConfirmation = transactionWriteCount;
+    const resetAuthorization = `Bearer ${jwt.sign({ id: ownerId }, process.env.JWT_SECRET)}`;
+    const registeredResetRequest = (body, headers = { authorization: resetAuthorization }) => ({
+      params: { id: 'yonkers' },
+      headers,
+      body,
+    });
+    const unauthorizedHooks = { proxy: 0 };
+    const unauthorizedBody = new Proxy({ confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' }, {
+      get() { unauthorizedHooks.proxy += 1; return undefined; },
+      getOwnPropertyDescriptor() { unauthorizedHooks.proxy += 1; return undefined; },
+      getPrototypeOf() { unauthorizedHooks.proxy += 1; return Object.prototype; },
+      ownKeys() { unauthorizedHooks.proxy += 1; return ['confirmation']; },
+    });
+    const dbCallsBeforeUnauthorizedReset = directDatabaseCallCount;
+    const unauthorizedWritesBeforeReset = transactionWriteCount;
+    const unauthorizedReset = await invokeRegisteredRoute(
+      racesRouter, '/:id/removal-reset', 'post', registeredResetRequest(unauthorizedBody, {}),
+    );
+    assert.equal(unauthorizedReset.statusCode, 401, JSON.stringify(unauthorizedReset.payload));
+    assert.equal(directDatabaseCallCount, dbCallsBeforeUnauthorizedReset,
+      'authentication rejects before any reset database call');
+    assert.equal(transactionWriteCount, unauthorizedWritesBeforeReset,
+      'authentication rejects before any reset write');
+    assert.deepEqual(unauthorizedHooks, { proxy: 0 },
+      'authentication rejects before inspecting or trapping the request body');
+
+    const hostileResetBodies = [
+      ['inherited confirmation', () => ({
+        body: Object.assign(Object.create({ confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' }), {
+          unrelated: true,
+        }),
+        hooks: { getter: 0, proxy: 0, coercion: 0 },
+      })],
+      ['accessor confirmation', () => {
+        const hooks = { getter: 0, proxy: 0, coercion: 0 };
+        const body = {};
+        Object.defineProperty(body, 'confirmation', {
+          enumerable: true,
+          get() { hooks.getter += 1; return 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE'; },
+        });
+        return { body, hooks };
+      }],
+      ['Proxy confirmation', () => {
+        const hooks = { getter: 0, proxy: 0, coercion: 0 };
+        const body = new Proxy({ confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' }, {
+          get(target, key) { hooks.proxy += 1; return Reflect.get(target, key); },
+          getOwnPropertyDescriptor(target, key) {
+            hooks.proxy += 1;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+          getPrototypeOf(target) { hooks.proxy += 1; return Reflect.getPrototypeOf(target); },
+          ownKeys(target) { hooks.proxy += 1; return Reflect.ownKeys(target); },
+        });
+        return { body, hooks };
+      }],
+      ['revoked Proxy confirmation', () => {
+        const revoked = Proxy.revocable({
+          confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE',
+        }, {});
+        revoked.revoke();
+        return {
+          body: revoked.proxy,
+          hooks: { getter: 0, proxy: 0, coercion: 0 },
+        };
+      }],
+      ['non-enumerable confirmation', () => {
+        const body = {};
+        Object.defineProperty(body, 'confirmation', {
+          enumerable: false,
+          value: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE',
+        });
+        return { body, hooks: { getter: 0, proxy: 0, coercion: 0 } };
+      }],
+      ['boxed confirmation', () => ({
+        body: { confirmation: new String('CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE') },
+        hooks: { getter: 0, proxy: 0, coercion: 0 },
+      })],
+      ['symbol extra', () => ({
+        body: {
+          confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE',
+          [Symbol('extra-authority')]: true,
+        },
+        hooks: { getter: 0, proxy: 0, coercion: 0 },
+      })],
+      ['non-enumerable extra', () => {
+        const body = { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' };
+        Object.defineProperty(body, 'extra', { enumerable: false, value: true });
+        return { body, hooks: { getter: 0, proxy: 0, coercion: 0 } };
+      }],
+      ['coercive confirmation', () => {
+        const hooks = { getter: 0, proxy: 0, coercion: 0 };
+        return {
+          body: {
+            confirmation: {
+              [Symbol.toPrimitive]() {
+                hooks.coercion += 1;
+                return 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE';
+              },
+            },
+          },
+          hooks,
+        };
+      }],
+    ];
+    for (const [label, createBody] of hostileResetBodies) {
+      restoreInvalidPlanResetBaseline();
+      const { body, hooks } = createBody();
+      const before = mutationState();
+      const writesBefore = transactionWriteCount;
+      const response = await invokeRegisteredRoute(
+        racesRouter, '/:id/removal-reset', 'post', registeredResetRequest(body),
+      );
+      const after = mutationState();
+      restoreInvalidPlanResetBaseline();
+      assert.equal(response.statusCode, 400, `${label}: ${JSON.stringify(response.payload)}`);
+      assert.equal(transactionWriteCount, writesBefore, `${label}: no destructive transaction`);
+      assert.equal(after, before, `${label}: no race or active-plan mutation`);
+      assert.deepEqual(hooks, { getter: 0, proxy: 0, coercion: 0 },
+        `${label}: no getter, Proxy, or coercion hook executes`);
+    }
+    restoreInvalidPlanResetBaseline();
+    const pollutionHooks = { getter: 0 };
+    Object.defineProperty(Object.prototype, 'confirmation', {
+      configurable: true,
+      get() { pollutionHooks.getter += 1; return 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE'; },
+    });
+    let pollutedReset;
+    const pollutedBefore = mutationState();
+    const pollutedWritesBefore = transactionWriteCount;
+    try {
+      pollutedReset = await invokeRegisteredRoute(
+        racesRouter, '/:id/removal-reset', 'post', registeredResetRequest({ unrelated: true }),
+      );
+    } finally {
+      delete Object.prototype.confirmation;
+    }
+    const pollutedAfter = mutationState();
+    restoreInvalidPlanResetBaseline();
+    assert.equal(pollutedReset.statusCode, 400, JSON.stringify(pollutedReset.payload));
+    assert.equal(transactionWriteCount, pollutedWritesBefore,
+      'prototype pollution cannot enter a destructive transaction');
+    assert.equal(pollutedAfter, pollutedBefore, 'prototype pollution preserves race and plan state');
+    assert.deepEqual(pollutionHooks, { getter: 0 },
+      'prototype-polluted confirmation authority is never read');
+
     const missingResetConfirmation = await invoke(resetRaceRemoval, {
       ...roadRequestBase,
       params: { id: 'yonkers' },
@@ -4325,11 +4499,12 @@ async function checkHyroxCandidateImmediateAdoption() {
     };
     let successfulReset;
     try {
-      successfulReset = await invoke(resetRaceRemoval, {
-        ...roadRequestBase,
-        params: { id: 'yonkers' },
-        body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
-      });
+      successfulReset = await invokeRegisteredRoute(
+        racesRouter,
+        '/:id/removal-reset',
+        'post',
+        registeredResetRequest({ confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' }),
+      );
     } finally {
       plansRouter.clearActivePlanForUser = firstClassClearActivePlanForUser;
     }
@@ -4835,10 +5010,14 @@ async function checkHyroxCandidateImmediateAdoption() {
     else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
     if (previousAudience === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
     else process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE = previousAudience;
+    if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousJwtSecret;
     delete require.cache[plansRoutePath];
     delete require.cache[racesRoutePath];
+    delete require.cache[authModulePath];
     if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;
     if (originalRacesRoute) require.cache[racesRoutePath] = originalRacesRoute;
+    if (originalAuth) require.cache[authModulePath] = originalAuth;
     if (originalDb) require.cache[dbModulePath] = originalDb;
     else delete require.cache[dbModulePath];
   }
