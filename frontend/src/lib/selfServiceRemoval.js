@@ -1,4 +1,10 @@
 export const SELF_SERVICE_REMOVAL_TIMEOUT_MS = 45000
+export const PLAN_RESET_CONFIRMATION = 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE'
+
+const RESET_REQUIRED_RESPONSES = new Set([
+  'GOAL_BACKWARD_GENERATION_FAILED',
+  'ACTIVE_PLAN_LINKAGE_UNVERIFIED',
+])
 
 function removalError(message, code, cause = null) {
   const error = new Error(message)
@@ -49,20 +55,42 @@ async function requestWithDeadline(request, timeoutMs, label) {
   }
 }
 
+function asPlanResetRequired(error, allowedCode) {
+  const status = Number(error?.response?.status)
+  const code = String(error?.response?.data?.code || '')
+  if (status !== 409 || code !== allowedCode || !RESET_REQUIRED_RESPONSES.has(code)) return error
+  return removalError(
+    'This race cannot be removed safely because the current plan cannot be rebuilt safely. Review the plan-clearing option to continue.',
+    'PLAN_RESET_REQUIRED',
+    error,
+  )
+}
+
 export async function removeOwnedRace({ api, raceId, planningClock, timeoutMs = SELF_SERVICE_REMOVAL_TIMEOUT_MS }) {
   const encodedRaceId = encodeURIComponent(String(raceId || ''))
-  const { data: previewData } = await requestWithDeadline(
-    (config) => api.post(`/races/${encodedRaceId}/removal-preview`, planningClock, config),
-    timeoutMs,
-    'Race removal review',
-  )
+  let previewData
+  try {
+    const response = await requestWithDeadline(
+      (config) => api.post(`/races/${encodedRaceId}/removal-preview`, planningClock, config),
+      timeoutMs,
+      'Race removal review',
+    )
+    previewData = response.data
+  } catch (error) {
+    throw asPlanResetRequired(error, 'GOAL_BACKWARD_GENERATION_FAILED')
+  }
   const data = ensureImmediateResponse(previewData)
   if (!data?.requires_apply) {
-    const directResponse = await requestWithDeadline(
-      (config) => api.delete(`/races/${encodedRaceId}`, config),
-      timeoutMs,
-      'Race removal',
-    )
+    let directResponse
+    try {
+      directResponse = await requestWithDeadline(
+        (config) => api.delete(`/races/${encodedRaceId}`, config),
+        timeoutMs,
+        'Race removal',
+      )
+    } catch (error) {
+      throw asPlanResetRequired(error, 'ACTIVE_PLAN_LINKAGE_UNVERIFIED')
+    }
     ensureImmediateResponse(directResponse?.data)
     return { path: 'direct', expectedRemainingRaceIds: null }
   }
@@ -96,6 +124,18 @@ export async function removeOwnedRace({ api, raceId, planningClock, timeoutMs = 
   }
   ensureImmediateResponse(applyResponse?.data)
   return { path: 'linked', candidateId, expectedRemainingRaceIds }
+}
+
+export async function resetOwnedRace({ api, raceId, timeoutMs = SELF_SERVICE_REMOVAL_TIMEOUT_MS }) {
+  const encodedRaceId = encodeURIComponent(String(raceId || ''))
+  const { data } = await requestWithDeadline(
+    (config) => api.post(`/races/${encodedRaceId}/removal-reset`, {
+      confirmation: PLAN_RESET_CONFIRMATION,
+    }, config),
+    timeoutMs,
+    'Plan clear and race removal',
+  )
+  return ensureImmediateResponse(data)
 }
 
 export async function removeScheduledWorkout({ api, sessionId, timeoutMs = SELF_SERVICE_REMOVAL_TIMEOUT_MS }) {

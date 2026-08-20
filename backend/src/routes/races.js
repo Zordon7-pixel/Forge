@@ -12,6 +12,8 @@ const hyroxStandards = require('../lib/hyroxStandards');
 const { isIanaTimezone } = require('../lib/hyroxPlan');
 const plansRouter = require('./plans');
 
+const PLAN_RESET_CONFIRMATION = 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE';
+
 // GPX uploads are held in memory only; raw coordinates are never persisted.
 const gpxUpload = multer({
   storage: multer.memoryStorage(),
@@ -767,6 +769,54 @@ router.post('/:id/removal-apply', auth, async (req, res) => {
   }
 });
 
+router.post('/:id/removal-reset', auth, async (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || Object.keys(body).length !== 1 || body.confirmation !== PLAN_RESET_CONFIRMATION) {
+    return res.status(400).json({
+      error: 'Type the exact confirmation before clearing the active plan and removing this race.',
+      code: 'INVALID_REMOVAL_RESET_CONFIRMATION',
+    });
+  }
+
+  try {
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const race = await tx.get(
+        'SELECT id FROM race_events WHERE id=? AND user_id=? FOR UPDATE',
+        [req.params.id, req.user.id],
+      );
+      if (!race) return planningInputUnchanged({ notFound: true });
+
+      const planClear = await plansRouter._test.clearActivePlanForUser(req.user.id, tx);
+      await tx.run(
+        "UPDATE plan_generation_candidates SET status='superseded' WHERE user_id=? AND status='preview'",
+        [req.user.id],
+      );
+      const removed = await tx.run(
+        'DELETE FROM race_events WHERE id=? AND user_id=?',
+        [req.params.id, req.user.id],
+      );
+      if (removed.changes !== 1) throw new Error('Owned race reset deletion failed');
+      return {
+        ok: true,
+        race_removed: true,
+        active_plan_cleared: planClear.cleared,
+        history_preserved: true,
+      };
+    });
+    if (result.notFound) {
+      return res.status(404).json({ error: 'Race not found', code: 'RACE_NOT_FOUND' });
+    }
+    return res.json(result);
+  } catch (err) {
+    console.error('[races/removal-reset] failed:', err.message);
+    return res.status(500).json({
+      error: 'Unable to clear the active plan and remove this race. Nothing was changed.',
+      code: 'RACE_REMOVAL_RESET_FAILED',
+    });
+  }
+});
+
 router.patch('/:id', auth, async (req, res) => {
   try {
     const body = req.body || {};
@@ -873,6 +923,7 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 router._test = {
+  PLAN_RESET_CONFIRMATION,
   normalizeRaceEvent,
   readRaceEventLifecycle,
   transitionRaceEventLifecycle,

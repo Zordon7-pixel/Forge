@@ -20,6 +20,7 @@ const { canonicalRoadContributorFamily } = require('../src/lib/canonicalWorkout'
 const { buildDecisionArtifactDiagnosticBundle } = require('../src/lib/racePlanDiagnostics');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
+const { resolveActivePlanForDate } = require('../src/lib/planAssignmentLifecycle');
 const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
 
 const HYROX_EQUIPMENT = ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'];
@@ -1484,6 +1485,8 @@ async function checkHyroxCandidateImmediateAdoption() {
   const candidates = new Map();
   const planningArtifacts = new Map();
   const rejectionRows = [];
+  let transactionWriteCount = 0;
+  let failResetRaceDelete = false;
   let fixedNowIso = '2026-08-14T16:00:00.000Z';
   let databaseJsonShape = 'serialized';
 
@@ -1535,6 +1538,12 @@ async function checkHyroxCandidateImmediateAdoption() {
     if (sql.includes('FROM plan_generation_candidates WHERE id=? AND user_id=?')) {
       const row = candidates.get(params[0]);
       return row && row.user_id === params[1] ? { ...row } : null;
+    }
+    if (sql.includes('SELECT id, plan_id, plan_version') && sql.includes("status='cleared'")) {
+      const cleared = [...userPlans.values()]
+        .filter((row) => row.user_id === params[0] && row.status === 'cleared')
+        .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))[0];
+      return cleared ? { ...cleared } : null;
     }
     if (sql.includes('JOIN planning_pipeline_artifacts canonical')
       && sql.includes("canonical.artifact_kind='canonical_session_set'")) {
@@ -1607,7 +1616,15 @@ async function checkHyroxCandidateImmediateAdoption() {
     }
     if (sql.includes('SELECT MAX(date) AS last_date FROM lifts') || sql.includes('MAX(substr(started_at')) return { last_date: null };
     if (sql.includes('SELECT max_hr') || sql.includes('SELECT max_heart_rate')) return { ...profile };
-    if (sql.includes('SELECT * FROM training_plans WHERE user_id')) return null;
+    if (sql.includes('FROM training_plans') && sql.includes('WHERE user_id')) {
+      if (sql.includes('NOT EXISTS') && [...userPlans.values()].some((row) => (
+        row.user_id === params[1] && row.status === 'cleared'
+      ))) return null;
+      const plan = [...trainingPlans.values()]
+        .filter((row) => row.user_id === params[0])
+        .sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')))[0];
+      return plan ? { ...plan } : null;
+    }
     return null;
   }
 
@@ -1628,6 +1645,7 @@ async function checkHyroxCandidateImmediateAdoption() {
   }
 
   async function runStatement(sql, params = []) {
+    transactionWriteCount += 1;
     if (sql.includes('INSERT INTO plan_generation_candidates')) {
       candidates.set(params[0], {
         id: params[0], user_id: params[1], status: params[2], training_plan_id: params[3],
@@ -1668,6 +1686,16 @@ async function checkHyroxCandidateImmediateAdoption() {
       });
       return { changes: 1 };
     }
+    if (sql.includes("UPDATE user_plans SET status='superseded'") && sql.includes('WHERE user_id=?')) {
+      let changes = 0;
+      for (const assignment of userPlans.values()) {
+        if (assignment.user_id === params[0] && assignment.status === 'active') {
+          assignment.status = 'superseded';
+          changes += 1;
+        }
+      }
+      return { changes };
+    }
     if (sql.includes("UPDATE user_plans SET status='superseded'")) {
       const assignment = userPlans.get(params[0]);
       if (!assignment || assignment.user_id !== params[1] || assignment.status !== 'active') return { changes: 0 };
@@ -1678,6 +1706,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       trainingPlans.set(params[0], {
         id: params[0], user_id: params[1], week_start: params[2], plan_json: params[3],
         name: params[4], type: params[5], weeks: params[6], description: params[7], plan_data: params[8],
+        created_at: `2026-08-14T16:00:${String(trainingPlans.size).padStart(2, '0')}.000Z`,
       });
       return { changes: 1 };
     }
@@ -1699,6 +1728,17 @@ async function checkHyroxCandidateImmediateAdoption() {
       });
       return { changes: 1 };
     }
+    if (sql.includes("UPDATE plan_generation_candidates") && sql.includes("SET status='superseded'")
+      && sql.includes('WHERE user_id=?')) {
+      let changes = 0;
+      for (const row of candidates.values()) {
+        if (row.user_id === params[0] && row.status === 'preview') {
+          row.status = 'superseded';
+          changes += 1;
+        }
+      }
+      return { changes };
+    }
     if (sql.includes("SET status='superseded'")) {
       const row = candidates.get(params[0]);
       if (!row || row.user_id !== params[1] || row.status !== 'preview') return { changes: 0 };
@@ -1711,6 +1751,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       return { changes: 1 };
     }
     if (sql.includes('DELETE FROM race_events WHERE id=? AND user_id=?')) {
+      if (failResetRaceDelete) throw new Error('injected reset deletion failure');
       const race = raceRows.get(params[0]);
       if (!race || race.user_id !== params[1]) return { changes: 0 };
       raceRows.delete(params[0]);
@@ -1726,11 +1767,32 @@ async function checkHyroxCandidateImmediateAdoption() {
     dbRun: runStatement,
     withUserMutation: async (_userId, fn) => fn(tx),
     withPlanningInputMutation: async (_userId, fn) => {
-      const result = await fn(tx);
-      return result && Object.prototype.hasOwnProperty.call(result, 'marker')
-        && Object.prototype.hasOwnProperty.call(result, 'value')
-        ? result.value
-        : result;
+      const rollbackSnapshot = {
+        races: new Map([...raceRows.entries()].map(([key, value]) => [key, JSON.parse(JSON.stringify(value))])),
+        plans: new Map([...trainingPlans.entries()].map(([key, value]) => [key, JSON.parse(JSON.stringify(value))])),
+        assignments: new Map([...userPlans.entries()].map(([key, value]) => [key, JSON.parse(JSON.stringify(value))])),
+        candidates: new Map([...candidates.entries()].map(([key, value]) => [key, JSON.parse(JSON.stringify(value))])),
+        artifacts: new Map([...planningArtifacts.entries()].map(([key, value]) => [key, JSON.parse(JSON.stringify(value))])),
+      };
+      try {
+        const result = await fn(tx);
+        return result && Object.prototype.hasOwnProperty.call(result, 'marker')
+          && Object.prototype.hasOwnProperty.call(result, 'value')
+          ? result.value
+          : result;
+      } catch (error) {
+        for (const [target, source] of [
+          [raceRows, rollbackSnapshot.races],
+          [trainingPlans, rollbackSnapshot.plans],
+          [userPlans, rollbackSnapshot.assignments],
+          [candidates, rollbackSnapshot.candidates],
+          [planningArtifacts, rollbackSnapshot.artifacts],
+        ]) {
+          target.clear();
+          for (const [key, value] of source.entries()) target.set(key, value);
+        }
+        throw error;
+      }
     },
   };
 
@@ -1909,6 +1971,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     const readMyPlan = routeHandler(plansRouter, '/my', 'get');
     const previewRaceRemoval = routeHandler(racesRouter, '/:id/removal-preview', 'post');
     const applyRaceRemoval = routeHandler(racesRouter, '/:id/removal-apply', 'post');
+    const resetRaceRemoval = routeHandler(racesRouter, '/:id/removal-reset', 'post');
     const deleteRace = routeHandler(racesRouter, '/:id', 'delete');
     const requestClock = {
       planning_date_local: planningDate,
@@ -4160,8 +4223,202 @@ async function checkHyroxCandidateImmediateAdoption() {
       yonkersOwned: raceRows.has('yonkers'),
     }, stateBeforeMalformedRemoval,
     'a malformed canonical active plan cannot authorize carry-forward or write removal state');
-    activeRoadPlanRow.plan_data = validRoadPlanData;
-    activeRoadPlanRow.plan_json = validRoadPlanJson;
+
+    const invalidPlanResetBaseline = {
+      races: cloneMap(raceRows),
+      plans: cloneMap(trainingPlans),
+      assignments: cloneMap(userPlans),
+      candidates: cloneMap(candidates),
+      artifacts: cloneMap(planningArtifacts),
+    };
+    const restoreInvalidPlanResetBaseline = () => {
+      restoreMap(raceRows, invalidPlanResetBaseline.races);
+      restoreMap(trainingPlans, invalidPlanResetBaseline.plans);
+      restoreMap(userPlans, invalidPlanResetBaseline.assignments);
+      restoreMap(candidates, invalidPlanResetBaseline.candidates);
+      restoreMap(planningArtifacts, invalidPlanResetBaseline.artifacts);
+    };
+    const invalidResetBaseline = mutationState();
+    const writesBeforeMissingConfirmation = transactionWriteCount;
+    const missingResetConfirmation = await invoke(resetRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: 'yonkers' },
+      body: {},
+    });
+    assert.equal(missingResetConfirmation.statusCode, 400, JSON.stringify(missingResetConfirmation.payload));
+    assert.equal(transactionWriteCount, writesBeforeMissingConfirmation,
+      'missing reset confirmation enters no write transaction');
+    assert.equal(mutationState(), invalidResetBaseline, 'missing reset confirmation writes nothing');
+    const wrongResetConfirmation = await invoke(resetRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: 'yonkers' },
+      body: { confirmation: 'clear it' },
+    });
+    assert.equal(wrongResetConfirmation.statusCode, 400, JSON.stringify(wrongResetConfirmation.payload));
+    assert.equal(transactionWriteCount, writesBeforeMissingConfirmation,
+      'wrong reset confirmation writes nothing');
+    assert.equal(mutationState(), invalidResetBaseline, 'wrong reset confirmation preserves all state');
+    const malformedResetConfirmation = await invoke(resetRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: 'yonkers' },
+      body: [],
+    });
+    assert.equal(malformedResetConfirmation.statusCode, 400,
+      JSON.stringify(malformedResetConfirmation.payload));
+    assert.equal(transactionWriteCount, writesBeforeMissingConfirmation,
+      'malformed reset confirmation writes nothing');
+    assert.equal(mutationState(), invalidResetBaseline, 'malformed reset confirmation preserves all state');
+
+    const writesBeforeWrongOwnerReset = transactionWriteCount;
+    const wrongOwnerReset = await invoke(resetRaceRemoval, {
+      ...roadRequestBase,
+      user: { id: foreignOwner },
+      params: { id: 'yonkers' },
+      body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
+    });
+    assert.equal(wrongOwnerReset.statusCode, 404, JSON.stringify(wrongOwnerReset.payload));
+    assert.equal(transactionWriteCount, writesBeforeWrongOwnerReset, 'wrong-owner reset performs zero writes');
+    assert.equal(mutationState(), invalidResetBaseline, 'wrong-owner reset preserves all owner state');
+    const writesBeforeAbsentReset = transactionWriteCount;
+    const absentReset = await invoke(resetRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: 'absent-race' },
+      body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
+    });
+    assert.equal(absentReset.statusCode, 404, JSON.stringify(absentReset.payload));
+    assert.equal(transactionWriteCount, writesBeforeAbsentReset, 'absent owned race reset performs zero writes');
+    assert.equal(mutationState(), invalidResetBaseline, 'absent owned race reset preserves all owner state');
+
+    candidates.set('stale-reset-preview', {
+      id: 'stale-reset-preview', user_id: ownerId, status: 'preview', candidate_plan_json: '{}',
+    });
+    candidates.set('foreign-reset-preview', {
+      id: 'foreign-reset-preview', user_id: foreignOwner, status: 'preview', candidate_plan_json: '{}',
+    });
+    const planHistoryBeforeReset = cloneMap(trainingPlans);
+    const assignmentHistoryBeforeReset = cloneMap(userPlans);
+    const recordedHistory = {
+      runs: clone(recentRuns),
+      lifts: [{ id: 'lift-history', date: '2026-08-12', completed: true }],
+      health: [{ id: 'health-history', resting_hr: 48 }],
+      checkins: [{ id: 'checkin-history', readiness: 8 }],
+      completedSessions: clone(JSON.parse(currentAssignment().progress_json).completedSessionIds),
+    };
+    const activeAssignmentBeforeReset = currentAssignment().id;
+    const activePlanBeforeReset = currentAssignment().plan_id;
+    const successfulReset = await invoke(resetRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: 'yonkers' },
+      body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
+    });
+    assert.equal(successfulReset.statusCode, 200, JSON.stringify(successfulReset.payload));
+    assert.deepEqual(successfulReset.payload, {
+      ok: true,
+      race_removed: true,
+      active_plan_cleared: true,
+      history_preserved: true,
+    });
+    assert.equal(raceRows.has('yonkers'), false, 'reset deletes only the selected owned race');
+    assert.equal(raceRows.has('army'), true, 'reset preserves every other owned race');
+    assert.equal(currentAssignment(), null, 'reset leaves no active assignment');
+    assert.equal(userPlans.get(activeAssignmentBeforeReset).status, 'superseded');
+    assert.deepEqual(
+      JSON.parse(userPlans.get(activeAssignmentBeforeReset).progress_json).completedSessionIds,
+      recordedHistory.completedSessions,
+      'reset preserves completion progress on the superseded assignment',
+    );
+    const clearMarker = [...userPlans.values()].find((row) => (
+      row.user_id === ownerId && row.status === 'cleared'
+    ));
+    assert.ok(clearMarker, 'reset writes a durable cleared assignment marker');
+    assert.equal(clearMarker.supersedes_user_plan_id, activeAssignmentBeforeReset,
+      'the clear marker retains lineage to the superseded assignment');
+    assert.equal(clearMarker.plan_id, activePlanBeforeReset,
+      'the clear marker references the preserved previously active plan');
+    for (const [planId, planRow] of planHistoryBeforeReset.entries()) {
+      assert.deepEqual(trainingPlans.get(planId), planRow, `reset preserves training plan ${planId}`);
+    }
+    assert.equal(trainingPlans.size, planHistoryBeforeReset.size,
+      'reset creates no synthetic training plan and preserves the full plan history byte-for-byte');
+    const legacyResolutionAfterReset = await resolveActivePlanForDate(ownerId, get, {
+      planningDateLocal: planningDate,
+    });
+    assert.equal(legacyResolutionAfterReset, null,
+      'the shared active-plan resolver treats a durable clear marker as no active plan');
+    const assignmentAfterClearId = 'assignment-after-clear';
+    userPlans.set(assignmentAfterClearId, {
+      id: assignmentAfterClearId,
+      user_id: ownerId,
+      plan_id: activePlanBeforeReset,
+      started_at: planningDate,
+      current_week: 1,
+      status: 'active',
+      progress_json: JSON.stringify({ completedSessionIds: [] }),
+      plan_version: Number(clearMarker.plan_version) + 1,
+      lineage_id: clearMarker.lineage_id,
+      supersedes_user_plan_id: clearMarker.id,
+      effective_from: planningDate,
+      created_at: '2026-08-14T16:00:02.000Z',
+    });
+    const activeResolutionAfterClear = await resolveActivePlanForDate(ownerId, get, {
+      planningDateLocal: planningDate,
+    });
+    assert.equal(activeResolutionAfterClear.source, 'assigned');
+    assert.equal(activeResolutionAfterClear.row.user_plan_id, assignmentAfterClearId,
+      'a later active assignment takes precedence over an older durable clear marker');
+    userPlans.delete(assignmentAfterClearId);
+    assert.equal(candidates.get('stale-reset-preview').status, 'superseded',
+      'reset invalidates the owner stale preview candidate');
+    assert.equal(candidates.get('foreign-reset-preview').status, 'preview',
+      'reset does not touch another owner candidate');
+    assert.deepEqual(recentRuns, recordedHistory.runs, 'reset preserves recorded run history');
+    assert.deepEqual(recordedHistory.lifts, [{ id: 'lift-history', date: '2026-08-12', completed: true }]);
+    assert.deepEqual(recordedHistory.health, [{ id: 'health-history', resting_hr: 48 }]);
+    assert.deepEqual(recordedHistory.checkins, [{ id: 'checkin-history', readiness: 8 }]);
+    const planAfterReset = await invoke(readMyPlan, { ...roadRequestBase, body: {} });
+    assert.equal(planAfterReset.statusCode, 200, JSON.stringify(planAfterReset.payload));
+    assert.deepEqual(planAfterReset.payload, { plan: null },
+      'the cleared marker prevents the preserved legacy training plan from reappearing as active');
+
+    const planHistoryBeforePlanlessReset = cloneMap(trainingPlans);
+    const assignmentHistoryBeforePlanlessReset = cloneMap(userPlans);
+    const planlessReset = await invoke(resetRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: 'army' },
+      body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
+    });
+    assert.equal(planlessReset.statusCode, 200, JSON.stringify(planlessReset.payload));
+    assert.deepEqual(planlessReset.payload, {
+      ok: true,
+      race_removed: true,
+      active_plan_cleared: false,
+      history_preserved: true,
+    }, 'an explicit reset can remove an owned race without falsely claiming it cleared a plan');
+    assert.equal(raceRows.has('army'), false);
+    assert.deepEqual(trainingPlans, planHistoryBeforePlanlessReset,
+      'a planless reset preserves every training plan row');
+    assert.deepEqual(userPlans, assignmentHistoryBeforePlanlessReset,
+      'a planless reset does not add another clear marker');
+
+    restoreInvalidPlanResetBaseline();
+    candidates.set('rollback-reset-preview', {
+      id: 'rollback-reset-preview', user_id: ownerId, status: 'preview', candidate_plan_json: '{}',
+    });
+    const beforeFailedReset = mutationState();
+    failResetRaceDelete = true;
+    const failedReset = await invoke(resetRaceRemoval, {
+      ...roadRequestBase,
+      params: { id: 'yonkers' },
+      body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
+    });
+    failResetRaceDelete = false;
+    assert.equal(failedReset.statusCode, 500, JSON.stringify(failedReset.payload));
+    assert.equal(mutationState(), beforeFailedReset,
+      'an injected failure after plan/candidate writes rolls back the entire reset transaction');
+    restoreInvalidPlanResetBaseline();
+    const restoredActiveRoadPlanRow = trainingPlans.get(currentAssignment().plan_id);
+    restoredActiveRoadPlanRow.plan_data = validRoadPlanData;
+    restoredActiveRoadPlanRow.plan_json = validRoadPlanJson;
 
     const candidateCountBeforeRoadRemoval = candidates.size;
     const artifactCountBeforeRoadRemoval = planningArtifacts.size;

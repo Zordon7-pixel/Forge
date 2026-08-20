@@ -30,6 +30,7 @@ export function verifyRaceRemovalActivation({
   activePlanReadConfirmed = true,
   removedRaceId,
   expectedRemainingRaceIds = null,
+  resetMode = false,
 } = {}) {
   const removedId = String(removedRaceId || '')
   const raceStillExists = races.some((race) => String(race?.id || '') === removedId)
@@ -39,10 +40,13 @@ export function verifyRaceRemovalActivation({
     ? expectedRemainingRaceIds.map(String)
     : null
   const exactReplacement = expected === null || sameOrderedIds(activeRaceIds, expected)
+  const activePlanCleared = !resetMode || activePlan === null
   return {
     activeRaceIds,
+    activePlanCleared,
     activePlanReadConfirmed,
-    confirmed: activePlanReadConfirmed && !raceStillExists && !removedGoalStillActive && exactReplacement,
+    confirmed: activePlanReadConfirmed && !raceStillExists && !removedGoalStillActive
+      && exactReplacement && activePlanCleared,
     exactReplacement,
     raceStillExists,
     removedGoalStillActive,

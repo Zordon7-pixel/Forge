@@ -7,7 +7,7 @@ export function isReplayUnsafeQueuedRequest(item = {}) {
   } catch {
     return false
   }
-  return /^\/api\/races\/[^/]+\/removal-(?:preview|apply)$/.test(pathname)
+  return /^\/api\/races\/[^/]+\/removal-(?:preview|apply|reset)$/.test(pathname)
     || /^\/api\/plans\/candidates\/[^/]+\/apply$/.test(pathname)
     || /^\/api\/plans\/adaptation\/[^/]+\/(?:accept|keep)$/.test(pathname)
 }

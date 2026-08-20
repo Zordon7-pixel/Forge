@@ -60,9 +60,15 @@ async function resolveAssignedPlanForDate(userId, get, options = {}) {
 async function resolveActivePlanForDate(userId, get, options = {}) {
   const assigned = await resolveAssignedPlanForDate(userId, get, options);
   if (assigned) return { source: 'assigned', row: assigned };
+  const ownerId = String(userId).trim();
   const legacy = await get(
-    'SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
-    [String(userId)]
+    `SELECT * FROM training_plans WHERE user_id = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM user_plans WHERE user_id=? AND status='cleared'
+       )
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [ownerId, ownerId]
   );
   return legacy ? { source: 'legacy', row: { ...legacy, plan_id: legacy.plan_id || legacy.id } } : null;
 }

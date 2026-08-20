@@ -10,7 +10,7 @@ import { phonePlanningClock, previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { activePlanRaceIds as planRaceIds, verifyRaceRemovalActivation } from '../lib/planActivation'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
-import { removeOwnedRace } from '../lib/selfServiceRemoval'
+import { removeOwnedRace, resetOwnedRace } from '../lib/selfServiceRemoval'
 
 function daysTo(date) {
   const ms = new Date(`${date}T12:00:00`).getTime() - Date.now()
@@ -184,6 +184,7 @@ export default function Races() {
   const [raceSaving, setRaceSaving] = useState(false)
   const [raceSaveError, setRaceSaveError] = useState('')
   const [removingRaceId, setRemovingRaceId] = useState(null)
+  const [planResetRace, setPlanResetRace] = useState(null)
   const removalInFlightRef = useRef(false)
 
   const load = async ({ fresh = false } = {}) => {
@@ -312,6 +313,7 @@ export default function Races() {
     if (removalInFlightRef.current) return
     removalInFlightRef.current = true
     setRemovingRaceId(race.id)
+    setPlanResetRace(null)
     setMessage('')
     const successMessage = `${race.race_name} was removed. Recorded runs, lifts, health data, check-ins, and training history were preserved.`
     let expectedRemainingRaceIds = null
@@ -334,6 +336,11 @@ export default function Races() {
       }
       setMessage(successMessage)
     } catch (err) {
+      if (err?.code === 'PLAN_RESET_REQUIRED') {
+        setPlanResetRace(race)
+        setMessage('Forge could not safely rebuild the current plan. Choose whether to keep everything or clear the plan and remove this race.')
+        return
+      }
       expectedRemainingRaceIds = err?.expectedRemainingRaceIds ?? expectedRemainingRaceIds
       const reason = err?.response?.data?.error || err?.message || `Could not remove ${race.race_name}.`
       try {
@@ -352,6 +359,55 @@ export default function Races() {
           : `${reason} The race is gone, but the active plan goals are not confirmed. Refresh before making another change.`)
       } catch (confirmationError) {
         console.error('[Races] race removal confirmation failed:', confirmationError?.message || confirmationError)
+        setMessage(`${reason} Forge could not confirm the final account state. Refresh before trying again.`)
+      }
+    } finally {
+      removalInFlightRef.current = false
+      setRemovingRaceId(null)
+    }
+  }
+
+  const confirmPlanResetRemoval = async () => {
+    const race = planResetRace
+    if (!race || removingRaceId || removalInFlightRef.current) return
+    removalInFlightRef.current = true
+    setRemovingRaceId(race.id)
+    setMessage('')
+    const successMessage = `${race.race_name} and the current active plan were removed. Recorded runs, lifts, health data, check-ins, and training history were preserved.`
+    try {
+      await resetOwnedRace({ api, raceId: race.id })
+      const refreshed = await load({ fresh: true })
+      const confirmation = verifyRaceRemovalActivation({
+        ...refreshed,
+        removedRaceId: race.id,
+        resetMode: true,
+      })
+      if (!confirmation.confirmed) {
+        throw new Error(confirmation.raceStillExists
+          ? 'Forge did not confirm the race removal. The race is still listed.'
+          : 'The race was removed, but Forge did not confirm that the active plan was cleared.')
+      }
+      setPlanResetRace(null)
+      setMessage(successMessage)
+    } catch (err) {
+      const reason = err?.response?.data?.error || err?.message || `Could not remove ${race.race_name}.`
+      try {
+        const refreshed = await load({ fresh: true })
+        const confirmation = verifyRaceRemovalActivation({
+          ...refreshed,
+          removedRaceId: race.id,
+          resetMode: true,
+        })
+        if (confirmation.confirmed) {
+          setPlanResetRace(null)
+          setMessage(`${successMessage} Forge confirmed it after refreshing your account.`)
+          return
+        }
+        setMessage(confirmation.raceStillExists
+          ? `${reason} Everything remains in place. Refresh and try again.`
+          : `${reason} Forge did not confirm that the active plan was cleared. Refresh before making another change.`)
+      } catch (confirmationError) {
+        console.error('[Races] plan reset confirmation failed:', confirmationError?.message || confirmationError)
         setMessage(`${reason} Forge could not confirm the final account state. Refresh before trying again.`)
       }
     } finally {
@@ -417,6 +473,42 @@ export default function Races() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Races</h1>
+
+      {planResetRace && (
+        <section
+          role="alertdialog"
+          aria-labelledby="plan-reset-title"
+          aria-describedby="plan-reset-description"
+          className="rounded-xl p-4 space-y-3"
+          style={{ background: 'var(--danger-dim)', border: '1px solid var(--danger)' }}
+        >
+          <h2 id="plan-reset-title" className="font-black" style={{ color: 'var(--text-primary)' }}>
+            Clear the plan to remove {planResetRace.race_name}?
+          </h2>
+          <p id="plan-reset-description" className="text-sm" style={{ color: 'var(--text-primary)' }}>
+            The selected race and your current active plan will be removed. Recorded runs, lifts, health data, check-ins, and training history will remain.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={confirmPlanResetRemoval}
+              disabled={Boolean(removingRaceId)}
+              className="rounded-lg px-3 py-2 text-sm font-black"
+              style={{ background: 'var(--danger)', color: 'white', minHeight: 44 }}
+            >Clear plan & remove race</button>
+            <button
+              type="button"
+              onClick={() => {
+                setPlanResetRace(null)
+                setMessage('Everything was kept. No race or plan was removed.')
+              }}
+              disabled={Boolean(removingRaceId)}
+              className="rounded-lg px-3 py-2 text-sm font-bold"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', minHeight: 44 }}
+            >Keep everything</button>
+          </div>
+        </section>
+      )}
 
       {planPromptRace && (
         <div className="rounded-xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>

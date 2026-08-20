@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {
+  PLAN_RESET_CONFIRMATION,
   SELF_SERVICE_REMOVAL_TIMEOUT_MS,
   removeOwnedRace,
   removeScheduledWorkout,
+  resetOwnedRace,
 } from '../src/lib/selfServiceRemoval.js'
+import { verifyRaceRemovalActivation } from '../src/lib/planActivation.js'
 
 const planSource = fs.readFileSync(new URL('../src/pages/Plan.jsx', import.meta.url), 'utf8')
 const dayViewSource = fs.readFileSync(new URL('../src/components/calendar/ForgedDayView.jsx', import.meta.url), 'utf8')
@@ -12,6 +15,83 @@ const racesSource = fs.readFileSync(new URL('../src/pages/Races.jsx', import.met
 const serviceWorkerSource = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8')
 
 const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 }
+
+function responseError(status, code, message = 'Request failed') {
+  return Object.assign(new Error(message), {
+    response: { status, data: { code, error: message } },
+  })
+}
+
+{
+  const api = {
+    async post() { throw responseError(409, 'GOAL_BACKWARD_GENERATION_FAILED') },
+  }
+  await assert.rejects(
+    () => removeOwnedRace({ api, raceId: 'invalid-plan-race', planningClock: clock }),
+    (error) => error?.code === 'PLAN_RESET_REQUIRED'
+      && /current plan cannot be rebuilt safely/i.test(error.message)
+      && !error.message.includes('GOAL_BACKWARD_GENERATION_FAILED'),
+    'the proven invalid-plan preview deadlock becomes a typed, human-readable reset requirement',
+  )
+}
+
+{
+  const api = {
+    async post() { return { data: { requires_apply: false } } },
+    async delete() { throw responseError(409, 'ACTIVE_PLAN_LINKAGE_UNVERIFIED') },
+  }
+  await assert.rejects(
+    () => removeOwnedRace({ api, raceId: 'legacy-plan-race', planningClock: clock }),
+    (error) => error?.code === 'PLAN_RESET_REQUIRED',
+    'the proven direct-delete linkage deadlock becomes reset-required',
+  )
+}
+
+for (const [label, error] of [
+  ['authentication failure', responseError(401, 'GOAL_BACKWARD_GENERATION_FAILED')],
+  ['validation failure', responseError(400, 'ACTIVE_PLAN_LINKAGE_UNVERIFIED')],
+  ['ordinary conflict', responseError(409, 'ACTIVE_PLAN_REBUILD_REQUIRED')],
+  ['network failure', Object.assign(new Error('offline'), { code: 'ENETDOWN' })],
+]) {
+  const api = { async post() { throw error } }
+  await assert.rejects(
+    () => removeOwnedRace({ api, raceId: 'ordinary-failure', planningClock: clock }),
+    (received) => received?.code !== 'PLAN_RESET_REQUIRED',
+    `${label} cannot trigger the destructive reset fallback`,
+  )
+}
+
+{
+  const calls = []
+  const api = {
+    async post(path, body) {
+      calls.push({ path, body })
+      return { data: { ok: true } }
+    },
+  }
+  const result = await resetOwnedRace({ api, raceId: 'race / owned' })
+  assert.equal(result.ok, true)
+  assert.equal(PLAN_RESET_CONFIRMATION, 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE')
+  assert.deepEqual(calls, [{
+    path: '/races/race%20%2F%20owned/removal-reset',
+    body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
+  }], 'the explicit reset sends only the exact confirmation literal to the encoded owned-race route')
+}
+
+assert.equal(verifyRaceRemovalActivation({
+  races: [{ id: 'army' }],
+  activePlan: null,
+  activePlanReadConfirmed: true,
+  removedRaceId: 'yonkers',
+  resetMode: true,
+}).confirmed, true, 'reset verification requires an authoritative empty active-plan read')
+assert.equal(verifyRaceRemovalActivation({
+  races: [{ id: 'army' }],
+  activePlan: { plan_data: { goals: [{ raceId: 'army' }] } },
+  activePlanReadConfirmed: true,
+  removedRaceId: 'yonkers',
+  resetMode: true,
+}).confirmed, false, 'reset verification rejects any surviving active plan, even when the removed goal is absent')
 
 {
   const calls = []
@@ -164,8 +244,14 @@ assert.match(racesSource, /await load\(\{ fresh: true \}\)/)
 assert.match(racesSource, /The race is still listed/)
 assert.match(racesSource, /active plan goals are not confirmed/)
 assert.match(racesSource, /Forge confirmed it after refreshing your account/)
+assert.match(racesSource, /current active plan will be removed/i)
+assert.match(racesSource, /Recorded runs, lifts, health data, check-ins, and training history (?:will remain|were preserved)/)
+assert.match(racesSource, />Clear plan & remove race</)
+assert.match(racesSource, />Keep everything</)
+assert.match(racesSource, /err\?\.code === 'PLAN_RESET_REQUIRED'/)
+assert.doesNotMatch(racesSource, />[^<]*(?:GOAL_BACKWARD_GENERATION_FAILED|ACTIVE_PLAN_LINKAGE_UNVERIFIED)[^<]*</)
 assert.match(serviceWorkerSource, /isReplayUnsafeMutation/)
-assert.match(serviceWorkerSource, /removal-\(\?:preview\|apply\)/)
+assert.match(serviceWorkerSource, /removal-\(\?:preview\|apply\|reset\)/)
 assert.match(serviceWorkerSource, /adaptation\\\/\[\^\/\]\+\\\/\(\?:accept\|keep\)/)
 
 console.log('SELF-SERVICE REMOVAL FRONTEND SMOKE OK')

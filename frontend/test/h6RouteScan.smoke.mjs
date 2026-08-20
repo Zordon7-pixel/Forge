@@ -125,7 +125,25 @@ console.log('\n== legacy owned plans remain visible without migration writes =='
 const plansRoute = readRepo('backend/src/routes/plans.js');
 const assignmentLifecycle = readRepo('backend/src/lib/planAssignmentLifecycle.js');
 assert(/resolveActivePlanForDate/.test(plansRoute), '/plans/my uses the shared date-aware assignment resolver');
-assert(/SELECT \* FROM training_plans WHERE user_id = \? ORDER BY created_at DESC LIMIT 1/.test(assignmentLifecycle), 'the shared resolver falls back to a user-scoped legacy plan');
+const legacyFallback = assignmentLifecycle.match(
+  /const legacy = await get\(\s*`([\s\S]*?)`\s*,\s*\[ownerId,\s*ownerId\]\s*\);/,
+);
+const legacyFallbackSql = legacyFallback?.[1].replace(/\s+/g, ' ').trim() || '';
+assert(
+  /const assigned = await resolveAssignedPlanForDate\(userId, get, options\);\s*if \(assigned\) return \{ source: 'assigned', row: assigned \};/.test(assignmentLifecycle)
+    && /^SELECT \* FROM training_plans WHERE user_id = \?/.test(legacyFallbackSql),
+  'legacy owned plans remain visible when no active assignment and no cleared marker exists',
+);
+assert(
+  /AND NOT EXISTS \( SELECT 1 FROM user_plans WHERE user_id=\? AND status='cleared' \)/.test(legacyFallbackSql)
+    && Boolean(legacyFallback),
+  "the shared resolver checks user_plans in the same owner scope for status='cleared' before legacy fallback",
+);
+assert(
+  /NOT EXISTS[\s\S]*ORDER BY created_at DESC LIMIT 1$/.test(legacyFallbackSql)
+    && /return legacy \? \{ source: 'legacy',[\s\S]*\} : null;/.test(assignmentLifecycle),
+  'a cleared owner does not resurrect preserved historical training_plans as active',
+);
 assert(/source:\s*'legacy'/.test(plansRoute) && /user_plan:\s*null/.test(plansRoute), 'legacy fallback is explicitly read-only until normal progress migration');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);

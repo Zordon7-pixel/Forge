@@ -185,7 +185,7 @@ function isApiMutation(request, url) {
 
 function isReplayUnsafeMutation(request, url) {
   if (!isApiMutation(request, url)) return false;
-  return /^\/api\/races\/[^/]+\/removal-(?:preview|apply)$/.test(url.pathname)
+  return /^\/api\/races\/[^/]+\/removal-(?:preview|apply|reset)$/.test(url.pathname)
     || /^\/api\/plans\/candidates\/[^/]+\/apply$/.test(url.pathname)
     || /^\/api\/plans\/adaptation\/[^/]+\/(?:accept|keep)$/.test(url.pathname);
 }

@@ -1336,6 +1336,18 @@ async function getAssignedPlanForUser(userId, tx = null, options = {}) {
   return assigned ? { source: 'assigned', row: assigned } : null;
 }
 
+async function getPlanClearMarker(userId, tx = null, { lock = false } = {}) {
+  const get = tx?.get || dbGet;
+  return get(`
+    SELECT id, plan_id, plan_version, lineage_id, supersedes_user_plan_id, effective_from
+    FROM user_plans
+    WHERE user_id=? AND status='cleared'
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+    ${lock ? 'FOR UPDATE' : ''}
+  `, [userId]);
+}
+
 async function getActivePlanForUser(userId, tx = null, options = {}) {
   const get = tx?.get || dbGet;
   return resolveActivePlanForDate(userId, get, {
@@ -1396,6 +1408,7 @@ async function getAssignedPlanForMutation(userId, tx, options = {}) {
 async function getActivePlanForMutation(userId, tx, options = {}) {
   const assignment = await getAssignedPlanForMutation(userId, tx, options);
   if (assignment) return assignment;
+  if (await getPlanClearMarker(userId, tx, { lock: true })) return null;
 
   const legacy = await tx.get(`
     SELECT * FROM training_plans
@@ -1409,6 +1422,53 @@ async function getActivePlanForMutation(userId, tx, options = {}) {
   return options.normalizePersistedIdentities === false
     ? active
     : normalizeActivePlanIdentitiesForMutation(active, userId, tx);
+}
+
+async function clearActivePlanForUser(userId, tx, options = {}) {
+  const planningDateLocal = options.planningDateLocal || getTodayISO();
+  const active = await getActivePlanForMutation(userId, tx, {
+    includeFuture: true,
+    planningDateLocal,
+    normalizePersistedIdentities: false,
+  });
+  if (!active) return Object.freeze({ cleared: false, markerId: null });
+
+  const preservedPlanId = String(active.row.plan_id || active.row.id || '').trim();
+  if (!preservedPlanId) throw new Error('Active plan clear marker requires a preserved training plan');
+  const supersedesUserPlanId = String(active.row.user_plan_id || '').trim() || null;
+  const markerId = uuidv4();
+  const priorVersion = Number(active.row.plan_version);
+  const planVersion = Number.isSafeInteger(priorVersion) && priorVersion >= 1 ? priorVersion + 1 : 1;
+  const lineageId = String(active.row.lineage_id || '').trim() || markerId;
+
+  const superseded = await tx.run(
+    "UPDATE user_plans SET status='superseded' WHERE user_id=? AND status='active'",
+    [userId],
+  );
+  if (supersedesUserPlanId && superseded.changes < 1) {
+    throw new Error('Active plan supersede failed');
+  }
+  const marker = await tx.run(
+    `INSERT INTO user_plans (
+       id, user_id, plan_id, started_at, current_week, status, progress_json,
+       plan_version, lineage_id, supersedes_user_plan_id, effective_from
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      markerId,
+      userId,
+      preservedPlanId,
+      planningDateLocal,
+      Number(active.row.current_week || 1),
+      'cleared',
+      JSON.stringify({ completedSessionIds: [] }),
+      planVersion,
+      lineageId,
+      supersedesUserPlanId,
+      planningDateLocal,
+    ],
+  );
+  if (marker.changes < 1) throw new Error('Active plan clear marker failed');
+  return Object.freeze({ cleared: true, markerId });
 }
 
 async function ensureWritablePlan(active, userId, tx) {
@@ -7278,6 +7338,7 @@ router._test = {
   computeGoalBackwardShadowDiagnostics,
   emitPlanReleaseTelemetry,
   currentGoalBackwardApplyEnvelope,
+  clearActivePlanForUser,
   getActivePlanForMutation,
   getActivePlanForUser,
   normalizeActivePlanIdentitiesForMutation,
