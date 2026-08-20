@@ -13,6 +13,18 @@ const planSource = fs.readFileSync(new URL('../src/pages/Plan.jsx', import.meta.
 const dayViewSource = fs.readFileSync(new URL('../src/components/calendar/ForgedDayView.jsx', import.meta.url), 'utf8')
 const racesSource = fs.readFileSync(new URL('../src/pages/Races.jsx', import.meta.url), 'utf8')
 const serviceWorkerSource = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8')
+const planResetEffectSource = racesSource.match(
+  /useEffect\(\(\) => \{\s*if \(!planResetRace\)[\s\S]*?\}, \[planResetRace\]\)/,
+)?.[0] || ''
+const planResetCatchSource = racesSource.match(
+  /if \(err\?\.code === 'PLAN_RESET_REQUIRED'\) \{([\s\S]*?)\n\s*\}/,
+)?.[1] || ''
+const planResetDialogSource = racesSource.match(
+  /\{planResetRace && \(\s*(<section[\s\S]*?<\/section>)\s*\)\}/,
+)?.[1] || ''
+const keepEverythingHandlerSource = planResetDialogSource.match(
+  /onClick=\{\(\) => \{([\s\S]*?)\}\}[\s\S]*?>Keep everything<\/button>/,
+)?.[1] || ''
 
 const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 }
 
@@ -249,6 +261,21 @@ assert.match(racesSource, /Recorded runs, lifts, health data, check-ins, and tra
 assert.match(racesSource, />Clear plan & remove race</)
 assert.match(racesSource, />Keep everything</)
 assert.match(racesSource, /err\?\.code === 'PLAN_RESET_REQUIRED'/)
+assert.match(planResetEffectSource, /requestAnimationFrame/, 'reset-required schedules one post-render dialog reveal')
+assert.equal((planResetEffectSource.match(/requestAnimationFrame/g) || []).length, 1, 'reset-required schedules exactly one reveal frame')
+assert.match(planResetEffectSource, /planResetDialogRef\.current/, 'the reveal targets the rendered alertdialog ref')
+assert.match(planResetEffectSource, /scrollIntoView[\s\S]*\.focus\(\{ preventScroll: true \}\)/, 'the reset confirmation is revealed before focus moves without a second scroll')
+assert.match(planResetEffectSource, /cancelAnimationFrame/, 'closing before the frame runs safely cancels the reveal')
+assert.doesNotMatch(planResetEffectSource, /confirmPlanResetRemoval|resetOwnedRace|\.click\(/, 'reveal and focus cannot trigger a destructive handler')
+assert.match(planResetDialogSource, /role="alertdialog"/)
+assert.match(planResetDialogSource, /ref=\{planResetDialogRef\}/, 'the actual alertdialog owns the reveal ref')
+assert.match(planResetDialogSource, /tabIndex=\{-1\}/, 'the alertdialog surface is programmatically focusable')
+assert.match(planResetDialogSource, /className="flex flex-wrap gap-2"/, 'confirmation actions wrap at compact phone widths')
+assert.equal((planResetDialogSource.match(/minHeight: 44/g) || []).length, 2, 'both confirmation actions retain 44px minimum targets')
+assert.match(keepEverythingHandlerSource, /setPlanResetRace\(null\)/)
+assert.doesNotMatch(keepEverythingHandlerSource, /resetOwnedRace|confirmPlanResetRemoval|api\.(?:post|delete)|\.click\(/, 'Keep everything sends zero reset calls')
+assert.doesNotMatch(planResetCatchSource, /setMessage\(/, 'reset-required does not write a duplicate status near the form')
+assert.doesNotMatch(racesSource, /Forge could not safely rebuild the current plan\. Choose whether to keep everything or clear the plan and remove this race\./, 'the alertdialog is the only reset-required explanation')
 assert.doesNotMatch(racesSource, />[^<]*(?:GOAL_BACKWARD_GENERATION_FAILED|ACTIVE_PLAN_LINKAGE_UNVERIFIED)[^<]*</)
 assert.match(serviceWorkerSource, /isReplayUnsafeMutation/)
 assert.match(serviceWorkerSource, /removal-\(\?:preview\|apply\|reset\)/)

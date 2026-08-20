@@ -186,6 +186,7 @@ export default function Races() {
   const [removingRaceId, setRemovingRaceId] = useState(null)
   const [planResetRace, setPlanResetRace] = useState(null)
   const removalInFlightRef = useRef(false)
+  const planResetDialogRef = useRef(null)
 
   const load = async ({ fresh = false } = {}) => {
     const freshConfig = fresh ? {
@@ -208,6 +209,16 @@ export default function Races() {
     return { races: nextRaces, activePlan: nextActivePlan, activePlanReadConfirmed }
   }
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (!planResetRace) return undefined
+    const revealFrame = window.requestAnimationFrame(() => {
+      const dialog = planResetDialogRef.current
+      if (!dialog) return
+      dialog.scrollIntoView({ block: 'center', inline: 'nearest' })
+      dialog.focus({ preventScroll: true })
+    })
+    return () => window.cancelAnimationFrame(revealFrame)
+  }, [planResetRace])
 
   const activePlanRaceIds = useMemo(() => {
     return planRaceIds(activePlan)
@@ -338,7 +349,6 @@ export default function Races() {
     } catch (err) {
       if (err?.code === 'PLAN_RESET_REQUIRED') {
         setPlanResetRace(race)
-        setMessage('Forge could not safely rebuild the current plan. Choose whether to keep everything or clear the plan and remove this race.')
         return
       }
       expectedRemainingRaceIds = err?.expectedRemainingRaceIds ?? expectedRemainingRaceIds
@@ -476,7 +486,9 @@ export default function Races() {
 
       {planResetRace && (
         <section
+          ref={planResetDialogRef}
           role="alertdialog"
+          tabIndex={-1}
           aria-labelledby="plan-reset-title"
           aria-describedby="plan-reset-description"
           className="rounded-xl p-4 space-y-3"
