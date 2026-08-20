@@ -2645,7 +2645,9 @@ const GOAL_BACKWARD_RUNNING_FAMILIES = new Set([
   'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run', 'interval_run',
   'race_rhythm_run', 'assessment', 'race',
 ]);
-const GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES = new Set(['hyrox_compromised']);
+const GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES = new Set([
+  'hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation',
+]);
 
 function goalBackwardCandidateMaterial(plan, availableLocalDates) {
   const available = Array.isArray(availableLocalDates) ? new Set(availableLocalDates) : null;
@@ -2978,9 +2980,20 @@ function assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan) {
     && isCanonicalHash(activeAppliedPlan.selected_candidate_hash);
 }
 
+function goalBackwardProjectableRunningMaterial(session, family = legacyGoalBackwardFamily(session)) {
+  if (GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(family)) return true;
+  return family === 'race'
+    && String(session?.kind || '').toLowerCase() === 'hyrox'
+    && session?.includesRun === true;
+}
+
 function goalBackwardMaterialRunningMeters(session) {
-  const direct = session?.distance_m ?? session?.distanceMeters;
+  const projectable = goalBackwardProjectableRunningMaterial(session);
+  const direct = projectable
+    ? session?.running_distance_m ?? session?.distance_m ?? session?.distanceMeters
+    : session?.distance_m ?? session?.distanceMeters;
   if (Number.isFinite(direct) && direct >= 0) return direct;
+  if (projectable) return 0;
   const miles = session?.distance_miles ?? session?.distanceMiles;
   return Number.isFinite(miles) && miles >= 0 ? Math.round(miles * 1609.344) : 0;
 }
@@ -3121,7 +3134,9 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
   const requiredRunningM = Number(minimumRunningM);
   const trainingAgeClass = String(options.trainingAgeClass || '').toUpperCase();
   const presentationFloorMin = ['BEGINNER', 'RETURNING'].includes(trainingAgeClass) ? 20 : 25;
-  const projectionPace = Number(options.projectionPaceSecondsPerMile);
+  const projectionPace = typeof options.projectionPaceSecondsPerMile === 'number'
+    && Number.isFinite(options.projectionPaceSecondsPerMile)
+    ? options.projectionPaceSecondsPerMile : null;
   const projectionPaceAvailable = projectionPace >= 180 && projectionPace <= 2400;
   const availableDaysCount = Number(options.availableDaysCount);
   const maximumSupportingCount = Number.isSafeInteger(availableDaysCount) && availableDaysCount >= 0
@@ -3136,15 +3151,16 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
     usedMaterialIndexes.add(materialIndex);
     const selectedFamily = legacyGoalBackwardFamily(candidateMaterial[materialIndex]);
     if (GOAL_BACKWARD_RUNNING_FAMILIES.has(selectedFamily)
-      || GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(selectedFamily)) {
+      || goalBackwardProjectableRunningMaterial(candidateMaterial[materialIndex], selectedFamily)) {
       selectedRunningM += goalBackwardMaterialRunningMeters(candidateMaterial[materialIndex]);
     }
   }
   const availableRunningMaterial = candidateMaterial.map((session, index) => {
     const sourceFamily = legacyGoalBackwardFamily(session);
-    const family = GOAL_BACKWARD_RUNNING_FAMILIES.has(sourceFamily)
+    const projectable = goalBackwardProjectableRunningMaterial(session, sourceFamily);
+    const family = GOAL_BACKWARD_RUNNING_FAMILIES.has(sourceFamily) && !projectable
       ? sourceFamily
-      : GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(sourceFamily) ? 'easy_run' : null;
+      : projectable ? 'easy_run' : null;
     const runningM = goalBackwardMaterialRunningMeters(session);
     const directDuration = Number(session?.duration_min ?? session?.durationMin);
     const durationMin = Number.isFinite(directDuration) && directDuration >= 0
@@ -3156,6 +3172,7 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
       family,
       index,
       materialId: goalBackwardMaterialId(session),
+      projectable,
       runningM,
       sourceFamily,
     };
@@ -3168,14 +3185,29 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
       || left.index - right.index
   ));
   const exactRunningMaterial = availableRunningMaterial.filter((entry) => (
-    !GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(entry.sourceFamily)
+    !entry.projectable
   ));
-  for (const { durationMin, family, materialId, runningM } of exactRunningMaterial) {
+  const usableExactRunningMaterial = exactRunningMaterial.filter(({ durationMin, family }) => (
+    Number.isFinite(durationMin)
+      && durationMin >= (family === 'long_aerobic' ? Math.max(30, presentationFloorMin) : presentationFloorMin)
+  ));
+  const projectableRunningMaterial = availableRunningMaterial.filter((entry) => entry.projectable);
+  const projectedRunningM = projectableRunningMaterial.reduce((sum, entry) => sum + entry.runningM, 0);
+  const projectedDurationMin = projectedRunningM > 0
+    ? Math.ceil(((projectedRunningM / 1609.344) * projectionPace) / 60) : 0;
+  const exactCapacityM = usableExactRunningMaterial.slice(0, maximumSupportingCount)
+    .reduce((sum, entry) => sum + entry.runningM, 0);
+  const projectedCapacityM = projectedRunningM
+    + usableExactRunningMaterial.slice(0, Math.max(0, maximumSupportingCount - 1))
+      .reduce((sum, entry) => sum + entry.runningM, 0);
+  const projectionCanHelp = projectionPaceAvailable && projectableRunningMaterial.length > 0
+    && projectedDurationMin >= presentationFloorMin
+    && projectedCapacityM > exactCapacityM
+    && selectedRunningM < requiredRunningM;
+  const exactSlots = Math.max(0, maximumSupportingCount - (projectionCanHelp ? 1 : 0));
+  for (const { family, materialId, runningM } of usableExactRunningMaterial) {
     if (!Number.isSafeInteger(requiredRunningM) || requiredRunningM < 0
-      || selectedRunningM >= requiredRunningM || supporting.length >= maximumSupportingCount) continue;
-    const familyPresentationFloorMin = family === 'long_aerobic'
-      ? Math.max(30, presentationFloorMin) : presentationFloorMin;
-    if (!Number.isFinite(durationMin) || durationMin < familyPresentationFloorMin) continue;
+      || selectedRunningM >= requiredRunningM || supporting.length >= exactSlots) continue;
     const supportsRequirementId = goalBackwardSupportRequirement(primary, family);
     supporting.push({
       requirement_id: `current-candidate-support-${supporting.length + 1}`,
@@ -3188,27 +3220,17 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
   }
   if (Number.isSafeInteger(requiredRunningM) && requiredRunningM >= 0
     && selectedRunningM < requiredRunningM && supporting.length < maximumSupportingCount
-    && projectionPaceAvailable) {
-    const selectedProjectable = [];
-    let projectedRunningM = 0;
-    for (const entry of availableRunningMaterial.filter((candidate) => (
-      GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(candidate.sourceFamily)
-    ))) {
-      if (selectedRunningM + projectedRunningM >= requiredRunningM) break;
-      selectedProjectable.push(entry);
-      projectedRunningM += entry.runningM;
-    }
-    const projectedDurationMin = projectedRunningM > 0
-      ? Math.ceil(((projectedRunningM / 1609.344) * projectionPace) / 60) : 0;
+    && projectionCanHelp) {
     // Projection consumes the selected recorded running component in full;
     // it never manufactures a token-sized remainder to hit the floor.
-    if (selectedProjectable.length
-      && projectedDurationMin >= presentationFloorMin) {
+    if (projectableRunningMaterial.length) {
       const supportsRequirementId = goalBackwardSupportRequirement(primary, 'easy_run');
+      const projectionBindingId = projectableRunningMaterial[0].materialId;
       supporting.push({
         requirement_id: `current-candidate-support-${supporting.length + 1}`,
         any_of: ['easy_run'],
         role: 'SUPPORTING',
+        ...(projectionBindingId ? { candidate_material_id: projectionBindingId } : {}),
         ...(supportsRequirementId ? { supports_requirement_id: supportsRequirementId } : {}),
       });
     }
@@ -3384,9 +3406,12 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const boundedCandidateMaterial = clusterPolicy?.required === true && selectedClusterWeek
     ? goalBackwardCandidateMaterial({ weeks: [selectedClusterWeek] }, availableLocalDates)
     : goalBackwardCandidateMaterial(built.plan, availableLocalDates);
-  const baseCandidateMaterial = boundedCandidateMaterial.length
+  const completeCandidateMaterial = goalBackwardCandidateMaterial(built.plan, null);
+  const baseCandidateMaterial = clusterPolicy?.required === true && boundedCandidateMaterial.length
     ? boundedCandidateMaterial
-    : goalBackwardCandidateMaterial(built.plan, null);
+    : decision.phase === 'DEVELOPMENT' && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
+      ? completeCandidateMaterial
+      : boundedCandidateMaterial.length ? boundedCandidateMaterial : completeCandidateMaterial;
   const carriedRemovalMaterial = clusterPolicy?.required === true
     ? [] : goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates);
   const carriedGoalExpansionMaterial = clusterPolicy?.required === true

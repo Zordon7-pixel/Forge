@@ -104,6 +104,9 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
   const toggleDay = (day) => setTrainingDays((current) => (
     current.includes(day) ? current.filter((item) => item !== day) : DAYS.filter((item) => [...current, day].includes(item))
   ))
+  const lockHorizontalScroll = (event) => {
+    if (event.currentTarget.scrollLeft !== 0) event.currentTarget.scrollLeft = 0
+  }
 
   const validate = () => {
     if (!eventName.trim()) return tx('error.name', 'Enter the event or foundation name.')
@@ -231,7 +234,7 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
 
   return (
     <div role="presentation" style={{ position: 'fixed', inset: 0, zIndex: 80, display: 'grid', alignItems: 'end', justifyItems: 'center', padding: 10, background: 'rgba(0,0,0,0.76)' }}>
-      <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="hyrox-setup-title" style={{ width: 'min(680px, 100%)', maxWidth: '100%', minWidth: 0, maxHeight: 'calc(100dvh - 20px)', overflowY: 'auto', padding: 16, paddingBottom: 'calc(18px + env(safe-area-inset-bottom, 0px))', borderRadius: 12, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="hyrox-setup-title" onScroll={lockHorizontalScroll} style={{ width: 'min(680px, 100%)', maxWidth: '100%', minWidth: 0, maxHeight: 'calc(100dvh - 20px)', overflowX: 'hidden', overflowY: 'auto', overscrollBehaviorX: 'none', touchAction: 'pan-y', padding: 16, paddingBottom: 'calc(18px + env(safe-area-inset-bottom, 0px))', borderRadius: 12, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <p style={{ margin: 0, color: 'var(--accent)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>{tx('eyebrow', 'Worldwide event plan')}</p>

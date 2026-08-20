@@ -1548,6 +1548,234 @@ test('failed linked race removal returns to a retryable terminal state at 320px'
   expect(runtimeErrors.filter((message) => !/status of 500 \(Internal Server Error\)/.test(message))).toEqual([])
 })
 
+test('HYROX setup stays horizontally locked', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const equipment = [
+    'ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill',
+  ]
+  const hyrox = {
+    id: 'hyrox-horizontal-lock',
+    race_name: 'HYROX Washington DC',
+    race_date: '2026-09-06',
+    event_local_date: '2026-09-06',
+    event_timezone: 'America/New_York',
+    event_kind: 'hyrox',
+    event_format: 'individual_open',
+    event_category: 'men',
+    goal_time_seconds: 3600,
+    status: 'upcoming',
+    event_config_json: {
+      schemaVersion: 1,
+      canonicalUnits: 'metric',
+      equipment,
+      runningPriority: 'maintain',
+      runDaysPerWeek: 4,
+      trainingDays: ['Mon', 'Wed', 'Thu', 'Sun'],
+    },
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/races', { races: [hyrox] }],
+      ['GET /api/plans/my', {
+        plan: { id: 'hyrox-horizontal-lock-plan', plan_data: { schemaVersion: 2, goals: [{ raceId: hyrox.id }] } },
+        user_plan: { id: 'hyrox-horizontal-lock-assignment', current_week: 1, started_at: today, progress: {} },
+      }],
+    ]),
+  })
+
+  await page.goto('/races')
+  await page.getByLabel('Manage HYROX Washington DC').getByRole('button', { name: 'Edit', exact: true }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Update your HYROX plan' })
+  const weekdayGrid = dialog.getByLabel('Available training days')
+  const dateInput = dialog.getByLabel('Exact local event date')
+  const durationInputs = [
+    dialog.getByLabel('Target finish time hours'),
+    dialog.getByLabel('Target finish time minutes'),
+    dialog.getByLabel('Target finish time seconds'),
+  ]
+  const close = dialog.getByRole('button', { name: 'Close HYROX setup' })
+  const sunday = weekdayGrid.getByRole('button', { name: 'Sun', exact: true })
+
+  await expect(dialog).toBeVisible()
+  await expect(weekdayGrid).toBeVisible()
+  await expect(dateInput).toHaveValue('2026-09-06')
+  for (const input of durationInputs) await expect(input).toHaveCount(1)
+
+  const measureLayout = () => dialog.evaluate((node) => {
+    const rectValue = (element) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      }
+    }
+    const overlay = node.parentElement
+    const visual = window.visualViewport
+    const descendants = [...node.querySelectorAll('*')].map((element) => ({
+      element,
+      rect: element.getBoundingClientRect(),
+    })).filter(({ rect }) => rect.width > 0 && rect.height > 0)
+    const widest = descendants.reduce((current, entry) => (
+      !current || entry.rect.width > current.rect.width ? entry : current
+    ), null)
+    const closeButton = node.querySelector('button[aria-label="Close HYROX setup"]')
+    const sundayButton = [...node.querySelectorAll('[aria-label="Available training days"] button')]
+      .find((button) => button.textContent.trim() === 'Sun')
+    const dialogRect = node.getBoundingClientRect()
+    const clientLeft = dialogRect.left + node.clientLeft
+    return {
+      overflowX: getComputedStyle(node).overflowX,
+      visualViewport: {
+        width: visual?.width ?? window.innerWidth,
+        height: visual?.height ?? window.innerHeight,
+        offsetLeft: visual?.offsetLeft ?? 0,
+        offsetTop: visual?.offsetTop ?? 0,
+        scale: visual?.scale ?? 1,
+      },
+      overlay: rectValue(overlay),
+      dialog: {
+        ...rectValue(node),
+        clientLeft,
+        clientRight: clientLeft + node.clientWidth,
+        clientWidth: node.clientWidth,
+        clientHeight: node.clientHeight,
+        scrollWidth: node.scrollWidth,
+        scrollHeight: node.scrollHeight,
+        scrollLeft: node.scrollLeft,
+        scrollTop: node.scrollTop,
+      },
+      document: {
+        clientWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollLeft: document.documentElement.scrollLeft,
+        bodyClientWidth: document.body.clientWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        bodyScrollLeft: document.body.scrollLeft,
+      },
+      descendants: {
+        minLeft: Math.min(...descendants.map(({ rect }) => rect.left)),
+        maxRight: Math.max(...descendants.map(({ rect }) => rect.right)),
+        widest: widest ? {
+          tag: widest.element.tagName,
+          left: widest.rect.left,
+          right: widest.rect.right,
+          width: widest.rect.width,
+        } : null,
+      },
+      controls: {
+        close: rectValue(closeButton),
+        sunday: rectValue(sundayButton),
+      },
+    }
+  })
+
+  const expectWithinVisualViewport = (box, visualViewport, label) => {
+    expect(box.left, `${label} left edge`).toBeGreaterThanOrEqual(visualViewport.offsetLeft - 1)
+    expect(box.right, `${label} right edge`).toBeLessThanOrEqual(visualViewport.offsetLeft + visualViewport.width + 1)
+    expect(box.top, `${label} top edge`).toBeGreaterThanOrEqual(visualViewport.offsetTop - 1)
+    expect(box.bottom, `${label} bottom edge`).toBeLessThanOrEqual(visualViewport.offsetTop + visualViewport.height + 1)
+  }
+  const expectInsideDialog = (box, layout, label) => {
+    expect(box.left, `${label} stays inside the dialog client left edge`).toBeGreaterThanOrEqual(layout.dialog.clientLeft - 1)
+    expect(box.right, `${label} stays inside the dialog client right edge`).toBeLessThanOrEqual(layout.dialog.clientRight + 1)
+    expect(box.top, `${label} stays inside the visible dialog top edge`).toBeGreaterThanOrEqual(layout.dialog.top - 1)
+    expect(box.bottom, `${label} stays inside the visible dialog bottom edge`).toBeLessThanOrEqual(layout.dialog.bottom + 1)
+  }
+  const expectHorizontalLock = (layout, baseline, label) => {
+    expect(layout.dialog.scrollWidth, `${label}: dialog has no horizontal overflow`).toBeLessThanOrEqual(layout.dialog.clientWidth)
+    expect(layout.dialog.scrollLeft, `${label}: dialog horizontal scroll remains zero`).toBe(0)
+    expect(layout.document.scrollWidth, `${label}: document stays within its client width`).toBeLessThanOrEqual(layout.document.clientWidth)
+    expect(layout.document.bodyScrollWidth, `${label}: body stays within its client width`).toBeLessThanOrEqual(layout.document.bodyClientWidth)
+    expect(layout.document.scrollLeft, `${label}: document horizontal scroll remains zero`).toBe(0)
+    expect(layout.document.bodyScrollLeft, `${label}: body horizontal scroll remains zero`).toBe(0)
+    expect(layout.dialog.left, `${label}: dialog does not move horizontally`).toBeCloseTo(baseline.dialog.left, 0)
+    expect(layout.dialog.right, `${label}: dialog right edge does not move horizontally`).toBeCloseTo(baseline.dialog.right, 0)
+    expect(layout.visualViewport.width, `${label}: visual viewport width does not shift`).toBeCloseTo(baseline.visualViewport.width, 0)
+    expect(layout.visualViewport.offsetLeft, `${label}: visual viewport offset does not shift`).toBeCloseTo(baseline.visualViewport.offsetLeft, 0)
+    expect(layout.visualViewport.scale, `${label}: visual viewport scale does not shift`).toBeCloseTo(baseline.visualViewport.scale, 2)
+    expect(layout.descendants.minLeft, `${label}: descendants stay inside the client left edge`).toBeGreaterThanOrEqual(layout.dialog.clientLeft - 1)
+    expect(layout.descendants.maxRight, `${label}: descendants stay inside the client right edge`).toBeLessThanOrEqual(layout.dialog.clientRight + 1)
+    expect(layout.descendants.widest.left, `${label}: widest descendant starts inside the client bounds`).toBeGreaterThanOrEqual(layout.dialog.clientLeft - 1)
+    expect(layout.descendants.widest.right, `${label}: widest descendant ends inside the client bounds`).toBeLessThanOrEqual(layout.dialog.clientRight + 1)
+  }
+
+  const initial = await measureLayout()
+  expect(initial.overflowX, 'HYROX setup dialog must not be a horizontal scroll container').toMatch(/^(hidden|clip)$/)
+  expect(initial.visualViewport.width).toBeGreaterThan(0)
+  expect(initial.visualViewport.offsetLeft).toBeGreaterThanOrEqual(0)
+  expect(initial.visualViewport.scale).toBeGreaterThan(0)
+  expect(initial.dialog.scrollHeight, 'the complete setup form uses the dialog as its vertical scroll container').toBeGreaterThan(initial.dialog.clientHeight)
+  expectHorizontalLock(initial, initial, 'initial setup')
+  expectWithinVisualViewport(initial.overlay, initial.visualViewport, 'overlay')
+  expectWithinVisualViewport(initial.dialog, initial.visualViewport, 'dialog')
+  expect(
+    (initial.dialog.left + initial.dialog.right) / 2,
+    'dialog remains centered in the visual viewport',
+  ).toBeCloseTo(initial.visualViewport.offsetLeft + initial.visualViewport.width / 2, 0)
+  for (const [label, box] of Object.entries(initial.controls)) {
+    expectInsideDialog(box, initial, label)
+    expectWithinVisualViewport(box, initial.visualViewport, label)
+  }
+  await expect(close).toBeVisible()
+  await expect(sunday).toBeVisible()
+
+  await dialog.evaluate(async (node) => {
+    const center = node.getBoundingClientRect()
+    node.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', clientX: center.left + 100 }))
+    node.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'touch', clientX: center.left + 25 }))
+    node.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch', clientX: center.left + 25 }))
+    node.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX: 80 }))
+    node.scrollLeft = 50
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+  const afterHorizontalAttempt = await measureLayout()
+  expectHorizontalLock(afterHorizontalAttempt, initial, 'after horizontal touch, wheel, and direct scroll attempts')
+
+  for (const input of [dateInput, ...durationInputs]) {
+    await input.scrollIntoViewIfNeeded()
+    await input.focus()
+    await expect(input).toBeFocused()
+    const focusedLayout = await measureLayout()
+    const inputBox = await input.boundingBox()
+    expect(inputBox).not.toBeNull()
+    const normalizedInputBox = {
+      left: inputBox.x,
+      right: inputBox.x + inputBox.width,
+      top: inputBox.y,
+      bottom: inputBox.y + inputBox.height,
+    }
+    expectHorizontalLock(focusedLayout, initial, `after focusing ${await input.getAttribute('aria-label') || 'event date'}`)
+    expectInsideDialog(normalizedInputBox, focusedLayout, 'focused input')
+    expectWithinVisualViewport(normalizedInputBox, focusedLayout.visualViewport, 'focused input')
+  }
+  const afterDurationFocus = await measureLayout()
+  let afterVerticalReachabilityCheck = afterDurationFocus
+  if (afterDurationFocus.dialog.scrollHeight > afterDurationFocus.dialog.clientHeight) {
+    await dialog.evaluate((node) => node.scrollTo({ top: node.scrollHeight }))
+    await expect.poll(() => dialog.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+    afterVerticalReachabilityCheck = await measureLayout()
+    expect(
+      afterVerticalReachabilityCheck.dialog.scrollTop,
+      'vertically overflowing dialog can scroll its content into reach',
+    ).toBeGreaterThan(0)
+  } else {
+    expect(
+      afterDurationFocus.dialog.scrollHeight,
+      'dialog content fits without vertical scrolling',
+    ).toBeLessThanOrEqual(afterDurationFocus.dialog.clientHeight)
+    expect(afterDurationFocus.dialog.scrollTop, 'non-overflowing dialog remains at its vertical origin').toBe(0)
+    expectWithinVisualViewport(afterDurationFocus.dialog, afterDurationFocus.visualViewport, 'non-overflowing dialog')
+  }
+  expectHorizontalLock(afterVerticalReachabilityCheck, initial, 'after the vertical reachability check')
+
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('an existing HYROX event can correct its division and review a combined candidate without mutating the current plan', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const hyrox = {

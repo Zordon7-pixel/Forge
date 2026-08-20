@@ -965,7 +965,17 @@ function preferredMaterialFamilyForFloor(session, decision, options = {}) {
 function roadCandidateMaterial(source) {
   return legacyCandidateMaterialEntries(source).map((session, index) => {
     const durationMin = finiteCandidateMaterialNumber(session.duration_min, session.durationMin);
-    const distanceM = finiteCandidateMaterialNumber(session.distance_m, session.distanceMeters);
+    const sourceFamily = legacyGoalBackwardFamily(session);
+    const hybridRunningSource = ['hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation']
+      .includes(sourceFamily)
+      || (sourceFamily === 'race'
+        && String(session?.kind || '').toLowerCase() === 'hyrox'
+        && session?.includesRun === true);
+    const declaresHybridRunningDistance = hybridRunningSource
+      && session.running_distance_m !== null && session.running_distance_m !== undefined;
+    const distanceM = declaresHybridRunningDistance
+      ? finiteCandidateMaterialNumber(session.running_distance_m)
+      : finiteCandidateMaterialNumber(session.distance_m, session.distanceMeters);
     const distanceMiles = finiteCandidateMaterialNumber(session.distance_miles, session.distanceMiles);
     const qualityWorkDurationMin = finiteCandidateMaterialNumber(
       session.quality_work_duration_min, session.qualityWorkDurationMin,
@@ -979,7 +989,7 @@ function roadCandidateMaterial(source) {
     return {
       material_id: String(session.session_id ?? session.id ?? `road-material-${index + 1}`),
       source_workout_id: session.workout_id ?? null,
-      workout_family: legacyGoalBackwardFamily(session),
+      workout_family: sourceFamily,
       legacy_scheduled_local_date: validLocalDate(
         session.scheduled_local_date ?? session.date
       ),
@@ -1002,6 +1012,15 @@ function roadCandidateMaterial(source) {
       },
     };
   });
+}
+
+function projectableHybridRunningMaterial(material) {
+  if (['hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation']
+    .includes(material?.workout_family)) return true;
+  const source = material?.source_session;
+  return material?.workout_family === 'race'
+    && String(source?.kind || '').toLowerCase() === 'hyrox'
+    && source?.includesRun === true;
 }
 
 function canonicalRoadCandidateMaterial(source, hybridProjectionPaceSecondsPerMile = null) {
@@ -1064,10 +1083,12 @@ function goalBackwardSkeletonIdentity(input = {}) {
     return material || null;
   });
   const materialRunningMeters = (material) => {
-    const direct = Number(material?.distance_m);
-    if (Number.isFinite(direct) && direct > 0) return direct;
-    const miles = Number(material?.distance_miles);
-    return Number.isFinite(miles) && miles > 0 ? miles * 1609.344 : 0;
+    const direct = material?.distance_m;
+    if (typeof direct === 'number' && Number.isFinite(direct) && direct > 0) return direct;
+    if (projectableHybridRunningMaterial(material)) return 0;
+    const miles = material?.distance_miles;
+    return typeof miles === 'number' && Number.isFinite(miles) && miles > 0
+      ? miles * 1609.344 : 0;
   };
   const exactRunningMeters = assignedMaterials.reduce((sum, material) => (
     sum + (material && RUNNING_GOAL_BACKWARD_FAMILIES.has(material.workout_family)
@@ -1083,7 +1104,7 @@ function goalBackwardSkeletonIdentity(input = {}) {
     && Number.isSafeInteger(requiredRunningMeters) && exactRunningMeters < requiredRunningMeters) {
     const projectable = materials.filter((entry) => (
       !usedMaterialIds.has(entry.material_id)
-        && entry.workout_family === 'hyrox_compromised'
+        && projectableHybridRunningMaterial(entry)
         && materialRunningMeters(entry) > 0
     )).sort((left, right) => (
       materialRunningMeters(right) - materialRunningMeters(left)
