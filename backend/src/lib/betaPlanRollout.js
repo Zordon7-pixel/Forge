@@ -353,7 +353,11 @@ function parseGoalBackwardCohortRefs(
 }
 
 function releaseAlertEntries(authority) {
-  return Object.hasOwn(authority, 'alertEntries') ? authority.alertEntries : releaseTelemetryBuffer;
+  // The in-process buffer is diagnostic evidence, not a deployment authority.
+  // Letting one request mutate later requests made release mode depend on which
+  // Node process handled an account. Rollback remains fail-closed only when a
+  // server-owned alert snapshot is supplied explicitly.
+  return Object.hasOwn(authority, 'alertEntries') ? authority.alertEntries : [];
 }
 
 function resolveOperationalGoalBackwardV24Mode(value, options = {}) {

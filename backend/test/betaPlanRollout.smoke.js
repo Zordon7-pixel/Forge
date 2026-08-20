@@ -13,6 +13,7 @@ const {
   emitGoalBackwardReleaseTelemetry,
   evaluateGoalBackwardReleaseAlerts,
   getGoalBackwardV24Audience,
+  goalBackwardReleaseTelemetrySnapshot,
   isCurrentRolloutPlan,
   localDateForOffset,
   preservedPlanTarget,
@@ -492,8 +493,25 @@ async function run() {
         userId: publicAccountId,
         audience: 'all',
       }),
+      'on',
+      'process-local diagnostic telemetry cannot silently change another request engine mode',
+    );
+    assert.equal(
+      plansRouter._test.resolvePlanGoalBackwardV24Mode(publicAccountId, {
+        mode: 'on',
+        audience: 'all',
+      }),
+      'on',
+      'the exported plan route also ignores process-local diagnostics as release authority',
+    );
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: publicAccountId,
+        audience: 'all',
+        alertEntries: goalBackwardReleaseTelemetrySnapshot(),
+      }),
       'off',
-      'trusted runtime telemetry in the bounded internal buffer still forces rollback',
+      'an explicit server-owned alert snapshot still forces rollback',
     );
   } finally {
     clearGoalBackwardReleaseTelemetry();

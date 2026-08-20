@@ -86,9 +86,21 @@ async function run() {
   assert.equal(alerts.rollback_required, true);
   assert.deepEqual(alerts.breached_thresholds, ['REVISION_MISMATCH']);
   assert.equal(
-    rollout.resolveOperationalGoalBackwardV24Mode('on', { userId: disposableUserId, cohortRefs }),
+    rollout.resolveOperationalGoalBackwardV24Mode('on', {
+      userId: otherUserId,
+      audience: 'all',
+    }),
+    'on',
+    'one account surface diagnostic cannot silently switch unrelated users to legacy on only one Node process',
+  );
+  assert.equal(
+    rollout.resolveOperationalGoalBackwardV24Mode('on', {
+      userId: disposableUserId,
+      cohortRefs,
+      alertEntries: rollout.goalBackwardReleaseTelemetrySnapshot(),
+    }),
     'off',
-    'a zero-tolerance alert forces the applicable cohort back to control',
+    'an explicit server-owned zero-tolerance alert history forces the applicable cohort back to control',
   );
   rollout.clearGoalBackwardReleaseTelemetry();
   for (const reasonCode of [
