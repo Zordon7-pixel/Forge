@@ -787,7 +787,7 @@ router.post('/:id/removal-reset', auth, async (req, res) => {
       );
       if (!race) return planningInputUnchanged({ notFound: true });
 
-      const planClear = await plansRouter._test.clearActivePlanForUser(req.user.id, tx);
+      const planClear = await plansRouter.clearActivePlanForUser(req.user.id, tx);
       await tx.run(
         "UPDATE plan_generation_candidates SET status='superseded' WHERE user_id=? AND status='preview'",
         [req.user.id],

@@ -1072,6 +1072,13 @@ assert.equal(deletedRaceProposal.status, 'keep');
 assert.match(deletedRaceProposal.reason, /protected race/);
 
 const routeSource = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
+const racesRouteSource = fs.readFileSync(path.join(__dirname, '../src/routes/races.js'), 'utf8');
+assert.doesNotMatch(racesRouteSource, /plansRouter\._test\.clearActivePlanForUser/,
+  'production race reset code must not consume the test-only plans namespace');
+assert.match(routeSource, /router\.clearActivePlanForUser\s*=\s*clearActivePlanForUser/,
+  'the plans router exposes plan reset as a first-class production helper');
+assert.match(routeSource, /router\._test\s*=\s*\{[\s\S]*clearActivePlanForUser/,
+  'the direct test helper remains available as an alias');
 assert.match(routeSource, /delete safe\.raceTargets/);
 assert.match(routeSource, /previewPlanForUser\(req\.user\.id/);
 assert.match(routeSource, /plan_generation_candidates/);
@@ -1806,6 +1813,10 @@ async function checkHyroxCandidateImmediateAdoption() {
   try {
     const plansRouter = require('../src/routes/plans');
     const racesRouter = require('../src/routes/races');
+    assert.equal(typeof plansRouter.clearActivePlanForUser, 'function',
+      'the plans router exposes clearActivePlanForUser for production consumers');
+    assert.equal(plansRouter.clearActivePlanForUser, plansRouter._test.clearActivePlanForUser,
+      'the first-class and direct-test exports share the existing implementation');
     const carryForwardProbe = plansRouter._test.goalBackwardRemovalCarryForwardMaterial({
       request: { operation: 'remove_race', remove_race_id: 'yonkers' },
       races: [{ id: 'army' }],
@@ -4306,11 +4317,24 @@ async function checkHyroxCandidateImmediateAdoption() {
     };
     const activeAssignmentBeforeReset = currentAssignment().id;
     const activePlanBeforeReset = currentAssignment().plan_id;
-    const successfulReset = await invoke(resetRaceRemoval, {
-      ...roadRequestBase,
-      params: { id: 'yonkers' },
-      body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
-    });
+    const firstClassClearActivePlanForUser = plansRouter.clearActivePlanForUser;
+    let firstClassClearCalls = 0;
+    plansRouter.clearActivePlanForUser = async (...args) => {
+      firstClassClearCalls += 1;
+      return firstClassClearActivePlanForUser(...args);
+    };
+    let successfulReset;
+    try {
+      successfulReset = await invoke(resetRaceRemoval, {
+        ...roadRequestBase,
+        params: { id: 'yonkers' },
+        body: { confirmation: 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE' },
+      });
+    } finally {
+      plansRouter.clearActivePlanForUser = firstClassClearActivePlanForUser;
+    }
+    assert.equal(firstClassClearCalls, 1,
+      'the registered reset handler calls the first-class production helper');
     assert.equal(successfulReset.statusCode, 200, JSON.stringify(successfulReset.payload));
     assert.deepEqual(successfulReset.payload, {
       ok: true,

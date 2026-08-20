@@ -7310,6 +7310,8 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
   }
 });
 
+router.clearActivePlanForUser = clearActivePlanForUser;
+
 router._test = {
   adaptationEpisodeDisposition,
   applicableGoalBackwardPlan,
