@@ -1918,6 +1918,142 @@ test('an existing owned HYROX event can apply a foundation without requiring dat
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('a successful two-week HYROX bridge suppresses an empty phase row and keeps review actions reachable on mobile', async ({ page }, testInfo) => {
+  const expectedViewport = testInfo.project.name === 'compact-mobile-320'
+    ? { width: 320, height: 568 }
+    : { width: 402, height: 874 }
+  expect(page.viewportSize()).toEqual(expectedViewport)
+  const runtimeErrors = collectRuntimeErrors(page)
+  const hyrox = {
+    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
+    event_local_date: '2026-09-06', event_timezone: 'America/New_York', event_kind: 'hyrox',
+    event_format: 'individual_open', event_category: 'men', goal_time_seconds: null, status: 'upcoming',
+  }
+  let previewCount = 0
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/races', { races: [hyrox] }],
+      ['GET /api/plans/my', {
+        plan: { id: 'active-hyrox-plan', plan_data: { schemaVersion: 2, goals: [{
+          raceId: hyrox.id, eventLocalDate: hyrox.event_local_date,
+          division: hyrox.event_format, category: hyrox.event_category,
+        }] } },
+        user_plan: { id: 'active-hyrox-assignment', current_week: 1, started_at: today, progress: {} },
+      }],
+      ['PATCH /api/races/hyrox-dc', { race: hyrox }],
+      ['POST /api/plans/generate-for-race/hyrox-dc', () => {
+        previewCount += 1
+        const emptyPhaseBridge = previewCount === 1
+        return {
+          candidate_id: emptyPhaseBridge ? 'two-week-bridge-candidate' : 'multi-phase-candidate',
+          candidate_hash: emptyPhaseBridge ? 'sha256:two-week-bridge-candidate' : 'sha256:multi-phase-candidate',
+          candidate: { plan_data: {
+            schemaVersion: 2,
+            schedulePreferences: { runDaysPerWeek: 3 },
+            hyroxPolicy: {
+              daysToEventAtGeneration: emptyPhaseBridge ? 16 : 35,
+              runwayClass: emptyPhaseBridge ? 'readiness_bridge' : 'short_runway',
+              sessionsPerWeek: 2,
+              maximumHardLowerBodyDaysPerRollingSeven: 2,
+              equipment: [],
+              missingEquipment: [],
+            },
+            goals: [{ kind: 'hyrox', raceId: hyrox.id, name: hyrox.race_name }],
+            weeks: emptyPhaseBridge
+              ? [
+                  { week: 1, startDate: '2026-08-17', days: [] },
+                  { week: 2, startDate: '2026-08-24', days: [] },
+                ]
+              : [
+                  { week: 1, phase: 'orientation_assessment', days: [] },
+                  { week: 2, phase: 'build', days: [] },
+                  { week: 3, phase: 'taper_race', days: [] },
+                ],
+          } },
+        }
+      }],
+    ]),
+  })
+
+  await page.goto('/races')
+  await page.getByLabel('Manage HYROX Washington DC').getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByRole('button', { name: 'Preview HYROX plan', exact: true }).click()
+
+  const dialog = page.getByRole('dialog')
+  const apply = dialog.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true })
+  const back = dialog.getByRole('button', { name: 'Back to setup', exact: true })
+  await expect(dialog.getByText('HYROX readiness bridge', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('2 weeks · 3 run exposures · 2 HYROX exposures · 2 hard lower-body days', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Phase sequence', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('alert')).toHaveCount(0)
+  await testInfo.attach(`hyrox-empty-phase-top-${expectedViewport.width}x${expectedViewport.height}`, {
+    body: await page.screenshot({ fullPage: false }),
+    contentType: 'image/png',
+  })
+
+  await back.scrollIntoViewIfNeeded()
+  await expect(apply).toBeEnabled()
+  await expect(apply).toBeInViewport()
+  await expect(back).toBeEnabled()
+  await expect(back).toBeInViewport()
+  const [applyBox, backBox] = await Promise.all([apply.boundingBox(), back.boundingBox()])
+  expect(applyBox).not.toBeNull()
+  expect(backBox).not.toBeNull()
+  expect(backBox.y, 'Back follows Apply without overlap').toBeGreaterThanOrEqual(applyBox.y + applyBox.height)
+  expect(applyBox.y, 'Apply does not clip above the viewport').toBeGreaterThanOrEqual(0)
+  expect(backBox.y + backBox.height, 'Back does not clip below the viewport').toBeLessThanOrEqual(expectedViewport.height)
+
+  const layout = await dialog.evaluate((node) => {
+    const dialogBox = node.getBoundingClientRect()
+    const reviewRows = [...node.querySelectorAll('dl > div')].map((row) => {
+      const box = row.getBoundingClientRect()
+      return {
+        left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+        clientWidth: row.clientWidth, scrollWidth: row.scrollWidth,
+      }
+    })
+    return {
+      viewportWidth: document.documentElement.clientWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+      dialog: {
+        left: dialogBox.left, right: dialogBox.right,
+        clientWidth: node.clientWidth, scrollWidth: node.scrollWidth,
+      },
+      reviewRows,
+    }
+  })
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth)
+  expect(layout.bodyWidth).toBeLessThanOrEqual(layout.viewportWidth)
+  expect(layout.dialog.scrollWidth).toBeLessThanOrEqual(layout.dialog.clientWidth)
+  for (const [index, row] of layout.reviewRows.entries()) {
+    expect(row.scrollWidth, `review row ${index + 1} has no horizontal overflow`).toBeLessThanOrEqual(row.clientWidth)
+    expect(row.left, `review row ${index + 1} does not clip left`).toBeGreaterThanOrEqual(layout.dialog.left)
+    expect(row.right, `review row ${index + 1} does not clip right`).toBeLessThanOrEqual(layout.dialog.right)
+    if (index > 0) {
+      expect(row.top, `review row ${index + 1} does not overlap its predecessor`).toBeGreaterThanOrEqual(layout.reviewRows[index - 1].bottom)
+    }
+  }
+  for (const box of [applyBox, backBox]) {
+    expect(box.x, 'review action does not clip left').toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width, 'review action does not clip right').toBeLessThanOrEqual(layout.viewportWidth)
+  }
+  await testInfo.attach(`hyrox-empty-phase-actions-${expectedViewport.width}x${expectedViewport.height}`, {
+    body: await page.screenshot({ fullPage: false }),
+    contentType: 'image/png',
+  })
+
+  await back.click()
+  await page.getByRole('button', { name: 'Preview HYROX plan', exact: true }).click()
+  await expect(dialog.getByText('Phase sequence', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Orientation Assessment → Build → Taper Race', { exact: true })).toBeVisible()
+  await expect(dialog).not.toContainText('orientation_assessment')
+  await expect(dialog).not.toContainText('taper_race')
+  expect(previewCount).toBe(2)
+  expect(requestsFor(apiState, 'POST', '/api/plans/generate-for-race/hyrox-dc')).toHaveLength(2)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('a failed reviewed HYROX apply keeps confirmed prior-calendar feedback beside the retry controls on mobile', async ({ page }, testInfo) => {
   const expectedViewport = testInfo.project.name === 'compact-mobile-320'
     ? { width: 320, height: 568 }

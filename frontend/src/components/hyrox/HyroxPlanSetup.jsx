@@ -267,10 +267,12 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
                 <dt style={{ fontSize: 11, fontWeight: 900, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Days remaining</dt>
                 <dd style={{ margin: '4px 0 0', color: 'var(--text-primary)' }}>{review.daysRemaining == null ? 'No dated event' : review.daysRemaining}</dd>
               </div>
-              <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-input)' }}>
-                <dt style={{ fontSize: 11, fontWeight: 900, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Phase sequence</dt>
-                <dd style={{ margin: '4px 0 0', color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{review.phaseLabels.join(' → ')}</dd>
-              </div>
+              {review.phaseLabels.length > 0 && (
+                <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-input)' }}>
+                  <dt style={{ fontSize: 11, fontWeight: 900, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Phase sequence</dt>
+                  <dd style={{ margin: '4px 0 0', color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{review.phaseLabels.join(' → ')}</dd>
+                </div>
+              )}
               <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-input)' }}>
                 <dt style={{ fontSize: 11, fontWeight: 900, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Week and session summary</dt>
                 <dd style={{ margin: '4px 0 0', color: 'var(--text-primary)' }}>{review.weekCount} weeks · {review.sessionSummary}</dd>

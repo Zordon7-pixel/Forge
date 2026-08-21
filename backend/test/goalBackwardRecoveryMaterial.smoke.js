@@ -7,6 +7,7 @@ const {
   deriveScopedRecoveryState,
   evaluateMaterialDose,
   minimumRunningDoseWithoutMaterialReduction,
+  normalizeCompletedRunningCredit,
   normalizeCrossModalReductionEvidence,
   normalizeScope,
   runningDistanceObservation,
@@ -1645,6 +1646,77 @@ test('C3-MAT-14', 'only a date-bound canonical current-week receipt contributes 
     )));
   }
   assert.equal(hookCalls, 0, 'receipt normalization must execute no getter or Proxy trap');
+});
+
+test('C3-MAT-15', 'completed-running evidence IDs reject non-strings without hooks, traps, or coercion', () => {
+  const receipt = {
+    schema_version: 1,
+    source: 'CANONICAL_CURRENT_WEEK_LOWER_BOUND',
+    planning_week_start_local: '2026-08-17',
+    through_local_date: '2026-08-17',
+    completed_running_m: Math.floor(4 * MI_TO_M),
+    evidence_ids: ['sha256:current-week-evidence'],
+  };
+  const normalized = normalizeCompletedRunningCredit(receipt, '2026-08-17');
+  assert.deepEqual(normalized, receipt, 'the existing positive receipt remains byte-equivalent');
+  assert.notEqual(normalized, receipt, 'normalization returns an isolated receipt');
+  assert.notEqual(normalized.evidence_ids, receipt.evidence_ids, 'normalization isolates evidence IDs');
+  assert.equal(Object.isFrozen(normalized), true, 'the normalized receipt remains immutable');
+  assert.equal(Object.isFrozen(normalized.evidence_ids), true, 'normalized evidence IDs remain immutable');
+
+  let objectToStringCalls = 0;
+  let symbolPrimitiveCalls = 0;
+  let ordinaryProxyTrapCalls = 0;
+  let revokedProxyTrapCalls = 0;
+  let revokedTargetCoercionCalls = 0;
+  const ordinaryProxy = new Proxy({}, {
+    get() {
+      ordinaryProxyTrapCalls += 1;
+      return undefined;
+    },
+  });
+  const revoked = Proxy.revocable({
+    toString() {
+      revokedTargetCoercionCalls += 1;
+      return 'hostile-revoked-value';
+    },
+  }, {
+    get(target, property, receiver) {
+      revokedProxyTrapCalls += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  revoked.revoke();
+  const cases = [
+    ['number', 42, () => 0],
+    ['boolean', true, () => 0],
+    ['null', null, () => 0],
+    ['object toString', {
+      toString() {
+        objectToStringCalls += 1;
+        return 'hostile-object-value';
+      },
+    }, () => objectToStringCalls],
+    ['Symbol.toPrimitive', {
+      [Symbol.toPrimitive]() {
+        symbolPrimitiveCalls += 1;
+        return 'hostile-symbol-value';
+      },
+    }, () => symbolPrimitiveCalls],
+    ['ordinary Proxy', ordinaryProxy, () => ordinaryProxyTrapCalls],
+    ['revoked Proxy', revoked.proxy, () => (
+      revokedProxyTrapCalls + revokedTargetCoercionCalls
+    )],
+  ];
+
+  for (const [label, value, counter] of cases) {
+    const rejected = normalizeCompletedRunningCredit({
+      ...receipt,
+      evidence_ids: [value],
+    }, '2026-08-17');
+    assert.equal(rejected, null, `${label} evidence ID must fail closed`);
+    assert.equal(counter(), 0, `${label} evidence ID must execute zero hooks, traps, or coercion`);
+  }
 });
 
 test('C3-UNKNOWN-01', 'unknown load cannot become zero or authorize either increase or reduction', () => {

@@ -71,8 +71,20 @@ for (const fixture of fixtures) {
   assert.equal(review.daysRemaining, fixture.days, `${fixture.weeks}-week fixture renders backend days remaining`)
   assert.equal(review.runwayClass, fixture.runway, `${fixture.weeks}-week fixture renders backend runway class`)
   assert.deepEqual(review.phases, [...new Set(plan.weeks.map((week) => week.phase))], `${fixture.weeks}-week fixture preserves backend phase sequence`)
+  assert.deepEqual(review.phaseLabels, review.phases.map((phase) => (
+    phase.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+  )), `${fixture.weeks}-week fixture renders every authoritative phase as readable copy`)
   assert.equal(review.weekCount, fixture.weeks, `${fixture.weeks}-week fixture renders backend week count`)
 }
+
+const twoWeekCanonicalBridge = hyroxCandidateReviewModel(candidateFixture({
+  weeks: 2,
+  days: 16,
+  runway: 'readiness_bridge',
+  phases: [],
+}))
+assert.equal(twoWeekCanonicalBridge.weekCount, 2, 'the short-runway canonical bridge keeps both authoritative weeks')
+assert.deepEqual(twoWeekCanonicalBridge.phaseLabels, [], 'a canonical bridge without phase data does not invent phase labels')
 
 const limited = hyroxCandidateReviewModel(candidateFixture({
   weeks: 5,
@@ -113,6 +125,7 @@ assert.deepEqual(normalizedHyrox.raw.stationSequence, hyroxRaw.stationSequence, 
 assert.equal(normalizedHyrox.raw.canonicalUnits, 'metric', 'display normalization does not mutate canonical units')
 
 assert.match(setup, /hyroxCandidateReviewModel/, 'candidate dialog uses the backend-driven HYROX review model')
+assert.match(setup, /review\.phaseLabels\.length > 0 && \([\s\S]*Phase sequence/, 'candidate dialog suppresses the entire phase row when no authoritative phase label exists')
 assert.match(setup, /Days remaining[\s\S]*Phase sequence[\s\S]*Equipment and substitutions[\s\S]*Hard-day safety/, 'candidate dialog presents the required review sections before apply')
 assert.match(setup, /setCandidate\(data\)[\s\S]*applyCandidate[\s\S]*applyPlanCandidateWithActivation/, 'HYROX always pauses on the candidate before explicit apply')
 assert.match(activation, /candidate_hash:\s*normalizedCandidateHash[\s\S]*choice:\s*'train_for_target'/, 'the bounded activation helper applies the exact reviewed candidate')
@@ -134,4 +147,4 @@ assert.match(catalog, /PLAN_GOALS\.map/, 'legacy no-date running blocks remain w
 assert.match(catalog, /openRace/, 'legacy race setup remains wired')
 assert.match(catalog, /previewAndApplyPlan/, 'legacy preview/apply remains wired')
 
-console.log('HYROX FRONTEND SMOKE OK (65)')
+console.log('HYROX FRONTEND SMOKE OK (72)')

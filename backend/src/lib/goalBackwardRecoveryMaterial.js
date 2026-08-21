@@ -97,6 +97,7 @@ function normalizeCompletedRunningCredit(receipt, planningDateLocal) {
     for (let index = 0; index < evidenceLength; index += 1) {
       const descriptor = evidenceDescriptors[index];
       if (!descriptor || !Object.hasOwn(descriptor, 'value')
+        || typeof descriptor.value !== 'string'
         || !BOUNDED_ID_PATTERN.test(descriptor.value)) return null;
       normalizedEvidenceIds.push(descriptor.value);
     }
