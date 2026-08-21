@@ -83,7 +83,7 @@ function normalizeCompletedRunningCredit(receipt, planningDateLocal) {
     if (values.schema_version !== 1
       || values.source !== 'CANONICAL_CURRENT_WEEK_LOWER_BOUND'
       || !weekStart || weekStart !== expectedWeekStart
-      || !throughDate || throughDate !== planningDate
+      || !throughDate || throughDate < weekStart || throughDate > planningDate
       || typeof values.completed_running_m !== 'number'
       || !Number.isSafeInteger(values.completed_running_m)
       || values.completed_running_m < 1 || values.completed_running_m > 1_000_000

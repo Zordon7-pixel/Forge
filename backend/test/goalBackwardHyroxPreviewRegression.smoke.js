@@ -25,6 +25,11 @@ const DEVELOPMENT_FLOOR_FACTOR = 0.85;
 const REQUIRED_RUNNING_M = 21887;
 const TRAINING_DAYS = Object.freeze(['Tue', 'Thu', 'Sat', 'Sun']);
 const HYROX_EQUIPMENT = Object.freeze([]);
+const RUNNING_FAMILIES = new Set([
+  'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run', 'interval_run',
+  'race_rhythm_run', 'hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation',
+  'assessment', 'race',
+]);
 
 function validatorResult(candidate, validator) {
   return candidate?.validation?.validator_results?.find((entry) => entry.validator === validator) || null;
@@ -42,6 +47,38 @@ function selectedSchedule(result) {
     content_hash: session.content_hash,
     derived_totals: session.derived_totals,
   })) || null;
+}
+
+function selectedRunningSessions(result) {
+  return result.selected_candidate?.canonical_sessions?.filter((session) => (
+    RUNNING_FAMILIES.has(session.workout_family)
+  )) || [];
+}
+
+function completedRunningReceipt(result) {
+  return validatorResult(result.selected_candidate, 'material_dose')
+    ?.receipt?.completed_running_credit || null;
+}
+
+function assertApplicableIdentity(scenario, label) {
+  const applicable = plansRouter._test.applicableGoalBackwardPlan(
+    scenario.built.plan,
+    scenario.result,
+  );
+  assert.ok(applicable, `${label} must remain applicable`);
+  assert.equal(applicable.decision_id, scenario.result.decision.decision_id, label);
+  assert.equal(applicable.decision_hash, scenario.result.decision.decision_hash, label);
+  assert.equal(
+    applicable.selected_candidate_hash,
+    scenario.result.selected_candidate.candidate_hash,
+    label,
+  );
+  assert.equal(
+    applicable.canonical_session_set_hash,
+    scenario.result.selected_candidate.canonical_session_set.content_hash,
+    label,
+  );
+  return applicable;
 }
 
 function compactDiagnostic(result) {
@@ -92,7 +129,7 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
   const target = {
     planMode: 'hyrox_build',
     runDaysPerWeek: 4,
-    trainingDays: [...TRAINING_DAYS],
+    trainingDays: [...(options.trainingDays || TRAINING_DAYS)],
     liftingEnabled: true,
     hyroxEquipment: [...HYROX_EQUIPMENT],
     hyroxEvent: {
@@ -107,7 +144,7 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
       runningPriority: 'maintain',
     },
   };
-  const currentWeek = {
+  const currentWeek = options.currentWeek === null ? null : {
     startDate: '2026-08-17',
     miles: 10,
     distanceState: 'KNOWN',
@@ -173,19 +210,20 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
     userPlanId: active.row.user_plan_id,
   } : null;
 
+  const planningConstraints = {
+    locks: options.locks || [],
+    manual_edits: options.manualEdits || [],
+    lock_revision: options.locks?.length ? 1 : 0,
+    edit_revision: options.manualEdits?.length ? 1 : 0,
+    constraint_fingerprint: null,
+  };
   const state = {
     target,
     context,
     races: [race],
-    inputHash: `sha256:${canonicalHash({ clock, race, target })}`,
+    inputHash: `sha256:${canonicalHash({ clock, race, target, currentWeek, planningConstraints })}`,
     planningInputRevision: 1,
-    planningConstraints: {
-      locks: [],
-      manual_edits: [],
-      lock_revision: 0,
-      edit_revision: 0,
-      constraint_fingerprint: null,
-    },
+    planningConstraints,
     active,
     activePlan,
     request: {
@@ -271,6 +309,139 @@ function run() {
   }
   assert.equal(replay.selected_candidate.candidate_hash, blank.selected_candidate.candidate_hash);
   assert.deepEqual(selectedSchedule(replay), selectedSchedule(blank));
+
+  const overlapOptions = {
+    trainingDays: ['Fri', 'Sat', 'Sun', 'Tue', 'Thu'],
+    currentWeek: {
+      runCount: 3,
+      runDates: ['2026-08-18', '2026-08-20', PLANNING_DATE],
+    },
+    locks: [{
+      constraint_kind: 'day_lock',
+      local_date: '2026-08-22',
+      role: 'PRIMARY_KEY',
+      workout_family: 'hyrox_station_skill',
+    }],
+  };
+  const planningDateCompletion = generateDiagnostics(null, overlapOptions);
+  const planningDateCompletionReplay = generateDiagnostics(null, overlapOptions);
+  assertBoundedHardValidSelection(
+    planningDateCompletion.result,
+    'verified planning-date completion with legal later availability',
+  );
+  assert.equal(overlapOptions.trainingDays.includes('Fri'), true,
+    'the planning date is an athlete-selected training day');
+  assert.equal(planningDateCompletion.result.search_diagnostics.available_day_count, 5,
+    'legal later placement dates remain available');
+  const overlapReceipt = completedRunningReceipt(planningDateCompletion.result);
+  assert.equal(overlapReceipt?.through_local_date, PLANNING_DATE);
+  assert.equal(overlapReceipt.completed_running_m, Math.floor(10 * 1609.344));
+  assert.equal(selectedRunningSessions(planningDateCompletion.result).every((session) => (
+    session.scheduled_local_date > overlapReceipt.through_local_date
+  )), true, 'planned running must be strictly later than the completed-running receipt boundary');
+  assert.equal(planningDateCompletion.result.search_diagnostics.placement_failure_reason ?? null, null);
+
+  const firstApplicable = assertApplicableIdentity(
+    planningDateCompletion,
+    'planning-date completion preview/apply binding',
+  );
+  const replayApplicable = assertApplicableIdentity(
+    planningDateCompletionReplay,
+    'planning-date completion replay binding',
+  );
+  assert.equal(
+    planningDateCompletionReplay.result.selected_candidate.candidate_hash,
+    planningDateCompletion.result.selected_candidate.candidate_hash,
+  );
+  assert.deepEqual(
+    selectedSchedule(planningDateCompletionReplay.result),
+    selectedSchedule(planningDateCompletion.result),
+  );
+  assert.deepEqual({
+    decision_id: replayApplicable.decision_id,
+    decision_hash: replayApplicable.decision_hash,
+    selected_candidate_hash: replayApplicable.selected_candidate_hash,
+    canonical_session_set_hash: replayApplicable.canonical_session_set_hash,
+  }, {
+    decision_id: firstApplicable.decision_id,
+    decision_hash: firstApplicable.decision_hash,
+    selected_candidate_hash: firstApplicable.selected_candidate_hash,
+    canonical_session_set_hash: firstApplicable.canonical_session_set_hash,
+  }, 'preview and apply bindings remain deterministic on replay');
+
+  const previousDayCompletion = generateDiagnostics(null, {
+    trainingDays: overlapOptions.trainingDays,
+    locks: overlapOptions.locks,
+  });
+  assertBoundedHardValidSelection(
+    previousDayCompletion.result,
+    'completed run one day before planning',
+  );
+  const previousDayReceipt = completedRunningReceipt(previousDayCompletion.result);
+  assert.equal(previousDayReceipt?.through_local_date, '2026-08-20');
+  assert.equal(previousDayReceipt.completed_running_m, Math.floor(10 * 1609.344),
+    'the earlier completed run retains full weekly credit');
+  assert.ok(selectedRunningSessions(previousDayCompletion.result).some((session) => (
+    session.scheduled_local_date === PLANNING_DATE
+  )), 'a receipt ending yesterday must not remove a legal planning-date run');
+  assert.equal(previousDayCompletion.result.search_diagnostics.placement_failure_reason ?? null, null);
+
+  const noCompletedRun = generateDiagnostics(null, {
+    trainingDays: overlapOptions.trainingDays,
+    locks: overlapOptions.locks,
+    currentWeek: {
+      miles: 0,
+      knownDistanceLowerBoundMiles: 0,
+      runCount: 0,
+      runDates: [],
+    },
+  });
+  assertBoundedHardValidSelection(noCompletedRun.result, 'planning-date availability without a completed run');
+  assert.equal(completedRunningReceipt(noCompletedRun.result), null);
+  assert.ok(selectedRunningSessions(noCompletedRun.result).some((session) => (
+    session.scheduled_local_date === PLANNING_DATE
+  )), 'no receipt boundary may suppress a legal planning-date run');
+
+  const planningDateHyrox = generateDiagnostics(null, {
+    trainingDays: overlapOptions.trainingDays,
+    currentWeek: overlapOptions.currentWeek,
+  });
+  assertBoundedHardValidSelection(planningDateHyrox.result, 'planning-date HYROX station work');
+  assert.ok(planningDateHyrox.result.selected_candidate.canonical_sessions.some((session) => (
+    session.scheduled_local_date === PLANNING_DATE
+      && ['hyrox_station_skill', 'hyrox_station_strength'].includes(session.workout_family)
+  )), 'non-running HYROX work remains legal on the completed-running boundary date');
+  assert.equal(selectedRunningSessions(planningDateHyrox.result).every((session) => (
+    session.scheduled_local_date > PLANNING_DATE
+  )), true);
+
+  const noLegalLaterRunningDay = generateDiagnostics(null, {
+    ...overlapOptions,
+    locks: [...overlapOptions.locks, {
+      constraint_kind: 'day_lock',
+      local_date: PLANNING_DATE,
+      role: 'PRIMARY_KEY',
+      workout_family: 'long_aerobic',
+    }],
+  });
+  assert.equal(noLegalLaterRunningDay.result.selected_candidate, null);
+  assert.equal(noLegalLaterRunningDay.result.candidates.length, 0,
+    'the engine must not retain an unsafe same-day duplicate as a least-bad candidate');
+  assert.equal(
+    noLegalLaterRunningDay.result.search_diagnostics.placement_failure_reason,
+    'SCHEDULE_CONSTRAINT',
+  );
+  assert.equal(
+    noLegalLaterRunningDay.result.search_diagnostics.placement_failure_detail,
+    'NO_RUNNING_PLACEMENT_AFTER_COMPLETED_RECEIPT',
+  );
+  assert.ok(noLegalLaterRunningDay.result.decision.reason_codes.includes(
+    'SCHEDULE_CONSTRAINT',
+  ));
+  assert.equal(plansRouter._test.applicableGoalBackwardPlan(
+    noLegalLaterRunningDay.built.plan,
+    noLegalLaterRunningDay.result,
+  ), null, 'a blocked running lock cannot produce an applicable duplicate plan');
 
   const malformedCredit = generateDiagnostics(null, {
     activePlan: false,

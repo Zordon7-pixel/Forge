@@ -2601,7 +2601,7 @@ function goalBackwardCompletedRunningCredit(context, planningDateLocal, evidence
   const lowerBoundMiles = currentWeek?.knownDistanceLowerBoundMiles;
   const runCount = currentWeek?.runCount;
   const runDates = Array.isArray(currentWeek?.runDates)
-    ? [...new Set(currentWeek.runDates)] : [];
+    ? [...new Set(currentWeek.runDates)].sort() : [];
   const knownMiles = currentWeek?.miles;
   const completeDistanceMatches = distanceState === 'KNOWN'
     && typeof knownMiles === 'number'
@@ -2626,7 +2626,7 @@ function goalBackwardCompletedRunningCredit(context, planningDateLocal, evidence
     schema_version: 1,
     source: 'CANONICAL_CURRENT_WEEK_LOWER_BOUND',
     planning_week_start_local: expectedWeekStart,
-    through_local_date: planningDateLocal,
+    through_local_date: runDates[runDates.length - 1],
     completed_running_m: completedRunningM,
     evidence_ids: Object.freeze([
       evidenceSnapshotId,

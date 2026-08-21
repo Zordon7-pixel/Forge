@@ -46,6 +46,7 @@ const { buildCanonicalPlanFromSessionSet } = require('./planSchema');
 const {
   buildCrossModalDoseLedger,
   buildDevelopmentRoleBinding,
+  normalizeCompletedRunningCredit,
 } = require('./goalBackwardRecoveryMaterial');
 
 const MAX_GOAL_BACKWARD_CANDIDATES = 64;
@@ -1280,7 +1281,13 @@ function fixedPlacementForRole(role, input = {}) {
   };
 }
 
-function rolePlacementChoices(role, input, availableDates, preferredMaterialFamily = null) {
+function rolePlacementChoices(
+  role,
+  input,
+  availableDates,
+  preferredMaterialFamily = null,
+  completedRunningThroughLocalDate = null,
+) {
   const fixed = fixedPlacementForRole(role, input);
   const dates = fixed.dates.length ? fixed.dates.filter((date) => availableDates.includes(date)) : availableDates;
   const allowedFamilies = [...new Set((role.any_of || []).map(String).filter(Boolean))].sort();
@@ -1292,10 +1299,20 @@ function rolePlacementChoices(role, input, availableDates, preferredMaterialFami
     workout_family: family,
     material_family_match: !preferredMaterialFamily || family === preferredMaterialFamily,
   })));
-  const boundedChoices = allChoices.slice(0, MAX_GOAL_BACKWARD_PLACEMENT_CHOICES_PER_ROLE);
+  const nonOverlappingChoices = completedRunningThroughLocalDate
+    ? allChoices.filter((choice) => (
+      !RUNNING_GOAL_BACKWARD_FAMILIES.has(choice.workout_family)
+        || choice.scheduled_local_date > completedRunningThroughLocalDate
+    ))
+    : allChoices;
+  const boundedChoices = nonOverlappingChoices.slice(0, MAX_GOAL_BACKWARD_PLACEMENT_CHOICES_PER_ROLE);
   Object.defineProperty(boundedChoices, 'search_truncated', {
     enumerable: false,
-    value: allChoices.length > boundedChoices.length,
+    value: nonOverlappingChoices.length > boundedChoices.length,
+  });
+  Object.defineProperty(boundedChoices, 'completed_running_overlap_blocked', {
+    enumerable: false,
+    value: nonOverlappingChoices.length < allChoices.length,
   });
   return boundedChoices;
 }
@@ -1542,13 +1559,24 @@ function enumerateGoalBackwardCandidates(input = {}) {
     String(session.requirement_id),
     preferredMaterialFamilyForFloor(session, decision, presentationFloorOptions),
   ]));
+  const completedRunningReceipt = normalizeCompletedRunningCredit(
+    input.validation_options?.completed_running_credit,
+    decision.planning_date_local,
+  );
   const placementSets = roles.map((role) => rolePlacementChoices(
     role,
     input,
     availableDates,
     preferredMaterialFamilyByRequirement.get(String(role.requirement_id)) || null,
+    completedRunningReceipt?.through_local_date ?? null,
   ));
   const placementChoicesTruncated = placementSets.some((choices) => choices.search_truncated === true);
+  const completedRunningPlacementBlocked = placementSets.some((choices) => (
+    choices.length === 0 && choices.completed_running_overlap_blocked === true
+  ));
+  const placementFailureReason = completedRunningPlacementBlocked ? 'SCHEDULE_CONSTRAINT' : null;
+  const placementFailureDetail = completedRunningPlacementBlocked
+    ? 'NO_RUNNING_PLACEMENT_AFTER_COMPLETED_RECEIPT' : null;
   const preliminary = [];
   const seen = new Set();
   let expandedNodeCount = 0;
@@ -1731,6 +1759,10 @@ function enumerateGoalBackwardCandidates(input = {}) {
     frontier_limit: MAX_GOAL_BACKWARD_SEARCH_FRONTIER,
     node_limit: MAX_GOAL_BACKWARD_SEARCH_NODES,
     truncation_reason: truncationReason,
+    ...(placementFailureReason ? {
+      placement_failure_reason: placementFailureReason,
+      placement_failure_detail: placementFailureDetail,
+    } : {}),
   });
   const finalized = finalizeGoalBackwardCandidateDecision(decision, {
     candidates: retained,
@@ -1740,6 +1772,9 @@ function enumerateGoalBackwardCandidates(input = {}) {
   });
   const finalizedDecision = immutable({
     ...clone(finalized),
+    ...(placementFailureReason ? {
+      reason_codes: [...new Set([...(finalized.reason_codes || []), placementFailureReason])],
+    } : {}),
     candidate_enumeration: {
       ...clone(finalized.candidate_enumeration),
       search_complete: searchDiagnostics.search_complete,
@@ -1748,6 +1783,10 @@ function enumerateGoalBackwardCandidates(input = {}) {
       placement_space_upper_bound: searchDiagnostics.placement_space_upper_bound,
       frontier_limit: searchDiagnostics.frontier_limit,
       node_limit: searchDiagnostics.node_limit,
+      ...(placementFailureReason ? {
+        placement_failure_reason: placementFailureReason,
+        placement_failure_detail: placementFailureDetail,
+      } : {}),
     },
   });
   return immutable({
