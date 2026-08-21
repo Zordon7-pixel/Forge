@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Check, Copy, Download, ImagePlus, Share2, Users, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import api from '../lib/api'
+import { createActionSingleFlight } from '../lib/actionSingleFlight'
 import { unreadableActivitySharePhotoMessage, validateActivitySharePhoto } from '../lib/activitySharePhoto'
 import { parsePlannedRun, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
 import PhotoLibraryService from '../services/PhotoLibraryService'
@@ -830,6 +831,8 @@ export default function ActivityShareStudio({ run, onClose }) {
   const ownedPhotoUrlsRef = useRef(new Set())
   const photoSelectionVersionRef = useRef(0)
   const onCloseRef = useRef(onClose)
+  const actionLaneRef = useRef(null)
+  if (!actionLaneRef.current) actionLaneRef.current = createActionSingleFlight()
   const photoInputId = useId()
   const photoFeedbackId = `${photoInputId}-feedback`
   const [template, setTemplate] = useState('route')
@@ -973,7 +976,7 @@ export default function ActivityShareStudio({ run, onClose }) {
     return new File([blob], filename, { type: fileType })
   }
 
-  const handleShare = async () => {
+  const handleShare = () => actionLaneRef.current(async () => {
     setBusy(true)
     setStatus('')
     try {
@@ -999,9 +1002,9 @@ export default function ActivityShareStudio({ run, onClose }) {
     } finally {
       setBusy(false)
     }
-  }
+  })
 
-  const handleSave = async () => {
+  const handleSave = () => actionLaneRef.current(async () => {
     setBusy(true)
     setStatus('')
     let url = null
@@ -1032,9 +1035,9 @@ export default function ActivityShareStudio({ run, onClose }) {
       if (url) window.setTimeout(() => URL.revokeObjectURL(url), 1000)
       setBusy(false)
     }
-  }
+  })
 
-  const handleCopy = async () => {
+  const handleCopy = () => actionLaneRef.current(async () => {
     setBusy(true)
     setStatus('')
     try {
@@ -1052,9 +1055,9 @@ export default function ActivityShareStudio({ run, onClose }) {
     } finally {
       setBusy(false)
     }
-  }
+  })
 
-  const handlePost = async () => {
+  const handlePost = () => actionLaneRef.current(async () => {
     if (!run?.id) {
       setStatus('Save this run before posting it to friends.')
       return
@@ -1079,7 +1082,7 @@ export default function ActivityShareStudio({ run, onClose }) {
     } finally {
       setBusy(false)
     }
-  }
+  })
 
   const openPhotoPicker = () => {
     const input = fileInputRef.current
