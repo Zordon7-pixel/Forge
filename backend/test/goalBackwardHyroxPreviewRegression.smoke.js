@@ -16,24 +16,15 @@ const {
   eventPolicyFor,
 } = require('../src/lib/racePlanPolicy');
 
-const PLANNING_DATE = '2026-08-20';
+const PLANNING_DATE = '2026-08-21';
 const TIMEZONE = 'America/New_York';
 const TIMEZONE_OFFSET_MINUTES = 240;
 const EVENT_DATE = '2026-09-06';
-const BASELINE_RUNNING_M = Math.round(20 * 1609.344);
+const BASELINE_RUNNING_M = Math.round(16 * 1609.344);
 const DEVELOPMENT_FLOOR_FACTOR = 0.85;
-const REQUIRED_RUNNING_M = 27358;
-const TRAINING_DAYS = Object.freeze(['Mon', 'Wed', 'Thu', 'Sun']);
-const HYROX_EQUIPMENT = Object.freeze([
-  'ski_erg',
-  'row_erg',
-  'sled_push',
-  'sled_pull',
-  'wall_ball_target',
-  'sandbag',
-  'farmers_carry',
-  'treadmill',
-]);
+const REQUIRED_RUNNING_M = 21887;
+const TRAINING_DAYS = Object.freeze(['Tue', 'Thu', 'Sat', 'Sun']);
+const HYROX_EQUIPMENT = Object.freeze([]);
 
 function validatorResult(candidate, validator) {
   return candidate?.validation?.validator_results?.find((entry) => entry.validator === validator) || null;
@@ -74,7 +65,7 @@ function compactDiagnostic(result) {
   };
 }
 
-function generateDiagnostics(goalTimeSeconds) {
+function generateDiagnostics(goalTimeSeconds, options = {}) {
   const clock = acceptPlanningClock({
     planning_date_local: PLANNING_DATE,
     timezone_offset_minutes: TIMEZONE_OFFSET_MINUTES,
@@ -87,10 +78,11 @@ function generateDiagnostics(goalTimeSeconds) {
 
   const race = {
     id: 'hyrox-september-6',
-    race_name: 'HYROX September 6',
+    race_name: 'Hyrox DC',
     race_date: EVENT_DATE,
     event_local_date: EVENT_DATE,
     event_timezone: TIMEZONE,
+    location: 'Washington DC',
     event_kind: 'hyrox',
     event_format: 'individual_open',
     event_category: 'men',
@@ -101,6 +93,7 @@ function generateDiagnostics(goalTimeSeconds) {
     planMode: 'hyrox_build',
     runDaysPerWeek: 4,
     trainingDays: [...TRAINING_DAYS],
+    liftingEnabled: true,
     hyroxEquipment: [...HYROX_EQUIPMENT],
     hyroxEvent: {
       raceId: race.id,
@@ -114,11 +107,25 @@ function generateDiagnostics(goalTimeSeconds) {
       runningPriority: 'maintain',
     },
   };
+  const currentWeek = {
+    startDate: '2026-08-17',
+    miles: 10,
+    distanceState: 'KNOWN',
+    knownDistanceLowerBoundMiles: 10,
+    unknownDistanceRunCount: 0,
+    runCount: 2,
+    runDates: ['2026-08-18', '2026-08-20'],
+    longRunCompleted: false,
+    ...(options.currentWeek || {}),
+  };
   const history = {
-    weeklyMileageBaseline: 20,
-    mileageBaseline: { observedLowerBoundWeeklyMiles: 20 },
+    weeklyMileageBaseline: 16,
+    mileageBaseline: { observedLowerBoundWeeklyMiles: 16 },
     recentRunCount: 8,
-    acuteRunLoad: { latestRun: { paceSecondsPerMile: 600 } },
+    acuteRunLoad: {
+      latestRun: { paceSecondsPerMile: 600 },
+      currentWeek,
+    },
     runLoadInput: {
       load_input_state: 'COMPLETE',
       load_input_confidence: 'HIGH',
@@ -150,6 +157,22 @@ function generateDiagnostics(goalTimeSeconds) {
   });
   assert.equal(built.validation.valid, true, 'the production HYROX generator must produce a valid source plan');
 
+  const active = options.activePlan === false ? null : {
+    source: 'assigned',
+    row: {
+      id: 'active-hyrox-plan',
+      user_plan_id: 'active-hyrox-assignment',
+      plan_version: 1,
+      plan_json: JSON.stringify(built.plan),
+      plan_data: JSON.stringify(built.plan),
+    },
+  };
+  const activePlan = active ? {
+    planVersion: 1,
+    trainingPlanId: active.row.id,
+    userPlanId: active.row.user_plan_id,
+  } : null;
+
   const state = {
     target,
     context,
@@ -163,20 +186,21 @@ function generateDiagnostics(goalTimeSeconds) {
       edit_revision: 0,
       constraint_fingerprint: null,
     },
-    active: null,
-    activePlan: null,
+    active,
+    activePlan,
     request: {
       race_ids: [race.id],
       planning_date_local: clock.planningDateLocal,
       timezone_offset_minutes: clock.timezoneOffsetMinutes,
     },
   };
-  return plansRouter._test.computeGoalBackwardShadowDiagnostics({
+  const result = plansRouter._test.computeGoalBackwardShadowDiagnostics({
     userId: context.profile.id,
     state,
     built,
     planningDateLocal: clock.planningDateLocal,
   });
+  return { built, result };
 }
 
 function assertBoundedHardValidSelection(result, label) {
@@ -206,9 +230,12 @@ function assertBoundedHardValidSelection(result, label) {
 }
 
 function run() {
-  const blank = generateDiagnostics(null);
-  const supportedTime = generateDiagnostics(3600);
-  const replay = generateDiagnostics(null);
+  const blankScenario = generateDiagnostics(null);
+  const supportedTimeScenario = generateDiagnostics(3600);
+  const replayScenario = generateDiagnostics(null);
+  const blank = blankScenario.result;
+  const supportedTime = supportedTimeScenario.result;
+  const replay = replayScenario.result;
 
   const hyroxPolicy = eventPolicyFor('hyrox_singles_v1');
   assert.equal(hyroxPolicy.phase_running_floor_factor.DEVELOPMENT, DEVELOPMENT_FLOOR_FACTOR);
@@ -221,8 +248,40 @@ function run() {
   assertBoundedHardValidSelection(blank, 'blank goal time');
   assertBoundedHardValidSelection(supportedTime, 'supported 60-minute goal time');
   assertBoundedHardValidSelection(replay, 'blank goal time replay');
+  for (const [label, scenario] of [
+    ['blank goal time', blankScenario],
+    ['supported 60-minute goal time', supportedTimeScenario],
+  ]) {
+    const applicable = plansRouter._test.applicableGoalBackwardPlan(
+      scenario.built.plan,
+      scenario.result,
+    );
+    assert.ok(applicable, `${label} must remain applicable on the real preview replacement path`);
+    assert.equal(applicable.goal_backward_engine_version, 'goal-backward-coaching-v2.4');
+    const materialDose = validatorResult(scenario.result.selected_candidate, 'material_dose')?.receipt;
+    assert.ok(materialDose?.completed_running_credit, JSON.stringify(materialDose));
+    assert.equal(materialDose.completed_running_credit.completed_running_m, Math.floor(10 * 1609.344));
+    assert.equal(materialDose.planned_candidate_running_m, 10000);
+    assert.equal(materialDose.candidate_running_m,
+      materialDose.planned_candidate_running_m + materialDose.completed_running_credit.completed_running_m);
+    assert.ok(materialDose.planned_candidate_running_m < materialDose.candidate_running_m);
+    assert.ok(scenario.result.selected_candidate.canonical_sessions.some((session) => (
+      session.workout_family === 'long_aerobic' && session.scheduled_local_date > '2026-08-23'
+    )), `${label} must not count the following partial week toward the credited current-week floor`);
+  }
   assert.equal(replay.selected_candidate.candidate_hash, blank.selected_candidate.candidate_hash);
   assert.deepEqual(selectedSchedule(replay), selectedSchedule(blank));
+
+  const malformedCredit = generateDiagnostics(null, {
+    activePlan: false,
+    currentWeek: { distanceState: 'UNKNOWN' },
+  }).result;
+  assert.equal(malformedCredit.selected_candidate, null,
+    'unverified current-week distance cannot be credited to make a candidate pass');
+  assert.ok(malformedCredit.candidates.every((candidate) => candidate.validation.violations.some((violation) => (
+    violation.reason === 'WEEKLY_RUNNING_FLOOR'
+      || violation.reason === 'UNSUPPORTED_MATERIAL_RUNNING_REDUCTION'
+  ))), 'the malformed-credit negative control remains rejected by the existing hard validators');
 
   console.log('GOAL BACKWARD HYROX PREVIEW REGRESSION SMOKE OK');
 }

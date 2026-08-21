@@ -13,6 +13,7 @@ const {
 const { normalizePlanningConstraints } = require('./planCandidateLifecycle');
 const {
   evaluateMaterialDose,
+  normalizeCompletedRunningCredit,
   normalizeScope,
   validateDevelopmentRoleDose,
 } = require('./goalBackwardRecoveryMaterial');
@@ -900,13 +901,28 @@ function validateRequiredExposures(sessions, options) {
   if (clusterExposure && !clusterExposure.valid) violations.push(...clusterExposure.violations);
   const minimumRunning = Number(options.minimum_weekly_demand?.running_m);
   if (Number.isSafeInteger(minimumRunning) && minimumRunning >= 0) {
-    const actualRunning = aggregateKnownRunningDistance(sessions);
+    const completedRunningReceipt = normalizeCompletedRunningCredit(
+      options.completed_running_credit,
+      options.planning_date_local,
+    );
+    const completedRunning = completedRunningReceipt?.completed_running_m ?? 0;
+    const creditedWeekEnd = completedRunning > 0
+      ? addDays(completedRunningReceipt.planning_week_start_local, 6) : null;
+    const applicableSessions = creditedWeekEnd
+      ? sessions.filter((session) => sessionLocalDate(session) <= creditedWeekEnd)
+      : sessions;
+    const actualRunning = aggregateKnownRunningDistance(applicableSessions);
     if (actualRunning === null) violations.push({
       code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'WEEKLY_RUNNING_DISTANCE_UNKNOWN', required_running_m: minimumRunning,
     });
-    else if (Math.round(actualRunning) < minimumRunning) violations.push({
+    else if (Math.round(actualRunning + completedRunning) < minimumRunning) violations.push({
       code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'WEEKLY_RUNNING_FLOOR',
-      required_running_m: minimumRunning, proposed_running_m: Math.round(actualRunning),
+      required_running_m: minimumRunning,
+      proposed_running_m: Math.round(actualRunning),
+      ...(completedRunning > 0 ? {
+        completed_running_credit_m: completedRunning,
+        credited_running_m: Math.round(actualRunning + completedRunning),
+      } : {}),
     });
   }
   return { validator: 'required_exposures', valid: violations.length === 0, violations, reason_codes: violations.map((violation) => violation.code) };

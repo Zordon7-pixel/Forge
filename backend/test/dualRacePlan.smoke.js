@@ -2195,21 +2195,19 @@ async function checkHyroxCandidateImmediateAdoption() {
       } catch (error) {
         sweepError = error;
       }
-      assert.equal(sweepError?.code, 'GOAL_BACKWARD_GENERATION_FAILED',
-        `${mileageVector.join('/')} must fail closed when the current constructor cannot meet the running floor`);
-      assert.equal(sweepResult?.selected_candidate, null);
+      assert.equal(sweepError, null,
+        `${mileageVector.join('/')} has verified current-week running that must count toward the running floor`);
+      assert.ok(sweepResult?.selected_candidate);
       assert.ok(sweepResult?.candidates.length > 0);
-      assert.ok(sweepResult.candidates.every((candidate) => (
-        !candidate.validation.violations.some((violation) => (
-          violation.code === 'BELOW_PRESENTATION_FLOOR_EXCEPTION'
-        )) || candidate.validation.violations.some((violation) => (
-          violation.code !== 'BELOW_PRESENTATION_FLOOR_EXCEPTION'
-        ))
-      )), `${mileageVector.join('/')} must not fail solely because of a token projected run: ${JSON.stringify(sweepResult.candidates.map((candidate) => candidate.validation.violations))}`);
-      assert.ok(sweepResult.candidates.some((candidate) => candidate.validation.violations.some((violation) => (
-        violation.reason === 'WEEKLY_RUNNING_FLOOR'
-          || violation.reason === 'WEEKLY_RUNNING_DISTANCE_UNKNOWN'
-      ))), `${mileageVector.join('/')} preserves the honest unmet-running-demand reason`);
+      const materialDose = sweepResult.selected_candidate.validation.validator_results.find((entry) => (
+        entry.validator === 'material_dose'
+      ));
+      assert.equal(materialDose?.valid, true);
+      assert.equal(
+        materialDose?.receipt?.completed_running_credit?.completed_running_m,
+        Math.floor(mileageVector.at(-1) * 1609.344),
+      );
+      assert.ok(materialDose.receipt.planned_candidate_running_m < materialDose.receipt.candidate_running_m);
       assert.ok(sweepResult.search_diagnostics.expanded_node_count <= MAX_GOAL_BACKWARD_SEARCH_NODES);
       assert.ok(sweepResult.search_diagnostics.generated_leaf_count <= MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
       assert.ok(sweepResult.search_diagnostics.role_count <= sweepResult.search_diagnostics.available_day_count);
@@ -2219,8 +2217,9 @@ async function checkHyroxCandidateImmediateAdoption() {
     const originalLatestDuration = recentRuns.at(-1).duration_seconds;
     recentRuns.at(-1).duration_seconds = 0;
     let missingProjectionEvidenceResult = null;
-    await assert.rejects(
-      () => plansRouter._test.previewPlanForUser(ownerId, {
+    let missingProjectionEvidenceError = null;
+    try {
+      await plansRouter._test.previewPlanForUser(ownerId, {
         ...requestClock,
         race_ids: ['hyrox', 'army'],
         target: {
@@ -2236,16 +2235,26 @@ async function checkHyroxCandidateImmediateAdoption() {
           alertEntries: [],
           inspectDecision: (result) => { missingProjectionEvidenceResult = result; },
         },
-      }),
-      (error) => error?.code === 'GOAL_BACKWARD_GENERATION_FAILED' && error?.status === 409,
-      'hybrid running cannot be projected without current pace evidence',
-    );
-    assert.equal(missingProjectionEvidenceResult?.selected_candidate, null);
-    assert.ok(missingProjectionEvidenceResult?.candidates.some((candidate) => (
-      candidate.validation.violations.some((violation) => (
-        violation.reason === 'WEEKLY_RUNNING_FLOOR' || violation.reason === 'WEEKLY_RUNNING_DISTANCE_UNKNOWN'
-      ))
-    )));
+      });
+    } catch (error) {
+      missingProjectionEvidenceError = error;
+    }
+    assert.equal(missingProjectionEvidenceError, null, JSON.stringify({
+      error: missingProjectionEvidenceError && {
+        code: missingProjectionEvidenceError.code,
+        status: missingProjectionEvidenceError.status,
+      },
+      violations: missingProjectionEvidenceResult?.candidates?.map((candidate) => (
+        candidate.validation.violations
+      )),
+    }));
+    assert.ok(missingProjectionEvidenceResult?.selected_candidate,
+      'known run distance remains creditable when pace evidence is incomplete');
+    const incompletePaceMaterialDose = missingProjectionEvidenceResult.selected_candidate.validation.validator_results
+      .find((entry) => entry.validator === 'material_dose');
+    assert.equal(incompletePaceMaterialDose?.valid, true);
+    assert.equal(incompletePaceMaterialDose?.receipt?.completed_running_credit?.completed_running_m,
+      Math.floor(recentRuns.at(-1).distance_miles * 1609.344));
     recentRuns.at(-1).duration_seconds = originalLatestDuration;
 
     const productionShapeClock = {

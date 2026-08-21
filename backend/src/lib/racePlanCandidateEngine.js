@@ -1642,6 +1642,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
       },
       observed_lower_bound_running_m: input.validation_options?.observed_lower_bound_running_m ?? null,
       observed_lower_bound_evidence_ids: input.validation_options?.observed_lower_bound_evidence_ids ?? [],
+      completed_running_credit: input.validation_options?.completed_running_credit ?? null,
       active_applied_plan: input.active_applied_plan ?? null,
       phase: decision.phase,
       training_age_class: input.validation_options?.training_age_class ?? decision.training_age_class,

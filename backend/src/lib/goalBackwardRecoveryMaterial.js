@@ -61,6 +61,63 @@ function exactLocalDate(value) {
   return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw ? null : raw;
 }
 
+function normalizeCompletedRunningCredit(receipt, planningDateLocal) {
+  try {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) || isProxy(receipt)
+      || Object.getPrototypeOf(receipt) !== Object.prototype) return null;
+    const keys = Reflect.ownKeys(receipt).sort();
+    if (JSON.stringify(keys) !== JSON.stringify([
+      'completed_running_m', 'evidence_ids', 'planning_week_start_local',
+      'schema_version', 'source', 'through_local_date',
+    ])) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(receipt);
+    if (keys.some((key) => !Object.hasOwn(descriptors[key], 'value'))) return null;
+    const values = Object.fromEntries(keys.map((key) => [key, descriptors[key].value]));
+    const weekStart = exactLocalDate(values.planning_week_start_local);
+    const throughDate = exactLocalDate(values.through_local_date);
+    const planningDate = exactLocalDate(planningDateLocal);
+    const planningInstant = planningDate ? new Date(`${planningDate}T12:00:00.000Z`) : null;
+    const expectedWeekStart = planningInstant
+      ? addDays(planningDate, -((planningInstant.getUTCDay() + 6) % 7)) : null;
+    const evidenceIds = values.evidence_ids;
+    if (values.schema_version !== 1
+      || values.source !== 'CANONICAL_CURRENT_WEEK_LOWER_BOUND'
+      || !weekStart || weekStart !== expectedWeekStart
+      || !throughDate || throughDate !== planningDate
+      || typeof values.completed_running_m !== 'number'
+      || !Number.isSafeInteger(values.completed_running_m)
+      || values.completed_running_m < 1 || values.completed_running_m > 1_000_000
+      || !Array.isArray(evidenceIds) || isProxy(evidenceIds)
+      || Object.getPrototypeOf(evidenceIds) !== Array.prototype) return null;
+    const evidenceDescriptors = Object.getOwnPropertyDescriptors(evidenceIds);
+    const evidenceLength = evidenceDescriptors.length?.value;
+    if (!Number.isSafeInteger(evidenceLength) || evidenceLength < 1 || evidenceLength > 4
+      || Reflect.ownKeys(evidenceIds).length !== evidenceLength + 1) return null;
+    const normalizedEvidenceIds = [];
+    for (let index = 0; index < evidenceLength; index += 1) {
+      const descriptor = evidenceDescriptors[index];
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')
+        || !BOUNDED_ID_PATTERN.test(descriptor.value)) return null;
+      normalizedEvidenceIds.push(descriptor.value);
+    }
+    if (new Set(normalizedEvidenceIds).size !== normalizedEvidenceIds.length) return null;
+    return Object.freeze({
+      schema_version: 1,
+      source: 'CANONICAL_CURRENT_WEEK_LOWER_BOUND',
+      planning_week_start_local: weekStart,
+      through_local_date: throughDate,
+      completed_running_m: values.completed_running_m,
+      evidence_ids: Object.freeze(normalizedEvidenceIds),
+    });
+  } catch (_error) {
+    return null;
+  }
+}
+
+function completedRunningCreditMeters(receipt, planningDateLocal) {
+  return normalizeCompletedRunningCredit(receipt, planningDateLocal)?.completed_running_m ?? null;
+}
+
 function rfc3339Instant(value) {
   if (typeof value !== 'string') return null;
   const match = value.match(RFC3339_PATTERN);
@@ -1214,16 +1271,31 @@ function qualifyingAuthorization(scope, input, comparators) {
 }
 
 function evaluateMaterialDose(input = {}) {
+  const completedRunningReceipt = normalizeCompletedRunningCredit(
+    input.completed_running_credit,
+    input.planning_date_local,
+  );
+  const completedRunningCredit = completedRunningReceipt?.completed_running_m ?? 0;
+  const creditedWeekEnd = completedRunningCredit > 0
+    ? addDays(completedRunningReceipt.planning_week_start_local, 6) : null;
+  const candidateWindowEnd = exactLocalDate(input.candidate_window_end_local);
   const window = {
     start: input.planning_date_local,
-    end: input.candidate_window_end_local,
+    end: creditedWeekEnd && (!candidateWindowEnd || creditedWeekEnd < candidateWindowEnd)
+      ? creditedWeekEnd : candidateWindowEnd,
   };
   const candidateObservation = runningDistanceObservation(input.candidate || {}, window);
-  const candidateRunning = candidateObservation.distance_m;
+  const plannedCandidateRunning = candidateObservation.distance_m;
+  const candidateRunning = plannedCandidateRunning === null
+    ? null : plannedCandidateRunning + completedRunningCredit;
   const recent = input.recent_normal_running || {};
   const comparators = [];
   const baseWithoutComparators = {
     candidate_running_m: candidateRunning,
+    ...(completedRunningCredit > 0 ? {
+      planned_candidate_running_m: plannedCandidateRunning,
+      completed_running_credit: clone(completedRunningReceipt),
+    } : {}),
     comparators,
     material_threshold: clone(GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running),
     reduction_authorization: null,
@@ -1291,6 +1363,10 @@ function evaluateMaterialDose(input = {}) {
   comparators.sort((left, right) => left.source.localeCompare(right.source));
   const base = {
     candidate_running_m: candidateRunning,
+    ...(completedRunningCredit > 0 ? {
+      planned_candidate_running_m: plannedCandidateRunning,
+      completed_running_credit: clone(completedRunningReceipt),
+    } : {}),
     comparators,
     material_threshold: clone(GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running),
     reduction_authorization: null,
@@ -1456,10 +1532,12 @@ module.exports = {
   MAX_RECEIPT_BYTES,
   buildDevelopmentRoleBinding,
   buildCrossModalDoseLedger,
+  completedRunningCreditMeters,
   deriveMaterialReductionScope,
   deriveScopedRecoveryState,
   evaluateMaterialDose,
   minimumRunningDoseWithoutMaterialReduction,
+  normalizeCompletedRunningCredit,
   normalizeCrossModalReductionEvidence,
   normalizeScope,
   ownDataJsonSnapshot,

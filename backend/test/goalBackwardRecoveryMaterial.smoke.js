@@ -50,6 +50,7 @@ function materialInput({
   reductionScope = null,
   crossModalLedger = null,
   crossModalReductionEvidence = null,
+  completedRunningCredit = null,
 } = {}) {
   return {
     candidate: {
@@ -76,6 +77,7 @@ function materialInput({
     reduction_scope: reductionScope,
     cross_modal_ledger: crossModalLedger,
     cross_modal_reduction_evidence: crossModalReductionEvidence,
+    completed_running_credit: completedRunningCredit,
   };
 }
 
@@ -1596,6 +1598,53 @@ test('C3-MAT-13', 'null week and day placeholders preserve peer evidence while m
       state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DISTANCE_MALFORMED',
     }, label);
   }
+});
+
+test('C3-MAT-14', 'only a date-bound canonical current-week receipt contributes completed running', () => {
+  const completedRunningCredit = {
+    schema_version: 1,
+    source: 'CANONICAL_CURRENT_WEEK_LOWER_BOUND',
+    planning_week_start_local: '2026-08-17',
+    through_local_date: '2026-08-17',
+    completed_running_m: Math.floor(4 * MI_TO_M),
+    evidence_ids: ['sha256:current-week-evidence'],
+  };
+  const credited = evaluateMaterialDose(materialInput({ completedRunningCredit }));
+  assert.equal(credited.valid, true);
+  assert.equal(credited.planned_candidate_running_m, milesToMeters(6.94));
+  assert.equal(credited.candidate_running_m,
+    milesToMeters(6.94) + Math.floor(4 * MI_TO_M));
+  assert.deepEqual(credited.completed_running_credit, completedRunningCredit);
+
+  let hookCalls = 0;
+  const accessorCredit = { ...completedRunningCredit };
+  Object.defineProperty(accessorCredit, 'source', {
+    enumerable: true,
+    get() { hookCalls += 1; return 'CANONICAL_CURRENT_WEEK_LOWER_BOUND'; },
+  });
+  const proxyCredit = new Proxy(completedRunningCredit, {
+    get(target, property, receiver) {
+      hookCalls += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  for (const invalidCredit of [
+    { ...completedRunningCredit, planning_week_start_local: '2026-08-16' },
+    { ...completedRunningCredit, through_local_date: '2026-08-18' },
+    { ...completedRunningCredit, completed_running_m: 4 * MI_TO_M },
+    { ...completedRunningCredit, untrusted: true },
+    accessorCredit,
+    proxyCredit,
+  ]) {
+    const rejected = evaluateMaterialDose(materialInput({ completedRunningCredit: invalidCredit }));
+    assert.equal(rejected.valid, false);
+    assert.equal(rejected.candidate_running_m, milesToMeters(6.94));
+    assert.equal(rejected.completed_running_credit, undefined);
+    assert.ok(rejected.violations.some((violation) => (
+      violation.reason === 'UNSUPPORTED_MATERIAL_RUNNING_REDUCTION'
+    )));
+  }
+  assert.equal(hookCalls, 0, 'receipt normalization must execute no getter or Proxy trap');
 });
 
 test('C3-UNKNOWN-01', 'unknown load cannot become zero or authorize either increase or reduction', () => {

@@ -2591,6 +2591,50 @@ function goalBackwardAvailableLocalDates(state, planningDateLocal) {
   return dates;
 }
 
+function goalBackwardCompletedRunningCredit(context, planningDateLocal, evidenceSnapshotId) {
+  const currentWeek = context?.history?.acuteRunLoad?.currentWeek;
+  const expectedWeekStart = concurrentPlan.racePlanWindow(
+    planningDateLocal,
+    planningDateLocal,
+  )?.startDate;
+  const distanceState = String(currentWeek?.distanceState || '').toUpperCase();
+  const lowerBoundMiles = currentWeek?.knownDistanceLowerBoundMiles;
+  const runCount = currentWeek?.runCount;
+  const runDates = Array.isArray(currentWeek?.runDates)
+    ? [...new Set(currentWeek.runDates)] : [];
+  const knownMiles = currentWeek?.miles;
+  const completeDistanceMatches = distanceState === 'KNOWN'
+    && typeof knownMiles === 'number'
+    && Number.isFinite(knownMiles)
+    && Math.abs(knownMiles - lowerBoundMiles) < 0.000001;
+  const incompleteDistanceIsLowerBound = distanceState === 'INCOMPLETE'
+    && knownMiles === null;
+  if (!expectedWeekStart || currentWeek?.startDate !== expectedWeekStart
+    || !['KNOWN', 'INCOMPLETE'].includes(distanceState)
+    || (!completeDistanceMatches && !incompleteDistanceIsLowerBound)
+    || typeof lowerBoundMiles !== 'number' || !Number.isFinite(lowerBoundMiles)
+    || lowerBoundMiles <= 0 || lowerBoundMiles > 500
+    || !Number.isSafeInteger(runCount) || runCount < 1 || runCount < runDates.length
+    || !runDates.length || runDates.some((date) => (
+      !concurrentPlan.isValidISODate(date)
+      || date < expectedWeekStart
+      || date > planningDateLocal
+    ))) return null;
+  const completedRunningM = Math.floor(lowerBoundMiles * 1609.344);
+  if (!Number.isSafeInteger(completedRunningM) || completedRunningM < 1) return null;
+  return Object.freeze({
+    schema_version: 1,
+    source: 'CANONICAL_CURRENT_WEEK_LOWER_BOUND',
+    planning_week_start_local: expectedWeekStart,
+    through_local_date: planningDateLocal,
+    completed_running_m: completedRunningM,
+    evidence_ids: Object.freeze([
+      evidenceSnapshotId,
+      context?.history?.runLoadInput?.load_input_hash,
+    ].filter((value) => typeof value === 'string' && value.length > 0)),
+  });
+}
+
 function goalBackwardTrainingAge(context = {}) {
   const explicit = String(context.profile?.training_age_class || '').toUpperCase();
   if (['BEGINNER', 'DEVELOPING', 'ESTABLISHED', 'ADVANCED'].includes(explicit)) return explicit;
@@ -3281,6 +3325,11 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     : goalBackwardAvailableLocalDates(state, planningDateLocal);
   const trainingAgeClass = goalBackwardTrainingAge(state.context);
   const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
+  const completedRunningCredit = goalBackwardCompletedRunningCredit(
+    state.context,
+    planningDateLocal,
+    evidenceSnapshotId,
+  );
   const scopedRecovery = deriveScopedRecoveryState({
     planning_date_local: planningDateLocal,
     candidate_window_end_local: addPolicyDays(planningDateLocal, 6),
@@ -3582,6 +3631,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       observed_lower_bound_evidence_ids: observedLowerBoundWeeklyMiles === null
         ? [] : [evidenceSnapshotId],
       material_reduction_scope: materialReductionScope,
+      completed_running_credit: completedRunningCredit,
       cross_modal_reduction_evidence: crossModalReductionEvidence,
       cross_modal_evidence_ids: crossModalReductionEvidence.valid
         ? crossModalReductionEvidence.decisive_evidence_ids : [],
