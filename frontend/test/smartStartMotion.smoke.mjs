@@ -158,6 +158,7 @@ const appJson = JSON.parse(read('frontend/app.json')).expo
 
 check(/isPluginAvailable\('ForgeMotion'\)/.test(serviceSource), 'web service checks native plugin presence before every bridge path')
 check(/requestAuthorization/.test(settingsSource) && /probable run/i.test(settingsSource) && /battery/i.test(settingsSource), 'Settings owns the explicit opt-in with privacy and battery copy')
+check(/Missed-start detection requires Forged Hybrid build 20 on a supported iPhone\. Manual Start Run still works\./.test(settingsSource) && !/Missed-start detection requires Forged Hybrid build 21\b/.test(settingsSource), 'Settings names Smart Start build 20 and contains no stale build 21 requirement')
 check(appSource.includes('It looks like you ran. Add or match this workout?'), 'the app shell presents the approved recovery prompt')
 check(/toManualLogRunPrefill\(candidate\)/.test(appSource) && /smartStartPrefill/.test(logRunSource), 'Add routes summary prefill into the existing manual Log Run flow')
 check(!/api\.(post|put|patch)\(['"`]\/runs/.test(appSource), 'the app-shell candidate never creates a run directly')

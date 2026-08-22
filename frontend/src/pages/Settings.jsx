@@ -400,7 +400,7 @@ export default function Settings() {
           ok: false,
           text: denied
             ? 'Motion & Fitness access is off. Manual Start Run still works; use the iPhone Settings path below to change access.'
-            : 'Missed-start detection requires Forged Hybrid build 21 on a supported iPhone. Manual Start Run still works.',
+            : 'Missed-start detection requires Forged Hybrid build 20 on a supported iPhone. Manual Start Run still works.',
         })
       }
     } catch (error) {
