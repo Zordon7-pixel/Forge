@@ -6,12 +6,14 @@
   "build": {
     "preview": {
       "distribution": "internal",
+      "node": "22.22.0",
       "ios": {
         "simulator": false
       }
     },
     "production": {
       "distribution": "store",
+      "node": "22.22.0",
       "ios": {
         "image": "macos-sequoia-15.6-xcode-26.2",
         "buildConfiguration": "Release"
