@@ -158,7 +158,7 @@ const appJson = JSON.parse(read('frontend/app.json')).expo
 
 check(/isPluginAvailable\('ForgeMotion'\)/.test(serviceSource), 'web service checks native plugin presence before every bridge path')
 check(/requestAuthorization/.test(settingsSource) && /probable run/i.test(settingsSource) && /battery/i.test(settingsSource), 'Settings owns the explicit opt-in with privacy and battery copy')
-check(/Missed-start detection requires Forged Hybrid build 20 on a supported iPhone\. Manual Start Run still works\./.test(settingsSource) && !/Missed-start detection requires Forged Hybrid build 21\b/.test(settingsSource), 'Settings names Smart Start build 20 and contains no stale build 21 requirement')
+check(/Missed-start detection requires Forged Hybrid build 21 on a supported iPhone\. Manual Start Run still works\./.test(settingsSource) && !/Missed-start detection requires Forged Hybrid build 20\b/.test(settingsSource), 'Settings names Smart Start build 21 and contains no stale build 20 requirement')
 check(appSource.includes('It looks like you ran. Add or match this workout?'), 'the app shell presents the approved recovery prompt')
 check(/toManualLogRunPrefill\(candidate\)/.test(appSource) && /smartStartPrefill/.test(logRunSource), 'Add routes summary prefill into the existing manual Log Run flow')
 check(!/api\.(post|put|patch)\(['"`]\/runs/.test(appSource), 'the app-shell candidate never creates a run directly')
@@ -169,7 +169,7 @@ check(appViewController.includes('registerPluginInstance(ForgeMotionPlugin())'),
 check(/<key>NSMotionUsageDescription<\/key>\s*<string>[^<]*probable runs[^<]*missed Start[^<]*<\/string>/i.test(infoPlist), 'Info.plist explains probable-run detection and missed-Start recovery')
 check((project.match(/ForgeMotionPlugin\.swift in Sources/g) || []).length >= 2, 'ForgeMotion has a file reference and app-target Sources membership')
 
-const expectedBuild = process.env.FORGE_EXPECTED_SMART_START_BUILD || '20'
+const expectedBuild = process.env.FORGE_EXPECTED_SMART_START_BUILD || '21'
 const projectBuilds = new Set([...project.matchAll(/CURRENT_PROJECT_VERSION = ([0-9]+);/g)].map((match) => match[1]))
 check(projectBuilds.size === 1 && projectBuilds.has(expectedBuild) && appJson.ios.buildNumber === expectedBuild, `all native targets and app.json use build ${expectedBuild}`)
 check(appJson.ios.infoPlist.NSMotionUsageDescription === 'Forged Hybrid uses Motion & Fitness history to detect probable runs and help recover a workout when you missed Start. Motion data is checked only after you opt in.', 'EAS metadata carries the exact Motion purpose string')
