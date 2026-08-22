@@ -47,6 +47,8 @@
 	<string>Forged Hybrid uses your location to map and measure your runs.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Forged Hybrid keeps recording your route in the background so your run does not stop when your screen is off.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Forged Hybrid uses Motion &amp; Fitness history to detect probable runs and help recover a workout when you missed Start. Motion data is checked only after you opt in.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Forged Hybrid saves a run share card to your Photos library only when you tap Save.</string>
 	<key>NSSupportsLiveActivities</key>

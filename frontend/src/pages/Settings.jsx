@@ -9,6 +9,7 @@ import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV } from '../lib/healthImport'
 import { formatFreshness, GARMIN_BETA_PRESENTATION } from '../lib/deviceSourcePresentation'
 import WatchDeliveryService from '../services/WatchDeliveryService'
+import SmartStartMotionService from '../services/SmartStartMotionService'
 import { athleteWatchAvailabilityMessage, isInternalWatchDiagnostic } from '../services/watchWorkoutAvailability'
 import TestFlightDebugPanel from '../components/TestFlightDebugPanel'
 import appConfig from '../../app.json'
@@ -81,6 +82,9 @@ export default function Settings() {
   const [debugTapCount, setDebugTapCount] = useState(0)
   const [showDebugPanel, setShowDebugPanel] = useState(false)
   const [watchDelivery, setWatchDelivery] = useState({ checked: false, canAutoSend: false, reason: '', providers: [] })
+  const [smartStartEnabled, setSmartStartEnabled] = useState(() => SmartStartMotionService.isEnabled())
+  const [smartStartStatus, setSmartStartStatus] = useState({ checked: false, available: false, authorization: 'unavailable', reason: '' })
+  const [smartStartBusy, setSmartStartBusy] = useState(false)
   const manualFileRef = useRef(null)
   const debugTapTimerRef = useRef(null)
   const deviceStatusRequestRef = useRef(0)
@@ -152,6 +156,19 @@ export default function Settings() {
         providers: WatchDeliveryService.getProviders(),
       }))
   }, [loadDeviceStatuses])
+
+  useEffect(() => {
+    let active = true
+    SmartStartMotionService.getStatus()
+      .then((status) => {
+        if (active) setSmartStartStatus({ checked: true, ...status })
+      })
+      .catch((error) => {
+        console.warn('[settings/smart-start] status check failed:', error?.message || error)
+        if (active) setSmartStartStatus({ checked: true, available: false, authorization: 'unavailable', reason: 'native_error' })
+      })
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -356,6 +373,53 @@ export default function Settings() {
       setPrivacyNotice({ ok: false, text: err?.response?.data?.error || 'Could not export data.' })
     } finally {
       setExporting(false)
+    }
+  }
+
+  const handleSmartStartToggle = async () => {
+    if (smartStartEnabled) {
+      SmartStartMotionService.setEnabled(false)
+      setSmartStartEnabled(false)
+      setPrivacyNotice({ ok: true, text: 'Missed-start detection is off. Manual Start Run remains available.' })
+      return
+    }
+
+    setSmartStartBusy(true)
+    try {
+      const result = await SmartStartMotionService.requestAuthorization()
+      setSmartStartStatus((current) => ({ checked: true, ...current, ...result }))
+      if (result.ok && result.authorization === 'authorized') {
+        SmartStartMotionService.setEnabled(true)
+        setSmartStartEnabled(true)
+        setPrivacyNotice({ ok: true, text: 'Missed-start detection is on. Recent motion history will be checked when Forged Hybrid is in the foreground.' })
+      } else {
+        SmartStartMotionService.setEnabled(false)
+        setSmartStartEnabled(false)
+        const denied = result.authorization === 'denied' || result.authorization === 'restricted'
+        setPrivacyNotice({
+          ok: false,
+          text: denied
+            ? 'Motion & Fitness access is off. Manual Start Run still works; use the iPhone Settings path below to change access.'
+            : 'Missed-start detection requires Forged Hybrid build 21 on a supported iPhone. Manual Start Run still works.',
+        })
+      }
+    } catch (error) {
+      console.warn('[settings/smart-start] opt-in failed:', error?.message || error)
+      SmartStartMotionService.setEnabled(false)
+      setSmartStartEnabled(false)
+      setPrivacyNotice({ ok: false, text: 'Motion opt-in could not be completed. Manual Start Run still works.' })
+    } finally {
+      setSmartStartBusy(false)
+    }
+  }
+
+  const openSmartStartSettings = async () => {
+    try {
+      const opened = await SmartStartMotionService.openSettings()
+      if (!opened) setPrivacyNotice({ ok: false, text: 'Open iPhone Settings > Privacy & Security > Motion & Fitness, then allow Forged Hybrid.' })
+    } catch (error) {
+      console.warn('[settings/smart-start] Settings recovery failed:', error?.message || error)
+      setPrivacyNotice({ ok: false, text: 'Open iPhone Settings > Privacy & Security > Motion & Fitness, then allow Forged Hybrid.' })
     }
   }
 
@@ -590,6 +654,44 @@ export default function Settings() {
       <section style={section}>
         <h2 style={sectionTitle}>Privacy</h2>
         <div style={sectionGrid}>
+          <div style={card}>
+            <span style={label}>Smart Missed-Start Detection</span>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 }}>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: 'var(--text-primary)' }}>Recover a probable run</p>
+                <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                  Off by default. After you opt in, Forged Hybrid checks recent Motion &amp; Fitness history while the app is in the foreground. It does not start all-day GPS or reconstruct your route, so battery impact stays low.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={smartStartEnabled}
+                aria-label="Smart missed-start detection"
+                onClick={handleSmartStartToggle}
+                disabled={smartStartBusy || (!smartStartEnabled && smartStartStatus.checked && !smartStartStatus.available)}
+                style={{ minWidth: 70, borderRadius: 999, padding: '9px 12px', border: `1px solid ${smartStartEnabled ? 'var(--accent)' : 'var(--border-subtle)'}`, background: smartStartEnabled ? 'var(--accent)' : 'var(--bg-input)', color: smartStartEnabled ? 'var(--on-accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 900, cursor: smartStartBusy ? 'wait' : 'pointer', opacity: smartStartBusy ? 0.65 : 1 }}
+              >
+                {smartStartBusy ? 'Checking' : smartStartEnabled ? 'On' : 'Off'}
+              </button>
+            </div>
+            {smartStartStatus.checked && !smartStartStatus.available && (
+              <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                Motion recovery is unavailable in this browser or app build. Manual Start Run is unchanged.
+              </p>
+            )}
+            {['denied', 'restricted'].includes(smartStartStatus.authorization) && (
+              <div style={{ marginTop: 12, borderRadius: 12, padding: 12, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  Manual Start Run remains fully available. To recover access, open iPhone Settings &gt; Privacy &amp; Security &gt; Motion &amp; Fitness and allow Forged Hybrid.
+                </p>
+                <button type="button" onClick={openSmartStartSettings} style={{ width: '100%', marginTop: 10, border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', background: 'var(--accent-dim)', color: 'var(--accent)', fontSize: 13, fontWeight: 800 }}>
+                  Open iPhone Settings
+                </button>
+              </div>
+            )}
+          </div>
+
           <div style={card}>
             <span style={label}>Data Export</span>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 0 }}>Download your account, training, device, and community data as JSON.</p>

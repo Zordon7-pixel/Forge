@@ -29,6 +29,24 @@ function todayISO() {
   return offsetDate.toISOString().slice(0, 10)
 }
 
+function normalizeSmartStartPrefill(value) {
+  if (!value || typeof value !== 'object') return null
+  const date = String(value.date || '')
+  const durationSeconds = Number(value.durationSeconds)
+  const distanceMeters = Number(value.distanceMeters)
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    || Number.isNaN(Date.parse(`${date}T12:00:00`))
+    || !Number.isFinite(durationSeconds)
+    || durationSeconds < 8 * 60
+    || durationSeconds > 6 * 60 * 60
+    || !Number.isFinite(distanceMeters)
+    || distanceMeters < 750
+    || distanceMeters > 100_000
+  ) return null
+  return { date, durationSeconds: Math.round(durationSeconds), distanceMeters: Math.round(distanceMeters) }
+}
+
 function createClientRunId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -374,11 +392,16 @@ export default function LogRun() {
   const activeRunReturnTo = activeRunReturnTargetFromLocation(location.pathname, location.search)
   const query = useMemo(() => new URLSearchParams(location.search), [location.search])
   const { units, fmt } = useUnits()
+  const smartStartPrefill = useMemo(
+    () => normalizeSmartStartPrefill(location.state?.smartStartPrefill),
+    [location.state],
+  )
   const [warmUpState] = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('warmup') === 'true' ? 'warmup' : 'done'
   })
   const [activeTab, setActiveTab] = useState(() => {
+    if (smartStartPrefill) return 'log'
     if (query.get('tab') === 'manual') return 'log'
     if (query.get('tab') === 'week') return 'week'
     if (query.get('tab') === 'month') return 'month'
@@ -398,9 +421,18 @@ export default function LogRun() {
   const [runBrief, setRunBrief] = useState(null)
   const [trackWorkout, setTrackWorkout] = useState('no')
 
-  const [date, setDate] = useState(todayISO())
-  const [distance, setDistance] = useState(() => query.get('distance') || '')
+  const [date, setDate] = useState(() => smartStartPrefill?.date || todayISO())
+  const [distance, setDistance] = useState(() => {
+    if (smartStartPrefill) {
+      const converted = units === 'metric'
+        ? smartStartPrefill.distanceMeters / 1000
+        : smartStartPrefill.distanceMeters / 1609.344
+      return converted.toFixed(2)
+    }
+    return query.get('distance') || ''
+  })
   const [duration, setDuration] = useState(() => {
+    if (smartStartPrefill) return formatRunDuration(smartStartPrefill.durationSeconds)
     const rawDistance = Number(query.get('distance') || 0)
     const paceSec = parsePaceToSecondsPerMile(query.get('pace'))
     if (rawDistance > 0 && paceSec) {
@@ -1121,7 +1153,7 @@ export default function LogRun() {
     return <div className="p-4" style={{ color: 'var(--text-muted)' }}>Checking today's check-in...</div>
   }
 
-  if (!checkInCompleted) {
+  if (!checkInCompleted && !smartStartPrefill) {
     return (
       <div className="rounded-2xl p-6" style={{ background: 'var(--bg-card)' }}>
         <h2 className="text-xl font-black mb-2" style={{ color: 'var(--text-primary)' }}>Morning Check-In Required</h2>
@@ -1273,6 +1305,12 @@ export default function LogRun() {
 
         {activeTab === 'log' && (
           <form onSubmit={onSubmit} className="space-y-4">
+            {smartStartPrefill && (
+              <div role="status" className="rounded-2xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)' }}>
+                <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Recovered Motion &amp; Fitness summary</p>
+                <p className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>Review the prefilled distance, duration, and date before saving. GPS had not started, so the route is unavailable.</p>
+              </div>
+            )}
             <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
               <p className="text-sm mb-2" style={{ color: 'var(--text-primary)' }}>Run type</p>
               <div className="flex gap-2 mb-4">{['easy','tempo','long','walk'].map((t)=><button key={t} type="button" onClick={()=>setRunType(t)} className="rounded-full px-3 py-1 text-xs font-semibold" style={{background:runType===t?'var(--accent)':'var(--bg-card)',color:runType===t?'#000':'var(--text-muted)',border:'1px solid var(--border-subtle)'}}>{t === 'walk' ? 'Walk' : t.charAt(0).toUpperCase()+t.slice(1)}</button>)}</div>

@@ -27,6 +27,7 @@
 		A7F300000000000000000014 /* ForgeRunActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000004 /* ForgeRunActivityBundle.swift */; };
 		A7F300000000000000000015 /* ForgeRunLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000005 /* ForgeRunLiveActivity.swift */; };
 		A7F300000000000000000016 /* ForgeRunActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000007 /* ForgeRunActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
+		A7F400000000000000000001 /* ForgeMotionPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F400000000000000000002 /* ForgeMotionPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -77,6 +78,7 @@
 		A7F300000000000000000005 /* ForgeRunLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRunLiveActivity.swift; sourceTree = "<group>"; };
 		A7F300000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A7F300000000000000000007 /* ForgeRunActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ForgeRunActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7F400000000000000000002 /* ForgeMotionPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMotionPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,6 +132,7 @@
 				A7F20000000000000000000D /* ForgePhotosPlugin.swift */,
 				A7F300000000000000000001 /* ForgeRunAttributes.swift */,
 				A7F300000000000000000002 /* ForgeLiveActivityPlugin.swift */,
+				A7F400000000000000000002 /* ForgeMotionPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -274,6 +277,7 @@
 				A7F20000000000000000000C /* ForgePhotosPlugin.swift in Sources */,
 				A7F300000000000000000011 /* ForgeRunAttributes.swift in Sources */,
 				A7F300000000000000000012 /* ForgeLiveActivityPlugin.swift in Sources */,
+				A7F400000000000000000001 /* ForgeMotionPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

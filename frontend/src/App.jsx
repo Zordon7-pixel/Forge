@@ -9,6 +9,7 @@ import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
 import HealthService from './services/HealthService'
 import NativeNotificationService from './services/NativeNotificationService'
+import SmartStartMotionService, { toManualLogRunPrefill } from './services/SmartStartMotionService'
 import { normalizeForgedDeepLink } from './lib/nativeDeepLink'
 import { emitAppOpenTelemetry } from './lib/appOpenTelemetry'
 import api, { acceptWaiver } from './lib/api'
@@ -203,6 +204,115 @@ function AutoHealthSync() {
   }, [])
 
   return null
+}
+
+function SmartMissedStartHost() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [candidate, setCandidate] = useState(null)
+  const checkInFlightRef = useRef(false)
+  const lastCheckAtRef = useRef(0)
+
+  const checkRecentMotion = useCallback(async () => {
+    const blockedPath = ['/run/active', '/run/treadmill', '/warmup', '/prep', '/log-run']
+      .some((path) => location.pathname.startsWith(path))
+    if (
+      blockedPath
+      || candidate
+      || checkInFlightRef.current
+      || !isLoggedIn()
+      || !SmartStartMotionService.isEnabled()
+      || !SmartStartMotionService.isPluginAvailable()
+    ) return
+
+    const now = Date.now()
+    if (now - lastCheckAtRef.current < 60_000) return
+    lastCheckAtRef.current = now
+    checkInFlightRef.current = true
+    try {
+      const result = await SmartStartMotionService.findRecentCandidate({ now: new Date(now) })
+      if (result.ok && result.candidate) setCandidate(result.candidate)
+    } catch (error) {
+      console.warn('[SmartStart] foreground history check failed:', error?.message || error)
+    } finally {
+      checkInFlightRef.current = false
+    }
+  }, [candidate, location.pathname])
+
+  useEffect(() => {
+    if (!SmartStartMotionService.isPluginAvailable()) return undefined
+    let cancelled = false
+    const listenerHandles = []
+    const check = () => {
+      if (!cancelled) checkRecentMotion()
+    }
+
+    check()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') check()
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    try {
+      const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) check()
+      })
+      const resumeHandle = CapacitorApp.addListener('resume', check)
+      Promise.all([appStateHandle, resumeHandle])
+        .then((handles) => {
+          if (cancelled) handles.forEach((handle) => handle?.remove?.())
+          else listenerHandles.push(...handles)
+        })
+        .catch((error) => console.warn('[SmartStart] foreground listener setup failed:', error?.message || error))
+    } catch (error) {
+      console.warn('[SmartStart] foreground listener setup failed:', error?.message || error)
+    }
+
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', handleVisibility)
+      listenerHandles.forEach((handle) => handle?.remove?.())
+    }
+  }, [checkRecentMotion])
+
+  if (!candidate) return null
+  const startedAt = new Date(candidate.startDate)
+  const timeLabel = Number.isNaN(startedAt.getTime())
+    ? 'Recent activity'
+    : startedAt.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  const distanceMiles = candidate.distanceMeters / 1609.344
+  const durationMinutes = Math.round(candidate.durationSeconds / 60)
+
+  const dismiss = () => {
+    SmartStartMotionService.suppressCandidate(candidate)
+    setCandidate(null)
+  }
+
+  const addToManualLog = () => {
+    const smartStartPrefill = toManualLogRunPrefill(candidate)
+    SmartStartMotionService.suppressCandidate(candidate)
+    setCandidate(null)
+    if (smartStartPrefill) navigate('/log-run?tab=manual', { state: { smartStartPrefill } })
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.74)' }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="smart-start-title" className="w-full max-w-sm rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-xs font-black uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Missed-start recovery</p>
+        <h2 id="smart-start-title" className="mt-1 text-xl font-black" style={{ color: 'var(--text-primary)' }}>It looks like you ran. Add or match this workout?</h2>
+        <div className="mt-4 rounded-xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{timeLabel}</p>
+          <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>{distanceMiles.toFixed(2)} mi · {durationMinutes} min · {candidate.steps.toLocaleString()} steps</p>
+        </div>
+        <p className="mt-3 text-sm leading-5" style={{ color: 'var(--text-muted)' }}>{candidate.routeMessage}</p>
+        <p className="mt-2 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>This is a non-counting summary until you review and save it. A later provider import can still match or enrich the saved workout.</p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button type="button" onClick={addToManualLog} className="rounded-xl px-3 py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>Add workout</button>
+          <button type="button" onClick={dismiss} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Not now</button>
+        </div>
+      </section>
+    </div>
+  )
 }
 
 function NativeNotificationNavigation() {
@@ -452,6 +562,7 @@ export default function App() {
       <AppOpenTelemetry />
       <ProProvider>
         <AutoHealthSync />
+        <SmartMissedStartHost />
         <NativeNotificationNavigation />
         <PlanCandidateDecisionSheet />
         <Suspense fallback={<PageFallback />}>
