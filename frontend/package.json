@@ -26,6 +26,7 @@
     "cap:ios": "npm run build && npx cap sync ios && npx cap open ios",
     "cap:android": "npm run build && npx cap sync android && npx cap open android",
     "cap:build:ios": "npx cap sync ios",
+    "eas-build-post-install": "npm run build && npx cap sync ios",
     "postinstall": "patch-package"
   },
   "dependencies": {
