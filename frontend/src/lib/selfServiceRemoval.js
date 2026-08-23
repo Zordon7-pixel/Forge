@@ -109,11 +109,11 @@ export async function removeOwnedRace({ api, raceId, planningClock, timeoutMs = 
   try {
     applyResponse = await requestWithDeadline(
       (config) => api.post(`/races/${encodedRaceId}/removal-apply`, {
+        ...applyBindings,
         candidate_id: candidateId,
         candidate_hash: candidateHash,
         choice: 'train_for_target',
         ...planningClock,
-        ...applyBindings,
       }, config),
       timeoutMs,
       'Race removal apply',

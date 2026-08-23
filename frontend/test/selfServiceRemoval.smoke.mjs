@@ -160,6 +160,11 @@ assert.equal(verifyRaceRemovalActivation({
           candidate_hash: 'sha256:owned',
           removal: { remaining_race_ids: ['army'] },
           apply_bindings: {
+            candidate_id: 'candidate-replay',
+            candidate_hash: 'sha256:replay',
+            choice: 'keep_current',
+            planning_date_local: '1999-12-31',
+            timezone_offset_minutes: -720,
             candidate_revision: 1,
             decision_id: 'decision-1',
           },
