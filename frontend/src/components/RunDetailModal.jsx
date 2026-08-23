@@ -12,6 +12,7 @@ import { providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import ActivityShareStudio from './ActivityShareStudio'
 import RunPlanImpact from './RunPlanImpact'
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
+import { buildCoachTakeaways } from '../lib/coachTakeaways'
 
 function fmtDuration(totalSeconds = 0) {
   const h = Math.floor(totalSeconds / 3600)
@@ -323,6 +324,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     } : null,
   ].filter(Boolean) : []
   const panelIs = (...keys) => !activePanel || keys.includes(activePanel)
+  const coachTakeaways = buildCoachTakeaways(feedback)
 
   return (
     <div
@@ -678,15 +680,39 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {panelIs('summary') && isRun && <div className="rounded-xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+        {panelIs('summary') && isRun && <section
+          aria-label="Coach Takeaways"
+          className="min-w-0 rounded-xl border p-4"
+          style={{
+            background: 'linear-gradient(145deg, var(--accent-dim) 0%, transparent 48%), var(--bg-card)',
+            borderColor: 'var(--border-subtle)',
+            boxShadow: 'inset 3px 0 0 var(--accent)',
+          }}
+        >
           <div className="flex items-center gap-2 mb-3">
             <Brain size={16} style={{ color: 'var(--accent)' }} />
-            <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Coach evaluation</span>
+            <h3 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Coach Takeaways</h3>
           </div>
 
-          {feedback ? (
+          {coachTakeaways.length > 0 ? (
             <>
-              <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{feedback}</p>
+              <ul className="m-0 list-none space-y-2 p-0" aria-label="Run coaching takeaways">
+                {coachTakeaways.map((takeaway, index) => (
+                  <li
+                    key={`${takeaway.label}-${index}`}
+                    className="min-w-0 rounded-xl border p-3"
+                    style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} aria-hidden="true" />
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-black uppercase tracking-wide" style={{ color: 'var(--accent)' }}>{takeaway.label}</p>
+                        <p className="mt-1 text-sm leading-snug" style={{ color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{takeaway.text}</p>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
               <AiGuidanceNote />
             </>
           ) : (
@@ -702,7 +728,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
               </button>
             </>
           )}
-        </div>}
+        </section>}
 
         {panelIs('summary') && onDelete && (
           <button type="button" onClick={onDelete} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border py-3 text-sm font-semibold" style={{ borderColor: 'rgba(239,68,68,0.45)', color: 'var(--danger)', background: 'var(--danger-dim)' }}>
