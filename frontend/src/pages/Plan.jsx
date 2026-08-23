@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
 import { ensureCommittedAdaptationDecision, isAdaptationDecisionRetryRequired } from '../lib/adaptationDecision'
 import { previewAndApplyPlan } from '../lib/planCandidates'
+import { createSurfaceReconcileLatch, reconcileBlockedPlanSurface } from '../lib/planCandidateActivation'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { useProContext } from '../context/ProContext'
 import ProGate from '../components/ProGate'
@@ -118,6 +119,7 @@ export default function Plan() {
   const [myPlan, setMyPlan] = useState(null)
   const [myUserPlan, setMyUserPlan] = useState(null)
   const [surfaceManifest, setSurfaceManifest] = useState(null)
+  const [surfaceRecoveryPhase, setSurfaceRecoveryPhase] = useState('idle')
   const [adaptationProposal, setAdaptationProposal] = useState(null)
   const [adaptationLoading, setAdaptationLoading] = useState(false)
   const [adaptationError, setAdaptationError] = useState('')
@@ -160,6 +162,17 @@ export default function Plan() {
   const [todayExecutionStatus, setTodayExecutionStatus] = useState('loading')
   const weekSyncInFlight = useRef(null)
   const currentPlanCalendarRef = useRef(null)
+  const surfaceReconcileLatch = useRef(createSurfaceReconcileLatch())
+
+  const applyPlanResponse = (response = {}) => {
+    const nextPlan = response?.plan || null
+    const nextUserPlan = response?.user_plan || null
+    const nextSurfaceManifest = response?.surface_manifest || null
+    setMyPlan(nextPlan)
+    setMyUserPlan(nextUserPlan)
+    setSurfaceManifest(nextSurfaceManifest)
+    return { nextPlan, nextUserPlan, nextSurfaceManifest }
+  }
 
   const openCurrentPlan = () => {
     const target = currentPlanCalendarRef.current
@@ -175,12 +188,17 @@ export default function Plan() {
     setTodayExecutionStatus('loading')
     try {
       const myRes = await api.get('/plans/my')
-      const nextPlan = myRes.data?.plan || null
-      const nextUserPlan = myRes.data?.user_plan || null
-      const nextSurfaceManifest = myRes.data?.surface_manifest || null
-      setMyPlan(nextPlan)
-      setMyUserPlan(nextUserPlan)
-      setSurfaceManifest(nextSurfaceManifest)
+      let planResponse = myRes.data || {}
+      applyPlanResponse(planResponse)
+      const recovery = await reconcileBlockedPlanSurface({
+        api,
+        planResponse,
+        latch: surfaceReconcileLatch.current,
+        onState: ({ phase }) => setSurfaceRecoveryPhase(phase),
+      })
+      if (recovery.phase === 'accepted') planResponse = recovery.response
+      const { nextPlan, nextUserPlan, nextSurfaceManifest } = applyPlanResponse(planResponse)
+      if (recovery.phase === 'not_applicable') setSurfaceRecoveryPhase('idle')
       const nextCalendar = nextPlan
         ? buildCalendarModel(nextPlan, nextUserPlan, { surfaceManifest: nextSurfaceManifest })
         : null
@@ -282,6 +300,21 @@ export default function Plan() {
     loadAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const retrySurfaceRecovery = async () => {
+    const recovery = await reconcileBlockedPlanSurface({
+      api,
+      planResponse: {
+        plan: myPlan,
+        user_plan: myUserPlan,
+        surface_manifest: surfaceManifest,
+      },
+      latch: surfaceReconcileLatch.current,
+      manualRetry: true,
+      onState: ({ phase }) => setSurfaceRecoveryPhase(phase),
+    })
+    if (recovery.phase === 'accepted') applyPlanResponse(recovery.response)
+  }
 
   useEffect(() => {
     if (!shouldRefreshScheduleDraft({ editing: scheduleEditing, saving: scheduleSaving })) return
@@ -1004,10 +1037,26 @@ export default function Plan() {
 
         {myPlan && calendarModel?.surface?.status === 'blocked' && (
           <section role="alert" aria-live="assertive" className="min-w-0 rounded-xl p-4" style={{ background: 'var(--danger-dim)', border: '1px solid var(--danger)', overflowWrap: 'anywhere' }}>
-            <h2 className="text-base font-black" style={{ color: 'var(--text-primary)' }}>Plan details are temporarily unavailable</h2>
+            <h2 className="text-base font-black" style={{ color: 'var(--text-primary)' }}>
+              {surfaceRecoveryPhase === 'recovering' ? 'Restoring your reviewed plan…' : 'Plan details are temporarily unavailable'}
+            </h2>
             <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              This plan changed after it was loaded. Refresh Train before viewing or starting this workout.
+              {surfaceRecoveryPhase === 'recovering'
+                ? 'Forge is safely restoring the plan you already reviewed. Workouts stay unavailable until that check finishes.'
+                : surfaceRecoveryPhase === 'retry'
+                  ? 'Plan recovery paused because the connection was interrupted. Workouts remain unavailable.'
+                  : 'This plan needs a reviewed rebuild before its workouts can be used.'}
             </p>
+            {surfaceRecoveryPhase === 'retry' && (
+              <button type="button" onClick={retrySurfaceRecovery} className="mt-3 min-h-11 rounded-lg px-4 py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+                Retry recovery
+              </button>
+            )}
+            {surfaceRecoveryPhase === 'review' && (
+              <button type="button" onClick={() => navigate('/plan-catalog')} className="mt-3 min-h-11 rounded-lg px-4 py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+                Review and rebuild plan
+              </button>
+            )}
           </section>
         )}
 

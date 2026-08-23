@@ -65,6 +65,7 @@ const {
 } = require('../lib/racePlanPolicy');
 const { validateCanonicalSessionSet } = require('../lib/canonicalWorkout');
 const { canonicalPrescriptionHash } = require('../lib/goalBackwardValidators');
+const { buildDecisionArtifactDiagnosticBundle } = require('../lib/racePlanDiagnostics');
 const {
   assertPersistablePlan,
   buildCandidateRejectionRecord,
@@ -2084,6 +2085,11 @@ function positivePlanRevision(value) {
   return Number.isSafeInteger(revision) ? revision : 1;
 }
 
+function exactPositivePlanRevision(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
+    ? value : null;
+}
+
 function activeCandidateMetadata(active) {
   if (!active) return null;
   return {
@@ -3833,10 +3839,20 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
   const canonicalPresent = Boolean(
     canonicalSessionSet && typeof canonicalSessionSet === 'object' && !Array.isArray(canonicalSessionSet)
   );
+  const candidateStatus = closedStatus(candidate.status, ['preview', 'applied', 'rejected', 'superseded']);
+  const assignmentStatus = closedStatus(activeRow?.status, ['active', 'superseded', 'cleared']);
+  const assignmentLinked = Boolean(candidate.applied_user_plan_id && activeRow?.user_plan_id)
+    && String(candidate.applied_user_plan_id) === String(activeRow.user_plan_id);
+  const appliedPlanLinked = Boolean(candidate.applied_training_plan_id && activeRow?.plan_id)
+    && String(candidate.applied_training_plan_id) === String(activeRow.plan_id);
   const predicateEntries = [
     ['SURFACE_ARTIFACT_PRESENT', Boolean(manifest && typeof manifest === 'object' && !Array.isArray(manifest))],
     ['CANDIDATE_BINDING_PRESENT', Boolean(candidate.id)],
     ['ASSIGNMENT_PRESENT', Boolean(activeRow && typeof activeRow === 'object' && !Array.isArray(activeRow))],
+    ['CANDIDATE_STATUS_APPLIED', candidateStatus === 'APPLIED'],
+    ['ASSIGNMENT_STATUS_ACTIVE', assignmentStatus === 'ACTIVE'],
+    ['ASSIGNMENT_LINK_MATCH', assignmentLinked],
+    ['APPLIED_PLAN_LINK_MATCH', appliedPlanLinked],
     ['SURFACE_SCHEMA_MATCH', manifest?.schema_version === 'goal_backward_surface_manifest_v1'],
     ['SURFACE_STATUS_ACCEPTED', manifest?.status === 'accepted'],
     ['SURFACE_ENABLED', manifest?.v24_surface_enabled === true],
@@ -3852,7 +3868,9 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
     ['GOAL_BINDING_MATCH', prefixedHash(identity?.goal_revisions || {}) === prefixedHash(candidateGoalRevisions)],
     ['PLAN_ID_MATCH', String(identity?.plan_id || '') === String(activePlan.plan_id || '')],
     ['PLAN_REVISION_MATCH', Number(identity?.plan_revision) === Number(activePlan.plan_revision)],
-    ['ASSIGNMENT_REVISION_MATCH', Number(identity?.plan_revision) === positivePlanRevision(activeRow?.plan_version)],
+    ['ASSIGNMENT_REVISION_MATCH', exactPositivePlanRevision(identity?.plan_revision) !== null
+      && exactPositivePlanRevision(activeRow?.plan_version) !== null
+      && identity.plan_revision === activeRow.plan_version],
     ['PLAN_DECISION_MATCH', String(identity?.decision_id || '') === String(activePlan.decision_id || '')],
     ['PLAN_DECISION_HASH_MATCH', hashIdentity(identity?.decision_hash) === hashIdentity(activePlan.decision_hash)],
     ['PLAN_CANDIDATE_HASH_MATCH', hashIdentity(identity?.candidate_hash) === hashIdentity(activePlan.selected_candidate_hash)],
@@ -3875,13 +3893,8 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
   const firstFailed = predicateEntries.find(([, passed]) => !passed)?.[0] || null;
   const accepted = firstFailed === null;
   const predicateGroup = (...codes) => codes.every((code) => predicates[code] === true);
-  const candidateStatus = closedStatus(candidate.status, ['preview', 'applied', 'rejected', 'superseded']);
-  const assignmentStatus = closedStatus(activeRow?.status, ['active', 'superseded', 'cleared']);
   const manifestStatus = closedStatus(manifest?.status, ['accepted', 'blocked']);
   const featureMode = closedStatus(manifest?.feature_mode, ['preview', 'on', 'shadow', 'off']);
-  const assignmentLinked = !candidate.applied_user_plan_id || !activeRow?.user_plan_id
-    ? null
-    : String(candidate.applied_user_plan_id) === String(activeRow.user_plan_id);
   return {
     schema_version: 'goal_backward_surface_predicate_diagnostic_v1',
     applicable: Number(activePlan.canonical_workout_schema_version) === 1,
@@ -3929,7 +3942,8 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
       ),
       surface_revision: predicates.SURFACE_REVISION_MATCH,
       candidate: predicateGroup(
-        'CANDIDATE_BINDING_PRESENT', 'CANDIDATE_REVISION_MATCH', 'CANDIDATE_CONTENT_HASH_MATCH'
+        'CANDIDATE_BINDING_PRESENT', 'CANDIDATE_STATUS_APPLIED',
+        'CANDIDATE_REVISION_MATCH', 'CANDIDATE_CONTENT_HASH_MATCH'
       ),
       decision: predicateGroup(
         'CANDIDATE_DECISION_MATCH', 'PLAN_DECISION_MATCH', 'PLAN_DECISION_HASH_MATCH',
@@ -3939,10 +3953,10 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
         'PLAN_ID_MATCH', 'PLAN_REVISION_MATCH', 'PLAN_PURPOSE_MATCH',
         'PLAN_FEASIBILITY_STATUS_MATCH', 'PLAN_FEASIBILITY_REASONS_MATCH', 'PLAN_WEEKS_MATCH'
       ),
-      assignment: predicates.ASSIGNMENT_PRESENT
-        && predicates.ASSIGNMENT_REVISION_MATCH
-        && assignmentStatus === 'ACTIVE'
-        && (assignmentLinked === null || assignmentLinked),
+      assignment: predicateGroup(
+        'ASSIGNMENT_PRESENT', 'ASSIGNMENT_STATUS_ACTIVE', 'ASSIGNMENT_LINK_MATCH',
+        'APPLIED_PLAN_LINK_MATCH', 'ASSIGNMENT_REVISION_MATCH'
+      ),
       session_set: predicateGroup(
         'CANONICAL_SESSION_SET_PRESENT', 'CANONICAL_PLAN_ID_MATCH',
         'CANONICAL_PLAN_REVISION_MATCH', 'CANONICAL_CANDIDATE_MATCH',
@@ -4005,8 +4019,9 @@ async function canonicalSurfaceManifestForActive(userId, activeRow, query = dbGe
     || !activePlan.canonical_session_set_hash
     || !activePlan.selected_candidate_hash) return null;
   const candidate = await query(
-    `SELECT id, decision_id, candidate_revision, athlete_state_revision, safety_state_hash,
-            goal_revisions_json, surface_revision, feature_mode, selected_candidate_hash
+    `SELECT id, status, decision_id, candidate_revision, athlete_state_revision, safety_state_hash,
+            goal_revisions_json, surface_revision, feature_mode, selected_candidate_hash,
+            applied_training_plan_id, applied_user_plan_id
      FROM plan_generation_candidates
      WHERE user_id=? AND applied_user_plan_id=? AND status='applied'
        AND feature_mode IN ('preview','on')
@@ -4054,6 +4069,161 @@ async function canonicalSurfaceManifestForActive(userId, activeRow, query = dbGe
 async function canonicalSurfaceResponseField(userId, activeRow, query = dbGet) {
   const manifest = await canonicalSurfaceManifestForActive(userId, activeRow, query);
   return manifest ? { surface_manifest: manifest } : {};
+}
+
+const SURFACE_RECONCILE_REVIEW_MESSAGE = 'This plan needs a reviewed rebuild before workouts can start.';
+
+function surfaceReconcileReviewRequired() {
+  const error = new Error(SURFACE_RECONCILE_REVIEW_MESSAGE);
+  error.code = 'SURFACE_RECONCILE_REVIEW_REQUIRED';
+  error.status = 409;
+  return error;
+}
+
+function storedSurfaceArtifact(row) {
+  try {
+    return parseCandidateJson(row?.payload_json, null);
+  } catch (_error) {
+    throw surfaceReconcileReviewRequired();
+  }
+}
+
+function completeAppliedSurfaceValidation(userId, candidate, artifacts, activeRow) {
+  let artifactDiagnostic;
+  try {
+    artifactDiagnostic = buildDecisionArtifactDiagnosticBundle({
+      targetUserId: userId,
+      decisionId: candidate?.decision_id,
+      artifactRows: artifacts,
+      candidateRow: candidate,
+    });
+  } catch (_error) {
+    throw surfaceReconcileReviewRequired();
+  }
+  const legacyApplyReceiptGaps = [...(artifactDiagnostic.reason_codes || [])].sort();
+  const exactLegacyApplyReceipt = JSON.stringify(legacyApplyReceiptGaps) === JSON.stringify([
+    'C4_DEPLOYMENT_REVISION_MISSING',
+    'C4_SOURCE_REVISION_MISSING',
+  ]);
+  if ((artifactDiagnostic.production_complete !== true && !exactLegacyApplyReceipt)
+    || artifactDiagnostic.canonical_binding?.verified !== true) {
+    throw surfaceReconcileReviewRequired();
+  }
+  const surfaceRow = artifacts.find((artifact) => artifact.artifact_kind === 'surface_manifest');
+  const canonicalRow = artifacts.find((artifact) => (
+    artifact.artifact_kind === 'canonical_session_set'
+      && artifact.id === surfaceRow?.parent_artifact_id
+  ));
+  if (!surfaceRow || !canonicalRow) throw surfaceReconcileReviewRequired();
+  const manifest = storedSurfaceArtifact(surfaceRow);
+  const canonicalSessionSet = storedSurfaceArtifact(canonicalRow);
+  const surfaceDiagnostic = surfaceManifestAppliedPlanDiagnostic(
+    manifest,
+    candidate,
+    activeRow,
+    canonicalSessionSet,
+  );
+  return { artifactDiagnostic, canonicalSessionSet, manifest, surfaceDiagnostic };
+}
+
+async function reconcileActiveSurfaceForUser(userId) {
+  return withUserMutation(userId, async (tx) => {
+    // This lock/re-read intentionally happens before parsing plan or progress JSON.
+    const active = await getActivePlanForMutation(userId, tx, {
+      includeFuture: true,
+      normalizePersistedIdentities: false,
+    });
+    if (!active || active.source !== 'assigned' || !active.row?.user_plan_id) {
+      throw surfaceReconcileReviewRequired();
+    }
+    const candidates = await tx.all(
+      `SELECT * FROM plan_generation_candidates
+       WHERE user_id=? AND applied_user_plan_id=? AND status='applied'
+         AND feature_mode IN ('preview','on')
+       ORDER BY applied_at DESC, id DESC
+       LIMIT 2
+       FOR UPDATE`,
+      [userId, active.row.user_plan_id],
+    );
+    if (candidates.length !== 1) throw surfaceReconcileReviewRequired();
+    const candidate = candidates[0];
+    const artifacts = await tx.all(
+      `SELECT id, user_id, artifact_kind, decision_id, parent_artifact_id,
+              plan_generation_candidate_id, schema_version, policy_version,
+              revision, content_hash, payload_json, created_at
+       FROM planning_pipeline_artifacts
+       WHERE user_id=? AND decision_id=?
+       ORDER BY created_at ASC, id ASC
+       LIMIT 32
+       FOR SHARE`,
+      [userId, candidate.decision_id],
+    );
+    const validation = completeAppliedSurfaceValidation(userId, candidate, artifacts, active.row);
+    if (validation.surfaceDiagnostic.status_code === 'ACCEPTED') {
+      return { ok: true, accepted: true, reconciled: false };
+    }
+
+    const failedPredicates = Object.entries(validation.surfaceDiagnostic.predicates)
+      .filter(([, passed]) => passed !== true)
+      .map(([predicate]) => predicate);
+    const requiredBindings = [
+      'artifact', 'surface_revision', 'candidate', 'decision', 'plan', 'session_set',
+      'content_hash', 'safety', 'athlete_state', 'goal',
+    ];
+    const authorityRevision = exactPositivePlanRevision(validation.manifest?.identity?.plan_revision);
+    const planRevision = exactPositivePlanRevision(parsePlan(active.row)?.plan_revision);
+    const canonicalRevision = exactPositivePlanRevision(validation.canonicalSessionSet?.plan_revision);
+    const storedAssignmentRevision = exactPositivePlanRevision(active.row.plan_version);
+    const exactLegacyZeroSuccessor = authorityRevision === 2
+      && planRevision === authorityRevision
+      && canonicalRevision === authorityRevision
+      && storedAssignmentRevision === 1
+      && failedPredicates.length === 1
+      && failedPredicates[0] === 'ASSIGNMENT_REVISION_MATCH'
+      && requiredBindings.every((binding) => validation.surfaceDiagnostic.bindings[binding] === true)
+      && validation.surfaceDiagnostic.statuses.candidate === 'APPLIED'
+      && validation.surfaceDiagnostic.statuses.assignment === 'ACTIVE';
+    if (!exactLegacyZeroSuccessor) throw surfaceReconcileReviewRequired();
+
+    const predecessorId = String(active.row.supersedes_user_plan_id || '').trim();
+    if (!predecessorId) throw surfaceReconcileReviewRequired();
+    const predecessor = await tx.get(
+      `SELECT up.id, up.user_id, up.plan_id, up.plan_version, up.status,
+              up.lineage_id, up.supersedes_user_plan_id, up.effective_from
+       FROM user_plans up
+       WHERE up.id=? AND up.user_id=?
+       FOR UPDATE OF up`,
+      [predecessorId, userId],
+    );
+    if (!predecessor
+      || predecessor.status !== 'superseded'
+      || predecessor.plan_version !== 0
+      || String(predecessor.lineage_id || '') !== String(active.row.lineage_id || '')
+      || String(candidate.applied_user_plan_id || '') !== String(active.row.user_plan_id)
+      || String(candidate.applied_training_plan_id || '') !== String(active.row.plan_id)) {
+      throw surfaceReconcileReviewRequired();
+    }
+
+    const update = await tx.run(
+      `UPDATE user_plans SET plan_version=?
+       WHERE id=? AND user_id=? AND status='active' AND plan_id=? AND plan_version=?`,
+      [authorityRevision, active.row.user_plan_id, userId, active.row.plan_id, storedAssignmentRevision],
+    );
+    if (update.changes !== 1) throw surfaceReconcileReviewRequired();
+    active.row.plan_version = authorityRevision;
+
+    const postValidation = completeAppliedSurfaceValidation(userId, candidate, artifacts, active.row);
+    const publicManifest = await canonicalSurfaceManifestForActive(
+      userId,
+      active.row,
+      (sql, params) => tx.get(sql, params),
+    );
+    if (postValidation.surfaceDiagnostic.status_code !== 'ACCEPTED'
+      || publicManifest?.status !== 'accepted') {
+      throw surfaceReconcileReviewRequired();
+    }
+    return { ok: true, accepted: true, reconciled: true };
+  });
 }
 
 const WORKOUT_START_ACCESS_SCHEMA = 'goal_backward_workout_start_access_v1';
@@ -6425,6 +6595,28 @@ router.post('/assign/:planId', auth, async (req, res) => {
   } catch (err) {
     console.error('[plans/assign] failed:', err.message);
     res.status(500).json({ error: 'Failed to assign plan' });
+  }
+});
+
+router.post('/my/surface-reconcile', auth, async (req, res) => {
+  const bodyKeys = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? Object.keys(req.body) : req.body == null ? [] : ['invalid'];
+  const queryKeys = req.query && typeof req.query === 'object' && !Array.isArray(req.query)
+    ? Object.keys(req.query) : [];
+  if (bodyKeys.length || queryKeys.length) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Plan recovery does not accept plan or account details.',
+    });
+  }
+  try {
+    return res.json(await reconcileActiveSurfaceForUser(req.user.id));
+  } catch (err) {
+    if (err?.code === 'SURFACE_RECONCILE_REVIEW_REQUIRED') {
+      return res.status(409).json({ ok: false, error: SURFACE_RECONCILE_REVIEW_MESSAGE });
+    }
+    console.error('[plans/my/surface-reconcile] failed:', err.message);
+    return res.status(500).json({ ok: false, error: 'Plan recovery is temporarily unavailable.' });
   }
 });
 

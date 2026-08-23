@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import {
   applyPlanCandidateWithActivation,
+  createSurfaceReconcileLatch,
   PLAN_CANDIDATE_APPLY_TIMEOUT_MS,
+  reconcileBlockedPlanSurface,
 } from '../src/lib/planCandidateActivation.js'
 
 const clock = { planning_date_local: '2026-08-15', timezone_offset_minutes: 240 }
@@ -65,6 +68,17 @@ function acceptedActive({
   }
 }
 const active = acceptedActive()
+const blockedActive = (() => {
+  const response = acceptedActive()
+  response.user_plan.plan_version = 1
+  response.surface_manifest = {
+    ...response.surface_manifest,
+    status: 'blocked',
+    reason_codes: ['SURFACE_REVISION_MISMATCH'],
+    sessions: [],
+  }
+  return response
+})()
 const onModeApplyBindings = {
   candidate_id: 'candidate-first-assignment',
   candidate_hash: 'sha256:first-assignment',
@@ -316,6 +330,166 @@ for (const [label, after] of [
     (error) => error?.code === 'PLAN_APPLY_FAILED_UNCHANGED' && /was not queued/.test(error.message),
     'an old service worker 202 can never be treated as applied',
   )
+}
+
+{
+  let current = structuredClone(blockedActive)
+  let postCalls = 0
+  let acceptedReads = 0
+  const phases = []
+  const api = {
+    async post(path, body) {
+      postCalls += 1
+      assert.equal(path, '/plans/my/surface-reconcile')
+      assert.equal(body, undefined, 'the owner-scoped repair sends no client-controlled body')
+      current = structuredClone(active)
+      return { data: { ok: true, accepted: true, reconciled: true } }
+    },
+    async get(path) {
+      assert.equal(path, '/plans/my')
+      acceptedReads += 1
+      return { data: structuredClone(current) }
+    },
+  }
+  const firstMount = await reconcileBlockedPlanSurface({
+    api,
+    planResponse: structuredClone(current),
+    latch: createSurfaceReconcileLatch(),
+    onState: (state) => phases.push(state.phase),
+  })
+  assert.deepEqual(phases, ['recovering', 'accepted'])
+  assert.equal(firstMount.phase, 'accepted')
+  assert.equal(firstMount.response.surface_manifest.status, 'accepted')
+  assert.ok(firstMount.response.surface_manifest.sessions.length > 0,
+    'the accepted refetch exposes the real executable surface')
+  assert.equal(postCalls, 1)
+  assert.equal(acceptedReads, 1)
+
+  const remount = await reconcileBlockedPlanSurface({
+    api,
+    planResponse: structuredClone(current),
+    latch: createSurfaceReconcileLatch(),
+  })
+  assert.equal(remount.phase, 'not_applicable')
+  assert.equal(postCalls, 1, 'reload/remount after server repair sends no duplicate POST')
+  assert.equal(acceptedReads, 1, 'accepted remount needs no recovery refetch')
+}
+
+{
+  let postCalls = 0
+  let getCalls = 0
+  const api = {
+    async post(path, body) {
+      postCalls += 1
+      assert.equal(path, '/plans/my/surface-reconcile')
+      assert.equal(body, undefined)
+      const error = new Error('conflict')
+      error.response = { status: 409, data: { error: 'This plan needs a reviewed rebuild.' } }
+      throw error
+    },
+    async get() { getCalls += 1; return { data: active } },
+  }
+  const result = await reconcileBlockedPlanSurface({
+    api,
+    planResponse: structuredClone(blockedActive),
+    latch: createSurfaceReconcileLatch(),
+  })
+  assert.equal(result.phase, 'review')
+  assert.equal(result.response.surface_manifest.status, 'blocked')
+  assert.equal(postCalls, 1)
+  assert.equal(getCalls, 0, 'a nonrepairable 409 remains blocked without a misleading GET')
+}
+
+{
+  let postCalls = 0
+  let getCalls = 0
+  const latch = createSurfaceReconcileLatch()
+  const api = {
+    async post(path, body) {
+      postCalls += 1
+      assert.equal(path, '/plans/my/surface-reconcile')
+      assert.equal(body, undefined)
+      if (postCalls === 1) throw new TypeError('network unavailable')
+      return { data: { ok: true, accepted: true, reconciled: true } }
+    },
+    async get(path) {
+      assert.equal(path, '/plans/my')
+      getCalls += 1
+      return { data: structuredClone(active) }
+    },
+  }
+  const transient = await reconcileBlockedPlanSurface({
+    api,
+    planResponse: structuredClone(blockedActive),
+    latch,
+  })
+  assert.equal(transient.phase, 'retry')
+  assert.equal(transient.response.surface_manifest.status, 'blocked')
+
+  const rerender = await reconcileBlockedPlanSurface({
+    api,
+    planResponse: structuredClone(blockedActive),
+    latch,
+  })
+  assert.equal(rerender.phase, 'retry')
+  assert.equal(postCalls, 1, 'a transient failure cannot create an automatic render loop')
+
+  const retried = await reconcileBlockedPlanSurface({
+    api,
+    planResponse: structuredClone(blockedActive),
+    latch,
+    manualRetry: true,
+  })
+  assert.equal(retried.phase, 'accepted')
+  assert.equal(retried.response.surface_manifest.status, 'accepted')
+  assert.equal(postCalls, 2, 'one explicit manual retry performs one additional POST')
+  assert.equal(getCalls, 1, 'manual retry success refetches the accepted plan exactly once')
+}
+
+for (const response of [active, stale]) {
+  let postCalls = 0
+  const result = await reconcileBlockedPlanSurface({
+    api: {
+      async post() { postCalls += 1; return { data: { ok: true } } },
+      async get() { throw new Error('not expected') },
+    },
+    planResponse: structuredClone(response),
+    latch: createSurfaceReconcileLatch(),
+  })
+  assert.equal(result.phase, 'not_applicable')
+  assert.equal(postCalls, 0, 'accepted and legacy plans send zero reconciliation requests')
+}
+
+{
+  let postCalls = 0
+  const latch = createSurfaceReconcileLatch()
+  const api = {
+    async post() {
+      postCalls += 1
+      const error = new TypeError('offline')
+      throw error
+    },
+    async get() { throw new Error('not expected') },
+  }
+  await reconcileBlockedPlanSurface({ api, planResponse: structuredClone(blockedActive), latch })
+  const otherOwnerState = structuredClone(blockedActive)
+  otherOwnerState.user_plan.id = 'assignment-other-owner'
+  await reconcileBlockedPlanSurface({ api, planResponse: otherOwnerState, latch })
+  assert.equal(postCalls, 2, 'an account/assignment change receives a fresh owner-isolated latch')
+}
+
+{
+  const planSource = fs.readFileSync(new URL('../src/pages/Plan.jsx', import.meta.url), 'utf8')
+  const blockerStart = planSource.indexOf("calendarModel?.surface?.status === 'blocked'")
+  const blockerEnd = planSource.indexOf('{/* Active plan:', blockerStart)
+  const blockerSource = planSource.slice(blockerStart, blockerEnd)
+  assert.match(blockerSource, /Restoring your reviewed plan/)
+  assert.match(blockerSource, /Retry recovery/)
+  assert.match(blockerSource, /Review and rebuild plan/)
+  assert.match(blockerSource, /navigate\('\/plan-catalog'/,
+    'a nonrepairable blocker leads to the existing reviewed-plan flow')
+  assert.doesNotMatch(blockerSource, /SURFACE_REVISION_MISMATCH|reason_codes|Start (?:run|lift|workout)/,
+    'the blocked state renders no raw enum or execution affordance')
 }
 
 console.log('PLAN CANDIDATE ACTIVATION LIFECYCLE SMOKE OK')

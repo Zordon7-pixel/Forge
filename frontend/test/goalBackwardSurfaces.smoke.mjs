@@ -186,6 +186,7 @@ check('backend emits one accepted manifest beside an applicable plan and no mani
 await checkAsync('backend serves the manifest only when the applied owner/assignment and canonical artifact chain match', async () => {
   const candidate = {
     id: 'candidate-db-1',
+    status: 'applied',
     decision_id: surfaceManifest.identity.decision_id,
     candidate_revision: surfaceManifest.identity.candidate_revision,
     athlete_state_revision: surfaceManifest.identity.athlete_state_revision,
@@ -194,6 +195,8 @@ await checkAsync('backend serves the manifest only when the applied owner/assign
     surface_revision: surfaceManifest.surface_revision,
     feature_mode: surfaceManifest.feature_mode,
     selected_candidate_hash: surfaceManifest.identity.candidate_hash,
+    applied_training_plan_id: 'stored-plan-1',
+    applied_user_plan_id: 'assignment-1',
   }
   const canonicalArtifact = {
     plan_id: surfaceManifest.identity.plan_id,
@@ -214,7 +217,13 @@ await checkAsync('backend serves the manifest only when the applied owner/assign
   }
   const served = await plansRoute._test.canonicalSurfaceManifestForActive(
     'owner-1',
-    { user_plan_id: 'assignment-1', plan_version: 7, plan_data: canonicalPlanData },
+    {
+      user_plan_id: 'assignment-1',
+      plan_id: 'stored-plan-1',
+      plan_version: 7,
+      status: 'active',
+      plan_data: canonicalPlanData,
+    },
     query,
   )
   assert.deepEqual(served, surfaceManifest)
@@ -445,7 +454,9 @@ for (const project of [
   check(`${project.name} fixture exposes human copy while preserving canonical fields and overflow guards`, () => {
     assert.match(planSource, /surface_manifest/)
     assert.match(planSource, /Plan details are temporarily unavailable/)
-    assert.match(planSource, /This plan changed after it was loaded\. Refresh Train before viewing or starting this workout\./)
+    assert.match(planSource, /Restoring your reviewed plan/)
+    assert.match(planSource, /Workouts stay unavailable until that check finishes/)
+    assert.match(planSource, /This plan needs a reviewed rebuild before its workouts can be used/)
     assert.doesNotMatch(planSource, /\{[A-Z][A-Z0-9]*_[A-Z0-9_]+\}/,
       'the athlete blocker never interpolates a raw internal enum')
     assert.doesNotMatch(planSource, />[^<{}]*SURFACE_REVISION_MISMATCH[^<{}]*</)

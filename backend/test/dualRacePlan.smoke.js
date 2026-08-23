@@ -1569,7 +1569,8 @@ async function checkHyroxCandidateImmediateAdoption() {
       const race = raceRows.get(params[0]);
       return race && race.user_id === params[1] ? { ...race } : null;
     }
-    if (sql.includes('SELECT id, decision_id, candidate_revision')
+    if ((sql.includes('SELECT id, decision_id, candidate_revision')
+      || sql.includes('SELECT id, status, decision_id, candidate_revision'))
       && sql.includes('FROM plan_generation_candidates')
       && sql.includes('applied_user_plan_id=?')
       && sql.includes("status='applied'")) {
@@ -1649,7 +1650,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     }
     if (sql.includes("up.status='active'") || sql.includes("up.status = 'active'")) {
       const assignment = currentAssignment();
-      if (!assignment) return null;
+      if (!assignment || assignment.user_id !== params[0]) return null;
       return sql.includes('JOIN training_plans')
         ? joinedAssignment(assignment)
         : { ...assignment, user_plan_id: assignment.id };
@@ -1688,6 +1689,21 @@ async function checkHyroxCandidateImmediateAdoption() {
 
   async function all(sql, params = []) {
     if (sql.includes('FROM runs')) return recentRuns.map((run) => ({ ...run }));
+    if (sql.includes('FROM plan_generation_candidates')
+      && sql.includes('applied_user_plan_id=?')
+      && sql.includes("status='applied'")) {
+      return [...candidates.values()].filter((candidate) => (
+        candidate.user_id === params[0]
+        && candidate.applied_user_plan_id === params[1]
+        && candidate.status === 'applied'
+      )).slice(0, 2).map((candidate) => ({ ...candidate }));
+    }
+    if (sql.includes('FROM planning_pipeline_artifacts')
+      && sql.includes('WHERE user_id=? AND decision_id=?')) {
+      return [...planningArtifacts.values()].filter((artifact) => (
+        artifact.user_id === params[0] && artifact.decision_id === params[1]
+      )).map((artifact) => ({ ...artifact }));
+    }
     if (sql.includes('FROM plan_candidate_rejections')) {
       return rejectionRows.filter((row) => row.user_id === params[0]
         && row.evidence_fingerprint === params[1]
@@ -1777,6 +1793,18 @@ async function checkHyroxCandidateImmediateAdoption() {
       });
       return { changes: 1 };
     }
+    if (sql.includes('UPDATE user_plans SET plan_version=?')
+      && sql.includes("status='active'")
+      && sql.includes('AND plan_id=? AND plan_version=?')) {
+      const assignment = userPlans.get(params[1]);
+      if (!assignment
+        || assignment.user_id !== params[2]
+        || assignment.status !== 'active'
+        || assignment.plan_id !== params[3]
+        || assignment.plan_version !== params[4]) return { changes: 0 };
+      assignment.plan_version = params[0];
+      return { changes: 1 };
+    }
     if (sql.includes("SET status='applied'")) {
       const row = candidates.get(params[4]);
       if (!row || row.user_id !== params[5] || row.status !== 'preview') return { changes: 0 };
@@ -1819,12 +1847,26 @@ async function checkHyroxCandidateImmediateAdoption() {
   }
 
   const tx = { get, all, run: runStatement };
+  let userMutationTail = Promise.resolve();
+  let serializeUserMutations = false;
+  const transactionalUserMutation = async (fn) => {
+    if (!serializeUserMutations) return fn(tx);
+    const prior = userMutationTail;
+    let release;
+    userMutationTail = new Promise((resolve) => { release = resolve; });
+    await prior;
+    try {
+      return await fn(tx);
+    } finally {
+      release();
+    }
+  };
   const mockDb = {
     dbGet: async (...args) => { directDatabaseCallCount += 1; return get(...args); },
     dbAll: async (...args) => { directDatabaseCallCount += 1; return all(...args); },
     dbRun: async (...args) => { directDatabaseCallCount += 1; return runStatement(...args); },
     runWithUserContext: (_userId, fn) => fn(),
-    withUserMutation: async (_userId, fn) => fn(tx),
+    withUserMutation: async (_userId, fn) => transactionalUserMutation(fn),
     withPlanningInputMutation: async (_userId, fn) => {
       const rollbackSnapshot = {
         races: new Map([...raceRows.entries()].map(([key, value]) => [key, JSON.parse(JSON.stringify(value))])),
@@ -2033,6 +2075,12 @@ async function checkHyroxCandidateImmediateAdoption() {
     const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
     const reject = routeHandler(plansRouter, '/candidates/:candidateId/reject', 'post');
     const readMyPlan = routeHandler(plansRouter, '/my', 'get');
+    const surfaceReconcile = routeHandler(plansRouter, '/my/surface-reconcile', 'post');
+    const surfaceReconcileLayer = plansRouter.stack.find((layer) => (
+      layer.route?.path === '/my/surface-reconcile' && layer.route?.methods?.post
+    ));
+    assert.equal(surfaceReconcileLayer.route.stack.length, 2,
+      'surface reconciliation is registered behind authentication and one real handler');
     const previewRaceRemoval = routeHandler(racesRouter, '/:id/removal-preview', 'post');
     const applyRaceRemoval = routeHandler(racesRouter, '/:id/removal-apply', 'post');
     const resetRaceRemoval = routeHandler(racesRouter, '/:id/removal-reset', 'post');
@@ -2047,6 +2095,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       headers: { 'x-forged-local-date': planningDate, 'x-forged-timezone-offset-minutes': '240' },
       get(name) { return this.headers[String(name).toLowerCase()]; },
     };
+    const surfaceRequestBase = { ...requestBase, query: {} };
     const eligibilityTelemetry = [];
     const currentCandidateCountBeforeIneligible = candidates.size;
     const ineligibleGoalBackward = await plansRouter._test.previewPlanForUser(ownerId, {
@@ -2855,6 +2904,268 @@ async function checkHyroxCandidateImmediateAdoption() {
       target.clear();
       for (const [key, value] of snapshot.entries()) target.set(key, clone(value));
     };
+    const reconcileAssignment = userPlans.get(applyResponse.payload.user_plan_id);
+    const reconcilePredecessor = userPlans.get(reconcileAssignment.supersedes_user_plan_id);
+    const reconcileCandidate = candidates.get(previewResponse.payload.candidate_id);
+    const reconcilePlanRow = trainingPlans.get(reconcileAssignment.plan_id);
+    assert.equal(reconcilePredecessor.plan_version, 0,
+      'the persisted regression fixture begins with the real legacy-zero predecessor');
+    reconcileAssignment.plan_version = 1;
+    const blockedBeforeReconcile = await invoke(readMyPlan, { ...requestBase, body: {} });
+    assert.equal(blockedBeforeReconcile.statusCode, 200);
+    assert.equal(blockedBeforeReconcile.payload.surface_manifest.status, 'blocked',
+      'the persisted successor 2-vs-1 assignment reproduces the already-blocked public surface');
+    assert.deepEqual(blockedBeforeReconcile.payload.surface_manifest.sessions, [],
+      'the reproduced blocker remains non-executable before repair');
+    const reconcileArtifacts = [...planningArtifacts.values()].filter((artifact) => (
+      artifact.decision_id === reconcileCandidate.decision_id
+    ));
+    const reconcileArtifactDiagnostic = buildDecisionArtifactDiagnosticBundle({
+      targetUserId: ownerId,
+      decisionId: reconcileCandidate.decision_id,
+      artifactRows: reconcileArtifacts,
+      candidateRow: reconcileCandidate,
+    });
+    assert.equal(reconcileArtifactDiagnostic.canonical_binding.verified, true,
+      JSON.stringify(reconcileArtifactDiagnostic.reason_codes));
+    assert.deepEqual([...reconcileArtifactDiagnostic.reason_codes].sort(), [
+      'C4_DEPLOYMENT_REVISION_MISSING',
+      'C4_SOURCE_REVISION_MISSING',
+    ], 'the historical public Apply shape omits only deployment/source receipt metadata');
+    const reconcileSurfaceArtifact = reconcileArtifacts.find((artifact) => artifact.artifact_kind === 'surface_manifest');
+    const reconcileCanonicalArtifact = reconcileArtifacts.find((artifact) => artifact.artifact_kind === 'canonical_session_set');
+    const reconcilePredicateDiagnostic = plansRouter._test.surfaceManifestAppliedPlanDiagnostic(
+      JSON.parse(reconcileSurfaceArtifact.payload_json),
+      reconcileCandidate,
+      joinedAssignment(reconcileAssignment),
+      JSON.parse(reconcileCanonicalArtifact.payload_json),
+    );
+    assert.deepEqual(Object.entries(reconcilePredicateDiagnostic.predicates)
+      .filter(([, passed]) => !passed).map(([predicate]) => predicate), ['ASSIGNMENT_REVISION_MATCH'],
+    JSON.stringify(reconcilePredicateDiagnostic.predicates));
+    const preservationBeforeReconcile = {
+      plan_data: reconcilePlanRow.plan_data,
+      plan_json: reconcilePlanRow.plan_json,
+      assignment: {
+        id: reconcileAssignment.id,
+        user_id: reconcileAssignment.user_id,
+        plan_id: reconcileAssignment.plan_id,
+        started_at: reconcileAssignment.started_at,
+        current_week: reconcileAssignment.current_week,
+        status: reconcileAssignment.status,
+        progress_json: reconcileAssignment.progress_json,
+        lineage_id: reconcileAssignment.lineage_id,
+        supersedes_user_plan_id: reconcileAssignment.supersedes_user_plan_id,
+        effective_from: reconcileAssignment.effective_from,
+        created_at: reconcileAssignment.created_at,
+      },
+      predecessor: clone(reconcilePredecessor),
+      candidate: clone(reconcileCandidate),
+      artifacts: cloneMap(planningArtifacts),
+      races: cloneMap(raceRows),
+      assignmentCount: userPlans.size,
+      planCount: trainingPlans.size,
+    };
+    const writesBeforeReconcile = transactionWriteCount;
+    const repairedSurface = await invoke(surfaceReconcile, { ...surfaceRequestBase, body: {} });
+    assert.equal(repairedSurface.statusCode, 200, JSON.stringify(repairedSurface.payload));
+    assert.deepEqual(repairedSurface.payload, { ok: true, accepted: true, reconciled: true },
+      'the athlete response is stable and discloses no IDs, hashes, or predicates');
+    assert.equal(transactionWriteCount - writesBeforeReconcile, 1,
+      'repair changes exactly one persisted row once');
+    const acceptedAfterReconcile = await invoke(readMyPlan, { ...requestBase, body: {} });
+    assert.equal(acceptedAfterReconcile.statusCode, 200);
+    assert.equal(acceptedAfterReconcile.payload.surface_manifest.status, 'accepted');
+    assert.ok(acceptedAfterReconcile.payload.surface_manifest.sessions.length > 0,
+      'reconcile makes the immediate owner-scoped GET executable');
+    assert.equal(acceptedAfterReconcile.payload.user_plan.plan_version, 2);
+    assert.equal(reconcileAssignment.plan_version, 2);
+    assert.equal(reconcilePlanRow.plan_data, preservationBeforeReconcile.plan_data,
+      'plan/session/goal/effective content is byte-preserved');
+    assert.equal(reconcilePlanRow.plan_json, preservationBeforeReconcile.plan_json,
+      'the compatibility plan payload is byte-preserved');
+    assert.deepEqual({
+      id: reconcileAssignment.id,
+      user_id: reconcileAssignment.user_id,
+      plan_id: reconcileAssignment.plan_id,
+      started_at: reconcileAssignment.started_at,
+      current_week: reconcileAssignment.current_week,
+      status: reconcileAssignment.status,
+      progress_json: reconcileAssignment.progress_json,
+      lineage_id: reconcileAssignment.lineage_id,
+      supersedes_user_plan_id: reconcileAssignment.supersedes_user_plan_id,
+      effective_from: reconcileAssignment.effective_from,
+      created_at: reconcileAssignment.created_at,
+    }, preservationBeforeReconcile.assignment,
+    'lineage, progress, completion evidence, effective date, and assignment identity are byte-preserved');
+    assert.deepEqual(reconcilePredecessor, preservationBeforeReconcile.predecessor);
+    assert.deepEqual(reconcileCandidate, preservationBeforeReconcile.candidate);
+    assert.deepEqual(planningArtifacts, preservationBeforeReconcile.artifacts);
+    assert.deepEqual(raceRows, preservationBeforeReconcile.races,
+      'race links and owned race rows are unchanged');
+    assert.equal(userPlans.size, preservationBeforeReconcile.assignmentCount);
+    assert.equal(trainingPlans.size, preservationBeforeReconcile.planCount);
+
+    const writesBeforeReplay = transactionWriteCount;
+    const noOpReplay = await invoke(surfaceReconcile, { ...surfaceRequestBase, body: {} });
+    assert.equal(noOpReplay.statusCode, 200);
+    assert.deepEqual(noOpReplay.payload, { ok: true, accepted: true, reconciled: false });
+    assert.equal(transactionWriteCount, writesBeforeReplay,
+      'accepted reconciliation replay is an idempotent zero-write no-op');
+
+    reconcileAssignment.plan_version = 1;
+    const writesBeforeConcurrent = transactionWriteCount;
+    serializeUserMutations = true;
+    let concurrentReplays;
+    try {
+      concurrentReplays = await Promise.all([
+        invoke(surfaceReconcile, { ...surfaceRequestBase, body: {} }),
+        invoke(surfaceReconcile, { ...surfaceRequestBase, body: {} }),
+      ]);
+    } finally {
+      serializeUserMutations = false;
+    }
+    assert.deepEqual(concurrentReplays.map((result) => result.statusCode), [200, 200]);
+    assert.deepEqual(concurrentReplays.map((result) => result.payload.reconciled).sort(), [false, true],
+      'concurrent identical calls converge through one repair and one accepted replay');
+    assert.equal(transactionWriteCount - writesBeforeConcurrent, 1);
+    assert.equal(userPlans.size, preservationBeforeReconcile.assignmentCount,
+      'concurrent reconciliation creates no duplicate assignment');
+
+    const acceptedReconcileBaseline = {
+      plans: cloneMap(trainingPlans),
+      assignments: cloneMap(userPlans),
+      candidates: cloneMap(candidates),
+      artifacts: cloneMap(planningArtifacts),
+      races: cloneMap(raceRows),
+    };
+    const restoreMapValues = (target, snapshot) => {
+      for (const key of [...target.keys()]) {
+        if (!snapshot.has(key)) target.delete(key);
+      }
+      for (const [key, value] of snapshot.entries()) {
+        const restored = clone(value);
+        const current = target.get(key);
+        if (current && typeof current === 'object' && !Array.isArray(current)) {
+          for (const currentKey of Object.keys(current)) delete current[currentKey];
+          Object.assign(current, restored);
+        } else {
+          target.set(key, restored);
+        }
+      }
+    };
+    const restoreAcceptedReconcileBaseline = () => {
+      restoreMapValues(trainingPlans, acceptedReconcileBaseline.plans);
+      restoreMapValues(userPlans, acceptedReconcileBaseline.assignments);
+      restoreMapValues(candidates, acceptedReconcileBaseline.candidates);
+      restoreMapValues(planningArtifacts, acceptedReconcileBaseline.artifacts);
+      restoreMapValues(raceRows, acceptedReconcileBaseline.races);
+    };
+    const reconcileMutationState = () => JSON.stringify({
+      plans: [...trainingPlans.entries()],
+      assignments: [...userPlans.entries()],
+      candidates: [...candidates.entries()],
+      artifacts: [...planningArtifacts.entries()],
+      races: [...raceRows.entries()],
+    });
+    const unrepairableCases = [
+      ['missing active assignment', () => { currentAssignment().status = 'superseded'; }],
+      ['missing applied candidate', () => { candidates.delete(previewResponse.payload.candidate_id); }],
+      ['candidate not applied', () => { candidates.get(previewResponse.payload.candidate_id).status = 'preview'; }],
+      ['missing surface artifact', () => {
+        const artifact = [...planningArtifacts.values()].find((row) => (
+          row.plan_generation_candidate_id === previewResponse.payload.candidate_id
+            && row.artifact_kind === 'surface_manifest'
+        ));
+        planningArtifacts.delete(artifact.id);
+      }],
+      ['missing canonical artifact', () => {
+        const artifact = [...planningArtifacts.values()].find((row) => (
+          row.plan_generation_candidate_id === previewResponse.payload.candidate_id
+            && row.artifact_kind === 'canonical_session_set'
+        ));
+        planningArtifacts.delete(artifact.id);
+      }],
+      ['plan decision mismatch', () => {
+        const assignment = currentAssignment();
+        const row = trainingPlans.get(assignment.plan_id);
+        const plan = JSON.parse(row.plan_data);
+        plan.decision_hash = '0'.repeat(64);
+        row.plan_data = JSON.stringify(plan);
+        row.plan_json = row.plan_data;
+      }],
+      ['artifact content hash mismatch', () => {
+        const artifact = [...planningArtifacts.values()].find((row) => row.artifact_kind === 'surface_manifest'
+          && row.plan_generation_candidate_id === previewResponse.payload.candidate_id);
+        const payload = JSON.parse(artifact.payload_json);
+        payload.purpose = `${payload.purpose} changed`;
+        artifact.payload_json = JSON.stringify(payload);
+      }],
+      ['candidate plan linkage mismatch', () => {
+        candidates.get(previewResponse.payload.candidate_id).applied_training_plan_id = 'different-plan';
+      }],
+      ['safety mismatch', () => {
+        candidates.get(previewResponse.payload.candidate_id).safety_state_hash = `sha256:${'0'.repeat(64)}`;
+      }],
+      ['athlete-state mismatch', () => {
+        candidates.get(previewResponse.payload.candidate_id).athlete_state_revision += 1;
+      }],
+      ['goal mismatch', () => {
+        candidates.get(previewResponse.payload.candidate_id).goal_revisions_json = JSON.stringify({ 'goal-other': 1 });
+      }],
+      ['multiple failed predicates', () => {
+        const candidate = candidates.get(previewResponse.payload.candidate_id);
+        candidate.safety_state_hash = `sha256:${'0'.repeat(64)}`;
+        candidate.athlete_state_revision += 1;
+      }],
+      ['malformed assignment revision', () => { currentAssignment().plan_version = '1'; }],
+      ['unsupported lineage', () => {
+        currentAssignment().plan_version = 1;
+        userPlans.get(currentAssignment().supersedes_user_plan_id).plan_version = 1;
+      }],
+    ];
+    for (const [label, mutate] of unrepairableCases) {
+      restoreAcceptedReconcileBaseline();
+      currentAssignment().plan_version = 1;
+      mutate();
+      const before = reconcileMutationState();
+      const beforeWrites = transactionWriteCount;
+      const rejected = await invoke(surfaceReconcile, { ...surfaceRequestBase, body: {} });
+      assert.equal(rejected.statusCode, 409, `${label}: ${JSON.stringify(rejected.payload)}`);
+      assert.deepEqual(rejected.payload, {
+        ok: false,
+        error: 'This plan needs a reviewed rebuild before workouts can start.',
+      }, `${label} returns only stable athlete-safe copy`);
+      assert.doesNotMatch(JSON.stringify(rejected.payload), /sha256|[a-f0-9]{32}|SURFACE_|MATCH|candidate|assignment/i);
+      assert.equal(transactionWriteCount, beforeWrites, `${label} performs zero writes`);
+      assert.equal(reconcileMutationState(), before, `${label} leaves every persisted row unchanged`);
+    }
+    restoreAcceptedReconcileBaseline();
+    const beforeWrongOwner = reconcileMutationState();
+    const beforeWrongOwnerWrites = transactionWriteCount;
+    const wrongOwner = await invoke(surfaceReconcile, {
+      ...surfaceRequestBase,
+      user: { id: '22222222-2222-4222-8222-222222222222' },
+      body: {},
+    });
+    assert.equal(wrongOwner.statusCode, 409);
+    assert.equal(transactionWriteCount, beforeWrongOwnerWrites);
+    assert.equal(reconcileMutationState(), beforeWrongOwner,
+      'a wrong owner cannot observe or mutate the active assignment');
+
+    const beforeControlledBody = reconcileMutationState();
+    const controlledBody = await invoke(surfaceReconcile, {
+      ...surfaceRequestBase,
+      body: { owner_id: ownerId, plan_revision: 2 },
+    });
+    assert.equal(controlledBody.statusCode, 400);
+    assert.deepEqual(controlledBody.payload, {
+      ok: false,
+      error: 'Plan recovery does not accept plan or account details.',
+    });
+    assert.equal(reconcileMutationState(), beforeControlledBody,
+      'client-controlled repair predicates are rejected before any mutation');
+    restoreAcceptedReconcileBaseline();
     const removalBaseline = {
       profile: clone(profile),
       races: cloneMap(raceRows),

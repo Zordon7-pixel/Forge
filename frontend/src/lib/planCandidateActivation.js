@@ -2,6 +2,7 @@ import { verifyHyroxPlanActivation } from './planActivation.js'
 
 export const PLAN_CANDIDATE_APPLY_TIMEOUT_MS = 45000
 export const PLAN_ACTIVATION_READ_TIMEOUT_MS = 15000
+export const PLAN_SURFACE_RECONCILE_TIMEOUT_MS = 15000
 
 function lifecycleError(message, code, details = {}) {
   const error = new Error(message)
@@ -52,6 +53,119 @@ function verifyApplicablePublicSurface(planResponse = {}, candidateHash = '') {
     applicable: true,
     confirmed: Object.values(checks).every(Boolean),
     checks,
+  }
+}
+
+function blockedApplicableSurfaceKey(planResponse = {}) {
+  const plan = planResponse?.plan?.plan_data || planResponse?.plan?.plan_json || {}
+  const verification = verifyApplicablePublicSurface(planResponse, plan?.selected_candidate_hash)
+  if (!verification.applicable || verification.confirmed) return null
+  const assignment = assignmentId(planResponse)
+  const storedPlan = String(planResponse?.plan?.id || '').trim()
+  const logicalPlan = String(plan?.plan_id || '').trim()
+  const key = assignment || storedPlan || logicalPlan
+  return key ? { key: `${assignment}:${storedPlan}:${logicalPlan}`, verification } : null
+}
+
+export function createSurfaceReconcileLatch() {
+  return {
+    key: null,
+    autoAttempted: false,
+    phase: 'idle',
+    inFlight: null,
+  }
+}
+
+export async function reconcileBlockedPlanSurface({
+  api,
+  planResponse,
+  latch,
+  manualRetry = false,
+  onState = null,
+  timeoutMs = PLAN_SURFACE_RECONCILE_TIMEOUT_MS,
+} = {}) {
+  const blocked = blockedApplicableSurfaceKey(planResponse)
+  if (!blocked) {
+    if (latch) {
+      latch.key = null
+      latch.autoAttempted = false
+      latch.phase = 'idle'
+      latch.inFlight = null
+    }
+    return { phase: 'not_applicable', response: planResponse, refetched: false }
+  }
+  if (!api || !latch) throw new TypeError('Surface reconciliation requires an API client and mounted latch')
+  if (latch.key !== blocked.key) {
+    latch.key = blocked.key
+    latch.autoAttempted = false
+    latch.phase = 'idle'
+    latch.inFlight = null
+  }
+  if (latch.inFlight) return latch.inFlight
+  if (manualRetry ? latch.phase !== 'retry' : latch.autoAttempted) {
+    return { phase: latch.phase, response: planResponse, refetched: false }
+  }
+  if (!manualRetry) latch.autoAttempted = true
+  const attemptKey = blocked.key
+  const publish = (phase) => {
+    if (latch.key !== attemptKey) return
+    latch.phase = phase
+    if (typeof onState === 'function') onState({ phase })
+  }
+  publish('recovering')
+
+  let task
+  task = (async () => {
+    try {
+      const reconcileResponse = await requestWithDeadline(
+        ({ timeout, signal }) => api.post('/plans/my/surface-reconcile', undefined, { timeout, signal }),
+        timeoutMs,
+        'Plan recovery timed out.',
+      )
+      if (latch.key !== attemptKey) {
+        return { phase: 'superseded', response: planResponse, refetched: false }
+      }
+      if (reconcileResponse?.data?.accepted !== true) {
+        publish('review')
+        return { phase: 'review', response: planResponse, refetched: false }
+      }
+      const refreshed = await requestWithDeadline(
+        ({ timeout, signal }) => api.get('/plans/my', {
+          timeout,
+          signal,
+          headers: { 'Cache-Control': 'no-cache' },
+          params: { forge_refresh: Date.now() },
+        }),
+        timeoutMs,
+        'The repaired plan could not be refreshed.',
+      )
+      const refreshedResponse = refreshed?.data || {}
+      if (latch.key !== attemptKey) {
+        return { phase: 'superseded', response: planResponse, refetched: true }
+      }
+      const refreshedPlan = refreshedResponse?.plan?.plan_data || refreshedResponse?.plan?.plan_json || {}
+      const accepted = verifyApplicablePublicSurface(
+        refreshedResponse,
+        refreshedPlan?.selected_candidate_hash,
+      )
+      if (!accepted.applicable || !accepted.confirmed) {
+        publish('review')
+        return { phase: 'review', response: planResponse, refetched: true }
+      }
+      publish('accepted')
+      return { phase: 'accepted', response: refreshedResponse, refetched: true }
+    } catch (error) {
+      const status = Number(error?.response?.status || 0)
+      const phase = status === 409 || (status >= 400 && status < 500) ? 'review' : 'retry'
+      publish(phase)
+      return { phase, response: planResponse, refetched: false }
+    }
+  })()
+  latch.inFlight = task
+  try {
+    return await task
+  } finally {
+    if (latch.key === attemptKey && latch.inFlight === task) latch.inFlight = null
   }
 }
 
