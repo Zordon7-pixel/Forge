@@ -35,7 +35,6 @@ import {
 } from '../lib/planSchedule'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
-const SURFACE_REVISION_MISMATCH = 'SURFACE_REVISION_MISMATCH'
 
 function executionFromCalendar(model, dateISO, completedSet) {
   if (!model) return null
@@ -1005,9 +1004,9 @@ export default function Plan() {
 
         {myPlan && calendarModel?.surface?.status === 'blocked' && (
           <section role="alert" aria-live="assertive" className="min-w-0 rounded-xl p-4" style={{ background: 'var(--danger-dim)', border: '1px solid var(--danger)', overflowWrap: 'anywhere' }}>
-            <h2 className="text-base font-black" style={{ color: 'var(--text-primary)' }}>Plan details are temporarily blocked</h2>
+            <h2 className="text-base font-black" style={{ color: 'var(--text-primary)' }}>Plan details are temporarily unavailable</h2>
             <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-              Forge detected {SURFACE_REVISION_MISMATCH}. Refresh the plan before viewing or starting this prescription.
+              This plan changed after it was loaded. Refresh Train before viewing or starting this workout.
             </p>
           </section>
         )}

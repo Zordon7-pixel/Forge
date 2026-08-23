@@ -18,6 +18,43 @@ function supersededAssignmentId(response = {}) {
   return String(response?.user_plan?.supersedes_user_plan_id || '').trim()
 }
 
+function hashIdentity(value) {
+  return String(value || '').trim().replace(/^sha256:/, '')
+}
+
+function verifyApplicablePublicSurface(planResponse = {}, candidateHash = '') {
+  const plan = planResponse?.plan?.plan_data || planResponse?.plan?.plan_json || {}
+  const applicable = Number(plan?.canonical_workout_schema_version) === 1
+    && Boolean(plan?.selected_candidate_hash)
+    && Boolean(plan?.canonical_session_set_hash)
+  if (!applicable) return { applicable: false, confirmed: true }
+
+  const manifest = planResponse?.surface_manifest
+  const identity = manifest?.identity
+  const checks = {
+    accepted: manifest?.schema_version === 'goal_backward_surface_manifest_v1'
+      && manifest?.status === 'accepted'
+      && manifest?.v24_surface_enabled === true
+      && ['preview', 'on'].includes(String(manifest?.feature_mode || ''))
+      && Array.isArray(manifest?.sessions)
+      && manifest.sessions.length > 0,
+    assignmentRevision: Number(identity?.plan_revision) === Number(planResponse?.user_plan?.plan_version),
+    planRevision: Number(identity?.plan_revision) === Number(plan?.plan_revision),
+    planIdentity: String(identity?.plan_id || '') === String(plan?.plan_id || ''),
+    decisionIdentity: String(identity?.decision_id || '') === String(plan?.decision_id || '')
+      && hashIdentity(identity?.decision_hash) === hashIdentity(plan?.decision_hash),
+    candidateIdentity: hashIdentity(identity?.candidate_hash) === hashIdentity(plan?.selected_candidate_hash)
+      && hashIdentity(identity?.candidate_hash) === hashIdentity(candidateHash),
+    sessionSetIdentity: hashIdentity(identity?.canonical_session_set_hash)
+      === hashIdentity(plan?.canonical_session_set_hash),
+  }
+  return {
+    applicable: true,
+    confirmed: Object.values(checks).every(Boolean),
+    checks,
+  }
+}
+
 function isTimeout(error) {
   return error?.code === 'PLAN_APPLY_TIMEOUT'
     || error?.code === 'ECONNABORTED'
@@ -190,9 +227,11 @@ export async function applyPlanCandidateWithActivation({
     hyroxRace,
     secondaryRaceId,
   })
-  if (activation.confirmed) {
+  const publicSurface = verifyApplicablePublicSurface(afterRead.response, normalizedCandidateHash)
+  const confirmedActivation = { ...activation, publicSurface }
+  if (activation.confirmed && publicSurface.confirmed) {
     return {
-      activation,
+      activation: confirmedActivation,
       activeResponse: afterRead.response,
       applyResponse: applyData,
       reconciled,
@@ -202,9 +241,9 @@ export async function applyPlanCandidateWithActivation({
 
   if (applyData) {
     throw lifecycleError(
-      'Forge accepted the reviewed plan but did not confirm its exact assignment and goals in the active calendar. Refresh before making another plan change.',
+      'Forge accepted the reviewed plan but did not confirm its exact assignment, goals, and public workout surface. Refresh before making another plan change.',
       'PLAN_APPLY_NOT_CONFIRMED',
-      { activation, applyResponse: applyData },
+      { activation: confirmedActivation, applyResponse: applyData },
     )
   }
   throw failureAfterReconciliation(applyError, beforeRead, afterRead)

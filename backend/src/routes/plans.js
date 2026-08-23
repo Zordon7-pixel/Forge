@@ -2075,10 +2075,19 @@ function normalizeCandidateRequest(body = {}) {
   };
 }
 
+function positivePlanRevision(value) {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 1 ? value : 1;
+  }
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return 1;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) ? revision : 1;
+}
+
 function activeCandidateMetadata(active) {
   if (!active) return null;
   return {
-    planVersion: active.source === 'assigned' ? Number(active.row.plan_version || 1) : null,
+    planVersion: active.source === 'assigned' ? positivePlanRevision(active.row.plan_version) : null,
     trainingPlanId: active.row.id || null,
     userPlanId: active.row.user_plan_id || null,
   };
@@ -3792,14 +3801,21 @@ function surfaceMismatchManifest(candidate = {}, payload = null) {
   };
 }
 
-function surfaceManifestMatchesAppliedPlan(manifest, candidate, activeRow, canonicalSessionSet = null) {
+function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRow = null, canonicalSessionSet = null) {
   const identity = manifest?.identity;
-  if (manifest?.schema_version !== 'goal_backward_surface_manifest_v1'
-    || manifest?.status !== 'accepted'
-    || manifest?.v24_surface_enabled !== true
-    || !['preview', 'on'].includes(String(manifest?.feature_mode || ''))
-    || !identity || !Array.isArray(manifest.sessions) || !manifest.sessions.length) return false;
   const hashIdentity = (value) => String(value || '').replace(/^sha256:/, '');
+  const diagnosticHash = (value) => {
+    const normalized = hashIdentity(value).toLowerCase();
+    return /^[a-f0-9]{64}$/.test(normalized) ? `sha256:${normalized}` : null;
+  };
+  const diagnosticRevision = (value) => {
+    const revision = Number(value);
+    return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+  };
+  const closedStatus = (value, allowed) => {
+    const normalized = String(value || '').toLowerCase();
+    return allowed.includes(normalized) ? normalized.toUpperCase() : 'UNKNOWN';
+  };
   const activePlan = parsePlan(activeRow) || {};
   const candidateGoalRevisions = parseJsonValue(candidate.goal_revisions_json, {});
   const activeWeeks = (Array.isArray(activePlan.weeks) ? activePlan.weeks : []).map((week, index) => ({
@@ -3813,34 +3829,172 @@ function surfaceManifestMatchesAppliedPlan(manifest, candidate, activeRow, canon
       || activeWeeks.find((week) => week.purpose)?.purpose
       || '',
   ).trim();
-  const canonicalMatches = canonicalSessionSet && typeof canonicalSessionSet === 'object'
-    && String(canonicalSessionSet.plan_id || '') === String(identity.plan_id || '')
-    && Number(canonicalSessionSet.plan_revision) === Number(identity.plan_revision)
-    && String(canonicalSessionSet.decision_id || '') === String(identity.decision_id || '')
-    && hashIdentity(canonicalSessionSet.decision_hash) === hashIdentity(identity.decision_hash)
-    && String(canonicalSessionSet.candidate_id || canonicalSessionSet.selected_candidate_id || '') === String(identity.candidate_id || '')
-    && hashIdentity(canonicalSessionSet.candidate_hash || canonicalSessionSet.selected_candidate_hash) === hashIdentity(identity.candidate_hash)
-    && hashIdentity(canonicalSessionSet.content_hash) === hashIdentity(identity.canonical_session_set_hash)
-    && JSON.stringify(canonicalSessionSet.sessions || []) === JSON.stringify(manifest.sessions);
-  return Number(manifest.surface_revision) === Number(candidate.surface_revision)
-    && Number(identity.candidate_revision) === Number(candidate.candidate_revision)
-    && String(identity.decision_id || '') === String(candidate.decision_id || '')
-    && hashIdentity(identity.candidate_hash) === hashIdentity(candidate.selected_candidate_hash)
-    && Number(identity.athlete_state_revision) === Number(candidate.athlete_state_revision)
-    && String(identity.safety_state_hash || '') === String(candidate.safety_state_hash || '')
-    && prefixedHash(identity.goal_revisions || {}) === prefixedHash(candidateGoalRevisions)
-    && String(identity.plan_id || '') === String(activePlan.plan_id || '')
-    && Number(identity.plan_revision) === Number(activePlan.plan_revision)
-    && Number(identity.plan_revision) === Number(activeRow?.plan_version || 1)
-    && String(identity.decision_id || '') === String(activePlan.decision_id || '')
-    && hashIdentity(identity.decision_hash) === hashIdentity(activePlan.decision_hash)
-    && hashIdentity(identity.candidate_hash) === hashIdentity(activePlan.selected_candidate_hash)
-    && hashIdentity(identity.canonical_session_set_hash) === hashIdentity(activePlan.canonical_session_set_hash)
-    && String(manifest.purpose || '') === activePurpose
-    && String(manifest.feasibility?.status || '') === String(activePlan.overall_feasibility || '')
-    && prefixedHash(manifest.feasibility?.reason_codes || []) === prefixedHash(activePlan.reasons || [])
-    && prefixedHash(manifest.weeks || []) === prefixedHash(activeWeeks)
-    && canonicalMatches;
+  const identityPresent = Boolean(identity && typeof identity === 'object' && !Array.isArray(identity));
+  const canonicalPresent = Boolean(
+    canonicalSessionSet && typeof canonicalSessionSet === 'object' && !Array.isArray(canonicalSessionSet)
+  );
+  const predicateEntries = [
+    ['SURFACE_ARTIFACT_PRESENT', Boolean(manifest && typeof manifest === 'object' && !Array.isArray(manifest))],
+    ['CANDIDATE_BINDING_PRESENT', Boolean(candidate.id)],
+    ['ASSIGNMENT_PRESENT', Boolean(activeRow && typeof activeRow === 'object' && !Array.isArray(activeRow))],
+    ['SURFACE_SCHEMA_MATCH', manifest?.schema_version === 'goal_backward_surface_manifest_v1'],
+    ['SURFACE_STATUS_ACCEPTED', manifest?.status === 'accepted'],
+    ['SURFACE_ENABLED', manifest?.v24_surface_enabled === true],
+    ['SURFACE_MODE_APPLICABLE', ['preview', 'on'].includes(String(manifest?.feature_mode || ''))],
+    ['SURFACE_IDENTITY_PRESENT', identityPresent],
+    ['SURFACE_SESSIONS_PRESENT', Array.isArray(manifest?.sessions) && manifest.sessions.length > 0],
+    ['SURFACE_REVISION_MATCH', Number(manifest?.surface_revision) === Number(candidate.surface_revision)],
+    ['CANDIDATE_REVISION_MATCH', Number(identity?.candidate_revision) === Number(candidate.candidate_revision)],
+    ['CANDIDATE_DECISION_MATCH', String(identity?.decision_id || '') === String(candidate.decision_id || '')],
+    ['CANDIDATE_CONTENT_HASH_MATCH', hashIdentity(identity?.candidate_hash) === hashIdentity(candidate.selected_candidate_hash)],
+    ['ATHLETE_STATE_REVISION_MATCH', Number(identity?.athlete_state_revision) === Number(candidate.athlete_state_revision)],
+    ['SAFETY_STATE_HASH_MATCH', String(identity?.safety_state_hash || '') === String(candidate.safety_state_hash || '')],
+    ['GOAL_BINDING_MATCH', prefixedHash(identity?.goal_revisions || {}) === prefixedHash(candidateGoalRevisions)],
+    ['PLAN_ID_MATCH', String(identity?.plan_id || '') === String(activePlan.plan_id || '')],
+    ['PLAN_REVISION_MATCH', Number(identity?.plan_revision) === Number(activePlan.plan_revision)],
+    ['ASSIGNMENT_REVISION_MATCH', Number(identity?.plan_revision) === positivePlanRevision(activeRow?.plan_version)],
+    ['PLAN_DECISION_MATCH', String(identity?.decision_id || '') === String(activePlan.decision_id || '')],
+    ['PLAN_DECISION_HASH_MATCH', hashIdentity(identity?.decision_hash) === hashIdentity(activePlan.decision_hash)],
+    ['PLAN_CANDIDATE_HASH_MATCH', hashIdentity(identity?.candidate_hash) === hashIdentity(activePlan.selected_candidate_hash)],
+    ['PLAN_SESSION_SET_HASH_MATCH', hashIdentity(identity?.canonical_session_set_hash) === hashIdentity(activePlan.canonical_session_set_hash)],
+    ['PLAN_PURPOSE_MATCH', String(manifest?.purpose || '') === activePurpose],
+    ['PLAN_FEASIBILITY_STATUS_MATCH', String(manifest?.feasibility?.status || '') === String(activePlan.overall_feasibility || '')],
+    ['PLAN_FEASIBILITY_REASONS_MATCH', prefixedHash(manifest?.feasibility?.reason_codes || []) === prefixedHash(activePlan.reasons || [])],
+    ['PLAN_WEEKS_MATCH', prefixedHash(manifest?.weeks || []) === prefixedHash(activeWeeks)],
+    ['CANONICAL_SESSION_SET_PRESENT', canonicalPresent],
+    ['CANONICAL_PLAN_ID_MATCH', String(canonicalSessionSet?.plan_id || '') === String(identity?.plan_id || '')],
+    ['CANONICAL_PLAN_REVISION_MATCH', Number(canonicalSessionSet?.plan_revision) === Number(identity?.plan_revision)],
+    ['CANONICAL_DECISION_MATCH', String(canonicalSessionSet?.decision_id || '') === String(identity?.decision_id || '')],
+    ['CANONICAL_DECISION_HASH_MATCH', hashIdentity(canonicalSessionSet?.decision_hash) === hashIdentity(identity?.decision_hash)],
+    ['CANONICAL_CANDIDATE_MATCH', String(canonicalSessionSet?.candidate_id || canonicalSessionSet?.selected_candidate_id || '') === String(identity?.candidate_id || '')],
+    ['CANONICAL_CANDIDATE_HASH_MATCH', hashIdentity(canonicalSessionSet?.candidate_hash || canonicalSessionSet?.selected_candidate_hash) === hashIdentity(identity?.candidate_hash)],
+    ['CANONICAL_CONTENT_HASH_MATCH', hashIdentity(canonicalSessionSet?.content_hash) === hashIdentity(identity?.canonical_session_set_hash)],
+    ['CANONICAL_SESSIONS_MATCH', JSON.stringify(canonicalSessionSet?.sessions || []) === JSON.stringify(manifest?.sessions)],
+  ];
+  const predicates = Object.fromEntries(predicateEntries);
+  const firstFailed = predicateEntries.find(([, passed]) => !passed)?.[0] || null;
+  const accepted = firstFailed === null;
+  const predicateGroup = (...codes) => codes.every((code) => predicates[code] === true);
+  const candidateStatus = closedStatus(candidate.status, ['preview', 'applied', 'rejected', 'superseded']);
+  const assignmentStatus = closedStatus(activeRow?.status, ['active', 'superseded', 'cleared']);
+  const manifestStatus = closedStatus(manifest?.status, ['accepted', 'blocked']);
+  const featureMode = closedStatus(manifest?.feature_mode, ['preview', 'on', 'shadow', 'off']);
+  const assignmentLinked = !candidate.applied_user_plan_id || !activeRow?.user_plan_id
+    ? null
+    : String(candidate.applied_user_plan_id) === String(activeRow.user_plan_id);
+  return {
+    schema_version: 'goal_backward_surface_predicate_diagnostic_v1',
+    applicable: Number(activePlan.canonical_workout_schema_version) === 1,
+    status_code: accepted ? 'ACCEPTED' : 'BLOCKED',
+    reason_codes: accepted ? [] : ['SURFACE_REVISION_MISMATCH'],
+    first_failed_predicate: firstFailed,
+    predicates,
+    statuses: {
+      manifest: manifestStatus,
+      feature_mode: featureMode,
+      candidate: candidateStatus,
+      assignment: assignmentStatus,
+    },
+    revisions: {
+      surface: {
+        manifest: diagnosticRevision(manifest?.surface_revision),
+        candidate: diagnosticRevision(candidate.surface_revision),
+        matches: predicates.SURFACE_REVISION_MATCH,
+      },
+      candidate: {
+        manifest: diagnosticRevision(identity?.candidate_revision),
+        candidate: diagnosticRevision(candidate.candidate_revision),
+        matches: predicates.CANDIDATE_REVISION_MATCH,
+      },
+      plan: {
+        manifest: diagnosticRevision(identity?.plan_revision),
+        plan: diagnosticRevision(activePlan.plan_revision),
+        assignment: diagnosticRevision(activeRow?.plan_version),
+        canonical_session_set: diagnosticRevision(canonicalSessionSet?.plan_revision),
+        matches: predicateGroup(
+          'PLAN_REVISION_MATCH', 'ASSIGNMENT_REVISION_MATCH', 'CANONICAL_PLAN_REVISION_MATCH'
+        ),
+      },
+      athlete_state: {
+        manifest: diagnosticRevision(identity?.athlete_state_revision),
+        candidate: diagnosticRevision(candidate.athlete_state_revision),
+        matches: predicates.ATHLETE_STATE_REVISION_MATCH,
+      },
+    },
+    bindings: {
+      artifact: predicateGroup(
+        'SURFACE_ARTIFACT_PRESENT', 'SURFACE_SCHEMA_MATCH', 'SURFACE_STATUS_ACCEPTED',
+        'SURFACE_ENABLED', 'SURFACE_MODE_APPLICABLE', 'SURFACE_IDENTITY_PRESENT',
+        'SURFACE_SESSIONS_PRESENT'
+      ),
+      surface_revision: predicates.SURFACE_REVISION_MATCH,
+      candidate: predicateGroup(
+        'CANDIDATE_BINDING_PRESENT', 'CANDIDATE_REVISION_MATCH', 'CANDIDATE_CONTENT_HASH_MATCH'
+      ),
+      decision: predicateGroup(
+        'CANDIDATE_DECISION_MATCH', 'PLAN_DECISION_MATCH', 'PLAN_DECISION_HASH_MATCH',
+        'CANONICAL_DECISION_MATCH', 'CANONICAL_DECISION_HASH_MATCH'
+      ),
+      plan: predicateGroup(
+        'PLAN_ID_MATCH', 'PLAN_REVISION_MATCH', 'PLAN_PURPOSE_MATCH',
+        'PLAN_FEASIBILITY_STATUS_MATCH', 'PLAN_FEASIBILITY_REASONS_MATCH', 'PLAN_WEEKS_MATCH'
+      ),
+      assignment: predicates.ASSIGNMENT_PRESENT
+        && predicates.ASSIGNMENT_REVISION_MATCH
+        && assignmentStatus === 'ACTIVE'
+        && (assignmentLinked === null || assignmentLinked),
+      session_set: predicateGroup(
+        'CANONICAL_SESSION_SET_PRESENT', 'CANONICAL_PLAN_ID_MATCH',
+        'CANONICAL_PLAN_REVISION_MATCH', 'CANONICAL_CANDIDATE_MATCH',
+        'CANONICAL_SESSIONS_MATCH'
+      ),
+      content_hash: predicateGroup(
+        'CANDIDATE_CONTENT_HASH_MATCH', 'PLAN_CANDIDATE_HASH_MATCH',
+        'PLAN_SESSION_SET_HASH_MATCH', 'CANONICAL_CANDIDATE_HASH_MATCH',
+        'CANONICAL_CONTENT_HASH_MATCH'
+      ),
+      safety: predicates.SAFETY_STATE_HASH_MATCH,
+      athlete_state: predicates.ATHLETE_STATE_REVISION_MATCH,
+      goal: predicates.GOAL_BINDING_MATCH,
+    },
+    hashes: {
+      candidate: {
+        manifest: diagnosticHash(identity?.candidate_hash),
+        candidate: diagnosticHash(candidate.selected_candidate_hash),
+        plan: diagnosticHash(activePlan.selected_candidate_hash),
+        canonical_session_set: diagnosticHash(
+          canonicalSessionSet?.candidate_hash || canonicalSessionSet?.selected_candidate_hash
+        ),
+      },
+      decision: {
+        manifest: diagnosticHash(identity?.decision_hash),
+        plan: diagnosticHash(activePlan.decision_hash),
+        canonical_session_set: diagnosticHash(canonicalSessionSet?.decision_hash),
+      },
+      session_set: {
+        manifest: diagnosticHash(identity?.canonical_session_set_hash),
+        plan: diagnosticHash(activePlan.canonical_session_set_hash),
+        canonical_session_set: diagnosticHash(canonicalSessionSet?.content_hash),
+      },
+      safety: {
+        manifest: diagnosticHash(identity?.safety_state_hash),
+        candidate: diagnosticHash(candidate.safety_state_hash),
+      },
+      goal_binding: {
+        manifest: diagnosticHash(prefixedHash(identity?.goal_revisions || {})),
+        candidate: diagnosticHash(prefixedHash(candidateGoalRevisions)),
+      },
+    },
+  };
+}
+
+function surfaceManifestMatchesAppliedPlan(manifest, candidate, activeRow, canonicalSessionSet = null) {
+  return surfaceManifestAppliedPlanDiagnostic(
+    manifest,
+    candidate,
+    activeRow,
+    canonicalSessionSet,
+  ).status_code === 'ACCEPTED';
 }
 
 async function canonicalSurfaceManifestForActive(userId, activeRow, query = dbGet) {
@@ -4750,7 +4904,7 @@ function replacementLineageForActivePlan(active, fallbackUserPlanId) {
   const supersedesUserPlanId = active?.row?.user_plan_id || null;
   return {
     lineageId: active?.row?.lineage_id || supersedesUserPlanId || fallbackUserPlanId,
-    priorVersion: Number(active?.row?.plan_version || 0),
+    priorVersion: active?.source === 'assigned' ? positivePlanRevision(active.row?.plan_version) : 0,
     supersedesUserPlanId,
   };
 }
@@ -7432,10 +7586,12 @@ router._test = {
   previewPlanForUser,
   rejectPlanCandidate,
   previewRaceRemovalForUser,
+  positivePlanRevision,
   raceRemovalCandidateRequest,
   raceRemovalImpact,
   raceRemovalImpactForUser,
   replacementLineageForActivePlan,
+  surfaceManifestAppliedPlanDiagnostic,
   sendCandidateError,
   verifyStoredGoalBackwardDecisionHash,
   withRequestPlanningClock,

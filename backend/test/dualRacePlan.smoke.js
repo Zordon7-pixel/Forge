@@ -1509,7 +1509,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     current_week: 1,
     status: 'active',
     progress_json: JSON.stringify({ completedSessionIds: ['completed-today'] }),
-    plan_version: 1,
+    plan_version: 0,
     lineage_id: 'lineage-hyrox-army',
     supersedes_user_plan_id: null,
     effective_from: '2026-08-10',
@@ -1568,6 +1568,30 @@ async function checkHyroxCandidateImmediateAdoption() {
     if (sql.includes('FROM race_events WHERE id=? AND user_id=?') || sql.includes('FROM race_events WHERE id = ? AND user_id = ?')) {
       const race = raceRows.get(params[0]);
       return race && race.user_id === params[1] ? { ...race } : null;
+    }
+    if (sql.includes('SELECT id, decision_id, candidate_revision')
+      && sql.includes('FROM plan_generation_candidates')
+      && sql.includes('applied_user_plan_id=?')
+      && sql.includes("status='applied'")) {
+      const row = [...candidates.values()].reverse().find((candidate) => (
+        candidate.user_id === params[0]
+        && candidate.applied_user_plan_id === params[1]
+        && candidate.status === 'applied'
+      ));
+      return row ? { ...row } : null;
+    }
+    if (sql.includes('SELECT surface.payload_json')
+      && sql.includes("surface.artifact_kind='surface_manifest'")) {
+      const surface = [...planningArtifacts.values()].reverse().find((artifact) => (
+        artifact.user_id === params[0]
+        && artifact.plan_generation_candidate_id === params[1]
+        && artifact.artifact_kind === 'surface_manifest'
+      ));
+      const canonical = surface ? planningArtifacts.get(surface.parent_artifact_id) : null;
+      return surface ? {
+        payload_json: databaseJsonValue(surface.payload_json),
+        canonical_payload_json: databaseJsonValue(canonical?.payload_json),
+      } : null;
     }
     if (sql.includes('FROM plan_generation_candidates WHERE id=? AND user_id=?')) {
       const row = candidates.get(params[0]);
@@ -2782,6 +2806,39 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(immediate.statusCode, 200, JSON.stringify(immediate.payload));
     assert.equal(immediate.payload.user_plan.id, applyResponse.payload.user_plan_id);
     assert.equal(immediate.payload.user_plan.effective_from, planningDate);
+    const appliedCandidate = candidates.get(previewResponse.payload.candidate_id);
+    const appliedCanonicalArtifact = [...planningArtifacts.values()].find((artifact) => (
+      artifact.plan_generation_candidate_id === appliedCandidate.id
+      && artifact.artifact_kind === 'canonical_session_set'
+    ));
+    const appliedCanonicalSessionSet = JSON.parse(appliedCanonicalArtifact.payload_json);
+    const persistedSuccessorPlan = JSON.parse(trainingPlans.get(applyResponse.payload.plan_id).plan_data);
+    assert.deepEqual({
+      canonicalSessionSetRevision: appliedCanonicalSessionSet.plan_revision,
+      persistedPlanRevision: persistedSuccessorPlan.plan_revision,
+      servedPlanRevision: immediate.payload.plan.plan_data.plan_revision,
+      assignmentRevision: immediate.payload.user_plan.plan_version,
+      manifestRevision: immediate.payload.surface_manifest?.identity?.plan_revision,
+      surfaceStatus: immediate.payload.surface_manifest?.status,
+    }, {
+      canonicalSessionSetRevision: 2,
+      persistedPlanRevision: 2,
+      servedPlanRevision: 2,
+      assignmentRevision: 2,
+      manifestRevision: 2,
+      surfaceStatus: 'accepted',
+    }, 'zero-version predecessor normalization must keep the preview, Apply, and immediate public surface on revision 2');
+    for (const [stored, expected] of [[1, 1], [7, 7], ['2', 2]]) {
+      assert.equal(plansRouter._test.positivePlanRevision(stored), expected,
+        'valid positive stored revisions remain semantically stable');
+    }
+    const coercionTrap = { valueOf() { throw new Error('must not coerce arbitrary revision objects'); } };
+    for (const stored of [0, -1, 1.5, '0', '-1', '1.5', ' 2 ', '2e0', '', null, undefined, NaN, Infinity, [], coercionTrap]) {
+      assert.equal(plansRouter._test.positivePlanRevision(stored), 1,
+        'non-positive, malformed, fractional, or coercive stored revisions normalize closed to revision 1');
+    }
+    assert.equal(plansRouter._test.replacementLineageForActivePlan(null, 'first-assignment').priorVersion, 0,
+      'a genuine first assignment retains its version-1 lifecycle');
     assert.deepEqual(immediate.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
     assert.equal(immediate.payload.plan.plan_data.goals[0].division, 'doubles');
     assert.equal(immediate.payload.plan.plan_data.goals[0].goalTimeSeconds, 3600);

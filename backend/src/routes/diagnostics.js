@@ -170,17 +170,61 @@ router.post('/plan-audit', auth, requireDiagnosticsAdmin, async (req, res) => {
   }
 });
 
-// GET /api/diagnostics/plan-audit/:decisionId/artifacts — bounded, owner-scoped
-// v2.4 pipeline artifacts. Payload validation fails closed on secret/PII keys.
-router.get('/plan-audit/:decisionId/artifacts', auth, requireDiagnosticsAdmin, async (req, res) => {
-  const targetUserId = typeof req.query?.user_id === 'string' ? req.query.user_id.trim() : '';
-  const decisionId = typeof req.params?.decisionId === 'string' ? req.params.decisionId.trim() : '';
-  if (!targetUserId || targetUserId.length > 128 || !decisionId || decisionId.length > 200) {
-    return res.status(400).json({ error: 'A valid user_id target and decision ID are required.' });
-  }
-
+function parseStoredDiagnosticJson(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
   try {
-    const artifacts = await dbAll(
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function safeAppliedSurfaceDiagnosticBundle(bundle, surfaceValidation) {
+  return {
+    schema_version: 'goal_backward_applied_surface_diagnostic_v1',
+    target_ref: bundle.target_ref,
+    artifact_count: bundle.artifact_count,
+    production_complete: bundle.production_complete === true,
+    reason_codes: Array.isArray(bundle.reason_codes) ? bundle.reason_codes : [],
+    stages: (Array.isArray(bundle.stages) ? bundle.stages : []).map((stage) => ({
+      stage: stage.stage,
+      complete: stage.complete === true,
+      ...(stage.reason_code ? { reason_code: stage.reason_code } : {}),
+    })),
+    release_identity: {
+      revisions_match: bundle.release_identity?.revisions_match === true,
+    },
+    canonical_binding: {
+      verified: bundle.canonical_binding?.verified === true,
+      plan_revision: bundle.canonical_binding?.plan_revision ?? null,
+      selected_candidate_hash: bundle.canonical_binding?.selected_candidate_hash || null,
+      canonical_session_set_hash: bundle.canonical_binding?.canonical_session_set_hash || null,
+    },
+    artifacts: (Array.isArray(bundle.artifacts) ? bundle.artifacts : []).map((artifact) => ({
+      artifact_kind: artifact.artifact_kind,
+      revision: artifact.revision,
+      content_hash: artifact.content_hash,
+      diagnostic_payload_hash: artifact.diagnostic_payload_hash,
+    })),
+    surface_validation: surfaceValidation,
+  };
+}
+
+function buildPlanArtifactDiagnosticHandler(dependencies = {}) {
+  const get = dependencies.dbGet || dbGet;
+  const all = dependencies.dbAll || dbAll;
+  const transact = dependencies.withTransaction || withTransaction;
+  return async (req, res) => {
+    const targetUserId = typeof req.query?.user_id === 'string' ? req.query.user_id.trim() : '';
+    const decisionId = typeof req.params?.decisionId === 'string' ? req.params.decisionId.trim() : '';
+    if (!targetUserId || targetUserId.length > 128 || !decisionId || decisionId.length > 200) {
+      return res.status(400).json({ error: 'A valid user_id target and decision ID are required.' });
+    }
+
+    try {
+      const artifacts = await all(
       `SELECT id, user_id, artifact_kind, decision_id, parent_artifact_id,
               plan_generation_candidate_id, schema_version, policy_version,
               revision, content_hash, payload_json, created_at
@@ -194,19 +238,42 @@ router.get('/plan-audit/:decisionId/artifacts', auth, requireDiagnosticsAdmin, a
     const candidateIds = [...new Set(artifacts
       .map((artifact) => artifact.plan_generation_candidate_id)
       .filter(Boolean))];
-    const candidateRow = candidateIds.length === 1 ? await dbGet(
+    const candidateRow = candidateIds.length === 1 ? await get(
       `SELECT id, user_id, status, training_plan_id, user_plan_id, active_plan_version,
               planning_input_revision, planning_date_local, timezone_offset_minutes,
               candidate_hash, engine_version, policy_version, decision_id,
               candidate_revision, athlete_state_revision, safety_state_hash,
               goal_revisions_json, lock_revision, edit_revision, surface_revision,
               export_revision, feature_mode, selected_candidate_hash,
-              material_change_json, created_at
+              material_change_json, applied_training_plan_id, applied_user_plan_id,
+              applied_at, created_at
        FROM plan_generation_candidates
        WHERE id=? AND user_id=? AND decision_id=?
        LIMIT 1`,
       [candidateIds[0], targetUserId, decisionId]
     ) : null;
+    const appliedRow = candidateRow?.status === 'applied' && candidateRow.applied_user_plan_id
+      ? await get(
+        `SELECT up.id AS user_plan_id, up.plan_id, up.plan_version, up.status,
+                tp.plan_data
+         FROM user_plans up
+         JOIN training_plans tp ON tp.id=up.plan_id AND tp.user_id=up.user_id
+         WHERE up.id=? AND up.user_id=?
+         LIMIT 1`,
+        [candidateRow.applied_user_plan_id, targetUserId],
+      )
+      : null;
+    const surfaceArtifact = artifacts.find((artifact) => artifact.artifact_kind === 'surface_manifest');
+    const canonicalArtifact = artifacts.find((artifact) => (
+      artifact.artifact_kind === 'canonical_session_set'
+      && (!surfaceArtifact || artifact.id === surfaceArtifact.parent_artifact_id)
+    ));
+    const surfaceValidation = plansRouter._test.surfaceManifestAppliedPlanDiagnostic(
+      parseStoredDiagnosticJson(surfaceArtifact?.payload_json),
+      candidateRow || {},
+      appliedRow,
+      parseStoredDiagnosticJson(canonicalArtifact?.payload_json),
+    );
 
     const bundle = buildDecisionArtifactDiagnosticBundle({
       targetUserId,
@@ -214,7 +281,8 @@ router.get('/plan-audit/:decisionId/artifacts', auth, requireDiagnosticsAdmin, a
       artifactRows: artifacts,
       candidateRow,
     });
-    await withTransaction(async (tx) => {
+    const diagnostic = safeAppliedSurfaceDiagnosticBundle(bundle, surfaceValidation);
+    await transact(async (tx) => {
       await tx.run(
         `INSERT INTO diagnostic_access_audit (
            id, actor_user_id, target_user_id, training_plan_id, user_plan_id, candidate_id, action
@@ -233,17 +301,28 @@ router.get('/plan-audit/:decisionId/artifacts', auth, requireDiagnosticsAdmin, a
       userIds: [req.user.id, targetUserId],
       requireUserIds: [req.user.id, targetUserId],
     });
-    return res.json({ ok: true, diagnostic: bundle });
-  } catch (err) {
-    console.error('[diagnostics/plan-artifacts] failed:', err.message);
-    return res.status(Number(err.status) || 500).json({
-      error: Number(err.status) && Number(err.status) < 500
-        ? err.message
-        : 'Unable to retrieve the linked plan artifacts.',
-      ...(err.code ? { code: err.code } : {}),
-    });
-  }
-});
+      return res.json({ ok: true, diagnostic });
+    } catch (err) {
+      console.error('[diagnostics/plan-artifacts] failed:', err.message);
+      return res.status(Number(err.status) || 500).json({
+        error: Number(err.status) && Number(err.status) < 500
+          ? err.message
+          : 'Unable to retrieve the linked plan artifacts.',
+        ...(err.code ? { code: err.code } : {}),
+      });
+    }
+  };
+}
+
+// GET /api/diagnostics/plan-audit/:decisionId/artifacts — bounded, owner-scoped
+// v2.4 pipeline artifacts plus the exact applied-surface predicate matrix.
+// Payload validation fails closed on secret/PII keys.
+router.get(
+  '/plan-audit/:decisionId/artifacts',
+  auth,
+  requireDiagnosticsAdmin,
+  buildPlanArtifactDiagnosticHandler(),
+);
 
 // GET /api/diagnostics/goal-backward-release — process-local, bounded release
 // counters. Records contain pseudonymous refs internally; this projection omits
@@ -263,5 +342,6 @@ router.get('/goal-backward-release', auth, requireDiagnosticsAdmin, (_req, res) 
 });
 
 router.requireDiagnosticsAdmin = requireDiagnosticsAdmin;
+router._test = { buildPlanArtifactDiagnosticHandler };
 
 module.exports = router;

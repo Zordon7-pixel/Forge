@@ -13,13 +13,58 @@ const stale = {
   plan: { plan_data: { goals: [{ raceId: 'yonkers' }, { raceId: 'army' }] } },
   user_plan: { id: 'assignment-old', supersedes_user_plan_id: null },
 }
-const active = {
-  plan: { plan_data: { goals: [
-    { raceId: 'hyrox-dc', eventLocalDate: '2026-09-06', division: 'doubles', category: 'men', goalTimeSeconds: 3540 },
-    { raceId: 'army' },
-  ] } },
-  user_plan: { id: 'assignment-new', supersedes_user_plan_id: 'assignment-old' },
+const activeGoals = [
+  { raceId: 'hyrox-dc', eventLocalDate: '2026-09-06', division: 'doubles', category: 'men', goalTimeSeconds: 3540 },
+  { raceId: 'army' },
+]
+
+function acceptedActive({
+  assignmentId = 'assignment-new',
+  supersedesUserPlanId = 'assignment-old',
+  candidateHash = 'sha256:exact',
+  goals = activeGoals,
+} = {}) {
+  const normalizedCandidateHash = String(candidateHash).replace(/^sha256:/, '')
+  const logicalPlanId = `logical-${assignmentId}`
+  const decisionHash = 'd'.repeat(64)
+  const sessionSetHash = 'e'.repeat(64)
+  return {
+    plan: {
+      id: `stored-${assignmentId}`,
+      plan_data: {
+        canonical_workout_schema_version: 1,
+        plan_id: logicalPlanId,
+        plan_revision: 2,
+        decision_id: 'decision-applied',
+        decision_hash: decisionHash,
+        selected_candidate_hash: normalizedCandidateHash,
+        canonical_session_set_hash: sessionSetHash,
+        goals,
+      },
+    },
+    user_plan: {
+      id: assignmentId,
+      plan_version: 2,
+      supersedes_user_plan_id: supersedesUserPlanId,
+    },
+    surface_manifest: {
+      schema_version: 'goal_backward_surface_manifest_v1',
+      status: 'accepted',
+      feature_mode: 'on',
+      v24_surface_enabled: true,
+      identity: {
+        plan_id: logicalPlanId,
+        plan_revision: 2,
+        decision_id: 'decision-applied',
+        decision_hash: decisionHash,
+        candidate_hash: normalizedCandidateHash,
+        canonical_session_set_hash: sessionSetHash,
+      },
+      sessions: [{ session_id: 'session-applied' }],
+    },
+  }
 }
+const active = acceptedActive()
 const onModeApplyBindings = {
   candidate_id: 'candidate-first-assignment',
   candidate_hash: 'sha256:first-assignment',
@@ -78,12 +123,60 @@ function fakeApi({ before = stale, after = active, post }) {
   assert.equal(result.reconciled, false)
 }
 
+for (const [label, after] of [
+  ['missing', (() => {
+    const response = acceptedActive({ candidateHash: 'sha256:missing-manifest' })
+    delete response.surface_manifest
+    return response
+  })()],
+  ['blocked', {
+    ...acceptedActive({ candidateHash: 'sha256:blocked-manifest' }),
+    surface_manifest: {
+      ...acceptedActive({ candidateHash: 'sha256:blocked-manifest' }).surface_manifest,
+      status: 'blocked',
+      reason_codes: ['SURFACE_REVISION_MISMATCH'],
+      sessions: [],
+    },
+  }],
+  ['ambiguous', (() => {
+    const response = acceptedActive({ candidateHash: 'sha256:ambiguous-manifest' })
+    response.surface_manifest.identity.plan_revision = 3
+    return response
+  })()],
+]) {
+  let postCalls = 0
+  const api = fakeApi({
+    after,
+    post: async () => {
+      postCalls += 1
+      return { data: { ok: true, user_plan_id: 'assignment-new' } }
+    },
+  })
+  await assert.rejects(
+    () => applyPlanCandidateWithActivation({
+      api,
+      candidateId: `candidate-${label}-manifest`,
+      candidateHash: `sha256:${label}-manifest`,
+      planningClock: clock,
+      hyroxRace: hyrox,
+      secondaryRaceId: 'army',
+      applyTimeoutMs: 20,
+      readTimeoutMs: 20,
+    }),
+    (error) => error?.code === 'PLAN_APPLY_NOT_CONFIRMED'
+      && /public workout surface/.test(error.message),
+    `${label} applicable public surface truth cannot confirm Apply`,
+  )
+  assert.equal(postCalls, 1, `${label} confirmation failure never triggers a blind duplicate Apply`)
+}
+
 {
   const noAssignment = { plan: null, user_plan: null }
-  const firstAssignment = {
-    ...active,
-    user_plan: { id: 'assignment-first', supersedes_user_plan_id: null },
-  }
+  const firstAssignment = acceptedActive({
+    assignmentId: 'assignment-first',
+    supersedesUserPlanId: null,
+    candidateHash: 'sha256:first-assignment',
+  })
   let committed = false
   let applyBody = null
   const api = {
@@ -130,8 +223,9 @@ function fakeApi({ before = stale, after = active, post }) {
 
 {
   let committed = false
+  const committedActive = acceptedActive({ candidateHash: 'sha256:timeout' })
   const api = {
-    async get() { return { data: committed ? active : stale } },
+    async get() { return { data: committed ? committedActive : stale } },
     async post() {
       committed = true
       const error = new Error('gateway timed out after commit')
@@ -177,9 +271,10 @@ function fakeApi({ before = stale, after = active, post }) {
 }
 
 {
+  const replayActive = acceptedActive({ candidateHash: 'sha256:replay' })
   const api = fakeApi({
-    before: active,
-    after: active,
+    before: replayActive,
+    after: replayActive,
     post: async () => ({ data: { ok: true, user_plan_id: 'assignment-new', replay: true } }),
   })
   const replay = await applyPlanCandidateWithActivation({
@@ -191,10 +286,11 @@ function fakeApi({ before = stale, after = active, post }) {
 }
 
 {
-  const foundation = {
-    plan: { plan_data: { goals: [] } },
-    user_plan: { id: 'assignment-foundation', supersedes_user_plan_id: 'assignment-old' },
-  }
+  const foundation = acceptedActive({
+    assignmentId: 'assignment-foundation',
+    candidateHash: 'sha256:foundation',
+    goals: [],
+  })
   const api = fakeApi({
     after: foundation,
     post: async () => ({ data: { ok: true, user_plan_id: 'assignment-foundation' } }),

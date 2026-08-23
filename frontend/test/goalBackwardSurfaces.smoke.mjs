@@ -444,7 +444,13 @@ for (const project of [
 ]) {
   check(`${project.name} fixture exposes human copy while preserving canonical fields and overflow guards`, () => {
     assert.match(planSource, /surface_manifest/)
-    assert.match(planSource, /SURFACE_REVISION_MISMATCH/)
+    assert.match(planSource, /Plan details are temporarily unavailable/)
+    assert.match(planSource, /This plan changed after it was loaded\. Refresh Train before viewing or starting this workout\./)
+    assert.doesNotMatch(planSource, /\{[A-Z][A-Z0-9]*_[A-Z0-9_]+\}/,
+      'the athlete blocker never interpolates a raw internal enum')
+    assert.doesNotMatch(planSource, />[^<{}]*SURFACE_REVISION_MISMATCH[^<{}]*</)
+    assert.doesNotMatch(planSource, />[^<{}]*[A-Z][A-Z0-9]*_[A-Z0-9_]+[^<{}]*</,
+      'the athlete blocker never renders a raw underscore enum')
     assert.match(calendarSource, /purposeReasonCodes/)
     assert.match(calendarSource, /targetProvenance/)
     assert.match(daySource, /adjustmentCriteria/)

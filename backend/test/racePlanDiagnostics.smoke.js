@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const diagnosticsRouter = require('../src/routes/diagnostics');
+const plansRouter = require('../src/routes/plans');
 const {
   buildDecisionArtifactDiagnosticBundle,
   buildGoalBackwardReleaseDiagnosticBundle,
@@ -293,6 +294,59 @@ function replaceC4Payload(fixture, kind, transform) {
   });
 }
 
+function buildAppliedSurfaceFixture() {
+  const fixture = buildC4Fixture();
+  const purpose = 'Build durable event-specific work.';
+  const weeks = [{
+    week: 1,
+    start_date: '2026-08-17',
+    phase: 'DEVELOPMENT',
+    purpose,
+  }];
+  replaceC4Payload(fixture, 'surface_manifest', (payload) => {
+    payload.purpose = purpose;
+    payload.feasibility = { status: 'supported', reason_codes: [] };
+    payload.weeks = weeks;
+  });
+  fixture.candidateRow = {
+    ...fixture.candidateRow,
+    status: 'applied',
+    applied_training_plan_id: 'stored-plan-c4',
+    applied_user_plan_id: 'assignment-c4-applied',
+  };
+  const canonical = fixture.artifacts.find((artifact) => (
+    artifact.artifact_kind === 'canonical_session_set'
+  )).payload_json;
+  const surface = fixture.artifacts.find((artifact) => (
+    artifact.artifact_kind === 'surface_manifest'
+  )).payload_json;
+  const appliedRow = {
+    user_plan_id: fixture.candidateRow.applied_user_plan_id,
+    plan_id: fixture.candidateRow.applied_training_plan_id,
+    plan_version: 8,
+    status: 'active',
+    plan_data: {
+      canonical_workout_schema_version: 1,
+      plan_id: canonical.plan_id,
+      plan_revision: canonical.plan_revision,
+      decision_id: canonical.decision_id,
+      decision_hash: canonical.decision_hash,
+      selected_candidate_hash: canonical.selected_candidate_hash,
+      canonical_session_set_hash: canonical.content_hash,
+      overall_feasibility: 'supported',
+      reasons: [],
+      purpose,
+      weeks: weeks.map((week) => ({
+        week: week.week,
+        startDate: week.start_date,
+        phase: week.phase,
+        purpose: week.purpose,
+      })),
+    },
+  };
+  return { ...fixture, appliedRow, canonical, surface };
+}
+
 function responseRecorder() {
   return {
     statusCode: 200,
@@ -566,6 +620,126 @@ async function run() {
     candidateRow: staleSurface.candidateRow,
   }).reason_codes.includes('C4_SURFACE_IDENTITY_STALE'), true);
 
+  const appliedSurface = buildAppliedSurfaceFixture();
+  assert.equal(typeof diagnosticsRouter._test?.buildPlanArtifactDiagnosticHandler, 'function',
+    'the authenticated admin artifact route exposes a dependency-injected handler for semantic route coverage');
+  const artifactRoute = diagnosticsRouter.stack.find((layer) => (
+    layer.route?.path === '/plan-audit/:decisionId/artifacts' && layer.route?.methods?.get
+  ));
+  assert.ok(artifactRoute, 'the applied surface diagnostic remains on the existing admin route');
+  const routeAdminGate = artifactRoute.route.stack[1].handle;
+  let forbiddenNextCalls = 0;
+  const forbiddenResponse = responseRecorder();
+  const oldRouteAdmins = process.env.DIAGNOSTICS_ADMIN_EMAILS;
+  process.env.DIAGNOSTICS_ADMIN_EMAILS = 'ops@forge.app';
+  try {
+    routeAdminGate(
+      { user: { email: 'athlete@example.com' } },
+      forbiddenResponse,
+      () => { forbiddenNextCalls += 1; },
+    );
+  } finally {
+    if (oldRouteAdmins === undefined) delete process.env.DIAGNOSTICS_ADMIN_EMAILS;
+    else process.env.DIAGNOSTICS_ADMIN_EMAILS = oldRouteAdmins;
+  }
+  assert.equal(forbiddenResponse.statusCode, 403);
+  assert.equal(forbiddenNextCalls, 0, 'a non-admin never reaches the applied surface diagnostic');
+
+  const auditWrites = [];
+  const routeHandler = diagnosticsRouter._test.buildPlanArtifactDiagnosticHandler({
+    async dbAll(sql, params) {
+      assert.match(sql, /FROM planning_pipeline_artifacts/);
+      assert.deepEqual(params, [appliedSurface.targetUserId, appliedSurface.decisionId]);
+      return appliedSurface.artifacts;
+    },
+    async dbGet(sql, params) {
+      if (sql.includes('FROM plan_generation_candidates')) {
+        assert.deepEqual(params, [
+          appliedSurface.candidateRow.id,
+          appliedSurface.targetUserId,
+          appliedSurface.decisionId,
+        ]);
+        return appliedSurface.candidateRow;
+      }
+      assert.match(sql, /FROM user_plans up[\s\S]*JOIN training_plans tp/);
+      assert.deepEqual(params, [
+        appliedSurface.candidateRow.applied_user_plan_id,
+        appliedSurface.targetUserId,
+      ]);
+      return appliedSurface.appliedRow;
+    },
+    async withTransaction(callback) {
+      return callback({
+        async run(sql, params) {
+          auditWrites.push({ sql, params });
+          return { changes: 1 };
+        },
+      });
+    },
+  });
+  const appliedResponse = responseRecorder();
+  await routeHandler({
+    params: { decisionId: appliedSurface.decisionId },
+    query: { user_id: appliedSurface.targetUserId },
+    user: { id: 'admin-actor-id', email: 'ops@forge.app' },
+  }, appliedResponse);
+  assert.equal(appliedResponse.statusCode, 200, JSON.stringify(appliedResponse.payload));
+  const surfaceDiagnostic = appliedResponse.payload.diagnostic.surface_validation;
+  assert.equal(surfaceDiagnostic.applicable, true);
+  assert.equal(surfaceDiagnostic.status_code, 'BLOCKED');
+  assert.equal(surfaceDiagnostic.first_failed_predicate, 'ASSIGNMENT_REVISION_MATCH');
+  assert.deepEqual(surfaceDiagnostic.reason_codes, ['SURFACE_REVISION_MISMATCH']);
+  assert.equal(surfaceDiagnostic.predicates.ASSIGNMENT_REVISION_MATCH, false);
+  assert.deepEqual(surfaceDiagnostic.revisions.plan, {
+    manifest: 9,
+    plan: 9,
+    assignment: 8,
+    canonical_session_set: 9,
+    matches: false,
+  });
+  assert.deepEqual(Object.keys(surfaceDiagnostic.bindings).sort(), [
+    'artifact', 'assignment', 'athlete_state', 'candidate', 'content_hash',
+    'decision', 'goal', 'plan', 'safety', 'session_set', 'surface_revision',
+  ]);
+  for (const forbidden of [
+    appliedSurface.targetUserId,
+    appliedSurface.appliedRow.user_plan_id,
+    appliedSurface.canonical.plan_id,
+    appliedSurface.canonical.sessions[0].session_id,
+    appliedSurface.appliedRow.plan_data.purpose,
+    'athlete@example.com',
+    'access_token',
+  ]) {
+    assert.equal(JSON.stringify(surfaceDiagnostic).includes(forbidden), false,
+      `surface predicate diagnostic must omit ${forbidden}`);
+  }
+  const routeDiagnosticJson = JSON.stringify(appliedResponse.payload.diagnostic);
+  for (const forbidden of [
+    appliedSurface.targetUserId,
+    appliedSurface.appliedRow.user_plan_id,
+    appliedSurface.canonical.plan_id,
+    appliedSurface.canonical.sessions[0].session_id,
+    appliedSurface.appliedRow.plan_data.purpose,
+  ]) {
+    assert.equal(routeDiagnosticJson.includes(forbidden), false,
+      `the admin route response must omit raw owner, assignment, plan, and session content: ${forbidden}`);
+  }
+  assert.equal(Object.hasOwn(appliedResponse.payload.diagnostic.artifacts[0], 'payload_json'), false,
+    'route artifact rows expose only safe status/revision/hash metadata');
+  assert.equal(auditWrites.length, 1);
+  assert.match(auditWrites[0].sql, /INSERT INTO diagnostic_access_audit/);
+  assert.doesNotMatch(auditWrites[0].sql, /UPDATE|DELETE|plan_generation_candidates|user_plans|training_plans/,
+    'the GET diagnostic records access but never mutates plan state');
+
+  const missingArtifactDiagnostic = plansRouter._test.surfaceManifestAppliedPlanDiagnostic(
+    null,
+    appliedSurface.candidateRow,
+    appliedSurface.appliedRow,
+    appliedSurface.canonical,
+  );
+  assert.equal(missingArtifactDiagnostic.first_failed_predicate, 'SURFACE_ARTIFACT_PRESENT');
+  assert.equal(missingArtifactDiagnostic.bindings.artifact, false);
+
   const missingBinding = buildC4Fixture();
   const missingBindingDiagnostic = buildDecisionArtifactDiagnosticBundle({
     targetUserId: missingBinding.targetUserId,
@@ -640,9 +814,11 @@ async function run() {
   assert.match(routeSource, /INSERT INTO diagnostic_access_audit/);
   assert.match(routeSource, /userIds: \[req\.user\.id, targetUserId\]/);
   assert.doesNotMatch(routeSource, /INSERT INTO plan_generation_candidates[\s\S]*plan-audit/);
-  assert.match(routeSource, /router\.get\('\/plan-audit\/:decisionId\/artifacts', auth, requireDiagnosticsAdmin/);
+  assert.match(routeSource, /router\.get\(\s*'\/plan-audit\/:decisionId\/artifacts',\s*auth,\s*requireDiagnosticsAdmin/);
   assert.match(routeSource, /FROM planning_pipeline_artifacts[\s\S]*WHERE user_id=\? AND decision_id=\?/);
   assert.match(routeSource, /FROM plan_generation_candidates[\s\S]*WHERE id=\? AND user_id=\? AND decision_id=\?/);
+  assert.match(routeSource, /applied_user_plan_id/);
+  assert.match(routeSource, /FROM user_plans up[\s\S]*JOIN training_plans tp[\s\S]*WHERE up\.id=\? AND up\.user_id=\?/);
   assert.match(routeSource, /LIMIT 32/);
   assert.match(routeSource, /router\.get\('\/goal-backward-release', auth, requireDiagnosticsAdmin/);
   assert.match(routeSource, /goalBackwardReleaseTelemetrySnapshot\(\)/);
