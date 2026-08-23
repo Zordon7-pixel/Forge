@@ -128,7 +128,8 @@ assert.match(setup, /hyroxCandidateReviewModel/, 'candidate dialog uses the back
 assert.match(setup, /review\.phaseLabels\.length > 0 && \([\s\S]*Phase sequence/, 'candidate dialog suppresses the entire phase row when no authoritative phase label exists')
 assert.match(setup, /Days remaining[\s\S]*Phase sequence[\s\S]*Equipment and substitutions[\s\S]*Hard-day safety/, 'candidate dialog presents the required review sections before apply')
 assert.match(setup, /setCandidate\(data\)[\s\S]*applyCandidate[\s\S]*applyPlanCandidateWithActivation/, 'HYROX always pauses on the candidate before explicit apply')
-assert.match(activation, /candidate_hash:\s*normalizedCandidateHash[\s\S]*choice:\s*'train_for_target'/, 'the bounded activation helper applies the exact reviewed candidate')
+assert.match(activation, /\.\.\.reviewedApplyBindings[\s\S]*candidate_hash:\s*normalizedCandidateHash[\s\S]*choice:\s*'train_for_target'/, 'the bounded activation helper applies the exact reviewed candidate and server bindings')
+assert.match(setup, /applyBindings:\s*candidate\.apply_bindings/, 'HYROX forwards the reviewed decision and revision envelope to apply')
 assert.match(setup, /goal_time_seconds:\s*goalTimeSeconds \|\| null/, 'HYROX saves the explicit performance target with the event truth')
 assert.match(setup, /hyroxRace:\s*eventMode === 'event_date' \? ownedHyroxRace : null[\s\S]*secondaryRaceId:\s*eventMode === 'event_date'/, 'foundation activation ignores dated owned-race truth without mutating the saved event')
 assert.match(activation, /verifyHyroxPlanActivation[\s\S]*expectedUserPlanId[\s\S]*secondaryRaceId/, 'HYROX apply verifies assignment identity and exact combined-goal membership')
@@ -147,4 +148,4 @@ assert.match(catalog, /PLAN_GOALS\.map/, 'legacy no-date running blocks remain w
 assert.match(catalog, /openRace/, 'legacy race setup remains wired')
 assert.match(catalog, /previewAndApplyPlan/, 'legacy preview/apply remains wired')
 
-console.log('HYROX FRONTEND SMOKE OK (72)')
+console.log('HYROX FRONTEND SMOKE OK (73)')

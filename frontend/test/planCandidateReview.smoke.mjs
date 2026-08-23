@@ -51,6 +51,7 @@ assert.equal(planCandidateRequiresReview({ plan: { plan_data: { overall_feasibil
 assert.equal(planCandidateRequiresReview({ plan: { plan_data: { overall_feasibility: 'supported' } } }), false)
 assert.equal(planCandidateRequiresReview({ replaces_active_plan: true, plan: { plan_data: { overall_feasibility: 'supported' } } }), true)
 assert.match(helper, /reviewPlanCandidateBeforeApply\([\s\S]*preview\.data/, 'candidate consent gates the apply request')
+assert.match(helper, /preview\.data\.apply_bindings[\s\S]*\.\.\.applyBindings[\s\S]*candidate_hash:\s*candidateHash/, 'shared applies retain the reviewed server binding envelope')
 assert.ok(
   helper.indexOf('reviewPlanCandidateBeforeApply(')
     < helper.indexOf("`/plans/candidates/${encodeURIComponent(candidateId)}/apply`"),
@@ -106,4 +107,4 @@ for (const page of ['Onboarding.jsx', 'Plan.jsx', 'PlanCatalog.jsx', 'Races.jsx'
   assert.match(read(`frontend/src/pages/${page}`), /isPlanCandidateReviewCancelled\(err\)/, `${page} treats an athlete cancellation as a non-error`)
 }
 
-console.log('PLAN CANDIDATE REVIEW SMOKE OK (34)')
+console.log('PLAN CANDIDATE REVIEW SMOKE OK (35)')

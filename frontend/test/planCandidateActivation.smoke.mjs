@@ -20,6 +20,34 @@ const active = {
   ] } },
   user_plan: { id: 'assignment-new', supersedes_user_plan_id: 'assignment-old' },
 }
+const onModeApplyBindings = {
+  candidate_id: 'candidate-first-assignment',
+  candidate_hash: 'sha256:first-assignment',
+  candidate_revision: 1,
+  decision_id: 'decision-first-assignment',
+  decision_hash: 'd'.repeat(64),
+  decision_artifact: {
+    artifact_id: 'artifact-first-assignment',
+    revision: 1,
+    content_hash: `sha256:${'a'.repeat(64)}`,
+  },
+  active_plan: { training_plan_id: null, user_plan_id: null, plan_revision: null },
+  planning_input_revision: 7,
+  planning_date_local: clock.planning_date_local,
+  planning_timezone: 'America/New_York',
+  timezone_offset_minutes: clock.timezone_offset_minutes,
+  goal_revisions: { 'goal-hyrox-dc': 2, 'goal-army': 1 },
+  goal_fingerprint: `sha256:${'b'.repeat(64)}`,
+  athlete_state_revision: 7,
+  safety_state_hash: `sha256:${'c'.repeat(64)}`,
+  evidence_fingerprint: `sha256:${'e'.repeat(64)}`,
+  constraint_fingerprint: `sha256:${'f'.repeat(64)}`,
+  policy_fingerprint: `sha256:${'1'.repeat(64)}`,
+  lock_revision: 0,
+  edit_revision: 0,
+  surface_revision: 1,
+  export_revision: 1,
+}
 
 function fakeApi({ before = stale, after = active, post }) {
   let reads = 0
@@ -48,6 +76,56 @@ function fakeApi({ before = stale, after = active, post }) {
   })
   assert.equal(result.activation.confirmed, true)
   assert.equal(result.reconciled, false)
+}
+
+{
+  const noAssignment = { plan: null, user_plan: null }
+  const firstAssignment = {
+    ...active,
+    user_plan: { id: 'assignment-first', supersedes_user_plan_id: null },
+  }
+  let committed = false
+  let applyBody = null
+  const api = {
+    async get() { return { data: committed ? firstAssignment : noAssignment } },
+    async post(_path, body) {
+      applyBody = body
+      const expectedBody = {
+        ...onModeApplyBindings,
+        candidate_hash: 'sha256:first-assignment',
+        choice: 'train_for_target',
+        ...clock,
+      }
+      if (JSON.stringify(body) !== JSON.stringify(expectedBody)) {
+        const error = new Error('Request failed with status code 409')
+        error.response = {
+          status: 409,
+          data: { code: 'CANDIDATE_REVISION_CHANGED', error: 'Candidate bindings changed after preview. Preview again.' },
+        }
+        throw error
+      }
+      committed = true
+      return { data: { ok: true, user_plan_id: 'assignment-first' } }
+    },
+  }
+  const result = await applyPlanCandidateWithActivation({
+    api,
+    candidateId: onModeApplyBindings.candidate_id,
+    candidateHash: onModeApplyBindings.candidate_hash,
+    applyBindings: onModeApplyBindings,
+    planningClock: clock,
+    hyroxRace: hyrox,
+    secondaryRaceId: 'army',
+    applyTimeoutMs: 20,
+    readTimeoutMs: 20,
+  })
+  assert.deepEqual(applyBody, {
+    ...onModeApplyBindings,
+    candidate_hash: onModeApplyBindings.candidate_hash,
+    choice: 'train_for_target',
+    ...clock,
+  }, 'the reviewed on-mode envelope reaches apply byte-for-byte')
+  assert.equal(result.activation.confirmed, true, 'a valid first assignment is confirmed authoritatively')
 }
 
 {

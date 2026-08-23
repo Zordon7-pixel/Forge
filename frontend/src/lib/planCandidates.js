@@ -23,15 +23,18 @@ export async function previewAndApplyPlan(path, body = {}, config = {}) {
   if (!candidateId || !candidateHash) {
     throw new Error('Plan preview did not include an apply token.')
   }
+  const applyBindings = preview.data?.apply_bindings && typeof preview.data.apply_bindings === 'object'
+    && !Array.isArray(preview.data.apply_bindings) ? preview.data.apply_bindings : {}
 
   const applied = await reviewPlanCandidateBeforeApply(
     preview.data,
     () => api.post(
       `/plans/candidates/${encodeURIComponent(candidateId)}/apply`,
       {
+        ...applyBindings,
         candidate_hash: candidateHash,
         choice: 'train_for_target',
-        planning_date_local: clock.planning_date_local,
+        ...clock,
       },
       config,
     ),

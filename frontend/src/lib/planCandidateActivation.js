@@ -132,6 +132,7 @@ export async function applyPlanCandidateWithActivation({
   api,
   candidateId,
   candidateHash,
+  applyBindings = null,
   planningClock,
   hyroxRace = null,
   secondaryRaceId = '',
@@ -143,6 +144,8 @@ export async function applyPlanCandidateWithActivation({
   if (!normalizedCandidateId || !normalizedCandidateHash) {
     throw lifecycleError('The reviewed plan is missing its apply token. Preview again.', 'PLAN_APPLY_TOKEN_MISSING')
   }
+  const reviewedApplyBindings = applyBindings && typeof applyBindings === 'object'
+    && !Array.isArray(applyBindings) ? applyBindings : {}
 
   const beforeRead = await tryReadActivePlan(api, readTimeoutMs)
   let applyData = null
@@ -150,6 +153,7 @@ export async function applyPlanCandidateWithActivation({
   try {
     const { data } = await requestWithDeadline(
       (config) => api.post(`/plans/candidates/${encodeURIComponent(normalizedCandidateId)}/apply`, {
+        ...reviewedApplyBindings,
         candidate_hash: normalizedCandidateHash,
         choice: 'train_for_target',
         ...planningClock,

@@ -218,6 +218,7 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
         api,
         candidateId,
         candidateHash,
+        applyBindings: candidate.apply_bindings,
         planningClock: phonePlanningClock(),
         hyroxRace: eventMode === 'event_date' ? ownedHyroxRace : null,
         secondaryRaceId: eventMode === 'event_date' ? secondaryRaceId : '',

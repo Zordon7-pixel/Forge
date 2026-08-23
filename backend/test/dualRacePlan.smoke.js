@@ -2734,6 +2734,42 @@ async function checkHyroxCandidateImmediateAdoption() {
       candidate_hash: previewResponse.payload.candidate_hash,
       ...previewResponse.payload.apply_bindings,
     };
+    const rejectedApplyBaseline = {
+      activeAssignmentId: currentAssignment().id,
+      assignmentCount: userPlans.size,
+      candidate: JSON.stringify(candidates.get(previewResponse.payload.candidate_id)),
+      trainingPlanCount: trainingPlans.size,
+    };
+    const missingBindingApply = await invoke(apply, {
+      ...requestBase,
+      params: { candidateId: previewResponse.payload.candidate_id },
+      body: {
+        ...requestClock,
+        choice: 'train_for_target',
+        candidate_hash: previewResponse.payload.candidate_hash,
+      },
+    });
+    assert.equal(missingBindingApply.statusCode, 409, JSON.stringify(missingBindingApply.payload));
+    assert.deepEqual(missingBindingApply.payload, {
+      code: 'CANDIDATE_REVISION_CHANGED',
+      error: 'Candidate bindings changed after preview. Preview again.',
+    });
+    const mismatchedBindingApply = await invoke(apply, {
+      ...requestBase,
+      params: { candidateId: previewResponse.payload.candidate_id },
+      body: { ...applyBody, candidate_revision: applyBody.candidate_revision + 1 },
+    });
+    assert.equal(mismatchedBindingApply.statusCode, 409, JSON.stringify(mismatchedBindingApply.payload));
+    assert.deepEqual(mismatchedBindingApply.payload, {
+      code: 'CANDIDATE_REVISION_CHANGED',
+      error: 'Candidate bindings changed after preview. Preview again.',
+    });
+    assert.deepEqual({
+      activeAssignmentId: currentAssignment().id,
+      assignmentCount: userPlans.size,
+      candidate: JSON.stringify(candidates.get(previewResponse.payload.candidate_id)),
+      trainingPlanCount: trainingPlans.size,
+    }, rejectedApplyBaseline, 'missing or mismatched reviewed bindings return 409 without any mutation');
     const applyResponse = await invoke(apply, {
       ...requestBase,
       params: { candidateId: previewResponse.payload.candidate_id },
