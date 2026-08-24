@@ -1329,8 +1329,18 @@ function partialPlacementComparator(left, right) {
     }, {});
     return Object.values(counts).reduce((sum, count) => sum + Math.max(0, count - 1), 0);
   };
+  const runningCollisionCount = (placements) => {
+    const counts = placements.reduce((result, placement) => {
+      if (!RUNNING_GOAL_BACKWARD_FAMILIES.has(placement.workout_family)) return result;
+      const date = placement.scheduled_local_date;
+      result[date] = (result[date] || 0) + 1;
+      return result;
+    }, {});
+    return Object.values(counts).reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+  };
   return materialMismatchCount(left) - materialMismatchCount(right)
     || collisionCount(left) - collisionCount(right)
+    || runningCollisionCount(left) - runningCollisionCount(right)
     || canonicalStringify(left).localeCompare(canonicalStringify(right));
 }
 
@@ -1369,6 +1379,22 @@ function stressTargetVector(input = {}) {
 
 function runningDistanceMeters(session = {}) {
   if (!RUNNING_GOAL_BACKWARD_FAMILIES.has(session.workout_family)) return 0;
+  if (['hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation']
+    .includes(session.workout_family) && Array.isArray(session.steps)) {
+    const runningStepDistance = (steps, multiplier = 1) => steps.reduce((sum, step) => {
+      if (!step || typeof step !== 'object') return sum;
+      if (step.type === 'repeat') {
+        const count = Number.isSafeInteger(step.repeat_count) && step.repeat_count > 0
+          ? step.repeat_count : 0;
+        return sum + runningStepDistance(Array.isArray(step.children) ? step.children : [], multiplier * count);
+      }
+      if (!['run', 'interval'].includes(step.type)) return sum;
+      const distance = Number(step.target?.distance_m);
+      return sum + (Number.isFinite(distance) && distance >= 0 ? distance * multiplier : 0);
+    }, 0);
+    const canonicalRunningDistance = runningStepDistance(session.steps);
+    if (canonicalRunningDistance > 0) return canonicalRunningDistance;
+  }
   const direct = Number(session.running_distance_m ?? session.distance_m ?? session.distanceMeters);
   if (Number.isFinite(direct) && direct >= 0) return direct;
   const miles = Number(session.distance_miles ?? session.distanceMiles);
@@ -1528,7 +1554,11 @@ function enumerateGoalBackwardCandidates(input = {}) {
     : decision.role_multiset.length;
   const maximumSessionCount = Math.min(requestedMaximumSessionCount, MAX_GOAL_BACKWARD_ROLE_COUNT);
   const roles = decision.role_multiset.slice(0, maximumSessionCount);
-  const roleCapacityExceeded = roles.length > availableDates.length;
+  const requestedMaximumSessionsPerDay = Number(input.maximum_sessions_per_day);
+  const maximumSessionsPerDay = Number.isSafeInteger(requestedMaximumSessionsPerDay)
+    ? Math.max(1, Math.min(2, requestedMaximumSessionsPerDay)) : 1;
+  const enforceSessionCapacityPerDay = maximumSessionsPerDay > 1;
+  const roleCapacityExceeded = roles.length > availableDates.length * maximumSessionsPerDay;
   const inputBounded = requestedAvailableDates.length > MAX_GOAL_BACKWARD_AVAILABLE_DATES
     || requestedMaximumSessionCount > MAX_GOAL_BACKWARD_ROLE_COUNT
     || roles.some((role) => new Set((role.any_of || []).map(String).filter(Boolean)).size
@@ -1594,6 +1624,9 @@ function enumerateGoalBackwardCandidates(input = {}) {
             nodeLimitReached = true;
             break outer;
           }
+          if (enforceSessionCapacityPerDay && placements.filter((placement) => (
+            placement.scheduled_local_date === choice.scheduled_local_date
+          )).length >= maximumSessionsPerDay) continue;
           expandedNodeCount += 1;
           next.push([...placements, { requirement_id: role.requirement_id, ...choice }]);
         }
@@ -1754,6 +1787,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
     retained_candidate_count: retained.length,
     role_count: roles.length,
     available_day_count: availableDates.length,
+    maximum_sessions_per_day: maximumSessionsPerDay,
     placement_space_upper_bound: boundedPlacementSpace(placementSets),
     placement_choices_truncated: placementChoicesTruncated,
     frontier_limit: MAX_GOAL_BACKWARD_SEARCH_FRONTIER,

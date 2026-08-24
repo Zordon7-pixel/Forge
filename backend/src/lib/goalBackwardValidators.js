@@ -1023,7 +1023,16 @@ function validatePresentationFloor(sessions, options = {}) {
     } else if (['threshold_run', 'interval_run', 'race_rhythm_run'].includes(family)) {
       below = qualityWorkMinutes(session, options) < 8;
     } else if (family === 'hyrox_compromised') {
-      below = Number(session.run_station_pair_count || 0) < 2 || Number(session.main_work_duration_min || 0) < 20;
+      const canonicalSteps = flattenedCanonicalSteps(session.steps);
+      const canonicalRunPairs = canonicalSteps.filter(({ step }) => (
+        ['run', 'interval'].includes(step.type)
+      )).length;
+      const canonicalStationPairs = canonicalSteps.filter(({ step }) => step.type === 'station').length;
+      const pairCount = Number(session.run_station_pair_count || 0)
+        || Math.min(canonicalRunPairs, canonicalStationPairs);
+      const mainWorkDuration = Number(session.main_work_duration_min || 0)
+        || Number(session.derived_totals?.work_duration_s || 0) / 60;
+      below = pairCount < 2 || mainWorkDuration < 20;
     } else if (['strength_lower', 'strength_upper', 'strength_full_body'].includes(family)
       && session.technique_or_rehab_scope !== true) {
       const exercises = Array.isArray(session.exercises) ? session.exercises : [];
@@ -1227,7 +1236,22 @@ function distanceMeters(session) {
 }
 
 function runningDistanceMeters(session) {
-  return RUNNING_FAMILIES.has(sessionFamily(session)) ? distanceMeters(session) : 0;
+  const family = sessionFamily(session);
+  if (!RUNNING_FAMILIES.has(family)) return 0;
+  if (COMPROMISED_FAMILIES.has(family)) {
+    const directRaw = session.running_distance_m;
+    const direct = directRaw === null || directRaw === undefined || directRaw === ''
+      ? NaN : Number(directRaw);
+    if (Number.isFinite(direct) && direct >= 0) return direct;
+    const canonicalRunningDistances = flattenedCanonicalSteps(session.steps)
+      .filter(({ step }) => ['run', 'interval'].includes(step.type))
+      .map(({ step, multiplier }) => Number(step.target?.distance_m) * multiplier)
+      .filter((value) => Number.isFinite(value) && value >= 0);
+    if (canonicalRunningDistances.length) {
+      return canonicalRunningDistances.reduce((sum, value) => sum + value, 0);
+    }
+  }
+  return distanceMeters(session);
 }
 
 function aggregateKnownRunningDistance(sessions) {

@@ -103,13 +103,14 @@ function compactDiagnostic(result) {
 }
 
 function generateDiagnostics(goalTimeSeconds, options = {}) {
+  const planningDate = options.planningDate || PLANNING_DATE;
   const clock = acceptPlanningClock({
-    planning_date_local: PLANNING_DATE,
+    planning_date_local: planningDate,
     timezone_offset_minutes: TIMEZONE_OFFSET_MINUTES,
-  }, PLANNING_DATE);
+  }, planningDate);
   assert.deepEqual(clock, {
     valid: true,
-    planningDateLocal: PLANNING_DATE,
+    planningDateLocal: planningDate,
     timezoneOffsetMinutes: TIMEZONE_OFFSET_MINUTES,
   });
 
@@ -121,7 +122,7 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
     event_timezone: TIMEZONE,
     location: 'Washington DC',
     event_kind: 'hyrox',
-    event_format: 'individual_open',
+    event_format: options.eventFormat || 'individual_open',
     event_category: 'men',
     goal_time_seconds: goalTimeSeconds,
     status: 'upcoming',
@@ -144,14 +145,17 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
       runningPriority: 'maintain',
     },
   };
+  const defaultCurrentWeek = planningDate === PLANNING_DATE ? {
+    startDate: '2026-08-17', miles: 10, knownDistanceLowerBoundMiles: 10,
+    runCount: 2, runDates: ['2026-08-18', '2026-08-20'],
+  } : {
+    startDate: '2026-08-24', miles: 0, knownDistanceLowerBoundMiles: 0,
+    runCount: 0, runDates: [],
+  };
   const currentWeek = options.currentWeek === null ? null : {
-    startDate: '2026-08-17',
-    miles: 10,
+    ...defaultCurrentWeek,
     distanceState: 'KNOWN',
-    knownDistanceLowerBoundMiles: 10,
     unknownDistanceRunCount: 0,
-    runCount: 2,
-    runDates: ['2026-08-18', '2026-08-20'],
     longRunCompleted: false,
     ...(options.currentWeek || {}),
   };
@@ -283,6 +287,41 @@ function run() {
     assert.equal(result.decision.minimum_weekly_demand.running_m, REQUIRED_RUNNING_M);
   }
 
+  const launchScenario = generateDiagnostics(3600, {
+    planningDate: '2026-08-24',
+    eventFormat: 'doubles',
+  });
+  assert.equal(launchScenario.result.decision.phase, 'DEVELOPMENT');
+  assert.equal(launchScenario.result.decision.minimum_weekly_demand.running_m, REQUIRED_RUNNING_M);
+  assertBoundedHardValidSelection(
+    launchScenario.result,
+    'Aug 24 doubles preview with four requested run days',
+  );
+  assert.equal(completedRunningReceipt(launchScenario.result), null);
+  const launchRunningSessions = selectedRunningSessions(launchScenario.result);
+  assert.equal(launchRunningSessions.length, 4,
+    'the selected preview must preserve all four requested running exposures');
+  assert.equal(new Set(launchRunningSessions.map((session) => session.scheduled_local_date)).size, 4,
+    'the four runs must remain on four distinct selected training days');
+  assert.equal(launchScenario.result.selected_candidate.canonical_sessions.length, 5,
+    'the HYROX skill session must use one legal same-day stack instead of deleting a run');
+  assert.equal(launchScenario.result.search_diagnostics.maximum_sessions_per_day, 2);
+  assert.ok(candidateRunningDose(launchScenario.result.selected_candidate) >= REQUIRED_RUNNING_M);
+  assertApplicableIdentity(launchScenario, 'Aug 24 preview/apply binding');
+  const launchCompromised = launchScenario.result.selected_candidate.canonical_sessions.find((session) => (
+    session.workout_family === 'hyrox_compromised'
+  ));
+  assert.ok(launchCompromised, 'the controlled compromised workout must remain canonical HYROX work');
+  assert.deepEqual(launchCompromised.steps.map((step) => step.type), [
+    'run', 'station', 'run', 'station',
+  ]);
+  assert.equal(launchCompromised.steps.filter((step) => step.type === 'run')
+    .reduce((sum, step) => sum + Number(step.target.distance_m || 0), 0), 2000,
+  'only the two 1 km run segments count toward running volume');
+  assert.equal(launchScenario.result.selected_candidate.skeleton_sessions.some((session) => (
+    session.projection_source_material_ids?.includes('hyrox-race-day')
+  )), false, 'the current week cannot borrow race-day running from the following week');
+
   assertBoundedHardValidSelection(blank, 'blank goal time');
   assertBoundedHardValidSelection(supportedTime, 'supported 60-minute goal time');
   assertBoundedHardValidSelection(replay, 'blank goal time replay');
@@ -299,7 +338,10 @@ function run() {
     const materialDose = validatorResult(scenario.result.selected_candidate, 'material_dose')?.receipt;
     assert.ok(materialDose?.completed_running_credit, JSON.stringify(materialDose));
     assert.equal(materialDose.completed_running_credit.completed_running_m, Math.floor(10 * 1609.344));
-    assert.equal(materialDose.planned_candidate_running_m, 10000);
+    assert.ok(materialDose.planned_candidate_running_m >= (
+      scenario.result.required_running_dose_receipt.required_running_m
+        - materialDose.completed_running_credit.completed_running_m
+    ));
     assert.equal(materialDose.candidate_running_m,
       materialDose.planned_candidate_running_m + materialDose.completed_running_credit.completed_running_m);
     assert.ok(materialDose.planned_candidate_running_m < materialDose.candidate_running_m);

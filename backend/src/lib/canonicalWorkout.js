@@ -1302,6 +1302,81 @@ function materializeHyroxStationSteps(family, source, input) {
   });
 }
 
+function materializeHyroxMixedSteps(family, source, input) {
+  const runSequence = Array.isArray(source.runSequenceMeters)
+    ? source.runSequenceMeters
+    : Array.isArray(source.run_sequence_meters) ? source.run_sequence_meters : [];
+  const stations = Array.isArray(source.stationSequence)
+    ? source.stationSequence
+    : Array.isArray(source.station_sequence) ? source.station_sequence : [];
+  const pairCount = Math.min(
+    runSequence.length,
+    stations.length,
+    boundedInteger(source.run_station_pair_count, 1) || Number.MAX_SAFE_INTEGER,
+  );
+  if (!Number.isSafeInteger(pairCount) || pairCount < 1) {
+    const error = new Error(`Workout family ${family} is missing run/station pairs`);
+    error.code = 'WORKOUT_FAMILY_UNRESOLVED';
+    throw error;
+  }
+  const totalDuration = prescribedDurationSeconds(source) ?? pairCount * 20 * 60;
+  const runDurations = distributedDurations(Math.round(totalDuration * 0.55), pairCount);
+  const stationDurations = distributedDurations(
+    totalDuration - runDurations.reduce((sum, value) => sum + value, 0),
+    pairCount,
+  );
+  const steps = [];
+  for (let index = 0; index < pairCount; index += 1) {
+    const runDistance = boundedInteger(runSequence[index], 1);
+    steps.push(step(
+      `${input.session_id}-run-${index + 1}`,
+      'run',
+      steps.length + 1,
+      targetForStep({
+        family: 'easy_run',
+        durationS: runDurations[index],
+        distanceM: runDistance,
+        input,
+        source,
+      }),
+      { workout_family: 'easy_run', step_role: 'WORK' },
+    ));
+    const station = stations[index] || {};
+    const distance = boundedInteger(station.distance_m ?? station.distanceMeters);
+    const repetitions = boundedInteger(station.repetitions ?? station.reps);
+    const load = Number(station.prescribedLoadKg ?? station.load_kg);
+    const loadKg = Number.isFinite(load) && load >= 0 ? Math.round(load * 10) / 10 : null;
+    const target = compactTarget({
+      distance_m: distance,
+      duration_s: stationDurations[index],
+      repetitions,
+      load_kg: loadKg,
+      rpe_range: { minimum: 6, maximum: 7 },
+    });
+    const units = [distance === null ? null : 'm', 's', repetitions === null ? null : 'count',
+      loadKg === null ? null : 'kg', 'rpe'].filter(Boolean);
+    steps.push(step(
+      `${input.session_id}-station-${index + 1}`,
+      'station',
+      steps.length + 1,
+      {
+        target,
+        provenance: [clusterProvenance(
+          { ...source, ...input },
+          units,
+          'hyrox_mixed_station_prescription',
+        )],
+      },
+      {
+        workout_family: 'hyrox_station_skill',
+        step_role: 'WORK',
+        station_id: String(station.id ?? station.station_id ?? `manual-station-${index + 1}`),
+      },
+    ));
+  }
+  return steps;
+}
+
 function sourceMaterialFor(candidate, skeleton) {
   const materials = Array.isArray(candidate.candidate_material) ? candidate.candidate_material : [];
   const material = materials.find((entry) => String(entry.material_id) === String(skeleton.candidate_material_id));
@@ -1350,7 +1425,9 @@ function materializeCanonicalSession(input = {}) {
   const steps = HYROX_STATION_FAMILIES.has(family)
     ? materializeHyroxStationSteps(family, source, materializationInput)
     : family === 'hyrox_partial_simulation' ? null
-      : materializeRoadGeneralSteps(family, source, materializationInput);
+      : HYROX_MIXED_FAMILIES.has(family)
+        ? materializeHyroxMixedSteps(family, source, materializationInput)
+        : materializeRoadGeneralSteps(family, source, materializationInput);
   const phaseReason = PHASE_REASON_CODES[decision.phase];
   const sourceReasons = Array.isArray(source.reason_codes) ? source.reason_codes : [];
   const purposeReasonCodes = [...new Set([phaseReason, ...sourceReasons]
