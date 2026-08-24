@@ -2212,6 +2212,7 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
       hyroxEvent: {
         raceId: hyroxRace.id,
         name: hyroxRace.race_name,
+        location: hyroxRace.location || null,
         eventLocalDate: localDate,
         eventTimezone: hyroxRace.event_timezone,
         format: hyroxRace.event_format,
@@ -3394,6 +3395,7 @@ function goalBackwardGoalsForState(userId, state) {
       goal_type: Number(race.goal_time_seconds || 0) > 0 ? 'performance' : 'completion',
       event_kind: goalBackwardEventKind(race, state),
       event_local_date: race.event_local_date || race.race_date,
+      location: race.location || null,
       event_state: lifecycle.event_state,
       event_revision: lifecycle.event_revision,
       transition_exit_met: lifecycle.transition_exit_met,

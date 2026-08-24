@@ -1425,10 +1425,11 @@ async function checkHyroxCandidateImmediateAdoption() {
     ['hyrox', {
       id: 'hyrox',
       user_id: ownerId,
-      race_name: 'HYROX New York',
+      race_name: 'HYROX Washington DC',
       race_date: '2026-09-06',
       event_local_date: '2026-09-06',
       event_timezone: 'America/New_York',
+      location: 'Washington DC',
       event_kind: 'hyrox',
       event_format: 'doubles',
       event_category: 'men',
@@ -1480,7 +1481,8 @@ async function checkHyroxCandidateImmediateAdoption() {
     },
     event: {
       raceId: 'hyrox',
-      name: 'HYROX New York',
+      name: 'HYROX Washington DC',
+      location: 'Washington DC',
       eventLocalDate: '2026-09-06',
       eventTimezone: 'America/New_York',
       format: 'doubles',
@@ -2787,6 +2789,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(previewResponse.payload.effective_from, planningDate);
     assert.deepEqual(previewResponse.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
     const retainedHyroxGoal = previewResponse.payload.plan.plan_data.goals[0];
+    assert.equal(retainedHyroxGoal.location, 'Washington DC');
     assert.equal(retainedHyroxGoal.division, 'doubles');
     assert.equal(retainedHyroxGoal.category, 'men');
     assert.equal(retainedHyroxGoal.eventLocalDate, '2026-09-06');
@@ -2795,6 +2798,9 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(JSON.parse(candidates.get(previewResponse.payload.candidate_id).planning_snapshot_json)
       .context.target.hyroxEvent.hyroxPerformanceBudget.target_total_time_s, 3600,
       'an explicit owned-race target overrides older stored performance-budget evidence');
+    assert.equal(JSON.parse(candidates.get(previewResponse.payload.candidate_id).planning_snapshot_json)
+      .context.target.hyroxEvent.location, 'Washington DC',
+      'the owner-scoped planning snapshot preserves the HYROX location');
     const retainedArmyGoal = previewResponse.payload.plan.plan_data.goals[1];
     assert.equal(retainedArmyGoal.goalType, 'pr');
     assert.equal(retainedArmyGoal.goalTimeSeconds, 5220);
@@ -2889,6 +2895,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(plansRouter._test.replacementLineageForActivePlan(null, 'first-assignment').priorVersion, 0,
       'a genuine first assignment retains its version-1 lifecycle');
     assert.deepEqual(immediate.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
+    assert.equal(immediate.payload.plan.plan_data.goals[0].location, 'Washington DC');
     assert.equal(immediate.payload.plan.plan_data.goals[0].division, 'doubles');
     assert.equal(immediate.payload.plan.plan_data.goals[0].goalTimeSeconds, 3600);
     assert.equal(
@@ -5358,6 +5365,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       goal.raceId === 'yonkers'
     )), false);
     const finalHyroxGoal = finalHyroxPreview.payload.plan.plan_data.goals[0];
+    assert.equal(finalHyroxGoal.location, 'Washington DC');
     assert.equal(finalHyroxGoal.eventLocalDate, '2026-09-06');
     assert.equal(finalHyroxGoal.division, 'doubles');
     assert.equal(finalHyroxGoal.category, 'men');
@@ -5402,6 +5410,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(raceRows.has('yonkers'), false);
     assert.equal(finalHyroxCurrent.payload.plan.plan_data.goals[0].division, 'doubles');
     assert.equal(finalHyroxCurrent.payload.plan.plan_data.goals[0].category, 'men');
+    assert.equal(finalHyroxCurrent.payload.plan.plan_data.goals[0].location, 'Washington DC');
     assert.equal(
       canonicalPlanRunningMeters(finalHyroxCurrent.payload.plan.plan_data),
       canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data),
@@ -5414,6 +5423,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     });
     assert.equal(finalHyroxReplay.statusCode, 200, JSON.stringify(finalHyroxReplay.payload));
     assert.equal(finalHyroxReplay.payload.replay, true);
+    assert.equal(finalHyroxReplay.payload.user_plan_id, finalHyroxApply.payload.user_plan_id);
     assert.equal(currentAssignment().id, finalHyroxApply.payload.user_plan_id,
       'the final candidate replay cannot create a duplicate assignment');
   } finally {

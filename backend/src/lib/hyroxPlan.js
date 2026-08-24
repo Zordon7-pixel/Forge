@@ -1637,6 +1637,7 @@ function generateHyroxPlan(input = {}) {
     eventKind: 'hyrox',
     raceId: event.raceId || null,
     name: event.name || 'HYROX event',
+    location: event.location || null,
     date: event.eventLocalDate || null,
     eventLocalDate: event.eventLocalDate || null,
     eventTimezone: event.eventTimezone,
