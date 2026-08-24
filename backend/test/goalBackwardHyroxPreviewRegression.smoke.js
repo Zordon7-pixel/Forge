@@ -127,12 +127,41 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
     goal_time_seconds: goalTimeSeconds,
     status: 'upcoming',
   };
+  const secondaryRace = options.secondaryRace ? {
+    id: 'ten-miler-october-11',
+    race_name: '10 Miler',
+    race_date: '2026-10-11',
+    event_local_date: '2026-10-11',
+    event_timezone: TIMEZONE,
+    location: 'Washington DC',
+    event_kind: 'run_race',
+    event_format: 'road',
+    event_category: 'men',
+    distance_miles: 10,
+    goal_time_seconds: 5400,
+    status: 'upcoming',
+  } : null;
+  const races = [race, secondaryRace].filter(Boolean);
   const target = {
     planMode: 'hyrox_build',
     runDaysPerWeek: 4,
     trainingDays: [...(options.trainingDays || TRAINING_DAYS)],
     liftingEnabled: true,
     hyroxEquipment: [...HYROX_EQUIPMENT],
+    ...(secondaryRace ? {
+      secondaryRace: {
+        kind: 'run_race',
+        raceId: secondaryRace.id,
+        name: secondaryRace.race_name,
+        eventLocalDate: secondaryRace.event_local_date,
+        eventTimezone: secondaryRace.event_timezone,
+        distanceMiles: secondaryRace.distance_miles,
+        goalTimeSeconds: secondaryRace.goal_time_seconds,
+        goalType: 'pr',
+        goalPaceSecondsPerMile: 540,
+        goalPaceLabel: '9:00/mi',
+      },
+    } : {}),
     hyroxEvent: {
       raceId: race.id,
       name: race.race_name,
@@ -186,11 +215,14 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
     profile: {
       id: 'hyrox-preview-regression-athlete',
       timezone: TIMEZONE,
-      training_age_class: 'ESTABLISHED',
+      training_age_class: options.trainingAgeClass || 'ESTABLISHED',
     },
     target,
     history,
-    recovery: { state: 'NORMAL' },
+    recovery: {
+      state: options.recoveryState || 'NORMAL',
+      ...(options.readinessScore !== undefined ? { readinessScore: options.readinessScore } : {}),
+    },
     safety: { activeInjury: false },
   };
   const built = plansRouter._test.buildDeterministicCandidate(context, {
@@ -224,14 +256,14 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
   const state = {
     target,
     context,
-    races: [race],
-    inputHash: `sha256:${canonicalHash({ clock, race, target, currentWeek, planningConstraints })}`,
+    races,
+    inputHash: `sha256:${canonicalHash({ clock, races, target, currentWeek, planningConstraints })}`,
     planningInputRevision: 1,
     planningConstraints,
     active,
     activePlan,
     request: {
-      race_ids: [race.id],
+      race_ids: races.map((event) => event.id),
       planning_date_local: clock.planningDateLocal,
       timezone_offset_minutes: clock.timezoneOffsetMinutes,
     },
@@ -321,6 +353,59 @@ function run() {
   assert.equal(launchScenario.result.selected_candidate.skeleton_sessions.some((session) => (
     session.projection_source_material_ids?.includes('hyrox-race-day')
   )), false, 'the current week cannot borrow race-day running from the following week');
+
+  const launchMultiGoalScenario = generateDiagnostics(3600, {
+    planningDate: '2026-08-24',
+    eventFormat: 'doubles',
+    secondaryRace: true,
+  });
+  assert.equal(launchMultiGoalScenario.result.decision.active_goals.length, 2);
+  assertBoundedHardValidSelection(
+    launchMultiGoalScenario.result,
+    'Aug 24 doubles preview with secondary 10-miler',
+  );
+  assertApplicableIdentity(launchMultiGoalScenario, 'Aug 24 multi-goal preview/apply binding');
+
+  const launchLowReadinessScenario = generateDiagnostics(3600, {
+    planningDate: '2026-08-24',
+    eventFormat: 'doubles',
+    secondaryRace: true,
+    recoveryState: 'RECOVERY',
+    readinessScore: 44,
+  });
+  assertBoundedHardValidSelection(
+    launchLowReadinessScenario.result,
+    'Aug 24 multi-goal preview at readiness 44',
+  );
+  assertApplicableIdentity(
+    launchLowReadinessScenario,
+    'Aug 24 readiness 44 preview/apply binding',
+  );
+
+  const launchDevelopingScenario = generateDiagnostics(3600, {
+    planningDate: '2026-08-24',
+    eventFormat: 'doubles',
+    secondaryRace: true,
+    recoveryState: 'RECOVERY',
+    readinessScore: 44,
+    trainingAgeClass: 'DEVELOPING',
+  });
+  assertBoundedHardValidSelection(
+    launchDevelopingScenario.result,
+    'Aug 24 developing multi-goal preview at readiness 44',
+  );
+  assertApplicableIdentity(
+    launchDevelopingScenario,
+    'Aug 24 developing readiness 44 preview/apply binding',
+  );
+  assert.equal(launchDevelopingScenario.result.decision.training_age_class, 'DEVELOPING');
+  assert.equal(launchDevelopingScenario.result.decision.recovery_state, 'CAUTION');
+  assert.equal(launchDevelopingScenario.result.search_diagnostics.maximum_sessions_per_day, 1);
+  assert.equal(launchDevelopingScenario.result.selected_candidate.canonical_sessions.length, 4);
+  assert.equal(selectedRunningSessions(launchDevelopingScenario.result).length, 3);
+  assert.ok(candidateRunningDose(launchDevelopingScenario.result.selected_candidate) >= (
+    launchDevelopingScenario.result.required_running_dose_receipt.required_running_m
+  ));
 
   assertBoundedHardValidSelection(blank, 'blank goal time');
   assertBoundedHardValidSelection(supportedTime, 'supported 60-minute goal time');

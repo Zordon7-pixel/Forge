@@ -3067,14 +3067,22 @@ function goalBackwardTopUpFullWeekRunningMaterial(candidateMaterial, requiredRun
     Number.isSafeInteger(completedRunningM) && completedRunningM >= 0 ? completedRunningM : 0
   ));
   const source = Array.isArray(candidateMaterial) ? candidateMaterial : [];
+  const selectedMaterialIds = Array.isArray(options.selectedMaterialIds)
+    ? new Set(options.selectedMaterialIds.map((value) => String(value || '')).filter(Boolean))
+    : null;
+  const selected = (session) => !selectedMaterialIds
+    || selectedMaterialIds.has(goalBackwardMaterialId(session));
   const currentRunningM = source.reduce((sum, session) => (
-    sum + goalBackwardMaterialRunningMeters(session)
+    sum + (selected(session) ? goalBackwardMaterialRunningMeters(session) : 0)
   ), 0);
   if (currentRunningM >= plannedRequirementM) return source;
   const adjustableIndexes = source.map((session, index) => ({
     family: legacyGoalBackwardFamily(session),
     index,
-  })).filter(({ family }) => ['easy_run', 'recovery_run', 'long_aerobic'].includes(family));
+    selected: selected(session),
+  })).filter(({ family, selected: isSelected }) => (
+    isSelected && ['easy_run', 'recovery_run', 'long_aerobic'].includes(family)
+  ));
   if (!adjustableIndexes.length) return source;
   const result = source.map((session) => ({ ...session }));
   const deficitMiles = (plannedRequirementM - currentRunningM) / 1609.344;
@@ -3619,14 +3627,17 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       throw error;
     }
     const requiredRunningM = requiredRunningDoseReceipt.required_running_m;
+    const fullWeekRunningPreservationEligible = planningDateLocal === planningWeekStartLocal
+      && ['DEVELOPING', 'ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
+      && recentNormalStatus === 'ESTABLISHED'
+      && runLoadComplete
+      && ['NORMAL', 'MONITOR'].includes(safetyAction)
+      && String(goals[0]?.event_kind || '').startsWith('HYROX');
     candidateMaterial = goalBackwardTopUpFullWeekRunningMaterial(
       candidateMaterial,
       requiredRunningM,
       {
-        enabled: planningDateLocal === planningWeekStartLocal
-          && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
-          && ['NORMAL', 'MONITOR'].includes(safetyAction)
-          && String(goals[0]?.event_kind || '').startsWith('HYROX'),
+        enabled: fullWeekRunningPreservationEligible,
         completedRunningM: completedRunningCredit?.completed_running_m || 0,
       },
     );
@@ -3662,6 +3673,17 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     );
     if (supportingStimuli.length) {
       decision = buildDecision({ ...decisionInput, supporting_stimuli: supportingStimuli });
+      candidateMaterial = goalBackwardTopUpFullWeekRunningMaterial(
+        candidateMaterial,
+        requiredRunningM,
+        {
+          enabled: fullWeekRunningPreservationEligible,
+          completedRunningM: completedRunningCredit?.completed_running_m || 0,
+          selectedMaterialIds: decision.role_multiset
+            .map((role) => role.candidate_material_id)
+            .filter(Boolean),
+        },
+      );
     }
   }
   const crossModalReductionEvidence = normalizeCrossModalReductionEvidence(
