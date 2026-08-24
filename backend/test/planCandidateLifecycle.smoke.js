@@ -176,6 +176,40 @@ async function run() {
   duplicate.weeks[0].days.push({ date: '2026-08-10', sessions: [{ ...duplicate.weeks[0].days[0].sessions[0] }] });
   assert.equal(candidateLifecycle.validatePlanStructure(duplicate).valid, false);
 
+  const canonicalHash = `sha256:${'c'.repeat(64)}`;
+  const canonicalPlan = {
+    ...plan,
+    canonical_workout_schema_version: 1,
+    selected_candidate_hash: canonicalHash,
+    canonical_session_set_hash: `sha256:${'d'.repeat(64)}`,
+  };
+  assert.equal(candidateLifecycle.validatePlanStructure(canonicalPlan).valid, true);
+  for (const marker of [
+    'canonical_workout_schema_version',
+    'selected_candidate_hash',
+    'canonical_session_set_hash',
+  ]) {
+    const partialCanonicalPlan = JSON.parse(JSON.stringify(canonicalPlan));
+    delete partialCanonicalPlan[marker];
+    const validation = candidateLifecycle.validatePlanStructure(partialCanonicalPlan);
+    assert.equal(validation.valid, false, `missing ${marker} cannot be persisted`);
+    assert.equal(
+      validation.errors.some((error) => error.code === 'CANONICAL_PLAN_MARKERS_INCOMPLETE'),
+      true,
+    );
+    assert.throws(
+      () => candidateLifecycle.assertPersistablePlan(partialCanonicalPlan),
+      (error) => error?.code === 'PLAN_INVARIANT_FAILED' && error?.status === 422,
+    );
+  }
+  const stringSchemaPlan = { ...plan, canonical_workout_schema_version: '1' };
+  assert.equal(
+    candidateLifecycle.validatePlanStructure(stringSchemaPlan).errors
+      .some((error) => error.code === 'CANONICAL_PLAN_MARKERS_INCOMPLETE'),
+    true,
+    'the persistence boundary matches the public surface canonical-marker boundary',
+  );
+
   const bindings = candidateLifecycle.buildGoalBackwardCandidateBindings({
     decisionId: 'decision-synthetic',
     candidateRevision: 1,

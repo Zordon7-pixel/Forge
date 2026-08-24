@@ -322,6 +322,23 @@ function validatePlanStructure(plan) {
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
     return { valid: false, errors: [{ code: 'PLAN_NOT_OBJECT', path: 'plan' }] };
   }
+  const canonicalMarkerState = {
+    schema: plan.canonical_workout_schema_version === 1,
+    candidate: Boolean(plan.selected_candidate_hash),
+    sessionSet: Boolean(plan.canonical_session_set_hash),
+  };
+  const declaresCanonicalPlan = Number(plan.canonical_workout_schema_version) === 1
+    || canonicalMarkerState.candidate
+    || canonicalMarkerState.sessionSet;
+  if (declaresCanonicalPlan && !Object.values(canonicalMarkerState).every(Boolean)) {
+    errors.push({ code: 'CANONICAL_PLAN_MARKERS_INCOMPLETE', path: 'plan' });
+  }
+  if (declaresCanonicalPlan && !isCanonicalHash(plan.selected_candidate_hash)) {
+    errors.push({ code: 'CANONICAL_PLAN_CANDIDATE_HASH_INVALID', path: 'selected_candidate_hash' });
+  }
+  if (declaresCanonicalPlan && !isCanonicalHash(plan.canonical_session_set_hash)) {
+    errors.push({ code: 'CANONICAL_PLAN_SESSION_SET_HASH_INVALID', path: 'canonical_session_set_hash' });
+  }
   if (!Array.isArray(plan.weeks) || !plan.weeks.length) {
     errors.push({ code: 'PLAN_WEEKS_REQUIRED', path: 'weeks' });
   }
