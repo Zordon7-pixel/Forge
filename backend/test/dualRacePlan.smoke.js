@@ -1464,6 +1464,9 @@ async function checkHyroxCandidateImmediateAdoption() {
     { id: 'run-4', date: '2026-08-08', distance_miles: 6, duration_seconds: 3300, type: 'long', created_at: '2026-08-08T12:00:00Z' },
     { id: 'completed-today', date: planningDate, distance_miles: 3, duration_seconds: 1650, type: 'easy', created_at: '2026-08-14T11:00:00Z' },
   ];
+  const completedWorkouts = [];
+  const recentLifts = [];
+  let healthRow = null;
   const initialPlan = hyrox.generateHyroxPlan({
     planningLocalDate: planningDate,
     athlete: { weeklyMilesCurrent: 16, runDaysPerWeek: 4, readiness: 'normal' },
@@ -1671,7 +1674,8 @@ async function checkHyroxCandidateImmediateAdoption() {
         ? { ...planRow }
         : null;
     }
-    if (sql.includes('SELECT * FROM health_sync') || sql.includes('FROM injury_logs') || sql.includes('FROM daily_checkins')) return null;
+    if (sql.includes('SELECT * FROM health_sync')) return healthRow ? { ...healthRow } : null;
+    if (sql.includes('FROM injury_logs') || sql.includes('FROM daily_checkins')) return null;
     if (sql.includes('SELECT MAX(date) AS last_date FROM runs')) {
       return { last_date: recentRuns.map((run) => run.date).sort().at(-1) || null };
     }
@@ -1691,6 +1695,8 @@ async function checkHyroxCandidateImmediateAdoption() {
 
   async function all(sql, params = []) {
     if (sql.includes('FROM runs')) return recentRuns.map((run) => ({ ...run }));
+    if (sql.includes('FROM workout_sessions')) return completedWorkouts.map((workout) => ({ ...workout }));
+    if (sql.includes('FROM lifts')) return recentLifts.map((lift) => ({ ...lift }));
     if (sql.includes('FROM plan_generation_candidates')
       && sql.includes('applied_user_plan_id=?')
       && sql.includes("status='applied'")) {
@@ -2087,6 +2093,12 @@ async function checkHyroxCandidateImmediateAdoption() {
     const applyRaceRemoval = routeHandler(racesRouter, '/:id/removal-apply', 'post');
     const resetRaceRemoval = routeHandler(racesRouter, '/:id/removal-reset', 'post');
     const deleteRace = routeHandler(racesRouter, '/:id', 'delete');
+    if (process.env.FORGE_INCIDENT_REBUILD_ONLY === 'true') {
+      process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'on';
+      process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE = 'all';
+      await checkIncidentRebuild(false);
+      return;
+    }
     const requestClock = {
       planning_date_local: planningDate,
       timezone_offset_minutes: 240,
@@ -2905,12 +2917,14 @@ async function checkHyroxCandidateImmediateAdoption() {
     );
     assert.notEqual(immediate.payload.user_plan.id, 'assignment-hyrox', 'the predecessor is not returned on the accepted local date');
 
-    const clone = (value) => JSON.parse(JSON.stringify(value));
-    const cloneMap = (map) => new Map([...map.entries()].map(([key, value]) => [key, clone(value)]));
-    const restoreMap = (target, snapshot) => {
+    function clone(value) { return JSON.parse(JSON.stringify(value)); }
+    function cloneMap(map) {
+      return new Map([...map.entries()].map(([key, value]) => [key, clone(value)]));
+    }
+    function restoreMap(target, snapshot) {
       target.clear();
       for (const [key, value] of snapshot.entries()) target.set(key, clone(value));
-    };
+    }
     const reconcileAssignment = userPlans.get(applyResponse.payload.user_plan_id);
     const reconcilePredecessor = userPlans.get(reconcileAssignment.supersedes_user_plan_id);
     const reconcileCandidate = candidates.get(previewResponse.payload.candidate_id);
@@ -3172,6 +3186,264 @@ async function checkHyroxCandidateImmediateAdoption() {
     });
     assert.equal(reconcileMutationState(), beforeControlledBody,
       'client-controlled repair predicates are rejected before any mutation');
+
+    async function checkIncidentRebuild(restoreAcceptedBaseline = true) {
+      // Production-shaped incident replay: a partially migrated canonical assignment is
+      // still authoritative, but it cannot supply a trustworthy running-dose baseline or
+      // canonical carry source. The reviewed rebuild must replace it from owner-scoped
+      // race, activity, health, and schedule inputs without editing those source rows.
+      if (restoreAcceptedBaseline) restoreAcceptedReconcileBaseline();
+      const incidentBaseline = {
+        profile: clone(profile),
+        races: cloneMap(raceRows),
+        plans: cloneMap(trainingPlans),
+        assignments: cloneMap(userPlans),
+        candidates: cloneMap(candidates),
+        artifacts: cloneMap(planningArtifacts),
+        runs: clone(recentRuns),
+        workouts: clone(completedWorkouts),
+        lifts: clone(recentLifts),
+        health: healthRow ? clone(healthRow) : null,
+        fixedNowIso,
+      };
+      const incidentRestore = () => {
+        Object.keys(profile).forEach((key) => delete profile[key]);
+        Object.assign(profile, clone(incidentBaseline.profile));
+        restoreMap(raceRows, incidentBaseline.races);
+        restoreMap(trainingPlans, incidentBaseline.plans);
+        restoreMap(userPlans, incidentBaseline.assignments);
+        restoreMap(candidates, incidentBaseline.candidates);
+        restoreMap(planningArtifacts, incidentBaseline.artifacts);
+        recentRuns.splice(0, recentRuns.length, ...clone(incidentBaseline.runs));
+        completedWorkouts.splice(0, completedWorkouts.length, ...clone(incidentBaseline.workouts));
+        recentLifts.splice(0, recentLifts.length, ...clone(incidentBaseline.lifts));
+        healthRow = incidentBaseline.health ? clone(incidentBaseline.health) : null;
+        fixedNowIso = incidentBaseline.fixedNowIso;
+      };
+      const incidentDate = '2026-08-24';
+      fixedNowIso = '2026-08-24T18:01:00.000Z';
+      Object.assign(profile, {
+        timezone: 'America/New_York',
+        training_age_class: 'DEVELOPING',
+        weekly_miles_current: 16,
+        run_days_per_week: 4,
+        lift_days_per_week: 1,
+        preferred_workout_days: JSON.stringify(['Tue', 'Thu', 'Sat', 'Sun']),
+      });
+      raceRows.delete('army');
+      raceRows.set('hyrox', {
+        ...raceRows.get('hyrox'),
+        race_name: 'DC HYROX',
+        race_date: '2026-09-06',
+        event_local_date: '2026-09-06',
+        event_timezone: 'America/New_York',
+        location: 'Washington DC',
+        event_kind: 'hyrox',
+        event_format: 'doubles',
+        event_category: 'men',
+        status: 'upcoming',
+      });
+      recentRuns.splice(0, recentRuns.length, ...[
+        ['incident-run-1', '2026-08-03', 4], ['incident-run-2', '2026-08-06', 4],
+        ['incident-run-3', '2026-08-08', 8], ['incident-run-4', '2026-08-10', 4],
+        ['incident-run-5', '2026-08-13', 4], ['incident-run-6', '2026-08-15', 8],
+        ['incident-run-7', '2026-08-17', 4], ['incident-run-8', '2026-08-20', 4],
+        ['incident-run-9', '2026-08-22', 8],
+      ].map(([id, date, distance]) => ({
+        id,
+        user_id: ownerId,
+        date,
+        distance_miles: distance,
+        duration_seconds: distance * 600,
+        perceived_effort: 5,
+        type: 'easy',
+        health_source: 'manual',
+        created_at: `${date}T12:00:00.000Z`,
+      })));
+      completedWorkouts.splice(0, completedWorkouts.length, {
+        id: 'incident-completed-workout',
+        user_id: ownerId,
+        started_at: '2026-08-18T11:00:00.000Z',
+        ended_at: '2026-08-18T11:40:00.000Z',
+        total_seconds: 2400,
+      });
+      recentLifts.splice(0, recentLifts.length, {
+        id: 'incident-completed-lift',
+        user_id: ownerId,
+        date: '2026-08-18',
+        workout_duration_seconds: 2400,
+        created_at: '2026-08-18T11:40:00.000Z',
+      });
+      healthRow = {
+        user_id: ownerId,
+        synced_at: '2026-08-24T18:00:00.000Z',
+        sleep_hours_last_night: 4,
+        sleep_end_at: '2026-08-24T11:00:00.000Z',
+        hrv_ms: 38,
+        hrv_ms_baseline: 50,
+        hrv_recorded_at: '2026-08-24T18:00:00.000Z',
+        resting_heart_rate: 65,
+        resting_heart_rate_baseline: 60,
+        resting_heart_rate_recorded_at: '2026-08-24T18:00:00.000Z',
+      };
+
+      const invalidAssignment = currentAssignment();
+      const invalidPlanRow = trainingPlans.get(invalidAssignment.plan_id);
+      const invalidPlan = JSON.parse(invalidPlanRow.plan_data);
+      invalidPlan.canonical_workout_schema_version = 1;
+      delete invalidPlan.selected_candidate_hash;
+      delete invalidPlan.canonical_session_set_hash;
+      invalidPlan.goals = (invalidPlan.goals || []).filter((goal) => goal.raceId === 'hyrox');
+      invalidPlan.goal = invalidPlan.goals[0];
+      invalidPlan.goal_feasibilities = (invalidPlan.goal_feasibilities || [])
+        .filter((goal) => goal.race_id === 'hyrox');
+      invalidPlan.weeks = [{
+        week: 1,
+        startDate: incidentDate,
+        days: [{
+          day: 'Tue',
+          date: '2026-08-25',
+          sessions: [{
+            id: 'incident-partial-run',
+            session_id: 'incident-partial-run',
+            kind: 'run',
+            type: 'easy',
+            workout_type: 'run',
+            workout_family: 'easy_run',
+            title: 'Partially migrated run',
+            duration_min: 40,
+            distance_miles: null,
+            scheduled_local_date: '2026-08-25',
+          }],
+        }],
+      }];
+      invalidPlanRow.plan_data = JSON.stringify(invalidPlan);
+      invalidPlanRow.plan_json = invalidPlanRow.plan_data;
+      invalidAssignment.progress_json = JSON.stringify({
+        completedSessionIds: ['incident-completed-plan-session'],
+        removedSessionIds: ['incident-reviewed-removal'],
+      });
+      const invalidCandidateIds = new Set([...candidates.values()]
+        .filter((candidate) => candidate.applied_user_plan_id === invalidAssignment.id)
+        .map((candidate) => candidate.id));
+      for (const candidateId of invalidCandidateIds) candidates.delete(candidateId);
+      for (const [artifactId, artifact] of planningArtifacts.entries()) {
+        if (invalidCandidateIds.has(artifact.plan_generation_candidate_id)) planningArtifacts.delete(artifactId);
+      }
+      const foreignPlan = {
+        ...clone(invalidPlanRow),
+        id: 'incident-foreign-plan',
+        user_id: '22222222-2222-4222-8222-222222222222',
+      };
+      const foreignAssignment = {
+        ...clone(invalidAssignment),
+        id: 'incident-foreign-assignment',
+        user_id: foreignPlan.user_id,
+        plan_id: foreignPlan.id,
+        lineage_id: 'incident-foreign-lineage',
+      };
+      trainingPlans.set(foreignPlan.id, foreignPlan);
+      userPlans.set(foreignAssignment.id, foreignAssignment);
+
+      const incidentRequest = {
+        user: { id: ownerId },
+        query: { date: incidentDate },
+        headers: {
+          'x-forged-local-date': incidentDate,
+          'x-forged-timezone-offset-minutes': '240',
+        },
+        get(name) { return this.headers[String(name).toLowerCase()]; },
+      };
+      const blockedIncident = await invoke(readMyPlan, { ...incidentRequest, body: {} });
+      assert.equal(blockedIncident.statusCode, 200);
+      assert.equal(blockedIncident.payload.plan.plan_data.canonical_workout_schema_version, 1);
+      assert.equal(blockedIncident.payload.surface_manifest, undefined,
+        'a persisted partial canonical marker has no executable manifest');
+      const incidentWritesBeforeReconcile = transactionWriteCount;
+      const rejectedIncidentReconcile = await invoke(surfaceReconcile, {
+        ...incidentRequest,
+        query: {},
+        body: {},
+      });
+      assert.equal(rejectedIncidentReconcile.statusCode, 409);
+      assert.equal(transactionWriteCount, incidentWritesBeforeReconcile,
+        '0a5ccd63 reconciliation only blocks this unsupported partial assignment');
+
+      const incidentSourcesBefore = {
+        runs: clone(recentRuns),
+        workouts: clone(completedWorkouts),
+        lifts: clone(recentLifts),
+        health: clone(healthRow),
+        race: clone(raceRows.get('hyrox')),
+        progress: invalidAssignment.progress_json,
+        foreignPlan: clone(trainingPlans.get(foreignPlan.id)),
+        foreignAssignment: clone(userPlans.get(foreignAssignment.id)),
+      };
+      const incidentPreview = await invoke(preview, {
+        ...incidentRequest,
+        body: {
+          planning_date_local: incidentDate,
+          timezone_offset_minutes: 240,
+          race_ids: ['hyrox'],
+          target: {
+            trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+            runDaysPerWeek: 4,
+            liftDaysPerWeek: 1,
+            planMode: 'hyrox_build',
+            liftingEnabled: true,
+          },
+        },
+      });
+      assert.equal(incidentPreview.statusCode, 201,
+        `a reviewed rebuild must escape the invalid assignment: ${JSON.stringify(incidentPreview.payload)}`);
+      assert.equal(incidentPreview.payload.plan.plan_data.goals[0].location, 'Washington DC');
+      assert.deepEqual(incidentPreview.payload.plan.plan_data.schedulePreferences.trainingDays,
+        ['Tue', 'Thu', 'Sat', 'Sun']);
+      const incidentCandidate = candidates.get(incidentPreview.payload.candidate_id);
+      const incidentPlanningSnapshot = JSON.parse(incidentCandidate.planning_snapshot_json);
+      assert.equal(incidentPlanningSnapshot.context.recovery.readinessScore, 44);
+      const incidentAthleteStateArtifact = [...planningArtifacts.values()].find((artifact) => (
+        artifact.decision_id === incidentCandidate.decision_id
+          && artifact.artifact_kind === 'athlete_state'
+      ));
+      assert.ok(incidentAthleteStateArtifact);
+      assert.equal(
+        JSON.parse(incidentAthleteStateArtifact.payload_json).recent_normal_running.status,
+        'PROVISIONAL',
+        'the registered route derives the bounded provisional running state used by policy',
+      );
+
+      const incidentApply = await invoke(apply, {
+        ...incidentRequest,
+        params: { candidateId: incidentPreview.payload.candidate_id },
+        body: {
+          planning_date_local: incidentDate,
+          timezone_offset_minutes: 240,
+          choice: 'train_for_target',
+          candidate_hash: incidentPreview.payload.candidate_hash,
+          ...incidentPreview.payload.apply_bindings,
+        },
+      });
+      assert.equal(incidentApply.statusCode, 200, JSON.stringify(incidentApply.payload));
+      const recoveredIncident = await invoke(readMyPlan, { ...incidentRequest, body: {} });
+      assert.equal(recoveredIncident.statusCode, 200);
+      assert.equal(recoveredIncident.payload.user_plan.id, incidentApply.payload.user_plan_id);
+      assert.equal(recoveredIncident.payload.surface_manifest.status, 'accepted');
+      assert.ok(recoveredIncident.payload.surface_manifest.sessions.length > 0);
+      assert.equal(invalidAssignment.status, 'superseded');
+      assert.equal(invalidAssignment.progress_json, incidentSourcesBefore.progress,
+        'the invalid predecessor keeps its exact completed progress in lineage history');
+      assert.deepEqual(recentRuns, incidentSourcesBefore.runs);
+      assert.deepEqual(completedWorkouts, incidentSourcesBefore.workouts);
+      assert.deepEqual(recentLifts, incidentSourcesBefore.lifts);
+      assert.deepEqual(healthRow, incidentSourcesBefore.health);
+      assert.deepEqual(raceRows.get('hyrox'), incidentSourcesBefore.race);
+      assert.deepEqual(trainingPlans.get(foreignPlan.id), incidentSourcesBefore.foreignPlan);
+      assert.deepEqual(userPlans.get(foreignAssignment.id), incidentSourcesBefore.foreignAssignment);
+      incidentRestore();
+    }
+    await checkIncidentRebuild();
+
     restoreAcceptedReconcileBaseline();
     const removalBaseline = {
       profile: clone(profile),
@@ -5453,9 +5725,13 @@ checkC1ProjectionAggregationBoundary();
 checkC1BoundedCandidateSearch();
 checkExplicitEventLifecycleAndOrderedPromotion();
 
-checkRacePatchNoOpBoundary()
-  .then(checkDedicatedRouteBoundary)
-  .then(checkHyroxCandidateImmediateAdoption)
+const routeSmoke = process.env.FORGE_INCIDENT_REBUILD_ONLY === 'true'
+  ? checkHyroxCandidateImmediateAdoption()
+  : checkRacePatchNoOpBoundary()
+    .then(checkDedicatedRouteBoundary)
+    .then(checkHyroxCandidateImmediateAdoption);
+
+routeSmoke
   .then(() => console.log('DUAL RACE PLAN SMOKE OK'))
   .catch((error) => {
     console.error(error);

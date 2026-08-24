@@ -105,6 +105,7 @@ function compactDiagnostic(result) {
 function generateDiagnostics(goalTimeSeconds, options = {}) {
   const planningDate = options.planningDate || PLANNING_DATE;
   const baselineRunningM = options.baselineRunningM || BASELINE_RUNNING_M;
+  const observedLowerBoundRunningM = options.observedLowerBoundRunningM ?? baselineRunningM;
   const recentNormalStatus = options.recentNormalStatus || 'ESTABLISHED';
   const loadInputState = options.loadInputState || 'COMPLETE';
   const recentNormalConfidence = options.recentNormalConfidence
@@ -197,7 +198,7 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
   };
   const history = {
     weeklyMileageBaseline: baselineRunningM / 1609.344,
-    mileageBaseline: { observedLowerBoundWeeklyMiles: baselineRunningM / 1609.344 },
+    mileageBaseline: { observedLowerBoundWeeklyMiles: observedLowerBoundRunningM / 1609.344 },
     recentRunCount: 8,
     acuteRunLoad: {
       latestRun: { paceSecondsPerMile: 600 },
@@ -468,17 +469,43 @@ function run() {
     baselineRunningM: provisionalBaselineRunningM,
     activePlan: false,
   });
-  assert.equal(launchIncompleteLoadScenario.result.selected_candidate, null,
-    'partial load coverage cannot top up a candidate from an unverified recent-normal comparator');
-  assert.equal(launchIncompleteLoadScenario.result.candidates.every((candidate) => (
+  assertBoundedHardValidSelection(
+    launchIncompleteLoadScenario.result,
+    'partial provider coverage with a sufficient completed-run lower bound',
+  );
+  assert.ok(candidateRunningDose(
+    launchIncompleteLoadScenario.result.selected_candidate,
+  ) >= provisionalRequiredRunningM);
+  assertApplicableIdentity(
+    launchIncompleteLoadScenario,
+    'partial coverage with a sufficient observed lower-bound preview/apply binding',
+  );
+
+  const launchInsufficientObservedLoadScenario = generateDiagnostics(3600, {
+    planningDate: '2026-08-24',
+    eventFormat: 'doubles',
+    secondaryRace: true,
+    recoveryState: 'RECOVERY',
+    readinessScore: 44,
+    trainingAgeClass: 'DEVELOPING',
+    recentNormalStatus: 'PROVISIONAL',
+    recentNormalConfidence: 'LOW',
+    loadInputState: 'PARTIAL',
+    baselineRunningM: provisionalBaselineRunningM,
+    observedLowerBoundRunningM: 16000,
+    activePlan: false,
+  });
+  assert.equal(launchInsufficientObservedLoadScenario.result.selected_candidate, null,
+    'partial provider coverage cannot top up from an insufficient completed-run lower bound');
+  assert.equal(launchInsufficientObservedLoadScenario.result.candidates.every((candidate) => (
     candidate.validation.violations.some((violation) => (
       violation.reason === 'WEEKLY_RUNNING_FLOOR'
         || violation.reason === 'UNSUPPORTED_MATERIAL_RUNNING_REDUCTION'
     ))
-  )), true, 'partial coverage remains rejected by the existing hard dose validators');
+  )), true, 'insufficient observations remain rejected by the existing hard dose validators');
   assert.equal(plansRouter._test.applicableGoalBackwardPlan(
-    launchIncompleteLoadScenario.built.plan,
-    launchIncompleteLoadScenario.result,
+    launchInsufficientObservedLoadScenario.built.plan,
+    launchInsufficientObservedLoadScenario.result,
   ), null);
 
   const launchTrainingGapScenario = generateDiagnostics(3600, {

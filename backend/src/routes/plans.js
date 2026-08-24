@@ -86,6 +86,7 @@ const {
   prefixedHash,
   validateCandidateBundle,
   validateGoalBackwardApplyEnvelope,
+  validatePlanStructure,
   validateStoredGoalBackwardCandidateBindings,
 } = require('../lib/planCandidateLifecycle');
 const {
@@ -3414,6 +3415,33 @@ function goalBackwardGoalsForState(userId, state) {
   });
 }
 
+function goalBackwardActiveAppliedPlan(state, persistedPlan) {
+  if (!state?.active || !persistedPlan) return null;
+  const assignedPlan = {
+    ...persistedPlan,
+    plan_revision: Math.max(1, Number(
+      state.activePlan?.planVersion || state.active.row?.plan_version || 1
+    )),
+  };
+  // Race removal is a narrower mutation whose retained sessions must be
+  // authenticated against the existing canonical source. Preserve that source
+  // here so the removal-specific validation below continues to fail closed.
+  if (state.request?.operation === 'remove_race') return assignedPlan;
+  const declaresCanonicalPlan = Number(persistedPlan.canonical_workout_schema_version) === 1
+    || Boolean(persistedPlan.selected_candidate_hash)
+    || Boolean(persistedPlan.canonical_session_set_hash);
+  // Keep the assignment authoritative for preview/apply freshness and atomic
+  // supersession, but never let an already-persisted partial canonical payload
+  // authorize dose preservation, revision carry, or session carry-forward. New
+  // writes reject this shape at assertPersistablePlan(); rebuilds must be able
+  // to replace historical rows that predate that boundary and have no applied
+  // candidate/canonical artifact capable of authenticating carry-forward.
+  if (declaresCanonicalPlan
+    && validatePlanStructure(persistedPlan).valid !== true
+    && !state.activeCanonicalCarryForwardSource) return null;
+  return assignedPlan;
+}
+
 function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDateLocal }, dependencies = {}) {
   const clusterPolicy = built.plan?.hyroxPolicy?.partialRaceOrderCluster || null;
   const selectedClusterWeek = Number.isInteger(clusterPolicy?.selectedWeekIndex)
@@ -3545,10 +3573,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const stableActivePlan = state.request?.operation === 'remove_race'
     ? state.removalPlanSnapshot
     : (state.active ? parsePlan(state.active.row) : null);
-  const activeAppliedPlan = state.active && stableActivePlan ? {
-    ...stableActivePlan,
-    plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
-  } : null;
+  const activeAppliedPlan = goalBackwardActiveAppliedPlan(state, stableActivePlan);
   if (!assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan)) {
     const error = new Error('The active canonical plan cannot authorize removal carry-forward.');
     error.code = 'REMOVAL_CARRY_FORWARD_SOURCE_INVALID';
@@ -3627,10 +3652,18 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       throw error;
     }
     const requiredRunningM = requiredRunningDoseReceipt.required_running_m;
+    const observedLowerBoundRunningM = observedLowerBoundWeeklyMiles === null
+      ? null : Math.round(observedLowerBoundWeeklyMiles * 1609.344);
+    const incompleteLoadFloorIsSufficient = !runLoadComplete
+      && Number.isSafeInteger(observedLowerBoundRunningM)
+      && observedLowerBoundRunningM >= requiredRunningM;
     const fullWeekRunningPreservationEligible = planningDateLocal === planningWeekStartLocal
       && ['DEVELOPING', 'ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
       && ['ESTABLISHED', 'PROVISIONAL'].includes(recentNormalStatus)
-      && runLoadComplete
+      // Incomplete provider coverage cannot authorize a recent-normal estimate,
+      // but completed run rows still establish a conservative observed lower
+      // bound. Unknown or insufficient observations remain fail-closed.
+      && (runLoadComplete || incompleteLoadFloorIsSufficient)
       && ['NORMAL', 'MONITOR'].includes(safetyAction)
       && String(goals[0]?.event_kind || '').startsWith('HYROX');
     candidateMaterial = goalBackwardTopUpFullWeekRunningMaterial(
@@ -7878,6 +7911,7 @@ router._test = {
   buildConcurrentContext,
   confidenceAwareMileageBaseline,
   goalBackwardSafetyState,
+  goalBackwardActiveAppliedPlan,
   goalBackwardRemovalCarryForwardMaterial,
   canonicalCarryGoalIds,
   goalBackwardRequiredRunningDoseReceipt,
