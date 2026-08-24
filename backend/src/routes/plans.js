@@ -3629,7 +3629,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     const requiredRunningM = requiredRunningDoseReceipt.required_running_m;
     const fullWeekRunningPreservationEligible = planningDateLocal === planningWeekStartLocal
       && ['DEVELOPING', 'ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
-      && recentNormalStatus === 'ESTABLISHED'
+      && ['ESTABLISHED', 'PROVISIONAL'].includes(recentNormalStatus)
       && runLoadComplete
       && ['NORMAL', 'MONITOR'].includes(safetyAction)
       && String(goals[0]?.event_kind || '').startsWith('HYROX');

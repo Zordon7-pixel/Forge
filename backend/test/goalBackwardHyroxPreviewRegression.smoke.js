@@ -104,6 +104,13 @@ function compactDiagnostic(result) {
 
 function generateDiagnostics(goalTimeSeconds, options = {}) {
   const planningDate = options.planningDate || PLANNING_DATE;
+  const baselineRunningM = options.baselineRunningM || BASELINE_RUNNING_M;
+  const recentNormalStatus = options.recentNormalStatus || 'ESTABLISHED';
+  const loadInputState = options.loadInputState || 'COMPLETE';
+  const recentNormalConfidence = options.recentNormalConfidence
+    || (recentNormalStatus === 'PROVISIONAL' ? 'LOW' : 'HIGH');
+  const recentNormalEligibleWeekCount = recentNormalStatus === 'PROVISIONAL' ? 3
+    : recentNormalStatus === 'INSUFFICIENT' ? 2 : 4;
   const clock = acceptPlanningClock({
     planning_date_local: planningDate,
     timezone_offset_minutes: TIMEZONE_OFFSET_MINUTES,
@@ -189,20 +196,27 @@ function generateDiagnostics(goalTimeSeconds, options = {}) {
     ...(options.currentWeek || {}),
   };
   const history = {
-    weeklyMileageBaseline: 16,
-    mileageBaseline: { observedLowerBoundWeeklyMiles: 16 },
+    weeklyMileageBaseline: baselineRunningM / 1609.344,
+    mileageBaseline: { observedLowerBoundWeeklyMiles: baselineRunningM / 1609.344 },
     recentRunCount: 8,
     acuteRunLoad: {
       latestRun: { paceSecondsPerMile: 600 },
       currentWeek,
     },
     runLoadInput: {
-      load_input_state: 'COMPLETE',
-      load_input_confidence: 'HIGH',
-      recent_normal_confidence: 'HIGH',
+      load_input_state: loadInputState,
+      load_input_confidence: loadInputState === 'COMPLETE' ? 'HIGH' : 'LOW',
+      recent_normal_confidence: recentNormalConfidence,
+      recent_normal_eligible_week_count: recentNormalEligibleWeekCount,
+      recent_normal_weeks: Array.from({ length: recentNormalEligibleWeekCount }, (_, index) => ({
+        week_start_local: ['2026-07-20', '2026-07-27', '2026-08-03', '2026-08-10'][index],
+        eligible: true,
+        distance_m: baselineRunningM,
+      })),
       recent_normal: {
-        status: 'ESTABLISHED',
-        median_distance_m: BASELINE_RUNNING_M,
+        status: recentNormalStatus,
+        eligible_week_count: recentNormalEligibleWeekCount,
+        median_distance_m: baselineRunningM,
       },
       windows: [],
       unresolved_conflicts: [],
@@ -406,6 +420,89 @@ function run() {
   assert.ok(candidateRunningDose(launchDevelopingScenario.result.selected_candidate) >= (
     launchDevelopingScenario.result.required_running_dose_receipt.required_running_m
   ));
+
+  const provisionalBaselineRunningM = 26509;
+  const provisionalRequiredRunningM = 22532;
+  const launchDevelopingProvisionalScenario = generateDiagnostics(3600, {
+    planningDate: '2026-08-24',
+    eventFormat: 'doubles',
+    secondaryRace: true,
+    recoveryState: 'RECOVERY',
+    readinessScore: 44,
+    trainingAgeClass: 'DEVELOPING',
+    recentNormalStatus: 'PROVISIONAL',
+    recentNormalConfidence: 'LOW',
+    baselineRunningM: provisionalBaselineRunningM,
+  });
+  assert.equal(
+    launchDevelopingProvisionalScenario.result.decision.minimum_weekly_demand.running_m,
+    provisionalRequiredRunningM,
+    'three eligible running weeks establish the same deterministic policy floor used by validation',
+  );
+  assert.equal(
+    launchDevelopingProvisionalScenario.result.decision.recent_normal_running.status,
+    'PROVISIONAL',
+  );
+  assertBoundedHardValidSelection(
+    launchDevelopingProvisionalScenario.result,
+    'Aug 24 developing multi-goal preview with complete provisional recent-normal evidence',
+  );
+  assert.ok(candidateRunningDose(
+    launchDevelopingProvisionalScenario.result.selected_candidate,
+  ) >= provisionalRequiredRunningM);
+  assertApplicableIdentity(
+    launchDevelopingProvisionalScenario,
+    'Aug 24 complete provisional preview/apply binding',
+  );
+
+  const launchIncompleteLoadScenario = generateDiagnostics(3600, {
+    planningDate: '2026-08-24',
+    eventFormat: 'doubles',
+    secondaryRace: true,
+    recoveryState: 'RECOVERY',
+    readinessScore: 44,
+    trainingAgeClass: 'DEVELOPING',
+    recentNormalStatus: 'PROVISIONAL',
+    recentNormalConfidence: 'LOW',
+    loadInputState: 'PARTIAL',
+    baselineRunningM: provisionalBaselineRunningM,
+    activePlan: false,
+  });
+  assert.equal(launchIncompleteLoadScenario.result.selected_candidate, null,
+    'partial load coverage cannot top up a candidate from an unverified recent-normal comparator');
+  assert.equal(launchIncompleteLoadScenario.result.candidates.every((candidate) => (
+    candidate.validation.violations.some((violation) => (
+      violation.reason === 'WEEKLY_RUNNING_FLOOR'
+        || violation.reason === 'UNSUPPORTED_MATERIAL_RUNNING_REDUCTION'
+    ))
+  )), true, 'partial coverage remains rejected by the existing hard dose validators');
+  assert.equal(plansRouter._test.applicableGoalBackwardPlan(
+    launchIncompleteLoadScenario.built.plan,
+    launchIncompleteLoadScenario.result,
+  ), null);
+
+  const launchTrainingGapScenario = generateDiagnostics(3600, {
+    planningDate: '2026-08-24',
+    eventFormat: 'doubles',
+    secondaryRace: true,
+    recoveryState: 'NORMAL',
+    trainingAgeClass: 'DEVELOPING',
+    recentNormalStatus: 'TRAINING_GAP',
+    recentNormalConfidence: 'LOW',
+    baselineRunningM: provisionalBaselineRunningM,
+  });
+  assert.ok(launchTrainingGapScenario.result.candidates.length > 0);
+  assert.ok(launchTrainingGapScenario.result.selected_candidate,
+    'Aug 24 training-gap rebuild remains explicitly authorized');
+  assert.equal(launchTrainingGapScenario.result.selected_candidate.validation.valid, true);
+  assert.ok(candidateRunningDose(launchTrainingGapScenario.result.selected_candidate)
+    < launchTrainingGapScenario.result.required_running_dose_receipt.required_running_m,
+  'the scoped training-gap rebuild remains a material reduction instead of an implicit top-up');
+  assert.equal(
+    validatorResult(launchTrainingGapScenario.result.selected_candidate, 'material_dose')
+      ?.receipt?.reduction_authorization?.reason_code,
+    'TRAINING_GAP_REBUILD',
+  );
 
   assertBoundedHardValidSelection(blank, 'blank goal time');
   assertBoundedHardValidSelection(supportedTime, 'supported 60-minute goal time');
