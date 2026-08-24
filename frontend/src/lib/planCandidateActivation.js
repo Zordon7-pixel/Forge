@@ -25,9 +25,13 @@ function hashIdentity(value) {
 
 function verifyApplicablePublicSurface(planResponse = {}, candidateHash = '') {
   const plan = planResponse?.plan?.plan_data || planResponse?.plan?.plan_json || {}
+  // Keep this boundary identical to validateSurfaceManifest(): any canonical
+  // marker makes the plan fail-closed. Requiring every marker here stranded
+  // partially migrated plans in a blocked calendar without ever attempting
+  // owner-scoped reconciliation or exposing the reviewed rebuild action.
   const applicable = Number(plan?.canonical_workout_schema_version) === 1
-    && Boolean(plan?.selected_candidate_hash)
-    && Boolean(plan?.canonical_session_set_hash)
+    || Boolean(plan?.selected_candidate_hash)
+    || Boolean(plan?.canonical_session_set_hash)
   if (!applicable) return { applicable: false, confirmed: true }
 
   const manifest = planResponse?.surface_manifest

@@ -1052,7 +1052,7 @@ export default function Plan() {
                 Retry recovery
               </button>
             )}
-            {surfaceRecoveryPhase === 'review' && (
+            {!['recovering', 'retry'].includes(surfaceRecoveryPhase) && (
               <button type="button" onClick={() => navigate('/plan-catalog')} className="mt-3 min-h-11 rounded-lg px-4 py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
                 Review and rebuild plan
               </button>

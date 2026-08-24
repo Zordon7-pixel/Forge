@@ -401,6 +401,40 @@ for (const [label, after] of [
 }
 
 {
+  const partialCanonical = {
+    plan: {
+      id: 'stored-partial-canonical',
+      plan_data: {
+        selected_candidate_hash: `sha256:${'a'.repeat(64)}`,
+        weeks: [],
+      },
+    },
+    user_plan: { id: 'assignment-partial-canonical', plan_version: 1 },
+    surface_manifest: null,
+  }
+  let postCalls = 0
+  const api = {
+    async post(path, body) {
+      postCalls += 1
+      assert.equal(path, '/plans/my/surface-reconcile')
+      assert.equal(body, undefined)
+      const error = new Error('review required')
+      error.response = { status: 409, data: { error: 'This plan needs a reviewed rebuild.' } }
+      throw error
+    },
+    async get() { throw new Error('not expected') },
+  }
+  const result = await reconcileBlockedPlanSurface({
+    api,
+    planResponse: partialCanonical,
+    latch: createSurfaceReconcileLatch(),
+  })
+  assert.equal(result.phase, 'review')
+  assert.equal(postCalls, 1,
+    'any canonical marker receives owner-scoped reconciliation instead of a dead-end blocked banner')
+}
+
+{
   let postCalls = 0
   let getCalls = 0
   const latch = createSurfaceReconcileLatch()
@@ -486,6 +520,8 @@ for (const response of [active, stale]) {
   assert.match(blockerSource, /Restoring your reviewed plan/)
   assert.match(blockerSource, /Retry recovery/)
   assert.match(blockerSource, /Review and rebuild plan/)
+  assert.match(blockerSource, /!\['recovering', 'retry'\]\.includes\(surfaceRecoveryPhase\)/,
+    'a blocked idle state always exposes the reviewed rebuild action')
   assert.match(blockerSource, /navigate\('\/plan-catalog'/,
     'a nonrepairable blocker leads to the existing reviewed-plan flow')
   assert.doesNotMatch(blockerSource, /SURFACE_REVISION_MISMATCH|reason_codes|Start (?:run|lift|workout)/,
