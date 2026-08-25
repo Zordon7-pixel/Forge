@@ -619,13 +619,6 @@ function drawPhotoTemplate(ctx, run, photo, logo) {
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
   if (photo) {
     drawCoverImage(ctx, photo, 0, 0, CARD_WIDTH, CARD_HEIGHT)
-    ctx.fillStyle = 'rgba(234,179,8,0.05)'
-    ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
-    const gradient = ctx.createLinearGradient(0, CARD_HEIGHT - 720, 0, CARD_HEIGHT - 300)
-    gradient.addColorStop(0, 'rgba(7,5,3,0)')
-    gradient.addColorStop(1, 'rgba(7,5,3,0.72)')
-    ctx.fillStyle = gradient
-    ctx.fillRect(0, CARD_HEIGHT - 720, CARD_WIDTH, 420)
   } else {
     const rand = mulberry32(11)
     for (let i = 0; i < 26; i += 1) {
@@ -656,20 +649,34 @@ function drawPhotoTemplate(ctx, run, photo, logo) {
     ctx.fillText('It becomes the whole card', CARD_WIDTH / 2, 684)
     ctx.textAlign = 'left'
   }
-  drawBrand(ctx, logo)
-  ctx.fillStyle = emberGradient(ctx, 0, 0, CARD_WIDTH, 0)
-  ctx.fillRect(0, CARD_HEIGHT - 330, CARD_WIDTH, 6)
-  ctx.fillStyle = 'rgba(7,5,3,0.96)'
-  ctx.fillRect(0, CARD_HEIGHT - 324, CARD_WIDTH, 324)
+
+  const photoFadeTop = CARD_HEIGHT - 680
+  const photoFade = ctx.createLinearGradient(0, photoFadeTop, 0, CARD_HEIGHT)
+  photoFade.addColorStop(0, 'rgba(12,10,7,0)')
+  photoFade.addColorStop(0.28, 'rgba(12,10,7,0.06)')
+  photoFade.addColorStop(0.58, 'rgba(12,10,7,0.28)')
+  photoFade.addColorStop(0.82, 'rgba(12,10,7,0.58)')
+  photoFade.addColorStop(1, 'rgba(12,10,7,0.80)')
+  ctx.fillStyle = photoFade
+  ctx.fillRect(0, photoFadeTop, CARD_WIDTH, CARD_HEIGHT - photoFadeTop)
+
+  roundRect(ctx, 48, 44, 474, 104, 26, 'rgba(7,5,3,0.58)', 'rgba(255,246,220,0.18)')
+  drawBrand(ctx, logo, { x: 64, y: 62 })
+
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,0.72)'
+  ctx.shadowBlur = 18
+  ctx.shadowOffsetY = 3
   ctx.fillStyle = '#FFFFFF'
-  ctx.font = `900 54px ${CARD_FONT}`
-  ctx.fillText(titleForRun(run), 72, CARD_HEIGHT - 234)
-  drawMicro(ctx, formatDate(run.date || run.created_at), 74, CARD_HEIGHT - 192, '#8E877A')
+  ctx.font = `900 58px ${CARD_FONT}`
+  ctx.fillText(titleForRun(run), 72, CARD_HEIGHT - 330, CARD_WIDTH - 144)
+  drawMicro(ctx, formatDate(run.date || run.created_at), 74, CARD_HEIGHT - 282, 'rgba(255,246,220,0.72)')
   drawStatRow(ctx, [
     ['Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 300],
     ['Time', formatDuration(run.duration_seconds), 250],
     ['Pace', formatPace(run), 240],
-  ], 74, CARD_HEIGHT - 108, 56)
+  ], 74, CARD_HEIGHT - 176, 56, { valueSize: 50 })
+  ctx.restore()
 }
 
 function captionForRun(run) {
