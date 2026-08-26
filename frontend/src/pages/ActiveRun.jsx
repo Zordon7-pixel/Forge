@@ -10,7 +10,6 @@ import { queueRequest } from '../lib/offlineQueue'
 import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure } from '../lib/dailyExecution'
 import { calculateElevationStats } from '../utils/elevation'
 import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, resolveActivityEndTimestamp, saveActiveRunSession } from '../lib/activeRunSession'
-import { savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { resolveRunCompletion, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
 import {
@@ -25,6 +24,13 @@ import { getAuthenticatedUserId } from '../lib/auth'
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 import { buildLiveActivityStart, buildLiveActivityUpdate } from '../lib/liveActivityState'
 import LiveActivityService from '../services/LiveActivityService'
+
+/*
+ * Phase B migration note: tracked completion formerly called
+ * savePostRunCheckInDraft and persisted
+ * checkInPending: completion.requiresImmediateCheckIn in the recap handoff.
+ * Both behaviors are retired; the durable factual recap is now immediately ready.
+ */
 import {
   requestNativeRunLocation,
   requestWebRunLocation,
@@ -1165,16 +1171,10 @@ export default function ActiveRun() {
       runId,
       queued,
     })
-    savePostRunCheckInDraft({
-      runId,
-      heatDrift: heatDrift || null,
-      runQueued: queued,
-      provenance: completion.provenance,
-    })
     const handoff = saveRunCompletionHandoff({
       runId,
       queued,
-      checkInPending: completion.requiresImmediateCheckIn,
+      checkInPending: false,
       heatDrift: heatDrift || null,
       provenance: completion.provenance,
       snapshot: buildRunCompletionSnapshot(payload, savedRun, {

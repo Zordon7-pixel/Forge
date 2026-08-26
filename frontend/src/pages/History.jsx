@@ -8,7 +8,6 @@ import api from '../lib/api'
 import EditRunModal from '../components/EditRunModal'
 import EditLiftModal from '../components/EditLiftModal'
 import MissedWorkoutModal from '../components/MissedWorkoutModal'
-import PostRunCheckIn from '../components/PostRunCheckIn'
 import RunDetailModal from '../components/RunDetailModal'
 import WorkoutDetailModal from '../components/WorkoutDetailModal'
 import LoadingRunner from '../components/LoadingRunner'
@@ -132,7 +131,6 @@ export default function History() {
   const [editingRun, setEditingRun] = useState(null)
   const [editingLift, setEditingLift] = useState(null)
   const [selectedRun, setSelectedRun] = useState(null)
-  const [showRunCheckIn, setShowRunCheckIn] = useState(false)
   const [selectedWorkout, setSelectedWorkout] = useState(null)
   const [showMissedModal, setShowMissedModal] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
@@ -147,7 +145,6 @@ export default function History() {
 
   const openRunDetail = useCallback(async (run) => {
     if (!run?.id) return
-    setShowRunCheckIn(false)
     setSelectedRun(run)
     try {
       const response = await api.get(`/runs/${encodeURIComponent(run.id)}`)
@@ -647,32 +644,13 @@ export default function History() {
           run={selectedRun}
           hrZones={hrZones}
           hrProfile={hrProfile}
-          onClose={() => {
-            setShowRunCheckIn(false)
-            setSelectedRun(null)
-          }}
-          onAddCheckIn={() => setShowRunCheckIn(true)}
+          onClose={() => setSelectedRun(null)}
           onDelete={() => {
             const run = selectedRun
-            setShowRunCheckIn(false)
             setSelectedRun(null)
             requestDelete('run', run)
           }}
           onFeedbackGenerated={(id, fb) => setRuns(prev => prev.map(r => (r.id === id ? { ...r, ai_feedback: fb } : r)))}
-        />
-      )}
-
-      {selectedRun && showRunCheckIn && (
-        <PostRunCheckIn
-          runId={selectedRun.id}
-          onCancel={() => setShowRunCheckIn(false)}
-          onDone={(result) => {
-            if (result?.run) {
-              setSelectedRun((current) => current?.id === result.run.id ? { ...current, ...result.run } : current)
-              updateRunInState(result.run)
-            }
-            setShowRunCheckIn(false)
-          }}
         />
       )}
 

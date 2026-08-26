@@ -4,7 +4,6 @@ import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import RunDetailModal from '../components/RunDetailModal'
 import RunMediaManager from '../components/RunMediaManager'
-import PostRunCheckIn from '../components/PostRunCheckIn'
 import ForgedStrike from '../components/ForgedStrike'
 import { getAuthenticatedUserId } from '../lib/auth'
 import { clearPostRunCheckInDraft } from '../lib/postRunCheckInDraft'
@@ -17,6 +16,12 @@ import {
   updateRunCompletionHandoff,
 } from '../lib/runCompletionHandoff'
 
+/*
+ * Phase B migration note: PostRunCheckIn formerly owned a separate
+ * data-testid="post-run-checkin-viewport" with presentation="page" here.
+ * The recap now ignores that retired handoff state and renders factual data directly.
+ */
+
 export default function RunRecap() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -28,9 +33,19 @@ export default function RunRecap() {
   const [loading, setLoading] = useState(() => !handoff?.snapshot)
   const [error, setError] = useState('')
   const [retryVersion, setRetryVersion] = useState(0)
-  const [showCheckIn, setShowCheckIn] = useState(() => Boolean(handoff?.checkInPending))
-  const [activeTab, setActiveTab] = useState(() => handoff?.checkInPending ? 'recovery' : 'summary')
+  const [activeTab, setActiveTab] = useState('summary')
   const [showStrike, setShowStrike] = useState(true)
+
+  useEffect(() => {
+    clearPostRunCheckInDraft()
+    const restoredHandoff = loadRunCompletionHandoff(id, ownerUserId)
+    if (!restoredHandoff) return
+    const refreshed = updateRunCompletionHandoff(id, ownerUserId, {
+      checkInPending: false,
+      phase: restoredHandoff.queued ? RUN_COMPLETION_PHASE.QUEUED : RUN_COMPLETION_PHASE.RECAP_READY,
+    })
+    if (refreshed) setHandoff(refreshed)
+  }, [id, ownerUserId])
 
   useEffect(() => {
     const refreshHandoff = () => {
@@ -61,9 +76,8 @@ export default function RunRecap() {
         setHrProfile(zonesResponse.data?.profile || null)
         const refreshed = updateRunCompletionHandoff(id, ownerUserId, {
           queued: false,
-          phase: handoff?.checkInPending
-            ? RUN_COMPLETION_PHASE.CHECKIN_PENDING
-            : RUN_COMPLETION_PHASE.RECAP_READY,
+          checkInPending: false,
+          phase: RUN_COMPLETION_PHASE.RECAP_READY,
           snapshot: savedRun,
         })
         if (refreshed) setHandoff(refreshed)
@@ -132,49 +146,6 @@ export default function RunRecap() {
 
   const queued = Boolean(handoff?.queued)
 
-  if (showCheckIn) {
-    return (
-      <div
-        className="fixed inset-0 z-40 overflow-y-auto overscroll-contain"
-        data-testid="post-run-checkin-viewport"
-        style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}
-      >
-        <main
-          className="mx-auto min-h-full w-full max-w-md px-4"
-          style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.25rem)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}
-        >
-          <header className="mb-5">
-            <p className="t-micro" style={{ color: 'var(--accent)' }}>Run saved</p>
-            <h1 className="mt-2 text-3xl font-black">How did that run feel?</h1>
-            <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
-              Your answers tune recovery and the next few training days. The run is already saved.
-            </p>
-            {queued && (
-              <p className="mt-3 rounded-xl p-3 text-sm font-semibold" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
-                Saved offline. Your check-in will queue with the run.
-              </p>
-            )}
-          </header>
-          <PostRunCheckIn
-            presentation="page"
-            runId={run.id}
-            heatDrift={handoff?.heatDrift}
-            onCancel={() => {
-              clearPostRunCheckInDraft(run.id)
-              finishHandoff()
-              setShowCheckIn(false)
-            }}
-            onDone={(result) => {
-              if (result?.run) setRun(result.run)
-              finishHandoff()
-              setShowCheckIn(false)
-            }}
-          />
-        </main>
-      </div>
-    )
-  }
-
   return (
     <div
       className="fixed inset-0 z-40 overflow-y-auto overscroll-contain"
@@ -192,10 +163,16 @@ export default function RunRecap() {
           />
         )}
 
-        {(queued || error || handoff?.planProgressNotice) && (
+        {(queued || error || handoff?.planProgressNotice || handoff?.heatDrift?.drifted) && (
           <div className="mb-3 space-y-2" aria-live="polite">
             {queued && <p className="rounded-xl p-3 text-sm font-semibold" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>Saved offline. This factual device recap remains available while the run waits to sync.</p>}
             {handoff?.planProgressNotice && <p className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>{handoff.planProgressNotice}</p>}
+            {handoff?.heatDrift?.drifted && (
+              <section className="rounded-xl p-3 text-sm" aria-label="Heat drift" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                <p className="font-bold" style={{ color: 'var(--accent)' }}>{handoff.heatDrift.label || 'Heat drift detected'}</p>
+                {handoff.heatDrift.reason && <p className="mt-1" style={{ color: 'var(--text-muted)' }}>{handoff.heatDrift.reason}</p>}
+              </section>
+            )}
             {error && (
               <div className="rounded-xl p-3 text-sm" role="status" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
                 <p>{error}</p>
@@ -255,10 +232,6 @@ export default function RunRecap() {
             hrZones={hrZones}
             hrProfile={hrProfile}
             onClose={() => leaveRecap('/history')}
-            onAddCheckIn={() => {
-              setActiveTab('recovery')
-              setShowCheckIn(true)
-            }}
             onFeedbackGenerated={(runId, feedback) => {
               if (runId === run.id) setRun((current) => ({ ...current, ai_feedback: feedback }))
             }}

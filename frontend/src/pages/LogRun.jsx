@@ -6,18 +6,18 @@ import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import track from '../lib/track'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
-import PostRunCheckIn from '../components/PostRunCheckIn'
 import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
 import AiGuidanceNote from '../components/AiGuidanceNote'
 import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
 import { authorizeWorkoutStart, fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO, unplannedRunRouteState, makeupRunRouteState, workoutStartAccessFromState, workoutStartDecision, workoutStartErrorMessage } from '../lib/dailyExecution'
-import { loadPostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { lockDocumentScroll } from '../lib/documentScrollLock'
 import { activeRunReturnTargetFromLocation, withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveRunCompletion, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
+import { buildRunCompletionSnapshot, saveRunCompletionHandoff } from '../lib/runCompletionHandoff'
+import { getAuthenticatedUserId } from '../lib/auth'
 import { normalizeTravelWorkoutOverride } from '../lib/travelTraining'
 import { calendarMonthView, motivationalRunName, normalizePlanSchedule, shiftCalendarMonth } from '../lib/planRunCalendar'
 
@@ -443,15 +443,11 @@ export default function LogRun() {
   const [notes, setNotes] = useState('')
   const [effort, setEffort] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [pendingPostRunDraft] = useState(() => loadPostRunCheckInDraft())
+  const [runCompletionOwnerId] = useState(() => getAuthenticatedUserId())
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
   const [fieldWarnings, setFieldWarnings] = useState({})
-  const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false)
-  const [showPostCheckIn, setShowPostCheckIn] = useState(Boolean(pendingPostRunDraft))
-  const [savedRunId, setSavedRunId] = useState(pendingPostRunDraft?.runId || null)
-  const [savedHeatDrift, setSavedHeatDrift] = useState(pendingPostRunDraft?.heatDrift || null)
   const [recentRuns, setRecentRuns] = useState([])
   const [runsLoading, setRunsLoading] = useState(false)
 
@@ -486,8 +482,6 @@ export default function LogRun() {
   const [editingNotes, setEditingNotes] = useState('')
   const [activeShoes, setActiveShoes] = useState([])
   const [selectedShoeId, setSelectedShoeId] = useState('')
-  const [checkingCheckIn, setCheckingCheckIn] = useState(true)
-  const [checkInCompleted, setCheckInCompleted] = useState(false)
   const distanceErrorRef = useRef(null)
   const durationErrorRef = useRef(null)
   const runIntentDialogRef = useRef(null)
@@ -574,23 +568,6 @@ export default function LogRun() {
       .catch((err) => {
         console.error('[LogRun] route planner availability check failed:', err.message)
       })
-    return () => { active = false }
-  }, [])
-
-  useEffect(() => {
-    let active = true
-    const check = async () => {
-      try {
-        const { data } = await api.get('/checkin/today', { params: { date: todayISO() } })
-        const completed = Boolean(data?.completed ?? data?.id ?? data)
-        if (active) setCheckInCompleted(completed)
-      } catch {
-        if (active) setCheckInCompleted(false)
-      } finally {
-        if (active) setCheckingCheckIn(false)
-      }
-    }
-    check()
     return () => { active = false }
   }, [])
 
@@ -857,9 +834,19 @@ export default function LogRun() {
           runId: clientRunId,
           queued: true,
         })
-        setShowPostCheckIn(completion.requiresImmediateCheckIn)
-        setFeedback(`Saved offline — will sync when connected.${progressNotice}`)
-        setShowRecoveryPrompt(true)
+        const handoff = saveRunCompletionHandoff({
+          runId: clientRunId,
+          queued: true,
+          checkInPending: false,
+          provenance: completion.provenance,
+          planProgressNotice: progressNotice.trim() || null,
+          snapshot: buildRunCompletionSnapshot(runPayload, { id: clientRunId }),
+        }, runCompletionOwnerId)
+        if (!handoff) {
+          setError('Run saved offline, but its device recap could not be prepared. The queued run will still sync when connected.')
+          return
+        }
+        navigate(completion.destination, { replace: true })
         return
       }
 
@@ -898,6 +885,15 @@ export default function LogRun() {
         provenance: RUN_PROVENANCE.MANUAL,
         runId,
       })
+      saveRunCompletionHandoff({
+        runId,
+        queued: false,
+        checkInPending: false,
+        provenance: completion.provenance,
+        heatDrift: runRes.data?.heatDrift || null,
+        planProgressNotice: planProgressNotice || null,
+        snapshot: buildRunCompletionSnapshot(runPayload, runRes.data?.run, { id: runId }),
+      }, runCompletionOwnerId)
       if (completion.destination) {
         navigate(completion.destination, { replace: true })
       }
@@ -919,9 +915,19 @@ export default function LogRun() {
           runId: clientRunId,
           queued: true,
         })
-        setShowPostCheckIn(completion.requiresImmediateCheckIn)
-        setFeedback(`Saved offline — will sync when connected.${progressNotice}`)
-        setShowRecoveryPrompt(true)
+        const handoff = saveRunCompletionHandoff({
+          runId: clientRunId,
+          queued: true,
+          checkInPending: false,
+          provenance: completion.provenance,
+          planProgressNotice: progressNotice.trim() || null,
+          snapshot: buildRunCompletionSnapshot(runPayload, { id: clientRunId }),
+        }, runCompletionOwnerId)
+        if (!handoff) {
+          setError('Run saved offline, but its device recap could not be prepared. The queued run will still sync when connected.')
+          return
+        }
+        navigate(completion.destination, { replace: true })
         setError('')
         return
       }
@@ -1149,20 +1155,6 @@ export default function LogRun() {
     setSelectedRun(null)
   }
 
-  if (checkingCheckIn) {
-    return <div className="p-4" style={{ color: 'var(--text-muted)' }}>Checking today's check-in...</div>
-  }
-
-  if (!checkInCompleted && !smartStartPrefill) {
-    return (
-      <div className="rounded-2xl p-6" style={{ background: 'var(--bg-card)' }}>
-        <h2 className="text-xl font-black mb-2" style={{ color: 'var(--text-primary)' }}>Morning Check-In Required</h2>
-        <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>Complete your morning check-in before starting a run.</p>
-        <button onClick={() => navigate('/checkin')} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Go to Check-In</button>
-      </div>
-    )
-  }
-
   if (warmUpState === 'warmup') {
     const returnParams = new URLSearchParams(location.search)
     returnParams.delete('warmup')
@@ -1178,7 +1170,7 @@ export default function LogRun() {
           travelWorkoutOverride,
         }
       : rawIncomingState
-    return <Navigate to="/warmup" replace state={{ ...incomingState, warmupReturnTo: returnTo, checkinCompleted: true, checkinDate: todayISO() }} />
+    return <Navigate to="/warmup" replace state={{ ...incomingState, warmupReturnTo: returnTo }} />
   }
 
   return (
@@ -1555,29 +1547,6 @@ export default function LogRun() {
         </div>
       )}
 
-      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={(result) => {
-        setShowPostCheckIn(false)
-        if (!result?.queued) {
-          navigate(`/run/recap/${savedRunId}`, { replace: true })
-          return
-        }
-        const checkInNotice = 'Post-run check-in queued and will sync with your run.'
-        setFeedback((current) => [checkInNotice, current].filter(Boolean).join(' '))
-        setShowRecoveryPrompt(true)
-      }} />}
-
-      {showRecoveryPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
-          <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-            <h3 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>Great run! Time to recover.</h3>
-            <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Post-run recovery uses static holds. Hold each stretch for the full duration to target the muscles you just used.</p>
-            <div className="mt-4 flex gap-2">
-              <button onClick={() => { setShowRecoveryPrompt(false); navigate('/stretches/session?type=post') }} className="flex-1 rounded-xl px-4 py-2 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>Start Recovery</button>
-              <button onClick={() => setShowRecoveryPrompt(false)} className="flex-1 rounded-xl px-4 py-2" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>Skip</button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   )
 }

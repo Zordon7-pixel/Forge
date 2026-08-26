@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core'
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { isLoggedIn, getUser } from './lib/auth'
 import { clearToken, rememberPostAuthRedirect } from './lib/tokenStore'
+import { clearPostRunCheckInDraft } from './lib/postRunCheckInDraft'
 import track from './lib/track'
 import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
@@ -56,7 +57,6 @@ const WorkoutSummary = lazyWithRetry(() => import('./pages/WorkoutSummary'))
 const ActiveRun = lazyWithRetry(() => import('./pages/ActiveRun'))
 const RunRecap = lazyWithRetry(() => import('./pages/RunRecap'))
 const TreadmillRun = lazyWithRetry(() => import('./pages/TreadmillRun'))
-const DailyCheckIn = lazyWithRetry(() => import('./pages/DailyCheckIn'))
 const Stretches = lazyWithRetry(() => import('./pages/Stretches'))
 const StretchSession = lazyWithRetry(() => import('./pages/StretchSession'))
 const PRWall = lazyWithRetry(() => import('./pages/PRWall'))
@@ -556,6 +556,10 @@ function ServiceWorkerUpdateNotice() {
 }
 
 export default function App() {
+  useEffect(() => {
+    clearPostRunCheckInDraft()
+  }, [])
+
   return (
     <BrowserRouter>
       <ServiceWorkerUpdateNotice />
@@ -627,14 +631,6 @@ export default function App() {
           element={
             <PrivateRoute>
               <TreadmillRun />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/checkin"
-          element={
-            <PrivateRoute>
-              <DailyCheckIn />
             </PrivateRoute>
           }
         />

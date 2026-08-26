@@ -16,6 +16,7 @@ import { buildPlannedSessionSnapshot } from '../src/lib/runProvenance.js'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '../..')
 const read = (relativePath) => readFileSync(resolve(root, relativePath), 'utf8')
+const executableSource = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 
 let passed = 0
 let failed = 0
@@ -78,13 +79,20 @@ const restored = loadActiveRunSession('phase-0-user', sessionStorage, now + 1000
 check(restored?.routeCoords?.[0]?.[3] === now - 5000, 'GPS sample timestamp survives session persistence')
 
 console.log('\n== client ordering ==')
+const app = read('frontend/src/App.jsx')
 const activeRun = read('frontend/src/pages/ActiveRun.jsx')
 const logRun = read('frontend/src/pages/LogRun.jsx')
+const recap = read('frontend/src/pages/RunRecap.jsx')
+const history = read('frontend/src/pages/History.jsx')
 const checkIn = read('frontend/src/components/PostRunCheckIn.jsx')
-check(!activeRun.includes('/ai/session-feedback'), 'GPS run does not analyze before check-in')
-check(!logRun.includes('/coach/feedback/'), 'manual run does not poll for analysis before check-in')
-check(checkIn.includes("/check-in") && checkIn.includes('queueRequest'), 'check-in uses the durable endpoint and offline queue')
-check(checkIn.includes('Your answers are still here'), 'failed check-in keeps the user answers visible')
+check(!activeRun.includes('/ai/session-feedback'), 'GPS run does not analyze before opening its factual recap')
+check(!logRun.includes('/coach/feedback/'), 'manual run does not poll for analysis before opening its factual recap')
+check(!executableSource(activeRun).includes('savePostRunCheckInDraft'), 'tracked completion creates no post-run questionnaire draft')
+check(!logRun.includes('loadPostRunCheckInDraft') && !logRun.includes('<PostRunCheckIn'), 'manual completion ignores legacy drafts and mounts no questionnaire')
+check(!recap.includes('<PostRunCheckIn') && !history.includes('<PostRunCheckIn'), 'recap and History mount no post-run questionnaire')
+check(app.includes('clearPostRunCheckInDraft()') && recap.includes('clearPostRunCheckInDraft()'), 'app and recap boundaries clear retired draft state')
+check(recap.includes('handoff?.heatDrift') && recap.includes('Heat drift'), 'heat drift remains passive recap truth')
+check(checkIn.includes("/check-in") && checkIn.includes('queueRequest'), 'unreachable legacy check-in stays intact for backend/offline compatibility')
 
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed) process.exit(1)
