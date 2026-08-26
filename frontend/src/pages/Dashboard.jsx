@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router'
 import { CalendarClock, ChevronRight, Dumbbell, X } from 'lucide-react'
@@ -6,7 +6,12 @@ import { useTranslation } from 'react-i18next'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
-import { ensureCommittedAdaptationDecision, isAdaptationDecisionRetryRequired } from '../lib/adaptationDecision'
+import {
+  adaptationProposalDecisionIdentity,
+  ensureCommittedAdaptationDecision,
+  isAdaptationDecisionRetryRequired,
+  isSettledAdaptationProposal,
+} from '../lib/adaptationDecision'
 import track from '../lib/track'
 import LoadingRunner from '../components/LoadingRunner'
 import Skeleton from '../components/Skeleton'
@@ -315,6 +320,7 @@ export default function Dashboard() {
   const [hybridReconciliationDecision, setHybridReconciliationDecision] = useState(null)
   const [hybridReconciliationError, setHybridReconciliationError] = useState('')
   const [hybridReconciliationNotice, setHybridReconciliationNotice] = useState('')
+  const settledAdaptationDecisionIdentities = useRef(new Set())
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
@@ -430,7 +436,11 @@ export default function Dashboard() {
         setWeeklyRecap(recapRes.data || null)
         setNextRecommendation(recommendationRes.data || null)
         setAgeGradedPerformance(ageGradedRes.data || null)
-        const nextProposal = adaptationRes.data?.proposal || null
+        const fetchedProposal = adaptationRes.data?.proposal || null
+        const nextProposal = isSettledAdaptationProposal(
+          fetchedProposal,
+          settledAdaptationDecisionIdentities.current,
+        ) ? null : fetchedProposal
         const pendingGap = trainingGapEvidence(nextProposal)
           && nextProposal?.status === 'proposal'
           && (nextProposal?.changes || []).length > 0
@@ -852,6 +862,8 @@ export default function Dashboard() {
         } : {}),
       })
       ensureCommittedAdaptationDecision(response, decision)
+      const settledIdentity = adaptationProposalDecisionIdentity(trainingGapProposal)
+      if (settledIdentity) settledAdaptationDecisionIdentities.current.add(settledIdentity)
       setTrainingGapProposal(null)
       setTrainingGapNotice(decision === 'accept' ? 'Next seven days adjusted for a safer return.' : 'Calendar left as planned.')
       await fetchDashboardData()

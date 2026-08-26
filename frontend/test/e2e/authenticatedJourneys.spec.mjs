@@ -485,7 +485,9 @@ test('Signature UI opens canonical readiness on demand and keeps Coach\'s Daily 
   await expect(rationaleToggle).toHaveAttribute('aria-expanded', 'true')
   await expect(coachsLog.getByText('Build aerobic control before the next quality session.', { exact: true })).toBeVisible()
   await assertSignatureResponsive(page, testInfo.project.use.viewport)
-  expect(requestsFor(apiState, 'GET', '/api/plans/today')).toHaveLength(1)
+  const planRequests = requestsFor(apiState, 'GET', '/api/plans/today')
+  expect(planRequests).toHaveLength(2)
+  expect(planRequests.map((request) => request.search.date).sort()).toEqual([today, tomorrow].sort())
 
   expect(fixture).toEqual(fixtureBeforePresentation)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
@@ -565,7 +567,7 @@ test('Signature UI truthfully covers loading, locked, unavailable, and error sta
   assertCleanApiAndRuntime(apiState, unexpectedRuntimeErrors)
 })
 
-test('planned rest day does not prompt for a readiness check-in', async ({ page }) => {
+test('planned rest day remains accepted while an optional extra run starts without a routine check-in', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
@@ -575,7 +577,7 @@ test('planned rest day does not prompt for a readiness check-in', async ({ page 
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: "Review today's plan" })).toBeVisible()
-  await expect(page.getByText('Rest and recovery are scheduled today. No check-in is needed unless you choose to train.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Rest and recovery are scheduled today. Recovery is the accepted plan unless you choose to train.', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'View rest day', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start extra run', exact: true })).toBeVisible()
@@ -590,13 +592,17 @@ test('planned rest day does not prompt for a readiness check-in', async ({ page 
 
   await page.getByRole('button', { name: 'Start extra run', exact: true }).click()
   await expect(page).toHaveURL(/\/log-run\?tab=manual&intent=rest-day/)
-  await expect(page.getByRole('heading', { name: 'Morning Check-In Required' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Go to Check-In' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Why are you running?' })).toBeVisible()
+  await expect(page.getByText('No missed run is available in this training week.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Go to Check-In' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Start extra run', exact: true }).click()
+  await expect(page).toHaveURL(/\/warmup$/)
+  await expect(page.getByText('Morning Check-In Required', { exact: true })).toHaveCount(0)
 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
-test('unscheduled rest guidance asks for a current check-in without claiming scheduled rest', async ({ page }) => {
+test('unscheduled rest guidance stays passive and never claims scheduled rest', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
@@ -617,14 +623,17 @@ test('unscheduled rest guidance asks for a current check-in without claiming sch
   })
 
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Check in', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
   await expect(page.getByText('An extra run is already logged today. Recovery is still the guidance for today.', { exact: true })).toBeVisible()
   await expect(page.getByText(/Rest and recovery are scheduled today/)).toHaveCount(0)
+  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
+  await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
-test('check-in recovery remains guidance and never offers the rest-labelled run', async ({ page }) => {
+test('legacy check-in recovery remains guidance and never offers the rest-labelled run', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
@@ -656,13 +665,14 @@ test('check-in recovery remains guidance and never offers the rest-labelled run'
   await expect(page.getByRole('button', { name: 'Start/log', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Map route', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Warm-up', exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Edit check-in', exact: true }).last()).toBeVisible()
+  await expect(page.getByRole('button', { name: /^(Check in|Edit check-in)$/i })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Recovery is the plan today' })).toHaveCount(0)
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
-test('legacy empty check-in rest stays truthful and closes every workout handoff', async ({ page }) => {
+test('legacy empty rest payload stays truthful and closes every workout handoff', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
@@ -684,7 +694,7 @@ test('legacy empty check-in rest stays truthful and closes every workout handoff
   await page.goto('/')
   await expect(page.getByRole('heading', { name: "Recovery is today's guidance", exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Edit check-in', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^(Check in|Edit check-in)$/i })).toHaveCount(0)
   await expect(page.getByText("Today's plan is not ready", { exact: true })).toHaveCount(0)
   await expect(page.getByText('No workout is available yet. Review your check-in or open the calendar.', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'View recovery', exact: true }).click()
@@ -704,6 +714,7 @@ test('legacy empty check-in rest stays truthful and closes every workout handoff
     /^Done$/i,
     /Remove workout/i,
     /Runner strength — no equipment/i,
+    /^(Check in|Edit check-in)$/i,
   ]
   for (const name of forbiddenButtons) {
     await expect(page.getByRole('button', { name })).toHaveCount(0)
@@ -720,6 +731,7 @@ test('legacy empty check-in rest stays truthful and closes every workout handoff
     await expect(page.getByRole('button', { name })).toHaveCount(0)
   }
   await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
   expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
@@ -740,7 +752,7 @@ test('legacy flat all-removed day stays removed without check-in recovery attrib
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'No workout remains today', exact: true })).toBeVisible()
   await expect(page.getByText("The scheduled workout was removed from today's plan.", { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Edit check-in', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^(Check in|Edit check-in)$/i })).toHaveCount(0)
   await expect(page.getByText("Recovery is today's guidance", { exact: false })).toHaveCount(0)
   await expect(page.getByText('Your check-in changed today to recovery', { exact: false })).toHaveCount(0)
   await expect(page.getByText('Changed to rest from daily check-in', { exact: false })).toHaveCount(0)
@@ -759,6 +771,7 @@ test('legacy flat all-removed day stays removed without check-in recovery attrib
     /^Done$/i,
     /Remove workout/i,
     /Runner strength — no equipment/i,
+    /^(Check in|Edit check-in)$/i,
   ]
   for (const name of forbiddenButtons) {
     await expect(page.getByRole('button', { name })).toHaveCount(0)
@@ -772,89 +785,38 @@ test('legacy flat all-removed day stays removed without check-in recovery attrib
     await expect(page.getByRole('button', { name })).toHaveCount(0)
   }
   await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
   expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
-test('submitting a safety check-in cannot turn its rest-labelled run slot into Prepare to Run', async ({ page }) => {
+test('passive safety authority cannot turn a rest-labelled run slot into an executable run', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
-  let checkinSaved = false
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
-      ['GET /api/checkin/today', () => checkinSaved ? {
-        feeling: 3,
-        legs: 3,
-        drive: 3,
-        sleep_hours: null,
-        life_flags: ['sick'],
-      } : null],
-      ['POST /api/checkin/preview', {
-        headline: 'Recovery is the safer call today.',
-        drivers: [{ label: 'Not well', detail: 'Training is paused while you are not feeling well.' }],
-      }],
-      ['POST /api/checkin', (request) => {
-        checkinSaved = true
-        expect(request.body).toMatchObject({ legs: 3, drive: 3, time_available: 45, life_flags: ['sick'] })
-        return {
-          headline: 'Recovery is the safer call today.',
-          adjustment: 'Rest day from today\'s check-in.',
-          drivers: [{ label: 'Not well', detail: 'Training is paused while you are not feeling well.' }],
-        }
-      }],
       ['GET /api/plans/today', checkinRecoveryExecution()],
     ]),
   })
 
-  await page.goto('/checkin')
-  await page.getByRole('button', { name: 'Fresh', exact: true }).click()
-  await page.getByRole('button', { name: 'Fired up', exact: true }).click()
-  await page.getByRole('button', { name: '45 min', exact: true }).click()
-  await page.getByRole('button', { name: 'Not well', exact: true }).click()
-  await page.getByRole('button', { name: 'Done', exact: true }).click()
-
-  await expect(page.getByRole('button', { name: 'View Today', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Prepare to Run', exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Start Warm-Up', exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Skip, start the run', exact: true })).toHaveCount(0)
-
-  await page.getByRole('button', { name: 'View Today', exact: true }).click()
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: "Review today's plan", exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^(Check in|Prepare to Run|Start Warm-Up|Skip, start the run)$/i })).toHaveCount(0)
   await page.getByRole('button', { name: 'View recovery', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Edit check-in', exact: true }).last()).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start run', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Map route', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /^(Check in|Edit check-in)$/i })).toHaveCount(0)
 
-  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(1)
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
 test('lift-only safety rest cannot expose strength or workout starts even with a stale lift payload', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
-  let checkinSaved = false
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
-      ['GET /api/checkin/today', () => checkinSaved ? {
-        feeling: 3,
-        legs: 3,
-        drive: 3,
-        sleep_hours: null,
-        life_flags: ['sick'],
-      } : null],
-      ['POST /api/checkin/preview', {
-        headline: 'Recovery is the safer call today.',
-        drivers: [{ label: 'Not well', detail: 'Training is paused while you are not feeling well.' }],
-      }],
-      ['POST /api/checkin', () => {
-        checkinSaved = true
-        return {
-          action: 'rest',
-          headline: 'Recovery is the safer call today.',
-          adjustment: "Rest day from today's check-in.",
-          drivers: [{ label: 'Not well', detail: 'Training is paused while you are not feeling well.' }],
-        }
-      }],
       // Deliberately retain a stale strength session while the canonical day
       // directive says rest. The phone must fail closed independently.
       ['GET /api/plans/today', liftOnlyCheckinRecoveryExecution({ patchSession: false })],
@@ -862,22 +824,14 @@ test('lift-only safety rest cannot expose strength or workout starts even with a
     ]),
   })
 
-  await page.goto('/checkin')
-  await page.getByRole('button', { name: 'Fresh', exact: true }).click()
-  await page.getByRole('button', { name: 'Fired up', exact: true }).click()
-  await page.getByRole('button', { name: '45 min', exact: true }).click()
-  await page.getByRole('button', { name: 'Not well', exact: true }).click()
-  await page.getByRole('button', { name: 'Done', exact: true }).click()
-
-  await expect(page.getByRole('button', { name: 'View Today', exact: true })).toBeVisible()
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Review Strength Workout', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'View Today', exact: true }).click()
-  await expect(page).not.toHaveURL(/\/log-lift/)
-  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'View recovery', exact: true }).click()
+  await expect(page).not.toHaveURL(/\/log-lift/)
   await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
 
@@ -898,7 +852,7 @@ test('lift-only safety rest cannot expose strength or workout starts even with a
   expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
 
-  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(1)
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
@@ -1095,15 +1049,12 @@ test('onboarding persists the athlete profile and generates one plan', async ({ 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
-test('check-in hands off through warm-up, run save, recovery check-in, and recap reload', async ({ page }) => {
+test('accepted plan hands off through warm-up and run save into a durable passive recap', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   let savedRun = null
-  let checkInPayload = null
   const apiState = await installAuthenticatedApi(page, {
     user: { sex: 'female' },
     responses: new Map([
-      ['POST /api/checkin/preview', { headline: 'Easy aerobic work fits today.', drivers: [{ label: 'Fresh legs' }] }],
-      ['POST /api/checkin', { headline: 'Easy aerobic work fits today.', adjustment: 'Easy aerobic work fits today.', drivers: [{ label: 'Fresh legs', detail: 'No recovery limiter detected.' }] }],
       ['GET /api/plans/today', executionWith()],
       ['POST /api/runs', (request) => {
         savedRun = {
@@ -1116,11 +1067,6 @@ test('check-in hands off through warm-up, run save, recovery check-in, and recap
       }],
       ['PUT /api/plans/my/progress', { ok: true }],
       ['GET /api/runs/journey-run', () => ({ run: savedRun })],
-      ['PATCH /api/runs/journey-run/check-in', (request) => {
-        checkInPayload = request.body
-        savedRun = { ...savedRun, ...request.body }
-        return { run: savedRun, feedbackStatus: 'pending' }
-      }],
     ]),
   })
 
@@ -1137,14 +1083,8 @@ test('check-in hands off through warm-up, run save, recovery check-in, and recap
     })
   })
 
-  await page.goto('/checkin')
-  await page.getByRole('button', { name: 'Fresh', exact: true }).click()
-  await page.getByRole('button', { name: 'Fired up', exact: true }).click()
-  await page.getByRole('button', { name: '45 min', exact: true }).click()
-  await page.getByRole('button', { name: 'All good', exact: true }).click()
-  await page.getByRole('button', { name: 'Done', exact: true }).click()
-  await page.getByRole('button', { name: 'Prepare to Run', exact: true }).click()
-  await page.getByRole('button', { name: 'Start Warm-Up', exact: true }).click()
+  await page.goto('/log-run')
+  await page.getByRole('button', { name: 'Start Scheduled Run', exact: true }).click()
   await expect(page).toHaveURL(/\/warmup$/)
 
   for (let step = 0; step < 4; step += 1) await page.getByRole('button', { name: 'Next', exact: true }).click()
@@ -1161,24 +1101,20 @@ test('check-in hands off through warm-up, run save, recovery check-in, and recap
   await page.getByRole('button', { name: 'Save Run', exact: true }).click()
 
   await expect(page).toHaveURL(/\/run\/recap\/journey-run$/)
-  await expect(page.getByRole('heading', { name: 'How did that run feel?' })).toBeVisible()
-  await page.getByRole('radio', { name: '5', exact: true }).click()
-  await page.getByRole('radio', { name: 'None - felt great', exact: true }).click()
-  await page.getByRole('radio', { name: 'Energized', exact: true }).click()
-  await page.getByTestId('post-run-checkin-page-submit').click()
-  await page.getByRole('status', { name: 'Run forged' }).click()
   await expect(page.getByRole('tab', { name: 'Summary' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'How did that run feel?' })).toHaveCount(0)
+  await expect(page.getByTestId('post-run-checkin-page-submit')).toHaveCount(0)
 
   expect(savedRun.plan_session_id).toBe(plannedRun.id)
-  expect(checkInPayload).toEqual({ perceived_effort: 5, pain_level: 'none', post_energy: 'high' })
   expect(requestsFor(apiState, 'POST', '/api/runs')).toHaveLength(1)
   expect(requestsFor(apiState, 'PUT', '/api/plans/my/progress')).toHaveLength(1)
-  expect(requestsFor(apiState, 'PATCH', '/api/runs/journey-run/check-in')).toHaveLength(1)
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
+  expect(requestsFor(apiState, 'PATCH', '/api/runs/journey-run/check-in')).toHaveLength(0)
 
   await page.reload()
   await expect(page.getByRole('tab', { name: 'Summary' })).toBeVisible()
   expect(requestsFor(apiState, 'POST', '/api/runs')).toHaveLength(1)
-  expect(requestsFor(apiState, 'PATCH', '/api/runs/journey-run/check-in')).toHaveLength(1)
+  expect(requestsFor(apiState, 'PATCH', '/api/runs/journey-run/check-in')).toHaveLength(0)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
@@ -1366,15 +1302,22 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
     }],
   }
   let keepAttempts = 0
+  let keepCommitted = false
+  let staleReadsAfterCommit = 0
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
       ['GET /api/plans/my', { plan, user_plan: { current_week: 1, started_at: today, progress: { completedSessionIds: [] } } }],
-      ['GET /api/plans/adaptation/current', { proposal }],
+      ['GET /api/plans/adaptation/current', () => {
+        // Exercise the real post-decision refetch with a stale pending snapshot.
+        // A committed exact proposal must remain settled on the client.
+        if (keepCommitted) staleReadsAfterCommit += 1
+        return { proposal }
+      }],
       ['POST /api/plans/adaptation/journey-adaptation/keep', () => {
         keepAttempts += 1
-        return keepAttempts === 1
-          ? qaResponse({ queued: true, offline: true }, 202)
-          : { ok: true, status: 'kept' }
+        if (keepAttempts === 1) return qaResponse({ queued: true, offline: true }, 202)
+        keepCommitted = true
+        return { ok: true, status: 'kept' }
       }],
     ]),
   })
@@ -1385,10 +1328,17 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
   await page.getByRole('button', { name: 'Keep original', exact: true }).click()
   await expect(page.getByText(/Forge did not save this choice immediately/)).toBeVisible()
   await expect(page.getByText('One transparent change', { exact: true })).toBeVisible()
+  const staleRefetch = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return response.request().method() === 'GET' && url.pathname === '/api/plans/adaptation/current'
+  })
   await page.getByRole('button', { name: 'Keep original', exact: true }).click()
+  await staleRefetch
   await expect(page.getByText('One transparent change', { exact: true })).toHaveCount(0)
   const keepRequests = requestsFor(apiState, 'POST', '/api/plans/adaptation/journey-adaptation/keep')
   expect(keepRequests).toHaveLength(2)
+  expect(requestsFor(apiState, 'GET', '/api/plans/adaptation/current')).toHaveLength(2)
+  expect(staleReadsAfterCommit).toBe(1)
   expect(keepRequests[1].body).toEqual({
     proposal_revision: proposal.revision,
     proposal_plan_version: proposal.planVersion,

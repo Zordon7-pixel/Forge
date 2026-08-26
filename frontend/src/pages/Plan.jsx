@@ -2,7 +2,12 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
-import { ensureCommittedAdaptationDecision, isAdaptationDecisionRetryRequired } from '../lib/adaptationDecision'
+import {
+  adaptationProposalDecisionIdentity,
+  ensureCommittedAdaptationDecision,
+  isAdaptationDecisionRetryRequired,
+  isSettledAdaptationProposal,
+} from '../lib/adaptationDecision'
 import { previewAndApplyPlan } from '../lib/planCandidates'
 import { createSurfaceReconcileLatch, reconcileBlockedPlanSurface } from '../lib/planCandidateActivation'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
@@ -165,6 +170,7 @@ export default function Plan() {
   const currentPlanCalendarRef = useRef(null)
   const focusedPlanDateRef = useRef(null)
   const surfaceReconcileLatch = useRef(createSurfaceReconcileLatch())
+  const settledAdaptationDecisionIdentities = useRef(new Set())
 
   const applyPlanResponse = (response = {}) => {
     const nextPlan = response?.plan || null
@@ -268,7 +274,11 @@ export default function Plan() {
         setAdaptationLoading(true)
         try {
           const adaptationRes = await api.get('/plans/adaptation/current', { params: { date: todayISO() } })
-          loadedAdaptationProposal = adaptationRes.data?.proposal || null
+          const nextAdaptationProposal = adaptationRes.data?.proposal || null
+          loadedAdaptationProposal = isSettledAdaptationProposal(
+            nextAdaptationProposal,
+            settledAdaptationDecisionIdentities.current,
+          ) ? null : nextAdaptationProposal
           adaptationLoaded = true
           setAdaptationProposal(loadedAdaptationProposal)
         } catch (err) {
@@ -710,6 +720,8 @@ export default function Plan() {
         } : {}),
       })
       ensureCommittedAdaptationDecision(response, decision)
+      const settledIdentity = adaptationProposalDecisionIdentity(adaptationProposal)
+      if (settledIdentity) settledAdaptationDecisionIdentities.current.add(settledIdentity)
       setAdaptationProposal(null)
       setAdaptationOpen(false)
       setAdaptationDecision(decision === 'accept' ? 'accepted' : 'kept')

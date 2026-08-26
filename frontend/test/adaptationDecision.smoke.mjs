@@ -2,9 +2,34 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {
   ADAPTATION_DECISION_RETRY_CODE,
+  adaptationProposalDecisionIdentity,
   ensureCommittedAdaptationDecision,
   isAdaptationDecisionRetryRequired,
+  isSettledAdaptationProposal,
 } from '../src/lib/adaptationDecision.js'
+
+const settledProposal = {
+  id: 'adaptation-1',
+  revision: 'revision-1',
+  planVersion: 'plan-version-1',
+}
+const settledIdentities = new Set([adaptationProposalDecisionIdentity(settledProposal)])
+assert.equal(isSettledAdaptationProposal({ ...settledProposal, decisionStatus: 'pending' }, settledIdentities), true)
+assert.equal(isSettledAdaptationProposal({ ...settledProposal, revision: 'revision-2' }, settledIdentities), false)
+assert.equal(isSettledAdaptationProposal({ ...settledProposal, planVersion: 'plan-version-2' }, settledIdentities), false)
+assert.equal(isSettledAdaptationProposal({ ...settledProposal, id: 'adaptation-2' }, settledIdentities), false)
+
+const previewProposal = {
+  id: null,
+  decisionStatus: 'preview',
+  previewFingerprint: 'preview-fingerprint-1',
+  revision: 'preview-revision-1',
+  planVersion: 'plan-version-1',
+  planningDate: '2026-08-26',
+}
+const previewIdentities = new Set([adaptationProposalDecisionIdentity(previewProposal)])
+assert.equal(isSettledAdaptationProposal({ ...previewProposal }, previewIdentities), true)
+assert.equal(isSettledAdaptationProposal({ ...previewProposal, previewFingerprint: 'preview-fingerprint-2' }, previewIdentities), false)
 
 for (const surface of ['Plan', 'Today', 'Run plan impact']) {
   assert.throws(
