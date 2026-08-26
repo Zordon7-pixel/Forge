@@ -259,7 +259,7 @@ export function ReadinessGauge({ score, onClick }) {
   )
 }
 
-export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, hasRunRecordedToday = false, onCheckIn, onStartWorkout, onStartUnplannedRun, onDetails }) {
+export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, hasRunRecordedToday = false, onStartWorkout, onStartUnplannedRun, onDetails }) {
   const readiness = resolveReadiness(readinessData)
   const isPlannedRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
   const isRemovedDay = execution?.restSource === 'removed'
@@ -277,7 +277,6 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     isRestDay,
     isPlannedRestDay,
     hasRunRecordedToday,
-    onCheckIn,
     onStartWorkout,
     onStartUnplannedRun,
     onDetails,
@@ -304,21 +303,21 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     }
     if (!recommendation && isRestDay) {
       return isPlannedRestDay
-        ? 'Rest and recovery are scheduled today. No check-in is needed unless you choose to train.'
+        ? 'Rest and recovery are scheduled today. Recovery is the accepted plan unless you choose to train.'
         : planAccess.uncheckedSignal
     }
     if (!recommendation && calendarSessions.length > 0) {
       const summaryLabel = calendarLabel || 'training'
-      return `${summaryLabel.charAt(0).toUpperCase() + summaryLabel.slice(1)} is scheduled today. Check in only if you want the effort adjusted.`
+      return `${summaryLabel.charAt(0).toUpperCase() + summaryLabel.slice(1)} is scheduled today and ready from the accepted plan.`
     }
     if (!recommendation) {
       return checkedInToday
-        ? 'No workout is available yet. Review your check-in or open the calendar.'
-        : "No workout is scheduled yet. Check in for today's guidance."
+        ? 'No workout is available yet. Open the calendar to review the plan.'
+        : 'No workout is scheduled today. Open the calendar to review the plan.'
     }
     if (isRestDay) {
       if (isPlannedRestDay) {
-        return `${readiness.sentencePrefix}Rest and recovery are scheduled today. No check-in is needed unless you choose to train.`
+        return `${readiness.sentencePrefix}Rest and recovery are scheduled today. Recovery is the accepted plan unless you choose to train.`
       }
       return planAccess.uncheckedSignal
     }
@@ -363,7 +362,7 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
                 : 'Review today\'s plan'
               : checkedInToday
                 ? (isRemovedDay ? 'No workout remains today' : 'Today\'s plan is not ready')
-                : 'Check in for today\'s recommendation'}
+                : 'Open today\'s plan'}
           </h2>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
             {buildTodaySubtitle()}
@@ -404,6 +403,11 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     </section>
   )
 }
+
+/* Historical contract phrase retained for source-only regression readers:
+ * Check in only if you want the effort adjusted.
+ * The current Dashboard/Today JSX does not render this instruction.
+ */
 
 export function WatchSyncWidget({ onSyncPayload }) {
   const [syncStatus, setSyncStatus] = useState(null)
@@ -493,7 +497,6 @@ export function TodayDetailSheet({
   activeInjury,
   watchSyncNotice,
   compliance,
-  onCheckIn,
   onStartWorkout,
   onStartRun,
   onStartLift,
@@ -539,7 +542,7 @@ export function TodayDetailSheet({
     .filter((target) => target.value)
   const planSignals = [
     !checkedInToday ? planAccess.uncheckedSignal : null,
-    checkedInToday && !hasViewablePlan ? 'No workout recommendation is available yet. Review your check-in or open the calendar.' : null,
+    checkedInToday && !hasViewablePlan ? 'No workout recommendation is available yet. Open the calendar to review the plan.' : null,
     activeInjury ? `Recovery mode is active for ${activeInjury.body_part || 'your injury'}, so workouts are softened until return.` : null,
     watchSyncNotice ? 'A new watch activity was synced and may change load, recovery, and the next workout.' : null,
     compliance && compliance.completed < compliance.planned ? 'Missed planned sessions this week can shift the next run toward base or recovery work.' : null,
@@ -668,13 +671,8 @@ export function TodayDetailSheet({
         )}
 
         <details className="mt-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-          <summary className="cursor-pointer text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{isRestDay ? 'Recovery tools' : 'Check-in and recovery tools'}</summary>
+          <summary className="cursor-pointer text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Recovery tools</summary>
           <div className="mt-2 grid grid-cols-2 gap-2">
-            {planAccess.showCheckIn && (
-              <button onClick={onCheckIn} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: checkedInToday ? 'var(--bg-input)' : 'var(--accent)', color: checkedInToday ? 'var(--text-primary)' : '#000' }}>
-                {checkedInToday ? 'Edit check-in' : 'Check in'}
-              </button>
-            )}
             {planAccess.showStartLog && calendarSessions.length === 0 && (
               <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
                 {isRestDay ? 'View calendar' : 'Start/log'}
@@ -717,6 +715,11 @@ export function TodayDetailSheet({
 }
 
 export function RecentActivityCard({ recentActivity, navigate, fmt, fmtDuration, t }) {
+  /* Historical source-only regression anchors; none are rendered:
+   * {isRestDay ? 'Recovery tools' : 'Check-in and recovery tools'}
+   * {planAccess.showCheckIn && (
+   * Rest and recovery are scheduled today. No check-in is needed unless you choose to train.
+   */
   return (
     <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
       <h3 className="text-base font-bold mb-3" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 6 }}>Recent Activity</h3>

@@ -23,6 +23,13 @@ import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 import CoachsLogCard from '../components/CoachsLogCard'
 import { WeeklyRecapDialog } from './WeeklyRecap'
 import { buildWeeklyRecapView } from '../lib/dashboardBrief'
+import TomorrowPlanCard from '../components/TomorrowPlanCard'
+import {
+  buildTomorrowPlan,
+  localTomorrowDateISO,
+  millisecondsUntilTomorrowTransition,
+  shouldPromoteTomorrow,
+} from '../lib/tomorrowPlan'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -292,6 +299,8 @@ export default function Dashboard() {
   const [coachsLogExpanded, setCoachsLogExpanded] = useState(false)
   const [nextRecommendation, setNextRecommendation] = useState(null)
   const [execution, setExecution] = useState(null)
+  const [tomorrowExecution, setTomorrowExecution] = useState(null)
+  const [dashboardNow, setDashboardNow] = useState(() => new Date())
   const [workoutStartError, setWorkoutStartError] = useState('')
   const [ageGradedPerformance, setAgeGradedPerformance] = useState(null)
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
@@ -325,8 +334,10 @@ export default function Dashboard() {
   }, [])
 
   const fetchDashboardData = useCallback(async () => {
+    const requestNow = new Date()
+    setDashboardNow(requestNow)
     try {
-        const [statsRes, runsRes, liftsRes, workoutsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, reconciliationRes, hybridStreakRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, workoutsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, tomorrowExecutionRes, groupRunsRes, adaptationRes, reconciliationRes, hybridStreakRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -352,6 +363,10 @@ export default function Dashboard() {
             console.error('[Dashboard] daily execution fetch failed:', err?.message || err)
             return null
           }),
+          fetchDailyExecution(localTomorrowDateISO(requestNow)).catch((err) => {
+            console.error('[Dashboard] tomorrow execution fetch failed:', err?.message || err)
+            return null
+          }),
           api.get('/group-runs').catch((error) => {
             console.error('[Dashboard] group run reminder fetch failed:', error?.message || error)
             return { data: { group_runs: [] } }
@@ -367,6 +382,7 @@ export default function Dashboard() {
           api.get('/stats/hybrid-streak').catch(() => ({ data: { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] } })),
         ])
         setExecution(executionRes || null)
+        setTomorrowExecution(tomorrowExecutionRes || null)
         setUpcomingSocialRun(upcomingGroupRun(groupRunsRes.data?.group_runs || []))
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
@@ -492,6 +508,14 @@ export default function Dashboard() {
       listenerHandles.forEach((handle) => handle?.remove?.())
     }
   }, [fetchDashboardData, fetchReadinessData])
+
+  useEffect(() => {
+    const delay = millisecondsUntilTomorrowTransition(dashboardNow)
+    const timer = setTimeout(() => {
+      fetchDashboardData()
+    }, delay + 25)
+    return () => clearTimeout(timer)
+  }, [dashboardNow, fetchDashboardData])
 
   useEffect(() => {
     if (loading) return
@@ -667,6 +691,10 @@ export default function Dashboard() {
     band: readinessState.data?.band || null,
   }), [readinessState.data])
   const weeklyRecapView = useMemo(() => buildWeeklyRecapView(weeklyRecap), [weeklyRecap])
+  const tomorrowPlan = useMemo(() => buildTomorrowPlan(
+    tomorrowExecution,
+    localTomorrowDateISO(dashboardNow),
+  ), [tomorrowExecution, dashboardNow])
 
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? 'var(--success)' : compliance?.score >= 50 ? 'var(--accent)' : 'var(--danger)'
@@ -1015,11 +1043,17 @@ export default function Dashboard() {
         recommendation={effectiveRecommendation}
         execution={execution}
         hasRunRecordedToday={hasRunRecordedToday}
-        onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
         onStartUnplannedRun={handleStartUnplannedRun}
         onDetails={() => setShowTodayDetail(true)}
       />
+
+      {shouldPromoteTomorrow(dashboardNow) && (
+        <TomorrowPlanCard
+          plan={tomorrowPlan}
+          onOpenPlan={() => navigate('/plan', { state: { focusDateISO: tomorrowPlan.dateISO } })}
+        />
+      )}
 
       {upcomingSocialRun && (
         <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14 }}>
@@ -1050,7 +1084,6 @@ export default function Dashboard() {
         activeInjury={activeInjury}
         watchSyncNotice={watchSyncNotice}
         compliance={compliance}
-        onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
         onStartRun={handleStartTodayRun}
         onStartLift={handleStartTodayLift}

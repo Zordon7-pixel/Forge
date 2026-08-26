@@ -235,6 +235,99 @@ export function resolveTodayPlanAccess({
   const isRestRecommendation = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const hasViewablePlan = hasRecommendation || sessionCount > 0 || isRestDay
 
+  // Dashboard/Today no longer supplies a check-in action. Keep the optional
+  // callback contract below for older non-surface callers while the current
+  // accepted-plan path opens or starts training immediately.
+  if (typeof onCheckIn !== 'function') {
+    if (!hasViewablePlan) {
+      return {
+        hasViewablePlan: false,
+        primaryAction: onDetails || onStartWorkout,
+        primaryLabel: 'View plan',
+        secondaryAction: null,
+        secondaryLabel: null,
+        trainAction: onDetails || onStartWorkout,
+        uncheckedSignal: 'No accepted workout is scheduled today. Open the calendar to review the plan.',
+        readinessFallback: 'No accepted workout is available today. Open the calendar to review the plan.',
+        showCheckIn: false,
+        showStartLog: false,
+      }
+    }
+
+    if (isRestRecommendation && !isPlannedRestDay) {
+      return {
+        hasViewablePlan: true,
+        primaryAction: onDetails,
+        primaryLabel: 'View recovery',
+        secondaryAction: null,
+        secondaryLabel: null,
+        trainAction: onDetails,
+        uncheckedSignal: 'Recovery is today\'s current safety guidance.',
+        readinessFallback: 'Recovery is today\'s current safety guidance. Review the reason before choosing any training.',
+        showCheckIn: false,
+        showStartLog: false,
+      }
+    }
+
+    if (isRestDay) {
+      return {
+        hasViewablePlan: true,
+        primaryAction: onDetails || onStartWorkout,
+        primaryLabel: 'View rest day',
+        secondaryAction: hasRunRecordedToday ? null : onStartUnplannedRun,
+        secondaryLabel: hasRunRecordedToday ? null : 'Start extra run',
+        trainAction: onDetails || onStartWorkout,
+        uncheckedSignal: 'Rest is scheduled today. Recovery is the accepted plan unless you choose to train.',
+        readinessFallback: 'Rest is scheduled from the accepted plan. Feeling fresh keeps the rest day in place.',
+        showCheckIn: false,
+        showStartLog: false,
+      }
+    }
+
+    if (allScheduledComplete) {
+      return {
+        hasViewablePlan: true,
+        primaryAction: onDetails,
+        primaryLabel: 'Review completed workout',
+        secondaryAction: null,
+        secondaryLabel: null,
+        trainAction: onDetails,
+        uncheckedSignal: "Today's scheduled workout is complete.",
+        readinessFallback: "Today's scheduled workout is complete.",
+        showCheckIn: false,
+        showStartLog: false,
+      }
+    }
+
+    if (allScheduledBlocked) {
+      return {
+        hasViewablePlan: true,
+        primaryAction: onDetails,
+        primaryLabel: 'View workout',
+        secondaryAction: null,
+        secondaryLabel: null,
+        trainAction: onDetails,
+        uncheckedSignal: 'Today\'s workout is visible but cannot start under the current safety plan.',
+        readinessFallback: 'The current safety plan blocks this workout. Review the details for the scoped reason.',
+        showCheckIn: false,
+        showStartLog: false,
+      }
+    }
+
+    return {
+      hasViewablePlan: true,
+      primaryAction: onStartWorkout,
+      primaryLabel: 'Start workout',
+      secondaryAction: onDetails,
+      secondaryLabel: onDetails ? 'Details' : null,
+      trainAction: onStartWorkout,
+      uncheckedSignal: "Today's accepted workout is ready to start.",
+      readinessFallback: 'The accepted scheduled workout is ready. Synced readiness adds context without gating training.',
+      showCheckIn: false,
+      showStartLog: hasRecommendation && sessionCount === 0,
+    }
+  }
+
   if (!hasViewablePlan) {
     return {
       hasViewablePlan: false,

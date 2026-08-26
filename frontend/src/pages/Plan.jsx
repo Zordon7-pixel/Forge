@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useLocation, useNavigate } from 'react-router'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
 import { ensureCommittedAdaptationDecision, isAdaptationDecisionRetryRequired } from '../lib/adaptationDecision'
@@ -115,6 +115,7 @@ function RacePlanReconciliationCard({ candidate, busy, error, onAdd, onReview })
 
 export default function Plan() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { isPro, loading: proLoading } = useProContext()
   const [myPlan, setMyPlan] = useState(null)
   const [myUserPlan, setMyUserPlan] = useState(null)
@@ -162,6 +163,7 @@ export default function Plan() {
   const [todayExecutionStatus, setTodayExecutionStatus] = useState('loading')
   const weekSyncInFlight = useRef(null)
   const currentPlanCalendarRef = useRef(null)
+  const focusedPlanDateRef = useRef(null)
   const surfaceReconcileLatch = useRef(createSurfaceReconcileLatch())
 
   const applyPlanResponse = (response = {}) => {
@@ -425,6 +427,19 @@ export default function Plan() {
     } : model
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [model, activeRace, races])
+
+  useEffect(() => {
+    const focusDateISO = String(location.state?.focusDateISO || '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(focusDateISO)
+      || !calendarModel
+      || focusedPlanDateRef.current === focusDateISO) return
+    const focusedDay = calendarModel.findDayByDate(focusDateISO)
+    if (!focusedDay) return
+    focusedPlanDateRef.current = focusDateISO
+    if (Number.isInteger(focusedDay.weekIndex)) setSelectedWeekIndex(focusedDay.weekIndex)
+    setSelectedDayISO(focusDateISO)
+  }, [calendarModel, location.state])
+
   const weeklyBrief = useMemo(() => buildWeeklyRunBrief({
     week: calendarModel?.getWeek(weekIndex),
     completedSet,
