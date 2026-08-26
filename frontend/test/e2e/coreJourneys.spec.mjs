@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { installAuthenticatedApi } from './support/mockApi.mjs'
 
 const ROUTES = [
-  { path: '/', label: 'Today', heading: "Check in for today's recommendation" },
+  { path: '/', label: 'Today', heading: "Open today's plan" },
   { path: '/run', label: 'Train', heading: 'Train' },
   { path: '/log-lift', label: 'Lift', heading: 'Start Workout' },
   { path: '/health', label: 'Body', heading: 'Body' },

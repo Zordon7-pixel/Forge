@@ -28,6 +28,7 @@ check(!logRun.includes("api.get('/checkin/today'") && !logRun.includes('Morning 
 check(!warmup.includes("api.get('/checkin/today'") && !warmup.includes('Morning Check-In Required') && !warmup.includes("navigate('/checkin')"), 'warm-up never waits on or links to a morning check-in')
 check(!logRun.includes('checkinCompleted: true') && !logRun.includes('checkinDate: todayISO()'), 'Log Run injects no retired check-in proof into warm-up state')
 check(!warmup.includes('checkinConfirmed') && !warmup.includes('checkInCompleted'), 'warm-up has no retired questionnaire state gate')
+check(!warmup.includes('Your check-in is saved') && warmup.includes('Your warm-up is complete. Start the run when you are ready.'), 'warm-up completion describes the completed preparation instead of a retired questionnaire')
 
 console.log('\n== start safety and execution handoffs ==')
 check(logRun.includes('authorizeWorkoutStart') && logRun.includes('workoutStartDecision'), 'existing workout-start safety authorization is preserved')

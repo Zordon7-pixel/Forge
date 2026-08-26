@@ -419,7 +419,7 @@ function WarmupDone({ onStartRun }) {
           <p className="t-micro" style={{ color: 'var(--accent)', margin: 0 }}>Ready</p>
           <h1 style={{ color: 'var(--text-primary)', fontSize: 30, lineHeight: 1.1, fontWeight: 950, margin: '8px 0' }}>Warm-up complete</h1>
           <p style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.5, margin: '0 auto 18px', maxWidth: 340 }}>
-            Your check-in is saved. Start today's scheduled run when you are ready.
+            Your warm-up is complete. Start the run when you are ready.
           </p>
           <button
             type="button"
