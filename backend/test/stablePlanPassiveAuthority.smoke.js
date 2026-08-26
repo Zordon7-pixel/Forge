@@ -739,15 +739,16 @@ async function adaptationDecisionsFailClosed() {
   const source = fs.readFileSync(routePath, 'utf8');
   const currentStart = source.indexOf("router.get('/adaptation/current'");
   const runStart = source.indexOf("router.get('/adaptation/run/:runId'");
+  const previewDecisionStart = source.indexOf("router.post('/adaptation/preview/:decision'");
   const acceptStart = source.indexOf("router.post('/adaptation/:proposalId/accept'");
-  assert(currentStart >= 0 && runStart > currentStart && acceptStart > runStart);
+  assert(currentStart >= 0 && runStart > currentStart && previewDecisionStart > runStart && acceptStart > previewDecisionStart);
   assert.doesNotMatch(
     source.slice(currentStart, runStart),
     /persistAdaptationProposal|(?:INSERT|UPDATE|DELETE)\s+/i,
     'reading the current proposal cannot mutate persistence',
   );
   assert.doesNotMatch(
-    source.slice(runStart, acceptStart),
+    source.slice(runStart, previewDecisionStart),
     /persistRunAdaptation|(?:INSERT|UPDATE|DELETE)\s+/i,
     'reading run impact cannot mutate persistence',
   );
@@ -916,6 +917,335 @@ async function adaptationDecisionsFailClosed() {
   }
 }
 
+async function previewAdaptationDecisionsAreAtomic() {
+  const ownerId = 'phase-c-preview-owner';
+  const wrongOwnerId = 'phase-c-preview-wrong-owner';
+  const planningDate = todayISO();
+  const originalPlan = {
+    schemaVersion: 2,
+    weeks: [{ week: 1, days: [{
+      date: planningDate,
+      day: 'Tue',
+      sessions: [{ id: 'preview-run', kind: 'run', type: 'quality', title: 'Original run', distance_miles: 5 }],
+    }] }],
+  };
+  const replacementPlan = JSON.parse(JSON.stringify(originalPlan));
+  replacementPlan.weeks[0].days[0].sessions[0].title = 'Server recomputed replacement';
+  const activeRow = {
+    user_plan_id: 'preview-assignment',
+    plan_id: 'preview-plan',
+    id: 'preview-plan',
+    user_id: ownerId,
+    status: 'active',
+    current_week: 1,
+    started_at: planningDate,
+    effective_from: planningDate,
+    progress_json: '{}',
+    plan_data: JSON.stringify(originalPlan),
+    plan_version: 1,
+  };
+  const proposalRows = [];
+  const writes = [];
+
+  const ownerMatches = (params) => params.map(String).includes(ownerId);
+  const findProposal = (sql, params) => {
+    if (!ownerMatches(params)) return null;
+    if (/WHERE id=\? AND user_id=\?/.test(sql)) {
+      return proposalRows.find((row) => params.map(String).includes(String(row.id))) || null;
+    }
+    if (/episode_key=\?/.test(sql)) {
+      return proposalRows.find((row) => row.episode_key && params.map(String).includes(String(row.episode_key))) || null;
+    }
+    if (/trigger_run_id=\?/.test(sql)) {
+      return proposalRows.find((row) => row.trigger_run_id && params.map(String).includes(String(row.trigger_run_id))) || null;
+    }
+    return proposalRows.find((row) => (
+      params.map(String).includes(String(row.planning_date))
+      && params.map(String).includes(String(row.plan_version))
+    )) || null;
+  };
+  const readOne = async (sql, params = []) => {
+    if (/FROM plan_adjustment_proposals/.test(sql)) return findProposal(sql, params);
+    if (/FROM user_plans up/.test(sql) && /JOIN training_plans tp/.test(sql)) {
+      return ownerMatches(params) ? { ...activeRow } : null;
+    }
+    if (/FROM user_plans up/.test(sql)) return ownerMatches(params) ? { ...activeRow } : null;
+    if (/FROM training_plans tp\s+JOIN user_plans owner_up/.test(sql)) {
+      return ownerMatches(params) ? { ...activeRow } : null;
+    }
+    if (/FROM training_plans WHERE user_id/.test(sql)) return null;
+    if (/FROM user_plans\s+WHERE user_id=\? AND status='cleared'/.test(sql)) return null;
+    if (/FROM health_sync/.test(sql)) return null;
+    if (/FROM users WHERE id=\?/.test(sql)) {
+      return ownerMatches(params) ? { schedule_type: 'adaptive', missed_workout_pref: 'adjust_week' } : null;
+    }
+    if (/SELECT MAX\(date\) AS last_date FROM (?:runs|lifts)/.test(sql)) return { last_date: null };
+    if (/SELECT MAX\(substr\(started_at/.test(sql)) return { last_date: null };
+    if (/SELECT id FROM runs/.test(sql)) return null;
+    throw new Error(`unexpected preview adaptation read: ${sql}`);
+  };
+  const readAll = async (sql, params = []) => {
+    assert.equal(ownerMatches(params), true, `preview adaptation collection read stays owner-scoped: ${sql}`);
+    if (/FROM plan_adjustment_proposals/.test(sql)) {
+      return proposalRows.filter((row) => row.user_id === ownerId && ['accepted', 'kept'].includes(row.status));
+    }
+    if (/FROM (?:injury_logs|runs|lifts|workout_sessions)/.test(sql)) return [];
+    throw new Error(`unexpected preview adaptation collection read: ${sql}`);
+  };
+  const runWrite = async (sql, params = []) => {
+    writes.push({ sql, params: [...params] });
+    if (/^\s*INSERT INTO plan_adjustment_proposals/.test(sql)) {
+      assert.equal(params[1], ownerId, 'new preview proposal is bound to the authenticated owner');
+      proposalRows.push({
+        id: params[0],
+        user_id: params[1],
+        episode_key: params[2],
+        user_plan_id: params[3],
+        plan_id: params[4],
+        plan_version: params[5],
+        window_start: params[6],
+        window_end: params[7],
+        planning_date: params[8],
+        status: params[9],
+        safety_exception: params[10],
+        original_json: params[11],
+        proposed_json: params[12],
+        changes_json: params[13],
+        evidence_json: params[14],
+        reason: params[15],
+        trigger_run_id: null,
+      });
+      return { changes: 1 };
+    }
+    assert.match(sql, /user_id=\?|user_id = \?/i, 'every preview decision mutation stays owner-scoped');
+    if (/UPDATE training_plans SET plan_data/.test(sql)) activeRow.plan_data = params[0];
+    if (/UPDATE user_plans SET progress_json/.test(sql)) activeRow.progress_json = params[0];
+    if (/UPDATE user_plans SET plan_version=plan_version\+1/.test(sql)) activeRow.plan_version += 1;
+    if (/plan_adjustment_proposals\s+SET status=\?/.test(sql) && params[0] === 'accepted') {
+      const row = proposalRows.find((candidate) => candidate.id === params[1] && candidate.user_id === params[2]);
+      if (!row || row.status !== 'pending') return { changes: 0 };
+      row.status = 'accepted';
+    }
+    if (/plan_adjustment_proposals\s+SET status=\?/.test(sql) && params[0] === 'kept') {
+      const row = proposalRows.find((candidate) => candidate.id === params[1] && candidate.user_id === params[2]);
+      if (!row || row.status !== 'pending') return { changes: 0 };
+      row.status = 'kept';
+    }
+    return { changes: 1 };
+  };
+  const tx = { get: readOne, all: readAll, run: runWrite };
+
+  const dbPath = require.resolve('../src/db');
+  const routePath = require.resolve('../src/routes/plans');
+  const enginePath = require.resolve('../src/lib/adaptationEngine');
+  const originalDb = require.cache[dbPath];
+  const originalRoute = require.cache[routePath];
+  const originalEngine = require.cache[enginePath];
+  const realEngine = require(enginePath);
+  require.cache[dbPath] = {
+    id: dbPath,
+    filename: dbPath,
+    loaded: true,
+    exports: {
+      dbGet: readOne,
+      dbAll: readAll,
+      dbRun: runWrite,
+      withUserMutation: async (_userId, callback) => callback(tx),
+      withPlanningInputMutation: async (userId, callback) => {
+        const database = userId === ownerId ? tx : {
+          ...tx,
+          get: async () => null,
+          all: async () => [],
+          run: async () => { throw new Error('wrong owner cannot write'); },
+        };
+        const result = await callback(database);
+        return typeof result?.marker === 'symbol' ? result.value : result;
+      },
+    },
+    children: [],
+    paths: [],
+  };
+  require.cache[enginePath] = {
+    id: enginePath,
+    filename: enginePath,
+    loaded: true,
+    exports: {
+      ...realEngine,
+      buildAdaptationProposal({ planningDateISO, planVersion }) {
+        return {
+          status: 'proposal',
+          planningDate: planningDateISO,
+          windowStart: planningDateISO,
+          windowEnd: planningDateISO,
+          planVersion,
+          safetyException: false,
+          evidence: [{ signal: 'run_gap', source: 'completion', objective: true, detail: 'Passive gap evidence' }],
+          changes: [{
+            sessionId: 'preview-run',
+            date: planningDateISO,
+            before: originalPlan.weeks[0].days[0].sessions[0],
+            after: replacementPlan.weeks[0].days[0].sessions[0],
+            summary: 'Server-owned replacement',
+          }],
+          proposedPlan: JSON.parse(JSON.stringify(replacementPlan)),
+          headline: 'Adjustment available',
+          reason: 'Current passive evidence supports a safer return.',
+        };
+      },
+    },
+    children: [],
+    paths: [],
+  };
+  delete require.cache[routePath];
+
+  const responseFor = () => {
+    const state = { statusCode: 200, payload: undefined };
+    return {
+      state,
+      response: {
+        status(code) { state.statusCode = code; return this; },
+        json(value) { state.payload = value; return this; },
+      },
+    };
+  };
+  const previewBody = (proposal) => ({
+    planning_date: proposal.planningDate,
+    proposal_revision: proposal.revision,
+    proposal_plan_version: proposal.planVersion,
+    preview_fingerprint: proposal.previewFingerprint,
+  });
+  const resetState = () => {
+    activeRow.plan_data = JSON.stringify(originalPlan);
+    activeRow.progress_json = '{}';
+    activeRow.plan_version = 1;
+    proposalRows.length = 0;
+    writes.length = 0;
+  };
+
+  try {
+    const router = require('../src/routes/plans');
+    const getPreview = routeHandler(router, '/adaptation/current', 'get');
+    const decidePreview = routeHandler(router, '/adaptation/preview/:decision', 'post');
+    assert.equal(typeof getPreview, 'function');
+    assert.equal(typeof decidePreview, 'function', 'an id:null preview has an explicit decision endpoint');
+
+    const previewResponse = responseFor();
+    await getPreview({
+      user: { id: ownerId }, query: { date: planningDate }, headers: {},
+    }, previewResponse.response);
+    assert.equal(previewResponse.state.statusCode, 200, JSON.stringify(previewResponse.state.payload));
+    const preview = previewResponse.state.payload?.proposal;
+    assert.equal(preview?.id, null);
+    assert.equal(preview?.decisionStatus, 'preview');
+    assert.match(preview?.revision || '', /^[a-f0-9]{32}$/);
+    assert.match(preview?.previewFingerprint || '', /^[a-f0-9]{64}$/);
+    assert.equal(writes.length, 0, 'GET preview remains read-only');
+    assert.equal(proposalRows.length, 0, 'GET preview creates no proposal row');
+
+    const malformed = responseFor();
+    await decidePreview({
+      user: { id: ownerId }, params: { decision: 'accept' },
+      body: { ...previewBody(preview), proposed_plan: replacementPlan },
+    }, malformed.response);
+    assert.equal(malformed.state.statusCode, 400, 'client plan deltas are rejected as malformed');
+    assert.equal(writes.length, 0, 'malformed preview decision is zero-write');
+
+    const stale = responseFor();
+    const changedFingerprint = `${preview.previewFingerprint.slice(0, -1)}${preview.previewFingerprint.endsWith('0') ? '1' : '0'}`;
+    await decidePreview({
+      user: { id: ownerId }, params: { decision: 'accept' },
+      body: { ...previewBody(preview), preview_fingerprint: changedFingerprint },
+    }, stale.response);
+    assert.equal(stale.state.statusCode, 409, 'stale preview fingerprint fails closed');
+    assert.equal(writes.length, 0, 'stale preview fingerprint is zero-write');
+
+    const staleRevision = responseFor();
+    const changedRevision = `${preview.revision.slice(0, -1)}${preview.revision.endsWith('0') ? '1' : '0'}`;
+    await decidePreview({
+      user: { id: ownerId }, params: { decision: 'keep' },
+      body: { ...previewBody(preview), proposal_revision: changedRevision },
+    }, staleRevision.response);
+    assert.equal(staleRevision.state.statusCode, 409, 'stale preview revision fails closed');
+    assert.equal(writes.length, 0, 'stale preview revision is zero-write');
+
+    const wrongOwner = responseFor();
+    await decidePreview({
+      user: { id: wrongOwnerId }, params: { decision: 'accept' }, body: previewBody(preview),
+    }, wrongOwner.response);
+    assert(wrongOwner.state.statusCode >= 400, 'wrong owner cannot decide another athlete preview');
+    assert.equal(writes.length, 0, 'wrong-owner preview decision is zero-write');
+
+    const missingOwner = responseFor();
+    await decidePreview({
+      user: null, params: { decision: 'accept' }, body: previewBody(preview),
+    }, missingOwner.response);
+    assert.equal(missingOwner.state.statusCode, 401, 'missing owner fails closed');
+    assert.equal(writes.length, 0, 'missing-owner preview decision is zero-write');
+
+    proposalRows.push({
+      id: 'concurrent-preview-proposal',
+      user_id: ownerId,
+      planning_date: planningDate,
+      plan_version: preview.planVersion,
+      status: 'pending',
+      trigger_run_id: null,
+    });
+    const concurrent = responseFor();
+    await decidePreview({
+      user: { id: ownerId }, params: { decision: 'accept' }, body: previewBody(preview),
+    }, concurrent.response);
+    assert.equal(concurrent.state.statusCode, 409, 'a concurrent pending decision fails closed');
+    assert.equal(writes.length, 0, 'concurrent preview decision causes no runtime writes');
+    proposalRows.length = 0;
+
+    const accepted = responseFor();
+    await decidePreview({
+      user: { id: ownerId }, params: { decision: 'accept' }, body: previewBody(preview),
+    }, accepted.response);
+    assert.equal(accepted.state.statusCode, 200, JSON.stringify(accepted.state.payload));
+    assert.equal(accepted.state.payload?.status, 'accepted');
+    assert.equal(proposalRows.length, 1, 'accept persists one owner-bound proposal/decision');
+    assert.equal(proposalRows[0].status, 'accepted');
+    assert.equal(JSON.parse(activeRow.plan_data).weeks[0].days[0].sessions[0].title, 'Server recomputed replacement');
+
+    const acceptWrites = writes.length;
+    const replay = responseFor();
+    await decidePreview({
+      user: { id: ownerId }, params: { decision: 'accept' }, body: previewBody(preview),
+    }, replay.response);
+    assert.equal(replay.state.statusCode, 409, 'preview decision replay fails closed');
+    assert.equal(writes.length, acceptWrites, 'preview decision replay has zero unintended writes');
+
+    resetState();
+    const keepPreviewResponse = responseFor();
+    await getPreview({
+      user: { id: ownerId }, query: { date: planningDate }, headers: {},
+    }, keepPreviewResponse.response);
+    const keepPreview = keepPreviewResponse.state.payload?.proposal;
+    const kept = responseFor();
+    await decidePreview({
+      user: { id: ownerId }, params: { decision: 'keep' }, body: previewBody(keepPreview),
+    }, kept.response);
+    assert.equal(kept.state.statusCode, 200, JSON.stringify(kept.state.payload));
+    assert.equal(kept.state.payload?.status, 'kept');
+    assert.equal(proposalRows.length, 1, 'keep persists one owner-bound decision');
+    assert.equal(proposalRows[0].status, 'kept');
+    assert.equal(activeRow.plan_data, JSON.stringify(originalPlan), 'keep leaves the accepted plan byte-equivalent');
+    assert.equal(
+      writes.some(({ sql }) => /UPDATE (?:training_plans|user_plans)/.test(sql)),
+      false,
+      'keep records the decision with zero plan mutation',
+    );
+  } finally {
+    delete require.cache[routePath];
+    if (originalRoute) require.cache[routePath] = originalRoute;
+    if (originalDb) require.cache[dbPath] = originalDb;
+    else delete require.cache[dbPath];
+    if (originalEngine) require.cache[enginePath] = originalEngine;
+    else delete require.cache[enginePath];
+  }
+}
+
 const cases = {
   'legacy-checkin': legacyCheckinIsPassive,
   'legacy-overrides': legacyOverridesAreAuditOnly,
@@ -926,6 +1256,7 @@ const cases = {
   'passive-run-coaching': runCoachingSurfacesIgnoreSubjectiveRows,
   'passive-coaching-prompts': coachingPromptsUsePassiveRunsOnly,
   'adaptation-decisions': adaptationDecisionsFailClosed,
+  'preview-adaptation-decisions': previewAdaptationDecisionsAreAtomic,
 };
 
 async function main() {

@@ -835,18 +835,26 @@ export default function Dashboard() {
   }, [navigate, execution, verifyWorkoutStart])
 
   const decideTrainingGap = useCallback(async (decision) => {
-    if (!trainingGapProposal?.id || !['accept', 'keep'].includes(decision)) return
+    const isPreview = !trainingGapProposal?.id && trainingGapProposal?.decisionStatus === 'preview'
+    if ((!trainingGapProposal?.id && !isPreview) || trainingGapDecision || !['accept', 'keep'].includes(decision)) return
     setTrainingGapDecision(decision)
     setTrainingGapError('')
     try {
-      const response = await api.post(`/plans/adaptation/${trainingGapProposal.id}/${decision}`, {
+      const endpoint = isPreview
+        ? `/plans/adaptation/preview/${decision}`
+        : `/plans/adaptation/${trainingGapProposal.id}/${decision}`
+      const response = await api.post(endpoint, {
         proposal_revision: trainingGapProposal.revision,
         proposal_plan_version: trainingGapProposal.planVersion,
+        ...(isPreview ? {
+          preview_fingerprint: trainingGapProposal.previewFingerprint,
+          planning_date: trainingGapProposal.planningDate,
+        } : {}),
       })
       ensureCommittedAdaptationDecision(response, decision)
       setTrainingGapProposal(null)
       setTrainingGapNotice(decision === 'accept' ? 'Next seven days adjusted for a safer return.' : 'Calendar left as planned.')
-      if (decision === 'accept') await fetchDashboardData()
+      await fetchDashboardData()
     } catch (error) {
       const errorData = error?.response?.data || {}
       if (isAdaptationDecisionRetryRequired(error)) {
@@ -862,7 +870,7 @@ export default function Dashboard() {
     } finally {
       setTrainingGapDecision(null)
     }
-  }, [fetchDashboardData, trainingGapProposal])
+  }, [fetchDashboardData, trainingGapDecision, trainingGapProposal])
 
   const decideHybridReconciliation = useCallback(async (decision) => {
     if (!hybridReconciliation || !['completed_untracked', 'later', 'life_event', 'skipped'].includes(decision)) return

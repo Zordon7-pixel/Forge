@@ -721,7 +721,9 @@ function plannedSessionsBetween(plan, startISO, endISO) {
   return rows;
 }
 
-async function buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO) {
+async function buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO, database = null) {
+  const get = database?.get || dbGet;
+  const all = database?.all || dbAll;
   const since = adaptationEngine.addDays(planningDateISO, -7);
   const progress = parseJsonValue(active?.row?.progress_json, {});
   const visiblePlan = planWithoutRemovedSessions(plan, progress, active?.row);
@@ -731,15 +733,15 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
     ? progress.hybridSessionReconciliations
     : {};
   const [runs, lifts, workouts, lastRun, lastLift, lastWorkout] = await Promise.all([
-    dbAll(`SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, since, planningDateISO]),
-    dbAll('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
-    dbAll(
+    all(`SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, since, planningDateISO]),
+    all('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
+    all(
       'SELECT id, started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND started_at<=? AND ended_at IS NOT NULL',
       [userId, `${since}T00:00:00`, `${planningDateISO}T23:59:59`]
     ),
-    dbGet(`SELECT MAX(date) AS last_date FROM runs WHERE user_id=? AND date<=? AND ${runActivitySql()}`, [userId, planningDateISO]),
-    dbGet('SELECT MAX(date) AS last_date FROM lifts WHERE user_id=? AND date<=?', [userId, planningDateISO]),
-    dbGet(
+    get(`SELECT MAX(date) AS last_date FROM runs WHERE user_id=? AND date<=? AND ${runActivitySql()}`, [userId, planningDateISO]),
+    get('SELECT MAX(date) AS last_date FROM lifts WHERE user_id=? AND date<=?', [userId, planningDateISO]),
+    get(
       'SELECT MAX(substr(started_at, 1, 10)) AS last_date FROM workout_sessions WHERE user_id=? AND started_at<=? AND ended_at IS NOT NULL',
       [userId, `${planningDateISO}T23:59:59`]
     ),
@@ -824,6 +826,10 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
 }
 
 async function buildAdaptationInputs(userId, plan, active, planningDateISO, options = {}) {
+  const database = options.database || null;
+  const strictReads = options.strictReads === true;
+  const get = database?.get || dbGet;
+  const all = database?.all || dbAll;
   const recentRunSince = adaptationEngine.addDays(planningDateISO, -34);
   const focusRunId = options.focusRunId ? String(options.focusRunId).trim() : '';
   const recentRunWindow = focusRunId
@@ -833,19 +839,21 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
     ? [userId, recentRunSince, planningDateISO, focusRunId]
     : [userId, recentRunSince, planningDateISO];
   const [healthRow, injuries, completion, recentRuns, profile] = await Promise.all([
-    dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
+    get('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
       console.error('[plans/adaptation] health sync lookup failed:', err.message);
+      if (strictReads) throw err;
       return null;
     }),
-    dbAll(
+    all(
       'SELECT id, date, body_part, pain_level, notes FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 3',
       [userId]
     ),
-    buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO).catch((err) => {
+    buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO, database).catch((err) => {
       console.error('[plans/adaptation] completion summary failed:', err.message);
+      if (strictReads) throw err;
       return {};
     }),
-    dbAll(
+    all(
       `SELECT id, date, distance_miles, duration_seconds, avg_heart_rate,
               pace_avg, health_source, created_at,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
@@ -856,10 +864,12 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
       recentRunParams
     ).catch((err) => {
       console.error('[plans/adaptation] recent run lookup failed:', err.message);
+      if (strictReads) throw err;
       return [];
     }),
-    dbGet('SELECT schedule_type, missed_workout_pref FROM users WHERE id=?', [userId]).catch((err) => {
+    get('SELECT schedule_type, missed_workout_pref FROM users WHERE id=?', [userId]).catch((err) => {
       console.error('[plans/adaptation] preference lookup failed:', err.message);
+      if (strictReads) throw err;
       return null;
     }),
   ]);
@@ -903,6 +913,48 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
       freshness: activeInjury.date || 'current',
     } : { active: false, openInjuries: [] },
   };
+}
+
+async function buildCurrentAdaptationProposal(userId, plan, active, planningDateISO, planVersion, database = null, options = {}) {
+  const inputs = await buildAdaptationInputs(userId, plan, active, planningDateISO, {
+    database,
+    strictReads: options.strictReads === true,
+  });
+  const runGapKey = inputs.completion?.lastRunDate
+    ? `run-gap:${inputs.completion.lastRunDate}`
+    : null;
+  inputs.completion = { ...(inputs.completion || {}), runGapEpisodeKey: runGapKey };
+  const [completionDecisionExists, runGapEpisode] = await Promise.all([
+    hasDecidedCompletionAdaptation(userId, planningDateISO, database),
+    findRunGapEpisode(userId, runGapKey, database),
+  ]);
+  const runGapDisposition = adaptationEpisodeDisposition(runGapEpisode, planVersion);
+  if (runGapDisposition === 'reuse') {
+    const pendingProposal = proposalFromRow(runGapEpisode);
+    if (pendingProposal.changes.length > 0) {
+      return { proposal: pendingProposal, persisted: true, reason: pendingProposal.reason };
+    }
+  }
+  if (completionDecisionExists || runGapDisposition === 'decided') {
+    inputs.completion = {
+      ...(inputs.completion || {}),
+      adaptationEnabled: false,
+      gapPromptEnabled: false,
+    };
+  }
+  const proposal = adaptationEngine.buildAdaptationProposal({
+    plan,
+    planningDateISO,
+    planVersion,
+    healthSignals: inputs.healthSignals,
+    completion: inputs.completion,
+    recentRunLoad: inputs.recentRunLoad,
+    injuryState: inputs.injuryState,
+  });
+  if (proposal.status !== 'proposal' || !Array.isArray(proposal.changes) || proposal.changes.length === 0) {
+    return { proposal: null, persisted: false, reason: proposal.reason };
+  }
+  return { proposal, persisted: false, reason: proposal.reason };
 }
 
 function encodeProposalReason(proposal) {
@@ -972,6 +1024,107 @@ function proposalDecisionRevision(row) {
     .slice(0, 32);
 }
 
+function adaptationPreviewBinding(userId, proposal) {
+  const ownerId = String(userId || '').trim();
+  if (!ownerId || !proposal || typeof proposal !== 'object') return null;
+  const fingerprint = crypto
+    .createHash('sha256')
+    .update(JSON.stringify({
+      contract: 'stable-plan-adaptation-preview-v1',
+      ownerId,
+      policyVersion: ADAPTATION_POLICY_VERSION,
+      planVersion: proposal.planVersion || null,
+      planningDate: proposal.planningDate || null,
+      windowStart: proposal.windowStart || null,
+      windowEnd: proposal.windowEnd || null,
+      safetyException: Boolean(proposal.safetyException),
+      proposedPlan: proposal.proposedPlan || null,
+      changes: Array.isArray(proposal.changes) ? proposal.changes : [],
+      evidence: Array.isArray(proposal.evidence) ? proposal.evidence : [],
+      headline: proposal.headline || null,
+      reason: proposal.reason || '',
+    }))
+    .digest('hex');
+  const revision = crypto
+    .createHash('sha256')
+    .update(`stable-plan-adaptation-preview-revision-v1:${fingerprint}`)
+    .digest('hex')
+    .slice(0, 32);
+  return { previewFingerprint: fingerprint, revision };
+}
+
+function secureAdaptationTokenEqual(expected, supplied, length) {
+  const expectedToken = String(expected || '');
+  const suppliedToken = String(supplied || '').trim().toLowerCase();
+  const pattern = new RegExp(`^[a-f0-9]{${length}}$`);
+  if (!pattern.test(expectedToken) || !pattern.test(suppliedToken)) return false;
+  return crypto.timingSafeEqual(Buffer.from(expectedToken, 'hex'), Buffer.from(suppliedToken, 'hex'));
+}
+
+function parseAdaptationPreviewDecision(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const allowed = new Set([
+    'planning_date',
+    'proposal_revision',
+    'proposal_plan_version',
+    'preview_fingerprint',
+  ]);
+  if (Object.keys(body).some((key) => !allowed.has(key))) return null;
+  const planningDate = normalizePlanningDate(body.planning_date);
+  const proposalRevision = String(body.proposal_revision || '').trim().toLowerCase();
+  const proposalPlanVersion = String(body.proposal_plan_version || '').trim().toLowerCase();
+  const previewFingerprint = String(body.preview_fingerprint || '').trim().toLowerCase();
+  if (!planningDate
+    || !/^[a-f0-9]{32}$/.test(proposalRevision)
+    || !/^[a-f0-9]{32}$/.test(proposalPlanVersion)
+    || !/^[a-f0-9]{64}$/.test(previewFingerprint)) return null;
+  return { planningDate, proposalRevision, proposalPlanVersion, previewFingerprint };
+}
+
+async function persistPreviewAdaptationProposal(userId, active, planVersion, originalPlan, proposal, tx) {
+  const id = uuidv4();
+  const episodeKey = runGapEpisodeKey(proposal.evidence);
+  const inserted = await tx.run(
+    `INSERT INTO plan_adjustment_proposals (
+      id, user_id, episode_key, user_plan_id, plan_id, plan_version, window_start, window_end,
+      planning_date, status, safety_exception, original_json, proposed_json,
+      changes_json, evidence_json, reason
+    )
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT DO NOTHING`,
+    [
+      id,
+      userId,
+      episodeKey,
+      active?.row?.user_plan_id || null,
+      active?.row?.id || null,
+      planVersion,
+      proposal.windowStart,
+      proposal.windowEnd,
+      proposal.planningDate,
+      'pending',
+      proposal.safetyException ? 1 : 0,
+      JSON.stringify(originalPlan || null),
+      JSON.stringify(proposal.proposedPlan || originalPlan || null),
+      JSON.stringify(proposal.changes || []),
+      JSON.stringify(proposal.evidence || []),
+      encodeProposalReason(proposal),
+    ]
+  );
+  if (inserted.changes !== 1) return null;
+  const stored = await tx.get(
+    `SELECT *
+     FROM plan_adjustment_proposals
+     WHERE id=? AND user_id=?
+     FOR UPDATE`,
+    [id, userId]
+  );
+  if (!stored || String(stored.id) !== String(id) || String(stored.user_id) !== String(userId)) {
+    throw new Error('Persisted adaptation preview identity could not be confirmed');
+  }
+  return stored;
+}
+
 async function findPendingAdaptation(userId, planningDateISO, planVersion, tx = null) {
   const get = tx?.get || dbGet;
   return get(
@@ -984,8 +1137,9 @@ async function findPendingAdaptation(userId, planningDateISO, planVersion, tx = 
   );
 }
 
-async function findLatestAdaptation(userId, planningDateISO, planVersion) {
-  return dbGet(
+async function findLatestAdaptation(userId, planningDateISO, planVersion, tx = null) {
+  const get = tx?.get || dbGet;
+  return get(
     `SELECT *
      FROM plan_adjustment_proposals
      WHERE user_id=? AND planning_date=? AND plan_version=? AND trigger_run_id IS NULL
@@ -995,8 +1149,9 @@ async function findLatestAdaptation(userId, planningDateISO, planVersion) {
   );
 }
 
-async function hasDecidedCompletionAdaptation(userId, planningDateISO) {
-  const rows = await dbAll(
+async function hasDecidedCompletionAdaptation(userId, planningDateISO, tx = null) {
+  const all = tx?.all || dbAll;
+  const rows = await all(
     `SELECT evidence_json
      FROM plan_adjustment_proposals
      WHERE user_id=? AND planning_date=? AND status IN ('accepted','kept') AND trigger_run_id IS NULL
@@ -6229,48 +6384,23 @@ router.get('/adaptation/current', auth, async (req, res) => {
       return res.json({ proposal: publicProposal(existingProposal) });
     }
 
-    const inputs = await buildAdaptationInputs(req.user.id, parsed, active, planningDateISO);
-    const runGapEpisodeKey = inputs.completion?.lastRunDate
-      ? `run-gap:${inputs.completion.lastRunDate}`
-      : null;
-    inputs.completion = { ...(inputs.completion || {}), runGapEpisodeKey };
-    const [completionDecisionExists, runGapEpisode] = await Promise.all([
-      hasDecidedCompletionAdaptation(req.user.id, planningDateISO),
-      findRunGapEpisode(req.user.id, runGapEpisodeKey),
-    ]);
-    const runGapDisposition = adaptationEpisodeDisposition(runGapEpisode, planVersion);
-    if (runGapDisposition === 'reuse') {
-      const pendingProposal = proposalFromRow(runGapEpisode);
-      if (pendingProposal.changes.length > 0) {
-        return res.json({ proposal: publicProposal(pendingProposal) });
-      }
-    }
-    if (completionDecisionExists || runGapDisposition === 'decided') {
-      inputs.completion = {
-        ...(inputs.completion || {}),
-        adaptationEnabled: false,
-        gapPromptEnabled: false,
-      };
-    }
-    const proposal = adaptationEngine.buildAdaptationProposal({
-      plan: parsed,
+    const computed = await buildCurrentAdaptationProposal(
+      req.user.id,
+      parsed,
+      active,
       planningDateISO,
-      planVersion,
-      healthSignals: inputs.healthSignals,
-      completion: inputs.completion,
-      recentRunLoad: inputs.recentRunLoad,
-      injuryState: inputs.injuryState,
-    });
-    if (proposal.status !== 'proposal' || !Array.isArray(proposal.changes) || proposal.changes.length === 0) {
-      return res.json({ proposal: null, reason: proposal.reason });
-    }
+      planVersion
+    );
+    if (computed.persisted) return res.json({ proposal: publicProposal(computed.proposal) });
+    if (!computed.proposal) return res.json({ proposal: null, reason: computed.reason });
+    const binding = adaptationPreviewBinding(req.user.id, computed.proposal);
     res.json({
       proposal: publicProposal({
-        ...proposal,
+        ...computed.proposal,
+        ...binding,
         id: null,
         decisionStatus: 'preview',
-        choices: [],
-        revision: null,
+        choices: ['accept', 'keep_original'],
       }),
     });
   } catch (err) {
@@ -6383,6 +6513,144 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
   } catch (err) {
     console.error('[plans/adaptation/run] failed:', err.message);
     res.status(500).json({ error: 'Failed to compute this run\'s plan impact' });
+  }
+});
+
+router.post('/adaptation/preview/:decision', auth, async (req, res) => {
+  const ownerId = String(req.user?.id || '').trim();
+  if (!ownerId) return res.status(401).json({ error: 'Authenticated owner is required' });
+  const decision = String(req.params?.decision || '').trim();
+  const previewRequest = parseAdaptationPreviewDecision(req.body);
+  if (!['accept', 'keep'].includes(decision) || !previewRequest) {
+    return res.status(400).json({
+      error: 'Preview decision payload is invalid',
+      code: 'ADAPTATION_PREVIEW_INVALID',
+    });
+  }
+
+  try {
+    const result = await withPlanningInputMutation(ownerId, async (tx) => {
+      const stale = (reason, code = 'ADAPTATION_STALE') => planningInputUnchanged({
+        conflict: true,
+        refreshRequired: true,
+        code,
+        reason,
+      });
+      const active = await getActivePlanForMutation(ownerId, tx, {
+        planningDateLocal: previewRequest.planningDate,
+        normalizePersistedIdentities: false,
+      });
+      if (!active) return stale('No active plan is assigned.');
+      const parsed = canonicalAdaptationPlan(active);
+      if (!parsed || !planSchema.isSchemaV2(parsed)) {
+        return stale('The active plan no longer supports this adjustment.');
+      }
+
+      const planVersion = planVersionFor(active, parsed);
+      if (!secureAdaptationTokenEqual(planVersion, previewRequest.proposalPlanVersion, 32)) {
+        return stale('The active plan changed after this adjustment was displayed.');
+      }
+      const existing = await findLatestAdaptation(
+        ownerId,
+        previewRequest.planningDate,
+        planVersion,
+        tx
+      );
+      if (existing) {
+        return planningInputUnchanged({
+          conflict: true,
+          refreshRequired: existing.status === 'pending',
+          code: ['accepted', 'kept'].includes(existing.status)
+            ? 'ADAPTATION_REPLAYED'
+            : 'ADAPTATION_PROPOSAL_CHANGED',
+          reason: ['accepted', 'kept'].includes(existing.status)
+            ? 'This adjustment has already been decided.'
+            : 'A current proposal already exists. Refresh before choosing.',
+        });
+      }
+
+      const computed = await buildCurrentAdaptationProposal(
+        ownerId,
+        parsed,
+        active,
+        previewRequest.planningDate,
+        planVersion,
+        tx,
+        { strictReads: true }
+      );
+      if (computed.persisted) {
+        return stale('A current proposal already exists. Refresh before choosing.', 'ADAPTATION_PROPOSAL_CHANGED');
+      }
+      if (!computed.proposal) {
+        return stale('Current passive data no longer supports this adjustment.');
+      }
+      const binding = adaptationPreviewBinding(ownerId, computed.proposal);
+      if (!binding
+        || !secureAdaptationTokenEqual(binding.revision, previewRequest.proposalRevision, 32)
+        || !secureAdaptationTokenEqual(binding.previewFingerprint, previewRequest.previewFingerprint, 64)) {
+        return stale(
+          'This adjustment changed after it was displayed. Review the refreshed proposal before choosing.',
+          'ADAPTATION_PROPOSAL_CHANGED'
+        );
+      }
+
+      const row = await persistPreviewAdaptationProposal(
+        ownerId,
+        active,
+        planVersion,
+        parsed,
+        computed.proposal,
+        tx
+      );
+      if (!row) {
+        return stale('Another decision reached this adjustment first. Refresh before choosing.', 'ADAPTATION_PROPOSAL_CHANGED');
+      }
+      const storedProposal = {
+        ...proposalFromRow(row),
+        proposedPlan: parseJsonValue(row.proposed_json, null),
+      };
+      const storedBinding = adaptationPreviewBinding(ownerId, storedProposal);
+      if (!storedBinding
+        || !secureAdaptationTokenEqual(binding.revision, storedBinding.revision, 32)
+        || !secureAdaptationTokenEqual(binding.previewFingerprint, storedBinding.previewFingerprint, 64)) {
+        throw new Error('Persisted adaptation preview binding changed');
+      }
+
+      if (decision === 'accept') {
+        await updateActivePlanData(active, ownerId, computed.proposal.proposedPlan, tx);
+      }
+      const decidedStatus = decision === 'accept' ? 'accepted' : 'kept';
+      const update = await tx.run(
+        `UPDATE plan_adjustment_proposals
+         SET status=?, decided_at=CURRENT_TIMESTAMP
+         WHERE id=? AND user_id=? AND status='pending'`,
+        [decidedStatus, row.id, ownerId]
+      );
+      if (update.changes !== 1) throw new Error('Preview adaptation decision lost concurrency race');
+      return {
+        ok: true,
+        status: decidedStatus,
+        proposal: proposalFromRow({ ...row, status: decidedStatus }),
+      };
+    });
+
+    if (result.conflict) return res.status(409).json({
+      error: result.reason,
+      code: result.code || 'ADAPTATION_CONFLICT',
+      refresh_required: Boolean(result.refreshRequired),
+    });
+    return res.json({
+      ok: true,
+      status: result.status,
+      proposal: publicProposal(result.proposal),
+      idempotent: false,
+    });
+  } catch (err) {
+    if (err?.code === 'AUTH_ACCOUNT_DELETED') {
+      return res.status(401).json({ error: 'Authenticated owner is unavailable' });
+    }
+    console.error('[plans/adaptation/preview-decision] failed:', err.message);
+    return res.status(500).json({ error: 'Failed to save transparent adaptation decision' });
   }
 });
 

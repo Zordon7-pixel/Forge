@@ -39,4 +39,44 @@ for (const [surface, url, successMutation] of sources) {
   assert.match(source, /isAdaptationDecisionRetryRequired\(/, `${surface} shows a retry-required state without clearing the proposal`)
 }
 
+const previewSurfaces = [
+  ['Plan', new URL('../src/pages/Plan.jsx', import.meta.url), 'decideAdaptation', 'adaptationProposal', 'decideAdaptation'],
+  ['Today', new URL('../src/pages/Dashboard.jsx', import.meta.url), 'decideTrainingGap', 'trainingGapProposal', 'onDecision'],
+]
+
+for (const [surface, url, handlerName, proposalName, buttonHandler] of previewSurfaces) {
+  const source = fs.readFileSync(url, 'utf8')
+  const handlerStart = source.indexOf(`const ${handlerName}`)
+  const handlerEnd = source.indexOf('\n  const ', handlerStart + 10)
+  const handler = source.slice(handlerStart, handlerEnd > handlerStart ? handlerEnd : undefined)
+  assert.ok(handlerStart >= 0, `${surface} exposes its adaptation decision handler`)
+  assert.match(handler, new RegExp(`${proposalName}\\?\\.decisionStatus === ['\"]preview['\"]`), `${surface} recognizes an id:null preview as actionable`)
+  assert.match(handler, /\/plans\/adaptation\/preview\/\$\{decision\}/, `${surface} posts preview choices to the explicit server decision endpoint`)
+  assert.match(handler, /preview_fingerprint\s*:/, `${surface} binds the preview fingerprint`)
+  assert.match(handler, /proposal_revision\s*:/, `${surface} binds the preview revision`)
+  assert.match(handler, /proposal_plan_version\s*:/, `${surface} binds the authoritative plan version`)
+  assert.match(handler, /planning_date\s*:/, `${surface} binds the phone-local planning date`)
+  assert.doesNotMatch(handler, new RegExp(`if \\(!${proposalName}\\?\\.id\\) return`), `${surface} does not silently discard an id:null preview click`)
+
+  const acceptClick = new RegExp(`onClick=\\{\\(\\) => ${buttonHandler}\\(['\"]accept['\"]\\)\\}`)
+  const keepClick = new RegExp(`onClick=\\{\\(\\) => ${buttonHandler}\\(['\"]keep['\"]\\)\\}`)
+  assert.match(source, acceptClick, `${surface} Accept button issues the explicit decision`)
+  assert.match(source, keepClick, `${surface} Keep button issues the explicit decision`)
+  if (surface === 'Today') {
+    assert.match(source, /onDecision=\{decideTrainingGap\}/, 'Today prompt delegates both buttons to the preview-capable decision handler')
+  }
+}
+
+const runImpactSource = fs.readFileSync(new URL('../src/components/RunPlanImpact.jsx', import.meta.url), 'utf8')
+assert.match(
+  runImpactSource,
+  /proposal\?\.decisionStatus === 'pending'/,
+  'Run plan impact remains actionable only for a persisted pending proposal',
+)
+assert.doesNotMatch(
+  runImpactSource,
+  /\/plans\/adaptation\/preview\//,
+  'Run plan impact does not regain preview decision authority',
+)
+
 console.log('ADAPTATION DECISION COMMITMENT SMOKE OK')

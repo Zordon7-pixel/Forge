@@ -324,7 +324,7 @@ export default function Plan() {
   }, [myPlan, scheduleEditing, scheduleSaving])
 
   useEffect(() => {
-    if (!adaptationProposal?.id) return
+    if (!adaptationProposal) return
     const hasPendingChanges = adaptationProposal.status === 'proposal'
       && (adaptationProposal.changes || []).length > 0
       && !['kept', 'accepted'].includes(adaptationProposal.decisionStatus)
@@ -692,20 +692,28 @@ export default function Plan() {
   }
 
   const decideAdaptation = async (decision) => {
-    if (!adaptationProposal?.id) return
+    const isPreview = !adaptationProposal?.id && adaptationProposal?.decisionStatus === 'preview'
+    if ((!adaptationProposal?.id && !isPreview) || decidingAdaptation || !['accept', 'keep'].includes(decision)) return
     setDecidingAdaptation(decision)
     setAdaptationError('')
     setAdaptationNotice('')
     try {
-      const response = await api.post(`/plans/adaptation/${adaptationProposal.id}/${decision}`, {
+      const endpoint = isPreview
+        ? `/plans/adaptation/preview/${decision}`
+        : `/plans/adaptation/${adaptationProposal.id}/${decision}`
+      const response = await api.post(endpoint, {
         proposal_revision: adaptationProposal.revision,
         proposal_plan_version: adaptationProposal.planVersion,
+        ...(isPreview ? {
+          preview_fingerprint: adaptationProposal.previewFingerprint,
+          planning_date: adaptationProposal.planningDate,
+        } : {}),
       })
       ensureCommittedAdaptationDecision(response, decision)
       setAdaptationProposal(null)
       setAdaptationOpen(false)
       setAdaptationDecision(decision === 'accept' ? 'accepted' : 'kept')
-      if (decision === 'accept') await loadAll({ includeAdaptation: false })
+      await loadAll({ includeAdaptation: decision !== 'accept' })
     } catch (err) {
       const errorData = err?.response?.data || {}
       if (isAdaptationDecisionRetryRequired(err)) {
