@@ -3,6 +3,7 @@ const { trustedCourseFacts } = require('../lib/concurrentPlan');
 const { hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 const { resolveRunEffort } = require('../lib/runEffort');
 const { resolveRunSchedule } = require('../lib/runSchedule');
+const { parseWorkoutMetrics } = require('../lib/workoutMetrics');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_RESPONSES_TIMEOUT_MS = 75_000;
@@ -105,6 +106,26 @@ function sanitizeObj(obj, maxLen = 200) {
     return out;
   }
   return obj;
+}
+
+function passiveRunInput(run = {}) {
+  const passive = { ...(run || {}) };
+  delete passive.perceived_effort;
+  delete passive.pain_level;
+  delete passive.post_energy;
+  delete passive.notes;
+  delete passive.user_rated_effort;
+  delete passive.athlete_rated_effort;
+
+  const rawMetrics = passive.workout_metrics_json ?? passive.workoutMetrics;
+  delete passive.workout_metrics_json;
+  delete passive.workoutMetrics;
+  if (rawMetrics !== undefined && rawMetrics !== null) {
+    const metrics = parseWorkoutMetrics(rawMetrics);
+    delete metrics.workout_effort_user_rated;
+    if (Object.keys(metrics).length) passive.workout_metrics_json = metrics;
+  }
+  return passive;
 }
 
 function clampInt(value, min, max, fallback) {
@@ -258,8 +279,8 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const recentRunLoad = observed.acuteRunLoad || {};
   const sevenDayMiles = nullableMetric(recentRunLoad.sevenDayMiles, { min: 0, max: 500 });
   const latestRun = recentRunLoad.latestRun || null;
-  const latestRunEffort = latestRun?.effectiveEffort
-    ? `, ${latestRun.effortSource === 'user_rated' ? 'rated RPE' : 'calculated effort'} ${Number(latestRun.effectiveEffort)}`
+  const latestRunEffort = latestRun?.effectiveEffort && latestRun.effortSource === 'calculated_hr_zones'
+    ? `, calculated effort ${Number(latestRun.effectiveEffort)}`
     : '';
   const latestRunDistance = nullableMetric(latestRun?.distanceMiles, { min: 0, max: 500 });
   const recentRunLine = latestRun
@@ -276,7 +297,6 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
     : sevenDayMiles.toFixed(1);
   const protection = recentRunLoad.protection || {};
   const healthMetrics = trainingContext?.recovery?.metrics || {};
-  const checkin = trainingContext?.checkin || null;
   const numericMetric = (value) => nullableMetric(value);
   const readinessMetric = numericMetric(trainingContext?.recovery?.readinessScore);
   const sleepMetric = numericMetric(healthMetrics.sleepHoursLastNight);
@@ -307,9 +327,6 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const recentRunSafetyRule = protection.active
     ? `- A run is already logged on ${sanitize(protection.noAdditionalRunOnDate, 10) || 'the protected date'}. Do not schedule another run that day. Do not schedule demanding running through ${sanitize(protection.hardRunsThrough, 10)} or lower-body strength through ${sanitize(protection.lowerBodyThrough, 10)}; preserve these recent-run safety windows exactly.`
     : '- No recent-run protection window is active.';
-  const checkinLine = checkin
-    ? `feeling ${Number(checkin.feeling || 0) || 'unknown'}/5, legs ${Number(checkin.legs || 0) || 'unknown'}/3, drive ${Number(checkin.drive || 0) || 'unknown'}/3${checkin.sleepHours ? `, ${Number(checkin.sleepHours)}h subjective sleep` : ''}${Array.isArray(checkin.lifeFlags) && checkin.lifeFlags.length ? `, flags: ${checkin.lifeFlags.map((flag) => sanitize(flag, 24)).join(', ')}` : ''}`
-    : 'none recorded today';
   const recentExerciseLine = Array.isArray(observed.recentExercises) && observed.recentExercises.length
     ? observed.recentExercises.slice(0, 8).map((exercise) => {
       const name = sanitize(exercise?.name, 60) || 'exercise';
@@ -347,7 +364,6 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
 - Apple Health activity this week: ${activityLine}
 - Apple Health cardio context: ${cardioFitnessLine}
 - Latest Apple Watch running-form context: ${runningFormLine}
-- Today's check-in: ${checkinLine}
 - Recent lifting detail: ${recentExerciseLine}
 - Injury notes: ${sanitize(profile.injury_notes) || 'none'}
 - Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}
@@ -393,21 +409,17 @@ ${recentRunSafetyRule}
   }
 }
 
-async function generateRunFeedback(run, profile) {
+async function generateRunFeedback(run) {
   const durationMin = Math.round((run.duration_seconds || 0) / 60);
   const pace = run.distance_miles > 0 && durationMin > 0
     ? `${Math.floor(durationMin / run.distance_miles)}:${String(Math.round((durationMin / run.distance_miles % 1) * 60)).padStart(2, '0')}/mi`
     : 'unknown pace';
 
-  const injuryCtx = sanitize(profile?.injury_notes) ? `, currently managing: ${sanitize(profile.injury_notes)}` : '';
-  const notesCtx = sanitize(run.notes) ? `\nAthlete note: "${sanitize(run.notes)}"` : '';
-  const postRunCtx = `\nPost-run check-in: pain ${sanitize(run.pain_level, 20) || 'not reported'}, energy ${sanitize(run.post_energy, 20) || 'not reported'}.`;
-  const resolvedEffort = resolveRunEffort(run);
+  const passiveRun = passiveRunInput(run);
+  const resolvedEffort = resolveRunEffort(passiveRun);
   const effortCtx = resolvedEffort.score
-    ? resolvedEffort.source === 'user_rated'
-      ? `athlete-rated RPE ${resolvedEffort.score}/10`
-      : `calculated training effort ${resolvedEffort.score}/10 from heart-rate zones and duration (not athlete-rated RPE)`
-    : 'effort not available';
+    ? `calculated training effort ${resolvedEffort.score}/10 from heart-rate zones and duration`
+    : 'passive effort data unavailable';
   let plannedSession = null;
   try {
     plannedSession = typeof run.planned_session_json === 'string'
@@ -420,12 +432,11 @@ async function generateRunFeedback(run, profile) {
     ? `\nPlanned prescription: ${JSON.stringify(sanitizeObj(plannedSession))}`
     : '';
 
-  const prompt = `You are a sharp, experienced hybrid runner/lifter coach who specializes in concurrent training (runners who also lift) reviewing a training log entry. Write 2-3 sentences of feedback. Sound like a knowledgeable training partner — direct, specific to the numbers, no fluff. Don't open with praise like "Great job" or "Well done". Don't mention weight or BMI. Reference the actual pace and available effort. Never describe calculated effort as athlete-rated RPE.
+  const prompt = `You are a sharp, experienced hybrid runner/lifter coach who specializes in concurrent training (runners who also lift) reviewing a training log entry. Write 2-3 sentences of feedback. Sound like a knowledgeable training partner — direct, specific to the numbers, no fluff. Don't open with praise like "Great job" or "Well done". Don't mention weight or BMI. Reference the actual pace and passive effort when available. Use only the supplied passive run metrics.
 
-${sanitize(run.type, 40) || 'Run'} — ${Number(run.distance_miles) || 0} miles in ${durationMin} min (${pace}), ${effortCtx}${notesCtx}${postRunCtx}${plannedCtx}
-Context: ${Number(profile?.weekly_miles_current) || 0} mi/week base, goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}${injuryCtx}
+${sanitize(run.type, 40) || 'Run'} — ${Number(run.distance_miles) || 0} miles in ${durationMin} min (${pace}), ${effortCtx}${plannedCtx}
 
-Under 60 words. No headers. No bullet points. If the athlete's recent lifts are heavy (lower body), mention CNS load or leg fatigue when relevant. Talk like someone who lifts AND runs.`;
+Under 60 words. No headers. No bullet points. Do not infer soreness, pain, energy, or perceived exertion. Talk like someone who lifts AND runs.`;
 
   try {
     const res = await getClient().messages.create({
@@ -477,11 +488,13 @@ Under 80 words. No headers. No bullet points. Acknowledge how this session affec
 
 async function generateRunBrief({ run, profile, recentRuns, recentLifts, userId }) {
   try {
-    const cacheKey = makeCacheKey('run-brief', { userId, run, recentRuns: (recentRuns || []).slice(0, 5), recentLifts: (recentLifts || []).slice(0, 3) });
+    const passiveRun = passiveRunInput(run);
+    const passiveRecentRuns = (recentRuns || []).slice(0, 5).map(passiveRunInput);
+    const cacheKey = makeCacheKey('run-brief', { userId, run: passiveRun, recentRuns: passiveRecentRuns, recentLifts: (recentLifts || []).slice(0, 3) });
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. Latest planned/session run: ${JSON.stringify(sanitizeObj(run || {}))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent workouts: ${JSON.stringify(sanitizeObj((recentLifts || []).slice(0,3)))}.`;
+    const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. Latest planned/session run: ${JSON.stringify(sanitizeObj(passiveRun))}. Recent runs: ${JSON.stringify(sanitizeObj(passiveRecentRuns))}. Recent workouts: ${JSON.stringify(sanitizeObj((recentLifts || []).slice(0,3)))}.`;
     const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 220, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -496,7 +509,8 @@ async function generateRunBrief({ run, profile, recentRuns, recentLifts, userId 
 
 async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns, userId }) {
   try {
-    const cacheKey = makeCacheKey('lift-plan', { userId, bodyPart, timeAvailable, recentSets: (recentSets || []).slice(0, 12), recentRuns: (recentRuns || []).slice(0, 4) });
+    const passiveRecentRuns = (recentRuns || []).slice(0, 4).map(passiveRunInput);
+    const cacheKey = makeCacheKey('lift-plan', { userId, bodyPart, timeAvailable, recentSets: (recentSets || []).slice(0, 12), recentRuns: passiveRecentRuns });
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
@@ -507,7 +521,7 @@ Build a complete, executable hybrid-athlete lifting session for strength, power,
 - Use practical strength/power prescriptions: low reps for power, moderate reps for strength, higher reps only for accessories.
 - Every exercise must have a specific name, numeric sets, reps, rest, a short focus label, and one concise form cue.
 - Respect fatigue visible in the recent running and lifting data; do not force lower-body power work when the athlete is not recovered.
-Body part: ${sanitize(bodyPart, 50)}. Time available: ${sanitize(timeAvailable, 20)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Recent sets: ${JSON.stringify(sanitizeObj((recentSets || []).slice(0,12)))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,4)))}.`;
+Body part: ${sanitize(bodyPart, 50)}. Time available: ${sanitize(timeAvailable, 20)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Recent sets: ${JSON.stringify(sanitizeObj((recentSets || []).slice(0,12)))}. Recent runs: ${JSON.stringify(sanitizeObj(passiveRecentRuns))}.`;
     const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 650, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -555,9 +569,10 @@ Rules:
 
 async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, todayTraining, userId }) {
   try {
+    const passiveRecentRuns = (recentRuns || []).slice(0, 5).map(passiveRunInput);
     const cacheKey = makeCacheKey('workout-recommendation', {
       userId,
-      recentRuns: (recentRuns || []).slice(0, 5),
+      recentRuns: passiveRecentRuns,
       recentWorkouts: (recentWorkouts || []).slice(0, 5),
       todayTraining: todayTraining || null,
       goal: profile?.goal_type,
@@ -575,7 +590,7 @@ Create a complete hybrid-athlete strength and speed session, not a summary of wh
 - warmup must contain 3 specific movements. recovery must contain 2 specific actions.
 - explanation is a separate 1-2 sentence coach rationale based on the athlete's data. Do not place rationale inside main.
 - restExplanation briefly explains how to use the listed rest periods.
-Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}. Injury context: ${sanitize(profile?.injury_limitations || profile?.injury_description || profile?.injury_notes, 200) || 'none reported'}. Available equipment: ${JSON.stringify(sanitizeObj(todayTraining?.availableEquipment || []))}. Today's scheduled training: ${JSON.stringify(sanitizeObj(todayTraining || {}))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent completed workouts with exercise content: ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
+Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}. Injury context: ${sanitize(profile?.injury_limitations || profile?.injury_description || profile?.injury_notes, 200) || 'none reported'}. Available equipment: ${JSON.stringify(sanitizeObj(todayTraining?.availableEquipment || []))}. Today's scheduled training: ${JSON.stringify(sanitizeObj(todayTraining || {}))}. Recent runs: ${JSON.stringify(sanitizeObj(passiveRecentRuns))}. Recent completed workouts with exercise content: ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
     const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 1600, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -816,19 +831,12 @@ Find 2-3 alternative exercises that target the same primary muscle groups with a
   }
 }
 
-async function generateRecoveryAdjustment({ checkin, readinessScore, activeInjury, recentLoad, profile, userId }) {
+async function generateRecoveryAdjustment({ readinessScore, activeInjury, recentLoad, profile, userId }) {
   try {
     const today = new Date().toISOString().slice(0, 10);
     const cacheKey = makeCacheKey('recovery-adjustment', { userId, date: today });
     const cached = getCached(cacheKey);
     if (cached) return cached;
-
-    const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
-    const feeling = checkin?.feeling ? feelingLabels[checkin.feeling] || String(checkin.feeling) : 'unknown';
-    const sleepHours = checkin?.sleep_hours != null ? Number(checkin.sleep_hours) : null;
-    const lifeFlags = (() => {
-      try { return JSON.parse(checkin?.life_flags || '[]'); } catch { return []; }
-    })();
 
     const injuryCtx = activeInjury
       ? `Active injury: ${sanitize(activeInjury.body_part, 50)}, pain level ${Number(activeInjury.pain_level) || 'unknown'}/10`
@@ -837,11 +845,7 @@ async function generateRecoveryAdjustment({ checkin, readinessScore, activeInjur
     const prompt = `You are an expert running and strength coach. An athlete needs today's training adjusted based on recovery signals. Return JSON only with keys: recommendation, adjusted_intensity, skip_reason.
 
 Recovery signals:
-- Feeling: ${feeling}
-- Sleep: ${sleepHours != null ? `${sleepHours} hours` : 'not reported'}
-- Soreness: ${lifeFlags.includes('sore') ? 'yes' : 'no'}
-- Life flags: ${lifeFlags.length ? lifeFlags.join(', ') : 'none'}
-- Readiness score: ${Number(readinessScore) || 'unknown'}/100
+- Passive readiness score: ${Number.isFinite(Number(readinessScore)) ? `${Number(readinessScore)}/100` : 'data unavailable'}
 - ${injuryCtx}
 - Recent training load (last 7 days): ${sanitize(JSON.stringify(recentLoad), 500)}
 - Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}
@@ -849,11 +853,12 @@ Recovery signals:
 Rules:
 - recommendation: 2-3 sentences explaining what to do today and why. Reference specific signals. Sound like a coach, not an app.
 - adjusted_intensity: exactly one of "light", "moderate", or "hard"
-- skip_reason: if readiness < 30 or feeling is Exhausted AND sore, provide a reason to skip. Otherwise null.
-- Be conservative with injuries. Be honest about sleep debt.`;
+- skip_reason: if passive readiness is available and below 30, or an explicit injury record requires rest, provide a reason to skip. Otherwise null.
+- If passive readiness is unavailable, say it is unavailable and do not ask for a check-in.
+- Be conservative with explicit injury records.`;
 
     const msg = await getClient().messages.create({
-      model: 'complex',
+      model: 'frequent',
       max_tokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -878,7 +883,7 @@ async function generatePostSessionInsight({ sessionType, comparisons, profile, u
     let dataBlock = '';
     if (sessionType === 'run') {
       const c = comparisons;
-      dataBlock = `Run completed: ${c.distance} mi in ${c.durationMin} min (${c.pace}/mi), effort ${c.effort}/10
+      dataBlock = `Run completed: ${c.distance} mi in ${c.durationMin} min (${c.pace}/mi)
 Recent 5 runs avg pace: ${c.recentAvgPace || 'n/a'}, avg distance: ${c.recentAvgDistance || 'n/a'} mi
 Pace trend (last 5): ${c.paceTrend || 'n/a'}
 Distance trend: ${c.distanceTrend || 'n/a'}

@@ -36,11 +36,12 @@ const {
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
-  shouldInvalidateRunFeedback,
 } = require('../lib/runPostRun');
 const { planningInputUnchanged } = require('../lib/planningRevision');
 const { getGoalBackwardV24Mode } = require('../lib/betaPlanRollout');
 const { buildAttributedCorrection } = require('../lib/goalBackwardEvidence');
+
+const RUN_FEEDBACK_CLAIM_STALE_MS = 10 * 60 * 1000;
 
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -89,8 +90,9 @@ function optionalIsoDate(value) {
 
 async function generateStoredRunFeedback(run, userId) {
   if (run?.ai_feedback) return { feedback: run.ai_feedback, status: 'existing' };
-  let claimed = false;
-  const claimAt = new Date().toISOString();
+  const claimNow = Date.now();
+  const claimAt = new Date(claimNow).toISOString();
+  const staleBefore = new Date(claimNow - RUN_FEEDBACK_CLAIM_STALE_MS).toISOString();
   try {
     const claim = await dbRun(
       `UPDATE runs
@@ -98,12 +100,11 @@ async function generateStoredRunFeedback(run, userId) {
        WHERE id=? AND user_id=? AND ai_feedback IS NULL
          AND (
            ai_feedback_requested_at IS NULL
-           OR ai_feedback_requested_at < CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+           OR ai_feedback_requested_at < ?
          )`,
-      [claimAt, run.id, userId]
+      [claimAt, run.id, userId, staleBefore]
     );
-    claimed = claim.changes > 0;
-    if (!claimed) {
+    if (claim.changes === 0) {
       const current = await dbGet(
         'SELECT ai_feedback FROM runs WHERE id=? AND user_id=?',
         [run.id, userId]
@@ -124,26 +125,14 @@ async function generateStoredRunFeedback(run, userId) {
       monthlyUsed: monthlyRow?.cnt,
     });
     if (!canCallAI) {
-      await dbRun(
-        `UPDATE runs SET ai_feedback_requested_at=NULL
-         WHERE id=? AND user_id=? AND ai_feedback IS NULL AND ai_feedback_requested_at=?`,
-        [run.id, userId, claimAt]
-      );
       return { feedback: null, status: 'limit' };
     }
 
     await dbRun('INSERT INTO ai_usage (id, user_id, call_type) VALUES (?,?,?)', [uuidv4(), userId, 'run_feedback']);
     const claimedRun = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [run.id, userId]);
     if (!claimedRun) return { feedback: null, status: 'unavailable' };
-    const feedback = await generateRunFeedback(claimedRun, profile || {});
-    if (!feedback) {
-      await dbRun(
-        `UPDATE runs SET ai_feedback_requested_at=NULL
-         WHERE id=? AND user_id=? AND ai_feedback IS NULL AND ai_feedback_requested_at=?`,
-        [run.id, userId, claimAt]
-      );
-      return { feedback: null, status: 'unavailable' };
-    }
+    const feedback = await generateRunFeedback(passiveRunFeedbackInput(claimedRun), profile || {});
+    if (!feedback) return { feedback: null, status: 'unavailable' };
 
     const storedResult = await dbRun(
       `UPDATE runs SET ai_feedback=?
@@ -155,19 +144,17 @@ async function generateStoredRunFeedback(run, userId) {
     return { feedback: stored?.ai_feedback || feedback, status: storedResult.changes > 0 ? 'generated' : 'existing' };
   } catch (err) {
     console.error('[runs/feedback] generation failed:', err.message);
-    if (claimed) {
-      try {
-        await dbRun(
-          `UPDATE runs SET ai_feedback_requested_at=NULL
-           WHERE id=? AND user_id=? AND ai_feedback IS NULL AND ai_feedback_requested_at=?`,
-          [run.id, userId, claimAt]
-        );
-      } catch (releaseErr) {
-        console.error('[runs/feedback] claim release failed:', releaseErr.message);
-      }
-    }
     return { feedback: null, status: 'unavailable' };
   }
+}
+
+function passiveRunFeedbackInput(run = {}) {
+  const passive = { ...run };
+  delete passive.perceived_effort;
+  delete passive.pain_level;
+  delete passive.post_energy;
+  delete passive.notes;
+  return passive;
 }
 
 function buildRunStructure({ recommendationType, suggestedDistance, suggestedPace }) {
@@ -224,12 +211,6 @@ function buildRunStructure({ recommendationType, suggestedDistance, suggestedPac
   }
 }
 
-function runStructureOverheadMinutes(recommendationType) {
-  if (recommendationType === 'moderate_run') return 25;
-  if (recommendationType === 'long_run') return 10;
-  return 15;
-}
-
 function detailsForRecommendation(type = 'easy_run', suggestedPace = '') {
   if (type === 'moderate_run') {
     return {
@@ -252,67 +233,6 @@ function detailsForRecommendation(type = 'easy_run', suggestedPace = '') {
     intensity: 'Conversational aerobic',
     progression: 'Easy aerobic run — build consistency without forcing speed.',
     steps: ['5-10 min relaxed warm-up', 'Hold steady conversational pace', 'Cool down easy'],
-  };
-}
-
-function parseLifeFlags(raw) {
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw !== 'string') return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function buildCheckinSignals(checkin = null) {
-  if (!checkin) {
-    return {
-      available: false,
-      summary: 'No check-in has been completed today.',
-      shouldRest: false,
-      shouldReduceIntensity: false,
-      timeAvailable: null,
-      flags: [],
-    };
-  }
-
-  const feeling = Number(checkin.feeling || 0);
-  const sleepHours = checkin.sleep_hours === null || checkin.sleep_hours === undefined ? null : Number(checkin.sleep_hours);
-  const timeAvailable = checkin.time_available === null || checkin.time_available === undefined ? null : Number(checkin.time_available);
-  const lifeFlags = parseLifeFlags(checkin.life_flags);
-  const flagSet = new Set(lifeFlags);
-  const flags = [];
-
-  if (feeling > 0 && feeling <= 2) flags.push('low energy');
-  if (sleepHours !== null && sleepHours < 6) flags.push(`${sleepHours}h sleep`);
-  if (timeAvailable !== null && timeAvailable <= 30) flags.push(`${timeAvailable} min available`);
-  if (flagSet.has('sore')) flags.push('sore');
-  if (flagSet.has('sick') || flagSet.has('not_well')) flags.push('not well');
-  if (flagSet.has('long_shift')) flags.push('long shift');
-  if (flagSet.has('traveling')) flags.push('traveling');
-  if (flagSet.has('stressed')) flags.push('stressed');
-
-  const shouldRest = feeling <= 1 || flagSet.has('sick') || flagSet.has('not_well') || (sleepHours !== null && sleepHours < 4.5);
-  const shouldReduceIntensity = shouldRest
-    || feeling <= 2
-    || (sleepHours !== null && sleepHours < 6)
-    || flagSet.has('sore')
-    || flagSet.has('long_shift')
-    || flagSet.has('traveling')
-    || flagSet.has('stressed')
-    || (timeAvailable !== null && timeAvailable <= 30);
-
-  return {
-    available: true,
-    summary: flags.length ? `Check-in: ${flags.slice(0, 3).join(', ')}.` : 'Check-in supports a normal training day.',
-    shouldRest,
-    shouldReduceIntensity,
-    timeAvailable: Number.isFinite(timeAvailable) ? timeAvailable : null,
-    feeling: Number.isFinite(feeling) && feeling > 0 ? feeling : null,
-    sleepHours: Number.isFinite(sleepHours) ? sleepHours : null,
-    flags,
   };
 }
 
@@ -383,8 +303,8 @@ router.get('/load-analysis', auth, async (req, res) => {
     const [twRow, lwRow, runs] = await Promise.all([
       dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, thisWeekStart, thisWeekEnd]),
       dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, lastWeekStart, thisWeekStart]),
-      dbAll(`SELECT date, duration_seconds, perceived_effort, heart_rate_zones,
-                    workout_metrics_json, watch_mode, notes, pain_level, post_energy,
+      dbAll(`SELECT date, duration_seconds, heart_rate_zones,
+                    workout_metrics_json, watch_mode,
                     type, watch_activity_type, watch_normalized_type
              FROM runs
              WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}
@@ -397,7 +317,14 @@ router.get('/load-analysis', auth, async (req, res) => {
 
     let hardStreak = 0, maxHardStreak = 0;
     for (const r of runs) {
-      if (Number(resolveRunEffort(r).score || 0) >= 7) { hardStreak++; maxHardStreak = Math.max(maxHardStreak, hardStreak); }
+      const passiveEffort = resolveRunEffort({
+        ...r,
+        perceived_effort: null,
+        pain_level: null,
+        post_energy: null,
+        notes: null,
+      });
+      if (Number(passiveEffort.score || 0) >= 7) { hardStreak++; maxHardStreak = Math.max(maxHardStreak, hardStreak); }
       else { hardStreak = 0; }
     }
 
@@ -442,8 +369,7 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
     const nextWeekStart = new Date(thisWeekStart);
     nextWeekStart.setDate(thisWeekStart.getDate() + 7);
 
-    const todayStr = today.toISOString().slice(0, 10);
-    const [profile, recentRuns, recentWorkouts, thisWeekRow, lastWeekRow, recentPrRow, healthRow, checkinRow] = await Promise.all([
+    const [profile, recentRuns, recentWorkouts, thisWeekRow, lastWeekRow, recentPrRow, healthRow] = await Promise.all([
       dbGet('SELECT name, goal_type FROM users WHERE id=?', [userId]).catch(() => null),
       dbAll(`SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC`, [userId, fourteenDaysAgoStr, todayExclusiveStr]),
       dbAll('SELECT started_at, muscle_groups, total_seconds FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC, created_at DESC LIMIT 5', [userId]).catch(() => []),
@@ -451,7 +377,6 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
       dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [userId, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
       dbGet('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? ORDER BY achieved_at DESC LIMIT 1', [userId, new Date(today.getTime() - (3 * 86400000)).toISOString().slice(0, 10)]),
       dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch(() => null),
-      dbGet('SELECT feeling, time_available, sleep_hours, life_flags FROM daily_checkins WHERE user_id=? AND checkin_date=?', [userId, todayStr]).catch(() => null),
     ]);
 
     const avgDistance = recentRuns.length > 0
@@ -516,33 +441,6 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
       }
     }
 
-    const checkinSignals = buildCheckinSignals(checkinRow || null);
-    let checkinAdjusted = false;
-    if (checkinSignals.available) {
-      if (checkinSignals.shouldRest) {
-        recommendationType = 'rest';
-        reason = `${checkinSignals.summary} Forged Hybrid is switching today to recovery.`;
-        suggestedDistance = 0;
-        checkinAdjusted = true;
-      } else if (checkinSignals.shouldReduceIntensity && recommendationType !== 'rest' && recommendationType !== 'strength') {
-        recommendationType = 'easy_run';
-        reason = `${checkinSignals.summary} Forged Hybrid lowered this to an easy controlled run.`;
-        suggestedDistance = Number(Math.max(1, suggestedDistance * 0.75).toFixed(1));
-        checkinAdjusted = true;
-      }
-
-      if (checkinSignals.timeAvailable !== null && checkinSignals.timeAvailable > 0 && recommendationType !== 'rest' && recommendationType !== 'strength') {
-        const paceSeconds = avgPaceSeconds || 600;
-        const runningMinutes = Math.max(5, checkinSignals.timeAvailable - runStructureOverheadMinutes(recommendationType));
-        const maxDistanceByTime = Math.max(0.5, (runningMinutes * 60) / paceSeconds);
-        if (suggestedDistance > maxDistanceByTime) {
-          suggestedDistance = Number(maxDistanceByTime.toFixed(1));
-          reason = `${checkinSignals.summary} Forged Hybrid capped the run to fit your available time.`;
-          checkinAdjusted = true;
-        }
-      }
-    }
-
     if (recommendationType === 'strength' || recommendationType === 'rest') {
       const recommendation = {
         recommendationType,
@@ -556,8 +454,6 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
         structure: buildRunStructure({ recommendationType, suggestedDistance: 0, suggestedPace: '--' }),
         healthAdjusted,
         healthSignals,
-        checkinAdjusted,
-        checkinSignals,
       };
       return applyInterference(recommendation, recentWorkouts);
     }
@@ -572,8 +468,6 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
       structure: buildRunStructure({ recommendationType, suggestedDistance, suggestedPace }),
       healthAdjusted,
       healthSignals,
-      checkinAdjusted,
-      checkinSignals,
     };
 
     recommendation = applyInterference(recommendation, recentWorkouts);
@@ -937,15 +831,23 @@ router.post('/', auth, async (req, res) => {
       return { inserted: true, run, userProfile, prResult };
     });
     if (!writeResult.inserted) {
+      const replayFeedback = isRunActivity(writeResult.run)
+        ? await generateStoredRunFeedback(writeResult.run, req.user.id)
+        : { feedback: null, status: 'unavailable' };
       return res.status(200).json({
         run: writeResult.run,
         heatDrift: { drifted: false },
         newPRs: [],
         discrepancies: [],
+        feedback: replayFeedback.feedback,
+        feedbackStatus: replayFeedback.status,
       });
     }
 
     const { run, userProfile, prResult } = writeResult;
+    const feedbackResult = isRunActivity(run)
+      ? await generateStoredRunFeedback(run, req.user.id)
+      : { feedback: null, status: 'unavailable' };
     const hrProfile = await getHrProfile(req.user.id, dbGet);
     let heatDrift = { drifted: false };
     try {
@@ -967,7 +869,14 @@ router.post('/', auth, async (req, res) => {
       heatDrift = { drifted: false };
     }
 
-    res.status(201).json({ run, heatDrift, newPRs: prResult.newPRs, discrepancies: prResult.discrepancies });
+    res.status(201).json({
+      run,
+      heatDrift,
+      newPRs: prResult.newPRs,
+      discrepancies: prResult.discrepancies,
+      feedback: feedbackResult.feedback,
+      feedbackStatus: feedbackResult.status,
+    });
 
   } catch (err) {
     if (err.status === 409) return res.status(409).json({ error: err.message });
@@ -987,7 +896,6 @@ async function updateRunHandler(req, res) {
     const { date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed, pain_level, post_energy } = req.body;
     const validPainLevels = ['none', 'mild', 'moderate', 'severe'];
     const validEnergyLevels = ['low', 'medium', 'high'];
-    const invalidatesFeedback = shouldInvalidateRunFeedback(req.body);
 
     if (pain_level !== undefined && pain_level !== null && !validPainLevels.includes(String(pain_level))) {
       return res.status(400).json({ error: 'Invalid pain_level' });
@@ -1033,15 +941,12 @@ async function updateRunHandler(req, res) {
         treadmill_speed = COALESCE(?, treadmill_speed),
         pain_level = COALESCE(?, pain_level),
         post_energy = COALESCE(?, post_energy),
-        ai_feedback = CASE WHEN ?=1 THEN NULL ELSE ai_feedback END,
-        ai_feedback_requested_at = CASE WHEN ?=1 THEN NULL ELSE ai_feedback_requested_at END,
         calories = ?
         WHERE id=? AND user_id=?`, [
         date ?? null, distance_miles ?? null, duration_seconds ?? null,
         notes ?? null, perceived_effort ?? null, type ?? null,
         run_surface ?? null, incline_pct ?? null, treadmill_speed ?? null,
         pain_level ?? null, post_energy ?? null,
-        invalidatesFeedback ? 1 : 0, invalidatesFeedback ? 1 : 0,
         calories, req.params.id, req.user.id
       ]);
 
@@ -1184,8 +1089,7 @@ router.patch('/:id/check-in', auth, async (req, res) => {
       if (changed) {
         await tx.run(
           `UPDATE runs
-           SET perceived_effort=?, pain_level=?, post_energy=?, ai_feedback=NULL,
-               ai_feedback_requested_at=NULL
+           SET perceived_effort=?, pain_level=?, post_energy=?
            WHERE id=? AND user_id=?`,
           [values.perceived_effort, values.pain_level, values.post_energy, req.params.id, req.user.id]
         );
@@ -1196,7 +1100,7 @@ router.patch('/:id/check-in', auth, async (req, res) => {
 
     const feedbackResult = updatedRun.ai_feedback
       ? { feedback: updatedRun.ai_feedback, status: 'existing' }
-      : await generateStoredRunFeedback(updatedRun, req.user.id);
+      : { feedback: null, status: updatedRun.ai_feedback_requested_at ? 'pending' : 'unavailable' };
     res.json({
       ok: true,
       run: withCalculatedEffort(updatedRun),

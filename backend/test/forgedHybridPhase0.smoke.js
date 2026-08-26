@@ -10,11 +10,9 @@ const {
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
-  shouldInvalidateRunFeedback,
 } = require('../src/lib/runPostRun');
 const { importKeysForItem, normalizeRow, resolveCanonicalDistanceSource } = require('../src/routes/import')._test;
-const { summarizeRecentRunLoad } = require('../src/lib/recentRunLoad');
-const { buildAdaptationProposal } = require('../src/lib/adaptationEngine');
+const { buildAdaptationProposal, classifyCompletionOutcome } = require('../src/lib/adaptationEngine');
 
 let passed = 0;
 let failed = 0;
@@ -125,49 +123,8 @@ check(!Object.prototype.hasOwnProperty.call(planned, 'untrustedExtra'), 'unknown
 check(Boolean(normalizePostRunCheckIn({ perceived_effort: 7, pain_level: 'moderate', post_energy: 'low' }).value), 'complete check-in is accepted');
 check(normalizePostRunCheckIn({ perceived_effort: 7, pain_level: 'moderate', post_energy: null }).value?.post_energy === null, 'post-run energy is optional');
 check(Boolean(normalizePostRunCheckIn({ perceived_effort: 11, pain_level: 'none', post_energy: 'high' }).error), 'invalid effort is rejected');
-check(shouldInvalidateRunFeedback({ pain_level: 'moderate' }), 'pain edits invalidate stored run feedback');
-check(shouldInvalidateRunFeedback({ notes: 'Felt smooth' }), 'note edits invalidate stored run feedback');
-check(!shouldInvalidateRunFeedback({ run_surface: 'trail' }), 'non-coaching metadata edits retain stored run feedback');
-check(!shouldInvalidateRunFeedback({ date: '2026-07-14' }), 'date-only edits retain stored run feedback');
 
-console.log('\n== pain and energy protection ==');
-const severeLoad = summarizeRecentRunLoad([{
-  date: '2026-07-14',
-  type: 'run',
-  distance_miles: 0.2,
-  duration_seconds: 300,
-  perceived_effort: 3,
-  pain_level: 'severe',
-  post_energy: 'medium',
-}], { todayISO: '2026-07-14', weeklyBaseline: 12, recoveryState: 'normal' });
-check(severeLoad.available && severeLoad.protection.postRunSevere, 'severe pain makes even a short run meaningful');
-check(severeLoad.protection.hardRunsThrough === '2026-07-17', 'severe pain protects running for 72 hours');
-check(severeLoad.protection.lowerBodyThrough === '2026-07-17', 'severe pain protects lower-body work for 72 hours');
-
-const lowEnergyLoad = summarizeRecentRunLoad([{
-  date: '2026-07-14',
-  type: 'run',
-  distance_miles: 0.2,
-  duration_seconds: 300,
-  perceived_effort: 3,
-  pain_level: 'none',
-  post_energy: 'low',
-}], { todayISO: '2026-07-14', weeklyBaseline: 12, recoveryState: 'normal' });
-check(lowEnergyLoad.protection.postRunCaution && !lowEnergyLoad.protection.postRunSevere, 'low energy creates a caution without inventing severe pain');
-check(lowEnergyLoad.protection.hardRunsThrough === '2026-07-16', 'low energy protects hard running for 48 hours');
-
-const cleanFragment = summarizeRecentRunLoad([{
-  date: '2026-07-14',
-  type: 'run',
-  distance_miles: 0.2,
-  duration_seconds: 300,
-  perceived_effort: 3,
-  pain_level: 'none',
-  post_energy: 'high',
-}], { todayISO: '2026-07-14', weeklyBaseline: 12, recoveryState: 'normal' });
-check(!cleanFragment.available, 'an easy short fragment without warning signals does not drive adaptation');
-
-console.log('\n== severe-pain calendar adaptation ==');
+console.log('\n== passive-only adaptation authority ==');
 const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, index) => ({
   date: `2026-07-${String(13 + index).padStart(2, '0')}`,
   day,
@@ -192,21 +149,73 @@ const plan = {
   strengthPolicy: { minimumSessionsPerWeek: 0 },
   weeks: [{ week: 1, phase: 'base', startDate: '2026-07-13', days }],
 };
-const proposal = buildAdaptationProposal({
+const baselineProposal = buildAdaptationProposal({
   plan,
   planningDateISO: '2026-07-14',
-  recentRunLoad: severeLoad,
 });
-check(proposal.status === 'proposal', 'severe post-run pain creates a transparent proposal');
-check(proposal.evidence.some((item) => item.source === 'post_run_checkin' && item.objective === false), 'subjective check-in evidence is labeled truthfully');
-check(proposal.changes.length === 3 && proposal.changes.every((change) => change.after.kind === 'rest'), 'all non-race runs in the protection window become safety holds');
+const subjectiveProposal = buildAdaptationProposal({
+  plan,
+  planningDateISO: '2026-07-14',
+  checkin: {
+    perceived_effort: 10,
+    pain_level: 'severe',
+    post_energy: 'low',
+  },
+  recentRunLoad: {
+    latestRun: {
+      evidence_id: 'legacy-subjective-run',
+      linked_session_id: 'run-1',
+      perceivedEffort: 10,
+      postRunPain: 'severe',
+      postRunEnergy: 'low',
+    },
+    protection: { active: false },
+  },
+});
+check(JSON.stringify(subjectiveProposal) === JSON.stringify(baselineProposal), 'subjective effort, pain, and energy cannot change the accepted calendar');
+check(subjectiveProposal.evidence.length === 0, 'subjective effort, pain, and energy are absent from adaptation evidence');
+const subjectiveCompletion = classifyCompletionOutcome({
+  observation: {
+    target_met: true,
+    perceived_effort: 10,
+    pain_level: 'severe',
+    post_energy: 'low',
+  },
+  prescribedSession: { session_id: 'run-1' },
+});
+check(subjectiveCompletion.outcome === 'ON_TARGET', 'subjective effort, pain, and energy cannot classify objective completion');
+
+console.log('\n== explicit injury safety coverage ==');
+const injuryProposal = buildAdaptationProposal({
+  plan,
+  planningDateISO: '2026-07-14',
+  injuryState: {
+    openInjuries: [{
+      id: 'explicit-knee-injury',
+      body_part: 'knee',
+      severity: 'severe',
+      date: '2026-07-14',
+      active: true,
+    }],
+  },
+});
+check(injuryProposal.status === 'proposal' && injuryProposal.safetyException, 'a structured explicit severe injury record creates a transparent safety proposal');
+check(injuryProposal.evidence.some((item) => item.source === 'injury' && item.signal === 'severe injury'), 'the safety proposal cites the explicit injury record instead of a post-run questionnaire');
+check(!injuryProposal.evidence.some((item) => item.source === 'post_run_checkin'), 'subjective post-run check-ins remain absent from safety evidence');
+check(injuryProposal.changes.length === 3 && injuryProposal.changes.every((change) => change.after.kind === 'rest'), 'all non-race runs in the injury safety window become holds');
 
 console.log('\n== source wiring ==');
 const root = path.resolve(__dirname, '..', '..');
 const runsRoute = fs.readFileSync(path.join(root, 'backend/src/routes/runs.js'), 'utf8');
 const aiService = fs.readFileSync(path.join(root, 'backend/src/services/ai.js'), 'utf8');
 const activeRun = fs.readFileSync(path.join(root, 'frontend/src/pages/ActiveRun.jsx'), 'utf8');
-check(/ai_feedback_requested_at < CURRENT_TIMESTAMP - INTERVAL '10 minutes'/.test(runsRoute), 'feedback generation has a stale-claim retry guard');
+check(
+  /const RUN_FEEDBACK_CLAIM_STALE_MS = 10 \* 60 \* 1000;/.test(runsRoute)
+    && /WHERE id=\? AND user_id=\? AND ai_feedback IS NULL[\s\S]*ai_feedback_requested_at IS NULL[\s\S]*OR ai_feedback_requested_at < \?/.test(runsRoute)
+    && /\[claimAt, run\.id, userId, staleBefore\]/.test(runsRoute),
+  'feedback generation atomically reclaims only owner-scoped stale claims after the parameterized ten-minute cutoff',
+);
+check(/UPDATE runs SET ai_feedback=\?[\s\S]*AND ai_feedback_requested_at=\?/.test(runsRoute), 'an older feedback worker cannot overwrite a newer claim result');
 check(/router\.patch\('\/:id\/check-in'/.test(runsRoute), 'post-run check-in has a dedicated endpoint');
 check(/router\.post\('\/', auth/.test(runsRoute), 'run creation remains authenticated');
 check(/ON CONFLICT \(id\) DO NOTHING/.test(runsRoute) && /SELECT \* FROM runs WHERE id=\? AND user_id=\?/.test(runsRoute), 'replayed client capture ids resolve to one user-scoped canonical run');

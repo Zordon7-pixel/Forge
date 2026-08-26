@@ -1,5 +1,7 @@
 const router = require('express').Router();
-const { dbGet, withPlanningInputMutation } = require('../db');
+const database = require('../db');
+const { dbGet } = database;
+const withPassiveCompatibilityMutation = database.withUserMutation || database.withPlanningInputMutation;
 const auth = require('../middleware/auth');
 const { deriveAction, buildPatch, buildDirective, estimateWorkoutMinutes } = require('../lib/checkinOverride');
 const dailyExecution = require('../lib/dailyExecution');
@@ -238,7 +240,7 @@ router.post('/', auth, async (req, res) => {
     }
     const today = requestPlanningDate(req, { bodyKeys: ['date'], queryKeys: [] });
 
-    const directive = await withPlanningInputMutation(req.user.id, async (tx) => {
+    await withPassiveCompatibilityMutation(req.user.id, async (tx) => {
       const resolvedSleepHours = await resolveCheckinSleepHours(req.user.id, sleep_hours, tx);
       const existing = await tx.get(
         'SELECT id FROM daily_checkins WHERE user_id=? AND checkin_date=? FOR UPDATE',
@@ -256,40 +258,16 @@ router.post('/', auth, async (req, res) => {
           [id, req.user.id, today, feeling, legs, drive, time_available, resolvedSleepHours, JSON.stringify(life_flags)]
         );
       }
-
-      const nextDirective = await computeCheckinDirective(req.user.id, {
-        feeling,
-        legs,
-        drive,
-        time_available,
-        sleep_hours: resolvedSleepHours,
-        life_flags,
-      }, tx, { planningDateLocal: today });
-      const overrideId = require('crypto').randomBytes(8).toString('hex');
-
-      if (nextDirective.hasWorkoutToday) {
-        await tx.run(
-          `INSERT INTO checkin_overrides (id, user_id, date, action, patch_json)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT (user_id, date) DO UPDATE SET
-             action = excluded.action,
-             patch_json = excluded.patch_json`,
-          [overrideId, req.user.id, today, nextDirective.action, JSON.stringify(nextDirective.patch)]
-        );
-      } else {
-        await tx.run('DELETE FROM checkin_overrides WHERE user_id=? AND date=?', [req.user.id, today]);
-      }
-      return nextDirective;
     });
 
     res.json({
       ok: true,
-      adjustment: directive.adjustment,
-      headline: directive.headline,
-      drivers: directive.drivers,
-      action: directive.action,
-      feeling: directive.feeling,
-      readiness_delta: directive.readiness_delta,
+      adjustment: 'Check-in saved for your history. Your accepted plan and today\'s training stay unchanged.',
+      headline: 'Plan stays as accepted',
+      drivers: [],
+      action: 'keep',
+      feeling: 'Noted',
+      readiness_delta: 0,
     });
   } catch (err) {
     console.error('[checkin] POST failed:', err);
@@ -310,19 +288,10 @@ router.post('/preview', auth, async (req, res) => {
     if (req.body?.date !== undefined && req.body?.date !== null && !isPlanningDateAllowed(req.body.date)) {
       return res.status(400).json({ error: 'date must be the current phone date' });
     }
-    const planningDateLocal = requestPlanningDate(req, { bodyKeys: ['date'], queryKeys: [] });
-    const resolvedSleepHours = await resolveCheckinSleepHours(req.user.id, validation.value.sleep_hours);
-    const directive = await computeCheckinDirective(
-      req.user.id,
-      { ...validation.value, sleep_hours: resolvedSleepHours },
-      undefined,
-      { planningDateLocal }
-    );
-
     res.json({
-      headline: directive.headline,
-      adjustment: directive.adjustment,
-      drivers: directive.drivers,
+      headline: 'Plan stays as accepted',
+      adjustment: 'Check-ins are retained for history and do not change training.',
+      drivers: [],
     });
   } catch (err) {
     console.error('[checkin] PREVIEW failed:', err);

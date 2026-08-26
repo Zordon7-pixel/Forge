@@ -2,7 +2,6 @@
 // Pure and deterministic: no DB, network, framework, or wall-clock dependency.
 
 const planSchema = require('./planSchema');
-const checkinOverride = require('./checkinOverride');
 const { canonicalHash } = require('./racePlanPolicy');
 const { candidateRejectionMatches } = require('./planCandidateLifecycle');
 
@@ -59,18 +58,13 @@ function classifyCompletionOutcome(input = {}) {
     || ['PARTIAL', 'PARTIAL_SYNC'].includes(sync);
   const pain = observation.pain_limited === true
     || observation.painLimited === true
-    || observedValue.pain_limited === true
-    || (firstFiniteMetric(observation, ['pain_level', 'painLevel', 'pain'])
-      ?? firstFiniteMetric(observedValue, ['pain_level', 'painLevel', 'pain'])) > 0;
+    || observedValue.pain_limited === true;
   const incomplete = observation.completed === false
     || observation.incomplete === true
     || ['missed', 'incomplete', 'abandoned', 'did_not_start'].includes(completionState);
   const excessive = observation.excessive_strain === true
     || observation.excessiveStrain === true
-    || observedValue.excessive_strain === true
-    || ((firstFiniteMetric(observation, ['perceived_exertion', 'perceivedEffort', 'rpe'])
-      ?? firstFiniteMetric(observedValue, ['perceived_exertion', 'perceived_effort', 'rpe'])) >= 9
-      && (observation.target_met ?? observedValue.target_met) !== false);
+    || observedValue.excessive_strain === true;
   const observedDistance = firstFiniteMetric(observation, [
     'observed_distance_m', 'observedDistanceM', 'distance_m', 'distanceMeters',
   ]) ?? firstFiniteMetric(observedValue, ['distance_m', 'observed_distance_m']);
@@ -156,28 +150,12 @@ function translateCompletionEvidence(input = {}, prescribedSessions = []) {
   const observations = Array.isArray(explicit) ? [...explicit] : [];
   if (!observations.length && (completion.evidence_id || completion.evidenceId)) observations.push(completion);
 
-  const checkin = input.checkin || {};
-  const checkinSessionId = checkin.linked_session_id ?? checkin.completed_session_id;
-  const checkinFlags = normalizeLifeFlags(checkin.life_flags);
-  if ((checkin.evidence_id || checkin.evidenceId) && checkinSessionId
-    && (checkin.post_workout === true || checkin.post_run === true)
-    && (checkin.pain_limited === true || finiteMetric(checkin.pain_level) > 0
-      || checkinFlags.some((flag) => ['injured', 'sore'].includes(flag)))) {
-    observations.push({
-      ...checkin,
-      linked_session_id: checkinSessionId,
-      pain_limited: true,
-    });
-  }
-
   const recentRun = input.recentRunLoad?.latestRun ?? input.recentRunLoad?.protectiveRun;
   if (recentRun && (recentRun.evidence_id || recentRun.evidenceId)
     && (recentRun.linked_session_id || recentRun.session_id)) {
     observations.push({
       ...recentRun,
       linked_session_id: recentRun.linked_session_id ?? recentRun.session_id,
-      pain_limited: recentRun.postRunPain && recentRun.postRunPain !== 'none',
-      excessive_strain: recentRun.postRunEnergy === 'low' && Number(recentRun.perceivedEffort || 0) >= 9,
     });
   }
 
@@ -246,29 +224,6 @@ function isWithin(date, start, end) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))
     && compareISO(date, start) >= 0
     && compareISO(date, end) <= 0;
-}
-
-function normalizeLifeFlags(raw) {
-  if (Array.isArray(raw)) return raw.map(String);
-  if (typeof raw !== 'string') return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-function hasCheckinSignal(checkin = {}) {
-  if (!checkin || typeof checkin !== 'object') return false;
-  return ['legs', 'drive', 'feeling', 'sleep_hours', 'time_available'].some((key) => (
-    checkin[key] !== undefined && checkin[key] !== null && checkin[key] !== ''
-  )) || normalizeLifeFlags(checkin.life_flags).length > 0;
-}
-
-function normalizeAxis(value) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 3 ? parsed : null;
 }
 
 function isHardRun(session = {}) {
@@ -462,51 +417,6 @@ function buildHealthEvidence(healthSignals = {}) {
   };
 }
 
-function buildCheckinEvidence(checkin = {}, todaySessions = []) {
-  if (!hasCheckinSignal(checkin)) return { evidence: [], action: 'keep', patch: {}, safety: false, directive: null };
-  const runToday = todaySessions.find((item) => item.kind === 'run');
-  const flags = normalizeLifeFlags(checkin.life_flags);
-  const legs = normalizeAxis(checkin.legs);
-  const feeling = Number(checkin.feeling || 3);
-  const timeAvailable = Number(checkin.time_available || 60);
-  const sleepHours = checkin.sleep_hours === null || checkin.sleep_hours === undefined || checkin.sleep_hours === ''
-    ? null
-    : Number(checkin.sleep_hours);
-  let action = checkinOverride.deriveAction(checkin);
-  let patch = runToday ? checkinOverride.buildPatch(action, runToday.session, checkin) : {};
-  const heavyLegsOnly = legs === 1
-    && action === 'recovery_swap'
-    && !flags.some((flag) => ['sick', 'injured', 'not_well', 'sore'].includes(flag))
-    && feeling > 2
-    && !(timeAvailable > 0 && timeAvailable <= 30)
-    && !flags.some((flag) => ['long_shift', 'traveling'].includes(flag))
-    && !(Number.isFinite(sleepHours) && sleepHours < 6);
-  if (heavyLegsOnly) {
-    action = 'keep';
-    patch = runToday && isHardRun(runToday.session) ? patchRunForHeavyLegs(runToday.session) : {};
-  }
-  const includeWhenKeep = heavyLegsOnly && Object.keys(patch || {}).length > 0;
-  const directive = checkinOverride.buildDirective(checkin, action, patch, Boolean(runToday), 0);
-  const safety = flags.includes('sick') || flags.includes('injured');
-  const drivers = Array.isArray(directive.drivers) ? directive.drivers : [];
-  const evidence = drivers.length
-    ? drivers.map((driver) => ({
-      signal: driver.label || 'check-in',
-      source: 'checkin',
-      objective: false,
-      freshness: 'today',
-      detail: `Subjective check-in: ${driver.detail || driver.label || 'daily check-in signal'}`,
-    }))
-    : [{
-      signal: 'check-in',
-      source: 'checkin',
-      objective: false,
-      freshness: 'today',
-      detail: 'Subjective check-in was recorded and does not require a calendar change.',
-    }];
-  return { evidence, action, patch, safety, directive, includeWhenKeep };
-}
-
 function buildCompletionEvidence(completion = {}) {
   if (!completion || typeof completion !== 'object') return { evidence: [], driver: false };
   if (completion.adaptationEnabled === false) return { evidence: [], driver: false };
@@ -596,19 +506,6 @@ function buildRecentRunEvidence(recentRunLoad = {}) {
     freshness: latest.daysSince === 0 ? 'today' : latest.daysSince === 1 ? 'yesterday' : `${latest.daysSince} days ago`,
     detail: `Logged run: ${details}. Duplicate running, hard sessions, and lower-body loading are protected during the next 24-72 hours.`,
   }];
-  if (latest.postRunCaution) {
-    const checkinDetails = [
-      latest.postRunPain && latest.postRunPain !== 'none' ? `${latest.postRunPain} pain` : null,
-      latest.postRunEnergy === 'low' ? 'low energy' : null,
-    ].filter(Boolean).join(' and ');
-    evidence.push({
-      signal: 'post-run check-in',
-      source: 'post_run_checkin',
-      objective: false,
-      freshness: latest.daysSince === 0 ? 'today' : latest.daysSince === 1 ? 'yesterday' : `${latest.daysSince} days ago`,
-      detail: `The athlete reported ${checkinDetails}; the next run and lower-body load stay conservative.`,
-    });
-  }
   return {
     driver: true,
     latest,
@@ -756,22 +653,6 @@ function buildInjuryEvidence(injuryState = {}, planningDateISO = null) {
     reason: rules[0] ? injuryRuleDetail('Reduced affected-modality load', rules[0]) : null,
     rules,
     evidence,
-  };
-}
-
-function patchRunForHeavyLegs(session) {
-  if (!isHardRun(session)) return {};
-  return {
-    type: 'controlled',
-    workout_type: 'run',
-    title: 'Controlled aerobic run',
-    intensity: 'Moderate',
-    target_zone: 'Zone 2-3',
-    pace_target: 'Controlled aerobic effort; skip hard surges',
-    description: 'Intensity trimmed from today\'s heavy-leg check-in.',
-    steps: ['Keep the effort controlled', 'Skip hard repeats or surges', 'Stop if soreness changes your stride'],
-    progression: 'Do not add pace or extra reps today.',
-    checkin_override: { action: 'keep', label: 'Intensity trimmed from heavy legs' },
   };
 }
 
@@ -1401,9 +1282,7 @@ function buildAdaptationProposal(input = {}) {
 
   const normalWindowEnd = addDays(planningDate, 3);
   const windowStart = planningDate;
-  const todaySessions = allDatedSessions(plan, planningDate, planningDate);
   const injury = buildInjuryEvidence(input.injuryState || input.injury || {}, planningDate);
-  const checkin = buildCheckinEvidence(input.checkin || {}, todaySessions);
   const health = buildHealthEvidence(input.healthSignals || {});
   const completion = buildCompletionEvidence(input.completion || input.adherence || {});
   const recentRun = buildRecentRunEvidence(input.recentRunLoad || {});
@@ -1413,18 +1292,14 @@ function buildAdaptationProposal(input = {}) {
   let windowEnd = normalWindowEnd;
   const evidence = [
     ...injury.evidence,
-    ...checkin.evidence.filter((item) => {
-      if (checkin.action === 'keep' && !checkin.safety && !checkin.includeWhenKeep) return false;
-      return true;
-    }),
     ...health.evidence,
     ...completion.evidence,
     ...recentRun.evidence,
   ];
 
-  if (injury.safety || checkin.safety) {
+  if (injury.safety) {
     safetyException = true;
-    safetyReason = injury.reason || 'sick or injured check-in';
+    safetyReason = injury.reason || 'active injury record';
     windowEnd = addDays(planningDate, 6);
   } else if (completion.runGap) {
     windowEnd = addDays(planningDate, 6);
@@ -1463,32 +1338,6 @@ function buildAdaptationProposal(input = {}) {
       );
     }
   } else {
-    const todayRun = todaySessions.find((item) => item.kind === 'run');
-    if (todayRun && checkin.action !== 'keep' && Object.keys(checkin.patch || {}).length) {
-      const patched = planSchema.applyOverrideToDay(todayRun.session, checkin.patch);
-      const after = checkin.action === 'recovery_swap'
-        ? enforceMinimumEffectiveRecoveryRun(
-          patched,
-          'Recovery choice from today\'s soreness or fatigue check-in.',
-          recoveryFloorOptions
-        )
-        : patched;
-      addChange(
-        changes,
-        todayRun,
-        after,
-        `${sessionSummary(todayRun.session)} changes to ${sessionSummary(after)} from today's subjective check-in.`
-      );
-    } else if (todayRun && checkin.action === 'keep' && Object.keys(checkin.patch || {}).length) {
-      const after = planSchema.applyOverrideToDay(todayRun.session, checkin.patch);
-      addChange(
-        changes,
-        todayRun,
-        after,
-        `${sessionSummary(todayRun.session)} stays on the calendar but intensity is capped from today's subjective check-in.`
-      );
-    }
-
     if (health.severity !== 'none') {
       for (const item of sessionsInWindow) {
         if (item.kind !== 'run' || String(item.session?.type || '').toLowerCase() === 'race' || !isHardRun(item.session)) continue;
@@ -1664,7 +1513,7 @@ function buildAdaptationProposal(input = {}) {
       'Keep the calendar as planned',
       evidence.length
         ? 'Available signals do not warrant changing the dated race calendar.'
-        : 'No fresh objective Apple Health driver, recent-run load, subjective check-in driver, completion concern, or active injury was provided.'
+        : 'No fresh objective Apple Health driver, recent-run load, completion concern, or active injury was provided.'
     );
   }
 
@@ -1685,7 +1534,7 @@ function buildAdaptationProposal(input = {}) {
       ? `A safety exception is marked because ${safetyReason}; the hold can extend beyond 72 hours.`
       : completion.runGap
         ? `We have not seen a logged run in ${completion.daysSinceRun} days. Lifting still counts; this optional change only eases the next seven days of running, and you can leave the calendar exactly as it is.`
-        : 'Only dated sessions inside the next 72 hours are changed from current recovery, recent-run load, check-in, and completion evidence; race target, phases, course facts, and the strength policy stay fixed.',
+        : 'Only dated sessions inside the next 72 hours are changed from passive recovery, recent-run load, and completion evidence; race target, phases, course facts, and the strength policy stay fixed.',
     planVersion: input.planVersion || null,
   };
   return validateCandidateOrKeep(input, proposal, candidate, windowEnd);

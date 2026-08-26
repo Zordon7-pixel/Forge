@@ -32,13 +32,55 @@ function runPlanningProfileRoutesSmoke() {
 
   assert.match(
     checkin,
-    /withPlanningInputMutation\(req\.user\.id,[\s\S]*daily_checkins[\s\S]*checkin_overrides/,
-    'daily check-in and override must commit in one planning transaction'
+    /const withPassiveCompatibilityMutation = database\.withUserMutation \|\| database\.withPlanningInputMutation;/,
+    'stale-client check-in storage must prefer the user-scoped mutation transaction'
+  );
+  const checkinPost = checkin.match(
+    /router\.post\('\/', auth, async \(req, res\) => \{([\s\S]*?)\n\}\);\n\nrouter\.post\('\/preview'/
+  )?.[1];
+  assert.equal(typeof checkinPost, 'string', 'daily check-in POST route must remain present and authenticated');
+  const compatibilityTransaction = checkinPost.match(
+    /await withPassiveCompatibilityMutation\(req\.user\.id, async \(tx\) => \{([\s\S]*?)\n    \}\);/
+  )?.[1];
+  assert.equal(
+    typeof compatibilityTransaction,
+    'string',
+    'daily check-in compatibility storage must run under the owner-scoped mutation transaction'
   );
   assert.match(
-    checkin,
-    /UPDATE daily_checkins[\s\S]*WHERE id=\? AND user_id=\?/,
-    'daily check-in update must remain owner scoped'
+    compatibilityTransaction,
+    /'SELECT id FROM daily_checkins WHERE user_id=\? AND checkin_date=\? FOR UPDATE',\s*\[req\.user\.id, today\]/,
+    'daily check-in lookup must parameterize owner and date under the transaction lock'
+  );
+  assert.match(
+    compatibilityTransaction,
+    /'UPDATE daily_checkins SET [^']+ WHERE id=\? AND user_id=\?',\s*\[feeling, legs, drive, time_available, resolvedSleepHours, JSON\.stringify\(life_flags\), existing\.id, req\.user\.id\]/,
+    'daily check-in update must remain owner scoped and parameterized'
+  );
+  assert.match(
+    compatibilityTransaction,
+    /'INSERT INTO daily_checkins \(id, user_id, checkin_date, [^']+\) VALUES \(\?,\?,\?,\?,\?,\?,\?,\?,\?\)',\s*\[id, req\.user\.id, today,/,
+    'daily check-in compatibility insert must parameterize owner and date'
+  );
+  assert.doesNotMatch(
+    compatibilityTransaction,
+    /\bcheckin_overrides\b/i,
+    'stale-client check-in storage must never write or delete check-in overrides'
+  );
+  assert.doesNotMatch(
+    compatibilityTransaction,
+    /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+(?:user_plans|training_plans)\b/i,
+    'stale-client check-in storage must never mutate an accepted plan'
+  );
+  assert.doesNotMatch(
+    checkinPost,
+    /\bcomputeCheckinDirective\(/,
+    'stale-client check-in POST must not derive a new execution directive'
+  );
+  assert.match(
+    checkinPost,
+    /adjustment: 'Check-in saved for your history\. Your accepted plan and today\\'s training stay unchanged\.'[\s\S]*headline: 'Plan stays as accepted'[\s\S]*drivers: \[\][\s\S]*action: 'keep'[\s\S]*readiness_delta: 0/,
+    'accepted plan execution must remain unchanged after compatibility storage'
   );
 
   assert.ok(

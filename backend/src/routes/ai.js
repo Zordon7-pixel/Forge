@@ -15,6 +15,12 @@ const {
   workoutsWithinRecoveryWindow,
 } = require('../lib/workoutRecommendationHistory');
 
+const PASSIVE_RUN_COACHING_COLUMNS = `id, date, type, distance_miles, duration_seconds,
+  avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones,
+  cadence_spm, cadence_avg, elevation_gain, elevation_loss, pace_avg,
+  watch_mode, watch_activity_type, watch_normalized_type, health_source,
+  workout_metrics_json, plan_session_id, planned_session_json, created_at`;
+
 const FALLBACK_ACCESSORIES = {
   chest: ['Incline Dumbbell Press', 'Push-Up'],
   back: ['Chest-Supported Row', 'Lat Pulldown'],
@@ -129,18 +135,11 @@ function parseStoredPlan(row) {
 
 async function loadTodayTraining(userId, dateISO) {
   try {
-    const [active, override] = await Promise.all([
-      resolveActivePlanForDate(userId, dbGet, { planningDateLocal: dateISO }),
-      dbGet(
-        'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
-        [userId, dateISO]
-      ),
-    ]);
+    const active = await resolveActivePlanForDate(userId, dbGet, { planningDateLocal: dateISO });
     const storedPlan = parseStoredPlan(active?.row);
     const plan = storedPlan ? planSchema.visiblePlanForAssignment(storedPlan, active.row) : null;
     if (!plan) return null;
-    const patch = dailyExecution.parseCheckinOverridePatch(override?.patch_json);
-    const resolved = dailyExecution.resolvePlanDayForDate({ plan, dateISO, patch });
+    const resolved = dailyExecution.resolvePlanDayForDate({ plan, dateISO });
     return dailyExecution.trainingContextFromResolvedDay(resolved, dateISO);
   } catch (err) {
     console.error('[ai/workout-recommendation] scheduled training lookup failed:', err.message);
@@ -158,7 +157,7 @@ router.post('/session-feedback', auth, async (req, res) => {
     let sessionData = null;
 
     if (sessionType === 'run') {
-      return res.status(410).json({ error: 'Run feedback is generated once after the post-run check-in.' });
+      return res.status(410).json({ error: 'Run feedback is generated once from the saved passive run metrics.' });
     } else if (sessionType === 'lift') {
       const session = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [sessionId, athleteId]);
       const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY logged_at ASC', [sessionId, athleteId]);
@@ -198,12 +197,12 @@ router.post('/post-session-insight', auth, async (req, res) => {
     let comparisons = null;
 
     if (sessionType === 'run') {
-      const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [sessionId, athleteId]);
+      const run = await dbGet(`SELECT ${PASSIVE_RUN_COACHING_COLUMNS} FROM runs WHERE id=? AND user_id=?`, [sessionId, athleteId]);
       if (!run) return res.status(404).json({ error: 'Run not found' });
       if (!isRunActivity(run)) return res.status(400).json({ error: 'Run analysis is only available for running activities' });
 
       const recentRuns = await dbAll(
-        `SELECT distance_miles, duration_seconds, perceived_effort, date FROM runs WHERE user_id=? AND id!=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 5`,
+        `SELECT distance_miles, duration_seconds, date FROM runs WHERE user_id=? AND id!=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 5`,
         [athleteId, sessionId]
       );
 
@@ -257,7 +256,6 @@ router.post('/post-session-insight', auth, async (req, res) => {
         distance: distMiles,
         durationMin,
         pace,
-        effort: run.perceived_effort || 5,
         recentAvgPace,
         recentAvgDistance,
         paceTrend,
@@ -355,9 +353,9 @@ router.get('/run-brief', auth, async (req, res) => {
   try {
     const { sessionId } = req.query;
     const [run, profile, recentRuns, recentLifts] = await Promise.all([
-      sessionId ? dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [sessionId, req.user.id]) : Promise.resolve(null),
+      sessionId ? dbGet(`SELECT ${PASSIVE_RUN_COACHING_COLUMNS} FROM runs WHERE id=? AND user_id=?`, [sessionId, req.user.id]) : Promise.resolve(null),
       dbGet('SELECT * FROM users WHERE id=?', [req.user.id]),
-      dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 8`, [req.user.id]),
+      dbAll(`SELECT ${PASSIVE_RUN_COACHING_COLUMNS} FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 8`, [req.user.id]),
       dbAll('SELECT * FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 5', [req.user.id])
     ]);
 
@@ -383,7 +381,7 @@ router.post('/lift-plan', auth, async (req, res) => {
     const [profile, recentSets, recentRuns] = await Promise.all([
       dbGet('SELECT * FROM users WHERE id=?', [athleteId]),
       dbAll('SELECT * FROM workout_sets WHERE user_id=? ORDER BY logged_at DESC LIMIT 40', [athleteId]),
-      dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 10`, [athleteId])
+      dbAll(`SELECT ${PASSIVE_RUN_COACHING_COLUMNS} FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 10`, [athleteId])
     ]);
 
     const plan = await generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns, userId: athleteId }) || {
@@ -413,7 +411,7 @@ router.get('/workout-recommendation', auth, async (req, res) => {
     const dateISO = requestPlanningDate(req, { bodyKeys: [], queryKeys: ['date'] });
     const [profile, recentRuns, recentSessions, recentSets, todayTraining] = await Promise.all([
       dbGet('SELECT * FROM users WHERE id=?', [userId]),
-      dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 10`, [userId]),
+      dbAll(`SELECT ${PASSIVE_RUN_COACHING_COLUMNS} FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 10`, [userId]),
       dbAll(
         'SELECT id, started_at, ended_at, muscle_groups, total_seconds FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 8',
         [userId]

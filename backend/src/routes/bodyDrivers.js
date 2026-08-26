@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbAll, dbGet } = require('../db');
+const { dbGet } = require('../db');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const auth = require('../middleware/auth');
 const { runActivitySql } = require('../lib/runActivity');
@@ -17,39 +17,17 @@ function formatSleep(hours) {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
-function avg(values) {
-  const nums = values.map(Number).filter(Number.isFinite);
-  return nums.length ? nums.reduce((sum, value) => sum + value, 0) / nums.length : null;
-}
-
 function validSleepHours(value) {
   if (value === null || value === undefined || value === '') return null;
   const hours = Number(value);
   return Number.isFinite(hours) && hours > 0 && hours <= 12 ? hours : null;
 }
 
-function parseFlags(raw) {
-  if (Array.isArray(raw)) return raw;
-  if (!raw || typeof raw !== 'string') return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    console.error('[body/drivers] check-in flags parse failed:', err.message);
-    return [];
-  }
-}
-
-function buildSleepDriver(checkins, healthSignals) {
-  const sleepRows = checkins
-    .map((row) => ({ ...row, sleep_hours: validSleepHours(row.sleep_hours) }))
-    .filter((row) => row.sleep_hours !== null);
+function buildSleepDriver(healthSignals) {
   const syncedSleep = validSleepHours(healthSignals?.metrics?.sleepHoursLastNight);
-  if (!sleepRows.length && syncedSleep === null) return null;
-  const current = sleepRows.length ? Number(sleepRows[0].sleep_hours) : syncedSleep;
-  const baseline = sleepRows.length
-    ? avg(sleepRows.slice(1).map((row) => row.sleep_hours))
-    : validSleepHours(healthSignals?.metrics?.sleepHours7dBaseline);
+  if (syncedSleep === null) return null;
+  const current = syncedSleep;
+  const baseline = validSleepHours(healthSignals?.metrics?.sleepHours7dBaseline);
   const delta = baseline === null ? 0 : current - baseline;
   const impact = current < 6.5 ? 'negative' : current >= 7.5 ? 'positive' : 'neutral';
   const trend = delta <= -0.5 ? 'down' : delta >= 0.5 ? 'up' : 'flat';
@@ -102,7 +80,7 @@ function buildRestingHrDriver(healthSignals) {
     impact,
     severity: impact === 'negative' ? 10 : 0,
     plainEnglish: `Resting heart rate is ${Math.abs(Math.round(delta))} bpm ${delta >= 0 ? 'above' : 'below'} your baseline.`,
-    suggestion: impact === 'negative' ? 'Keep today controlled and pair this with sleep, soreness, and how you feel.' : 'No unusual resting-heart-rate strain is showing.',
+    suggestion: impact === 'negative' ? 'Keep today controlled and compare this with the other passive recovery metrics.' : 'No unusual resting-heart-rate strain is showing.',
   };
 }
 
@@ -131,22 +109,7 @@ function buildStrainDriver(currentMiles, priorMiles, liftCount) {
       : impact === 'positive'
         ? `Training load is down ${Math.abs(Math.round(ratio * 100))}% versus the prior week, so you look fresher.`
         : `Training load is balanced with ${value} and ${liftCount} lift ${liftCount === 1 ? 'session' : 'sessions'}.`,
-    suggestion: impact === 'negative' ? 'Avoid stacking another hard day on top of this load.' : 'You can follow the plan if sleep and soreness agree.',
-  };
-}
-
-function buildSorenessDriver(checkin) {
-  const flags = parseFlags(checkin?.life_flags);
-  if (!flags.includes('sore')) return null;
-  return {
-    key: 'soreness',
-    label: 'Soreness',
-    value: '7/10',
-    trend: 'down',
-    impact: 'negative',
-    severity: 9,
-    plainEnglish: 'Your check-in flagged soreness, so readiness is limited by tissue stress today.',
-    suggestion: 'Choose easy running, mobility, or upper-body work unless soreness improves.',
+    suggestion: impact === 'negative' ? 'Avoid stacking another hard day on top of this load.' : 'Follow the accepted plan while passive recovery metrics remain stable.',
   };
 }
 
@@ -154,8 +117,7 @@ router.get('/drivers', auth, async (req, res) => {
   try {
     const since7 = isoDaysAgo(7);
     const since14 = isoDaysAgo(14);
-    const [checkins, health, currentRun, priorRun, currentLifts] = await Promise.all([
-      dbAll('SELECT sleep_hours, life_flags, checkin_date, created_at FROM daily_checkins WHERE user_id=? AND checkin_date>=? ORDER BY checkin_date DESC, created_at DESC', [req.user.id, since7]).catch(lookupFallback('check-in', [])),
+    const [health, currentRun, priorRun, currentLifts] = await Promise.all([
       dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(lookupFallback('health sync', null)),
       dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND ${runActivitySql()}`, [req.user.id, since7]).catch(lookupFallback('current run load', { miles: 0 })),
       dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, since14, since7]).catch(lookupFallback('prior run load', { miles: 0 })),
@@ -164,11 +126,10 @@ router.get('/drivers', auth, async (req, res) => {
     const healthSignals = buildHealthSignals(health || {});
 
     const driversWithSeverity = [
-      buildSleepDriver(checkins, healthSignals),
+      buildSleepDriver(healthSignals),
       buildHrvDriver(healthSignals),
       buildRestingHrDriver(healthSignals),
       buildStrainDriver(Number(currentRun?.miles || 0), Number(priorRun?.miles || 0), Number(currentLifts?.count || 0)),
-      buildSorenessDriver(checkins[0]),
     ].filter(Boolean);
     const drivers = driversWithSeverity.map(({ severity, ...driver }) => driver);
 
@@ -183,7 +144,7 @@ router.get('/drivers', auth, async (req, res) => {
       ? `${limiter.label} is the limiter today — ${limiter.plainEnglish}`
       : drivers.length
         ? 'All recent inputs look good — train as planned'
-        : 'Not enough recent data yet — sync Apple Health or complete today\'s check-in.';
+        : 'Not enough recent data yet — passive data is unavailable, so the accepted plan remains unchanged.';
 
     res.json({
       summary,

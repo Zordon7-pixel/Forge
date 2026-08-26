@@ -132,10 +132,12 @@ const missedSessions = firstChange(proposal({
 }));
 assertExplicitAlternative(missedSessions, /missed-session history/i);
 
-const soreness = firstChange(proposal({
+const subjectiveSoreness = proposal({
   checkin: { legs: 2, drive: 2, feeling: 3, sleep_hours: 7, time_available: 60, life_flags: ['sore'] },
-}));
-assertExplicitAlternative(soreness, /sore|soreness|check-in/i);
+});
+assert.equal(subjectiveSoreness.status, 'keep', 'subjective soreness cannot propose a plan change');
+assert.deepEqual(subjectiveSoreness.changes, []);
+assert.deepEqual(subjectiveSoreness.proposedPlan, sourcePlan(), 'subjective soreness leaves the accepted plan byte-equivalent');
 
 const timeBelow = firstChange(proposal({
   plan: sourcePlan({ duration: 27, miles: null, prescriptionBasis: 'time' }),

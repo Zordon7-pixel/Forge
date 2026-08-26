@@ -832,15 +832,11 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
   const recentRunParams = focusRunId
     ? [userId, recentRunSince, planningDateISO, focusRunId]
     : [userId, recentRunSince, planningDateISO];
-  const [healthRow, checkin, injuries, completion, recentRuns, profile] = await Promise.all([
+  const [healthRow, injuries, completion, recentRuns, profile] = await Promise.all([
     dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
       console.error('[plans/adaptation] health sync lookup failed:', err.message);
       return null;
     }),
-    dbGet(
-      'SELECT feeling, legs, drive, sleep_hours, time_available, life_flags, checkin_date FROM daily_checkins WHERE user_id=? AND checkin_date=?',
-      [userId, planningDateISO]
-    ),
     dbAll(
       'SELECT id, date, body_part, pain_level, notes FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 3',
       [userId]
@@ -850,8 +846,8 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
       return {};
     }),
     dbAll(
-      `SELECT id, date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
-              pain_level, post_energy, pace_avg, health_source, created_at,
+      `SELECT id, date, distance_miles, duration_seconds, avg_heart_rate,
+              pace_avg, health_source, created_at,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
               type, watch_activity_type, watch_normalized_type
        FROM runs
@@ -884,7 +880,6 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
   const missedWorkoutPref = String(profile?.missed_workout_pref || 'adjust_week').toLowerCase();
   return {
     healthSignals,
-    checkin: checkin || null,
     completion: {
       ...(completion || {}),
       gapPromptEnabled: ['adaptive', 'flexible'].includes(scheduleType) && missedWorkoutPref !== 'skip',
@@ -1743,10 +1738,10 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   const sinceDate = addPolicyDays(planningDateISO, -55);
   const planningWeekStartDate = concurrentPlan.racePlanWindow(planningDateISO, planningDateISO)?.startDate || planningDateISO;
   const runHistoryStartDate = addPolicyDays(planningWeekStartDate, -56);
-  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, dailyCheckin, evidenceCorrections] = await Promise.all([
+  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, evidenceCorrections] = await Promise.all([
     all(
-      `SELECT id, date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
-              pain_level, post_energy, pace_avg, health_source, created_at,
+      `SELECT id, date, distance_miles, duration_seconds, avg_heart_rate,
+              pace_avg, health_source, created_at,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
               type, watch_activity_type, watch_normalized_type,
               health_source_workout_id, health_start_at
@@ -1756,8 +1751,8 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       [userId, runHistoryStartDate, planningDateISO]
     ),
     all(
-      `SELECT id, date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
-              pain_level, post_energy, pace_avg, health_source, created_at,
+      `SELECT id, date, distance_miles, duration_seconds, avg_heart_rate,
+              pace_avg, health_source, created_at,
               heart_rate_zones, workout_metrics_json, watch_mode,
               type, watch_activity_type, watch_normalized_type,
               health_source_workout_id, health_start_at
@@ -1798,13 +1793,6 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     }),
     get('SELECT id FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 1', [userId]).catch((err) => {
       console.error('[plans/generate] injury lookup failed:', err.message);
-      return null;
-    }),
-    get(
-      'SELECT feeling, legs, drive, sleep_hours, time_available, life_flags, checkin_date FROM daily_checkins WHERE user_id=? AND checkin_date=?',
-      [userId, planningDateISO]
-    ).catch((err) => {
-      console.error('[plans/generate] daily check-in lookup failed:', err.message);
       return null;
     }),
     all(
@@ -1892,21 +1880,6 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     || (healthFreshness.respiratoryRate !== false && hasMetric(healthMetrics.respiratoryRate))
     || (healthFreshness.runningDynamics !== false && [healthMetrics.runningPowerWatts, healthMetrics.runningSpeedMps, healthMetrics.runningStrideLengthM, healthMetrics.runningVerticalOscillationCm, healthMetrics.runningGroundContactTimeMs].some(hasMetric)));
   let recoveryState = healthSignals.available ? healthSignals.recoveryState : 'unknown';
-  const checkinFlags = parseLifeFlags(dailyCheckin?.life_flags);
-  const checkinFeeling = Number(dailyCheckin?.feeling || 0);
-  const checkinSleep = dailyCheckin?.sleep_hours === null || dailyCheckin?.sleep_hours === undefined
-    ? null
-    : Number(dailyCheckin.sleep_hours);
-  const severeCheckin = checkinFeeling === 1
-    || (Number.isFinite(checkinSleep) && checkinSleep < 4.5)
-    || checkinFlags.some((flag) => ['sick', 'not_well', 'injured'].includes(flag));
-  const cautionCheckin = checkinFeeling === 2
-    || Number(dailyCheckin?.legs || 0) === 1
-    || Number(dailyCheckin?.drive || 0) === 1
-    || (Number.isFinite(checkinSleep) && checkinSleep < 6)
-    || checkinFlags.includes('stressed');
-  if (severeCheckin) recoveryState = 'low';
-  else if (cautionCheckin && !['low', 'recovery'].includes(recoveryState)) recoveryState = 'caution';
   if (activeInjury || profile.comeback_mode || String(profile.injury_notes || '').trim()) recoveryState = 'low';
   const mileageBaseline = confidenceAwareMileageBaseline(planningRuns, runLoadInput, {
     planningDateISO,
@@ -1985,15 +1958,6 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       syncedAt: healthRow?.synced_at || null,
       metrics: healthSignals.metrics || {},
     },
-    checkin: dailyCheckin ? {
-      date: dailyCheckin.checkin_date,
-      feeling: Number(dailyCheckin.feeling || 0) || null,
-      legs: Number(dailyCheckin.legs || 0) || null,
-      drive: Number(dailyCheckin.drive || 0) || null,
-      sleepHours: Number.isFinite(checkinSleep) ? checkinSleep : null,
-      timeAvailable: Number(dailyCheckin.time_available || 0) || null,
-      lifeFlags: checkinFlags,
-    } : null,
   };
 }
 
@@ -5854,19 +5818,11 @@ function normalizeAdaptivePreferences(input = {}) {
   };
 }
 
-function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries, healthRow = null) {
-  const avgFeeling = checkins.length
-    ? checkins.reduce((s, c) => s + Number(c.feeling || 3), 0) / checkins.length
-    : 3;
-  const avgSleep = checkins.length
-    ? checkins.reduce((s, c) => s + Number(c.sleep_hours || 7), 0) / checkins.length
-    : 7;
+function getAdaptiveWeek(user, recentRuns, recentLifts, activeInjuries, healthRow = null) {
   const hasInjury = activeInjuries.length > 0;
   const recentVolume = recentRuns.length;
 
   let intensity = 'normal';
-  if (avgFeeling < 2.5 || avgSleep < 6) intensity = 'reduced';
-  if (avgFeeling >= 4 && avgSleep >= 7.5 && recentVolume < 3) intensity = 'increased';
   if (hasInjury) intensity = 'recovery';
 
   const healthSignals = buildHealthSignals(healthRow || {});
@@ -5876,13 +5832,9 @@ function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries
     else if (healthSignals.recoveryState === 'strong' && intensity === 'normal' && recentVolume < 3) intensity = 'increased';
   }
 
-  const lowSleepNights = checkins.filter((c) => Number(c.sleep_hours || 7) < 6).length;
-  const lowFeelingDays = checkins.filter((c) => Number(c.feeling || 3) <= 2).length;
-  const lifeFlags = checkins.flatMap((c) => parseLifeFlags(c.life_flags));
-  const uniqueFlags = [...new Set(lifeFlags)];
-  const flagsLabel = uniqueFlags.slice(0, 2).join(', ');
-
-  let reason = 'Balanced check-ins and load support a normal week.';
+  let reason = healthSignals.available
+    ? 'Passive recovery and objective load support a normal week.'
+    : 'Passive recovery data is unavailable; the accepted schedule and objective load remain authoritative.';
   let recommendation = 'Keep consistency and execute this week as planned.';
   if (intensity === 'recovery') {
     reason = `Active injury logged — shifting to recovery week with lighter work.`;
@@ -5892,18 +5844,11 @@ function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries
       recommendation = 'Prioritize mobility, easy aerobic work, and one fewer hard session.';
     }
   } else if (intensity === 'reduced') {
-    reason = `${lowSleepNights || lowFeelingDays} recovery signal(s) detected${flagsLabel ? ` (${flagsLabel})` : ''} — lighter week recommended.`;
-    recommendation = "You've had low readiness markers, so this week reduces stress.";
-    if (healthSignals.shouldReduceIntensity) {
-      reason = `${healthSignals.summary} Lighter week recommended.`;
-      recommendation = "Apple Health is showing recovery stress, so this week backs off intensity.";
-    }
+    reason = `${healthSignals.summary} Lighter week recommended.`;
+    recommendation = 'Passive health metrics show recovery stress, so this week backs off intensity.';
   } else if (intensity === 'increased') {
-    reason = "You've been sleeping well and feeling great with room to build load.";
-    recommendation = "You're ready for a controlled mileage bump this week.";
-    if (healthSignals.recoveryState === 'strong') {
-      reason = `${healthSignals.summary} You have room for a controlled mileage bump.`;
-    }
+    reason = `${healthSignals.summary} You have room for a controlled mileage bump.`;
+    recommendation = 'Passive health metrics and objective load support a controlled mileage bump this week.';
   }
 
   return {
@@ -5912,8 +5857,6 @@ function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries
     sessions: generateSessions(intensity, user),
     reason,
     stats: {
-      avgFeeling: Math.round(avgFeeling * 10) / 10,
-      avgSleep: Math.round(avgSleep * 10) / 10,
       recentRuns: recentRuns.length,
       recentLifts: recentLifts.length,
       activeInjuries: activeInjuries.length,
@@ -5929,12 +5872,8 @@ async function buildAdaptiveRecommendation(userId, preferences = {}) {
   start.setDate(start.getDate() - 6);
   const startDate = start.toISOString().slice(0, 10);
 
-  const [user, checkins, activeInjuries, recentRuns, recentLifts, healthRow] = await Promise.all([
+  const [user, activeInjuries, recentRuns, recentLifts, healthRow] = await Promise.all([
     dbGet('SELECT id, goal_type, goal_race_date, run_days_per_week, lift_days_per_week FROM users WHERE id=?', [userId]),
-    dbAll(
-      'SELECT feeling, sleep_hours, life_flags, checkin_date FROM daily_checkins WHERE user_id=? AND checkin_date >= ? ORDER BY checkin_date DESC LIMIT 7',
-      [userId, startDate]
-    ),
     dbAll('SELECT * FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC', [userId]),
     dbAll(`SELECT id, date FROM runs WHERE user_id=? AND date >= ? AND ${runActivitySql()} ORDER BY date DESC`, [userId, startDate]),
     dbAll(
@@ -5953,7 +5892,7 @@ async function buildAdaptiveRecommendation(userId, preferences = {}) {
     ...user,
     run_days_per_week: normalizedPreferences.run_days_per_week || user.run_days_per_week,
     preferred_run_days: normalizedPreferences.preferred_run_days,
-  }, recentRuns || [], recentLifts || [], checkins || [], activeInjuries || [], healthRow);
+  }, recentRuns || [], recentLifts || [], activeInjuries || [], healthRow);
 }
 
 router.get('/', auth, async (req, res) => {
@@ -6318,7 +6257,6 @@ router.get('/adaptation/current', auth, async (req, res) => {
       planningDateISO,
       planVersion,
       healthSignals: inputs.healthSignals,
-      checkin: inputs.checkin,
       completion: inputs.completion,
       recentRunLoad: inputs.recentRunLoad,
       injuryState: inputs.injuryState,
@@ -6326,8 +6264,15 @@ router.get('/adaptation/current', auth, async (req, res) => {
     if (proposal.status !== 'proposal' || !Array.isArray(proposal.changes) || proposal.changes.length === 0) {
       return res.json({ proposal: null, reason: proposal.reason });
     }
-    const persisted = await persistAdaptationProposal(req.user.id, active, planVersion, parsed, proposal);
-    res.json({ proposal: publicProposal(persisted) });
+    res.json({
+      proposal: publicProposal({
+        ...proposal,
+        id: null,
+        decisionStatus: 'preview',
+        choices: [],
+        revision: null,
+      }),
+    });
   } catch (err) {
     console.error('[plans/adaptation/current] failed:', err.message);
     res.status(500).json({ error: 'Failed to compute transparent adaptation' });
@@ -6342,8 +6287,8 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
     if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
 
     const run = await dbGet(
-      `SELECT id, date, type, distance_miles, duration_seconds, perceived_effort,
-              avg_heart_rate, pain_level, post_energy, pace_avg, health_source,
+      `SELECT id, date, type, distance_miles, duration_seconds,
+              avg_heart_rate, pace_avg, health_source,
               created_at, heart_rate_zones, workout_metrics_json, watch_mode,
               notes, watch_activity_type, watch_normalized_type
        FROM runs
@@ -6395,7 +6340,6 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
       planningDateISO,
       planVersion,
       healthSignals: { available: false },
-      checkin: null,
       completion: {},
       recentRunLoad: inputs.recentRunLoad,
       injuryState: { active: false, openInjuries: [] },
@@ -6426,8 +6370,16 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
       proposal.headline = 'Plan stays as written';
       proposal.reason = 'This run is included in your training load and does not require changing the next 72 hours.';
     }
-    const persisted = await persistRunAdaptation(req.user.id, run, active, planVersion, parsed, proposal);
-    res.json({ impact: publicProposal(persisted) });
+    res.json({
+      impact: publicProposal({
+        ...proposal,
+        id: null,
+        decisionStatus: 'preview',
+        triggerRunId: run.id,
+        choices: [],
+        revision: null,
+      }),
+    });
   } catch (err) {
     console.error('[plans/adaptation/run] failed:', err.message);
     res.status(500).json({ error: 'Failed to compute this run\'s plan impact' });
@@ -6448,7 +6400,7 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
         return planningInputUnchanged({ conflict: true, refreshRequired: true, ...decisionConflict });
       }
       if (row.status === 'accepted') {
-        return planningInputUnchanged({ ok: true, status: 'accepted', proposal: proposalFromRow(row), idempotent: true });
+        return planningInputUnchanged({ conflict: true, code: 'ADAPTATION_REPLAYED', reason: 'Proposal was already accepted.' });
       }
       if (row.status !== 'pending') {
         return planningInputUnchanged({ conflict: true, reason: 'Proposal is no longer pending.' });
@@ -6456,6 +6408,7 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
 
       const active = await getActivePlanForMutation(req.user.id, tx, {
         planningDateLocal: normalizePlanningDate(row.planning_date, { defaultToToday: true }),
+        normalizePersistedIdentities: false,
       });
       if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
       const parsed = canonicalAdaptationPlan(active);
@@ -6514,13 +6467,14 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
         return planningInputUnchanged({ conflict: true, refreshRequired: true, ...decisionConflict });
       }
       if (row.status === 'kept') {
-        return planningInputUnchanged({ ok: true, status: 'kept', proposal: proposalFromRow(row), idempotent: true });
+        return planningInputUnchanged({ conflict: true, code: 'ADAPTATION_REPLAYED', reason: 'Proposal was already kept.' });
       }
       if (row.status !== 'pending') {
         return planningInputUnchanged({ conflict: true, reason: 'Proposal is no longer pending.' });
       }
       const active = await getActivePlanForMutation(req.user.id, tx, {
         planningDateLocal: normalizePlanningDate(row.planning_date, { defaultToToday: true }),
+        normalizePersistedIdentities: false,
       });
       if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
       const parsed = canonicalAdaptationPlan(active);
@@ -7198,20 +7152,9 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
     const parsed = planWithoutRemovedSessions(parsePlan(active.row), progress, active.row);
     if (!parsed) return res.status(409).json({ error: 'Active plan could not be read' });
 
-    const override = await dbGet(
-      'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
-      [req.user.id, dateISO]
-    );
-    const patch = dailyExecution.parseCheckinOverridePatch(override?.patch_json);
-    const selection = dailyExecution.resolvePlanDayForDate({ plan: parsed, dateISO, patch });
+    const selection = dailyExecution.resolvePlanDayForDate({ plan: parsed, dateISO });
     if (!selection.selectedEntry || String(selection.selectedEntry.date || '') !== dateISO) {
       return res.status(404).json({ error: 'Scheduled lift session not found for this date' });
-    }
-    if (planSchema.isRestOverridePatch(patch)) {
-      return res.status(409).json({
-        error: 'Today was changed to recovery by your check-in. Keep the rest day or update your check-in first.',
-        code: 'CHECKIN_REST_OVERRIDE',
-      });
     }
 
     const entry = selection.selectedEntry;
@@ -7335,12 +7278,7 @@ router.get('/today', auth, async (req, res) => {
     const parsed = withDurationEstimatePlanPayload(planViews.visiblePlan);
     const anchorPayload = planAnchorPayload(parsed);
 
-    const override = await dbGet(
-      'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
-      [req.user.id, dateISO]
-    );
-    const patch = dailyExecution.parseCheckinOverridePatch(override?.patch_json);
-    const resolvedToday = dailyExecution.resolvePlanDayForDate({ plan: parsed, dateISO, patch });
+    const resolvedToday = dailyExecution.resolvePlanDayForDate({ plan: parsed, dateISO });
     const storedToday = dailyExecution.resolvePlanDayForDate({ plan: planViews.storedPlan, dateISO });
     const {
       weekdayShort,

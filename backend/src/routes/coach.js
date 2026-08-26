@@ -82,14 +82,6 @@ router.post('/substitute', auth, requirePremium('Exercise substitutions'), async
 // POST /coach/adjust-today — recovery-informed plan adjustment (AI-limited for free users)
 router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10);
-
-    // Today's check-in
-    const checkin = await dbGet(
-      'SELECT * FROM daily_checkins WHERE user_id=? AND checkin_date=?',
-      [req.user.id, today]
-    );
-
     // Readiness score from injury logs (mirrors /api/pt/readiness logic)
     let readinessScore = null;
     const logs = await dbAll(
@@ -112,19 +104,6 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
       readinessScore = Math.max(0, Math.min(100, Math.round(daysScore + painScore + trendBonus)));
     }
 
-    // If no injury-based readiness, derive from check-in
-    if (readinessScore === null && checkin) {
-      const feeling = Number(checkin.feeling) || 3;
-      const sleepHrs = checkin.sleep_hours != null ? Number(checkin.sleep_hours) : 7;
-      const lifeFlags = (() => { try { return JSON.parse(checkin.life_flags || '[]'); } catch { return []; } })();
-      let score = feeling * 16; // 1-5 → 16-80
-      if (sleepHrs < 6) score -= 15;
-      else if (sleepHrs >= 8) score += 10;
-      if (lifeFlags.includes('sore')) score -= 10;
-      if (lifeFlags.includes('sick')) score -= 20;
-      readinessScore = Math.max(0, Math.min(100, Math.round(score)));
-    }
-
     const healthRow = await dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(() => null);
     const healthSignals = buildHealthSignals(healthRow || {});
     if (healthSignals.available && healthSignals.readinessScore !== null && healthSignals.readinessScore !== undefined) {
@@ -141,7 +120,7 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
     // Recent training load (last 7 days)
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
     const recentRuns = await dbAll(
-      `SELECT date, distance_miles, duration_seconds, perceived_effort, type FROM runs WHERE user_id=? AND date>=? AND ${runActivitySql()} ORDER BY date DESC`,
+      `SELECT date, distance_miles, duration_seconds, type FROM runs WHERE user_id=? AND date>=? AND ${runActivitySql()} ORDER BY date DESC`,
       [req.user.id, sevenDaysAgo]
     ).catch((err) => {
       console.error('[coach/recovery] recent run lookup failed:', err.message);
@@ -156,7 +135,6 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
     const profile = await dbGet('SELECT * FROM users WHERE id=?', [req.user.id]);
 
     const result = await generateRecoveryAdjustment({
-      checkin,
       readinessScore,
       activeInjury,
       recentLoad: { runs: recentRuns, lifts: recentLifts },
@@ -178,11 +156,6 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
       readiness_score: readinessScore,
       health_summary: healthSignals.available ? healthSignals.summary : null,
       health_signals: healthSignals,
-      checkin_summary: checkin ? {
-        feeling: checkin.feeling,
-        sleep_hours: checkin.sleep_hours,
-        life_flags: (() => { try { return JSON.parse(checkin.life_flags || '[]'); } catch { return []; } })(),
-      } : null,
     });
   } catch (err) {
     console.error('Adjust-today route error:', err.message);

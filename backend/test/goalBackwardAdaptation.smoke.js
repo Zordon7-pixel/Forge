@@ -93,7 +93,20 @@ function assertCompletionOutcomeContracts() {
     [{ observed_duration_s: 2760, prescribed_duration_s: 2400 }, 'ABOVE_TARGET'],
     [{ target_met: true, perceived_exertion: 10, excessive_strain: true }, 'EXCESSIVE_STRAIN'],
     [{ completion_state: 'missed' }, 'INCOMPLETE'],
-    [{ pain_limited: true, pain_level: 6 }, 'PAIN_LIMITED'],
+    [{
+      target_met: true,
+      pain_level: 10,
+      painLevel: 10,
+      pain: 10,
+      perceived_exertion: 10,
+      perceivedEffort: 10,
+      rpe: 10,
+      postRunPain: 'severe',
+      postRunEnergy: 'low',
+      energy: 'low',
+      value: { pain_level: 10, perceived_effort: 10, rpe: 10, post_energy: 'low' },
+    }, 'ON_TARGET'],
+    [{ pain_limited: true, injury_record_id: 'injury-record-explicit' }, 'PAIN_LIMITED'],
     [{ quality_state: 'PARTIAL', sync_state: 'PARTIAL_SYNC', observed_duration_s: 0 }, 'UNSCORABLE_PARTIAL_SYNC'],
   ];
   for (const [observation, expected] of fixtures) {
@@ -118,16 +131,20 @@ function assertCompletionOutcomeContracts() {
     }],
     checkin: {
       evidence_id: 'checkin-current', linked_session_id: 'translated-session', post_workout: true,
-      life_flags: ['sore'],
+      life_flags: ['sore', 'injured'], pain_level: 10, perceived_effort: 10, post_energy: 'low',
     },
     recentRunLoad: {
       latestRun: {
         evidence_id: 'run-current', session_id: 'translated-session', target_met: true,
-        postRunPain: 'none',
+        postRunPain: 'severe', postRunEnergy: 'low', perceivedEffort: 10,
       },
     },
   }, [{ session_id: 'translated-session', duration_s: 1200 }]);
-  assert.deepEqual(translated.map((entry) => entry.outcome), ['ON_TARGET', 'PAIN_LIMITED', 'ON_TARGET']);
+  assert.deepEqual(
+    translated.map((entry) => entry.outcome),
+    ['ON_TARGET', 'ON_TARGET'],
+    'subjective check-in answers are omitted and subjective run fields cannot create pain or strain outcomes',
+  );
 
   const partial = classifyCompletionOutcome({
     observation: {
@@ -203,7 +220,46 @@ function assertCompletionOutcomeContracts() {
 
 assertCompletionOutcomeContracts();
 
-test('SAFE-01', 'fresh restrictive safety evidence wins over a great readiness check-in', () => {
+test('SAFE-01', 'subjective answers stay inert while explicit injury and safety records remain authoritative', () => {
+  const currentPlan = plan([session('subjective-quality', '2026-08-14', 'threshold_run', {
+    kind: 'run', type: 'quality', workout_type: 'run', role: 'PRIMARY_KEY',
+    duration_min: 40, distance_miles: 4,
+  })]);
+  const proposalInput = {
+    plan: currentPlan,
+    planningDateISO: '2026-08-14',
+    planVersion: 'subjective-fields-inert',
+  };
+  const baseline = buildAdaptationProposal(proposalInput);
+  const subjective = buildAdaptationProposal({
+    ...proposalInput,
+    checkin: {
+      evidence_id: 'subjective-checkin', linked_session_id: 'subjective-quality', post_run: true,
+      feeling: 1, legs: 1, drive: 1, sleep_hours: 2, time_available: 5,
+      life_flags: ['sick', 'injured', 'sore'], pain_level: 10, perceived_effort: 10, post_energy: 'low',
+    },
+    recentRunLoad: {
+      latestRun: {
+        evidence_id: 'subjective-run-answers', session_id: 'subjective-quality', target_met: true,
+        postRunPain: 'severe', postRunEnergy: 'low', perceivedEffort: 10,
+      },
+      protection: { active: false },
+    },
+  });
+  assert.deepEqual(subjective, baseline, 'questionnaire answers cannot change the adaptation proposal');
+
+  const injury = buildAdaptationProposal({
+    ...proposalInput,
+    injuryState: {
+      activeInjuries: [{
+        id: 'injury-record-objective', bodyPart: 'knee', severity: 'severe', date: '2026-08-14',
+      }],
+    },
+  });
+  assert.equal(injury.safetyException, true, 'a structured open injury record remains authoritative');
+  assert.equal(injury.changes.length, 1);
+  assert.equal(injury.changes[0].after.kind, 'rest');
+
   const run = session('restricted-run', '2026-08-16', 'easy_run');
   const result = buildSafetyExecutability([run], {
     safety_action: 'NO_RUNNING',
@@ -229,7 +285,7 @@ test('SAFE-02', 'NO_RUNNING blocks running while leaving safe upper-body work el
   ]);
 });
 
-test('SAFE-03', 'FULL_REST closes every executable surface for the same safety revision', () => {
+test('SAFE-03', 'FULL_REST and malformed safety overlays fail closed on every executable surface', () => {
   const result = buildSafetyExecutability([
     session('rest-blocked', '2026-08-16', 'strength_upper', {
       exercises: [{ working_sets: 2 }, { working_sets: 2 }],
@@ -238,6 +294,19 @@ test('SAFE-03', 'FULL_REST closes every executable surface for the same safety r
   assert.equal(Object.values(result.surface_executability).every((value) => value === false), true);
   assert.equal(result.sessions[0].executable, false);
   assert.equal(result.sessions[0].safety_state_revision, 9);
+
+  const invalidOverlay = buildSafetyExecutability([
+    session('invalid-scope-blocked', '2026-08-16', 'strength_upper', {
+      exercises: [{ working_sets: 2 }, { working_sets: 2 }],
+    }),
+  ], {
+    safety_action: 'NORMAL',
+    safety_state_revision: 10,
+    safety_scope: [{ action: 'NO_RUNNING' }],
+  });
+  assert.equal(invalidOverlay.safety_scope_state, 'INVALID_FAIL_CLOSED');
+  assert.equal(invalidOverlay.sessions[0].reason_code, 'SAFETY_SCOPE_INVALID');
+  assert.equal(Object.values(invalidOverlay.surface_executability).every((value) => value === false), true);
 });
 
 test('SAFE-04', 'a superseding resolved state can return to NORMAL without permanent suppression', () => {

@@ -186,8 +186,9 @@ async function routeBoundarySmoke() {
       checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
     }));
     response = await invoke(handler, request({ date: '2026-08-03', session_id: 'lift-owner' }));
-    assert.equal(response.statusCode, 409, 'the owner/date-bound check-in rest override blocks direct endpoint use');
-    assert.equal(response.payload.code, 'CHECKIN_REST_OVERRIDE');
+    assert.equal(response.statusCode, 200, 'a stale owner/date-bound check-in rest override is audit-only and cannot block accepted execution');
+    assert.equal(response.payload.alternative.id, 'lift-owner', 'the owner retains the accepted travel-training session');
+    assert.equal(response.payload.alternative.adjustedForTravel, true, 'the accepted session remains executable in travel context');
     response = await invoke(handler, request({ date: '2026-08-04', session_id: 'lift-tomorrow' }));
     assert.equal(response.statusCode, 200, 'a current-date override cannot suppress a different date lift');
     assert.equal(response.payload.alternative.id, 'lift-tomorrow');
@@ -197,7 +198,7 @@ async function routeBoundarySmoke() {
     plan.weeks[0].days[1].sessions[0].workout_type = 'rest';
     activeRow.plan_data = JSON.stringify(plan);
     response = await invoke(handler, request({ date: '2026-08-03', session_id: 'lift-owner' }));
-    assert.equal(response.statusCode, 409, 'a retained rest-labelled lift cannot bypass the direct endpoint');
+    assert.equal(response.statusCode, 409, 'an explicit current rest safety state on the accepted plan still blocks unsafe endpoint use');
     assert.equal(response.payload.code, 'PLAN_SESSION_IS_REST');
     delete plan.weeks[0].days[1].sessions[0].type;
     delete plan.weeks[0].days[1].sessions[0].workout_type;

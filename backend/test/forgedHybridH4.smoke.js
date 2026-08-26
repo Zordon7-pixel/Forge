@@ -233,7 +233,32 @@ const noHistoryGap = adaptation.buildAdaptationProposal({
 });
 assert(noHistoryGap.status === 'keep' && noHistoryGap.changes.length === 0, 'a new athlete with no activity history is not labelled inactive');
 
-section('objective and subjective evidence labels');
+section('objective evidence authority and subjective input inertness');
+const subjectiveOnly = adaptation.buildAdaptationProposal({
+  plan: army,
+  planningDateISO: '2026-07-13',
+  planVersion: 'v1',
+  checkin: {
+    legs: 1,
+    drive: 1,
+    feeling: 1,
+    sleep_hours: 2,
+    time_available: 5,
+    life_flags: ['sick', 'injured', 'sore'],
+    perceived_effort: 10,
+    pain_level: 10,
+    post_energy: 'low',
+  },
+});
+const subjectiveBaseline = adaptation.buildAdaptationProposal({
+  plan: army,
+  planningDateISO: '2026-07-13',
+  planVersion: 'v1',
+});
+assert(JSON.stringify(subjectiveOnly) === JSON.stringify(subjectiveBaseline), 'subjective check-in, effort, pain, and energy inputs have zero adaptation authority');
+assert(subjectiveOnly.status === 'keep' && subjectiveOnly.changes.length === 0, 'subjective-only input keeps the accepted calendar unchanged');
+assert(!subjectiveOnly.evidence.some((item) => ['checkin', 'post_run_checkin'].includes(item.source)), 'subjective input is absent from adaptation evidence');
+
 const labelled = adaptation.buildAdaptationProposal({
   plan: army,
   planningDateISO: '2026-07-13',
@@ -243,8 +268,35 @@ const labelled = adaptation.buildAdaptationProposal({
 });
 assert(labelled.status === 'proposal' && labelled.changes.length > 0, 'fresh low readiness produces a proposal');
 assert(labelled.evidence.some((item) => item.source === 'apple_health' && item.objective === true), 'Apple Health evidence is labelled objective');
-assert(labelled.evidence.some((item) => item.source === 'checkin' && item.objective === false), 'check-in evidence is labelled subjective');
+assert(!labelled.evidence.some((item) => ['checkin', 'post_run_checkin'].includes(item.source)), 'subjective check-in fields do not enter objective recovery evidence');
 assert(adaptation.proposalMatchesPlanVersion(labelled, 'v1') && !adaptation.proposalMatchesPlanVersion(labelled, 'v2'), 'pure plan-version check models stale proposal conflict');
+
+const passiveLoadPlan = clone(army);
+setHardRun(passiveLoadPlan, '2026-07-14', 'passive-load-run');
+const passiveLoad = adaptation.buildAdaptationProposal({
+  plan: passiveLoadPlan,
+  planningDateISO: '2026-07-13',
+  recentRunLoad: {
+    protectiveRun: {
+      date: '2026-07-12',
+      distanceMiles: 7.3,
+      durationMinutes: 75,
+      paceLabel: '10:16/mi',
+      avgHeartRate: 148,
+      daysSince: 1,
+    },
+    protection: {
+      active: true,
+      noAdditionalRunOnDate: null,
+      hardRunsThrough: '2026-07-15',
+      lowerBodyThrough: '2026-07-15',
+      upperBodyOptionalThrough: '2026-07-14',
+      postRunSevere: false,
+    },
+  },
+});
+assert(passiveLoad.status === 'proposal' && passiveLoad.changes.some((change) => change.sessionId === 'passive-load-run'), 'passive recent training load can create the allowed bounded proposal');
+assert(passiveLoad.evidence.some((item) => item.source === 'recent_run' && item.objective === true), 'passive recent-load evidence is labelled objective');
 
 section('72-hour date boundary');
 const boundaryPlan = clone(army);
@@ -271,7 +323,7 @@ assert(safety.status === 'proposal' && safety.safetyException === true, 'active 
 assert(safety.reason.includes('safety exception') && safety.evidence.some((item) => item.source === 'injury'), 'safety proposal has a labelled safety reason');
 assert(safety.changes.some((change) => change.date > adaptation.addDays('2026-07-13', 3)), 'safety exception may extend beyond 72 hours');
 
-section('graded injury and soreness downshift');
+section('graded structured injury and soreness downshift');
 const injuryPlan = clone(army);
 setHardRun(injuryPlan, '2026-07-13', 'moderate-calf-run');
 const healthyReadiness = {
@@ -285,12 +337,12 @@ const moderateInjury = adaptation.buildAdaptationProposal({
   healthSignals: healthyReadiness,
   injuryState: {
     active: true,
-    openInjuries: [{ bodyPart: 'calf', pain_level: 5, date: '2026-07-11', active: true }],
+    openInjuries: [{ bodyPart: 'calf', pain_level: 5, date: '2026-07-11', active: true, notes: 'calf soreness' }],
   },
 });
 const moderateRunChange = moderateInjury.changes.find((change) => change.sessionId === 'moderate-calf-run');
 const expectedModerateMiles = Math.max(0.5, Math.round(Number(moderateRunChange?.before.distance_miles || 0) * 0.75 * 10) / 10);
-assert(moderateInjury.status === 'proposal' && !moderateInjury.safetyException, 'open moderate injury downshifts without forcing full rest');
+assert(moderateInjury.status === 'proposal' && !moderateInjury.safetyException, 'structured open moderate injury/soreness downshifts without forcing full rest');
 assert(moderateRunChange && moderateRunChange.after.distance_miles === expectedModerateMiles, 'moderate calf injury applies the fixed 25% run-volume reduction');
 assert(moderateRunChange?.summary.includes('open calf injury') && moderateInjury.evidence.some((item) => item.detail.includes('open calf injury')), 'moderate injury driver cites the injured body part');
 assert(healthyReadiness.metrics.readinessScore.value === 86, 'injury rules do not change the passive Apple Health readiness number');
@@ -311,11 +363,25 @@ setHardRun(heavyLegsPlan, '2026-07-13', 'heavy-legs-run');
 const heavyLegs = adaptation.buildAdaptationProposal({
   plan: heavyLegsPlan,
   planningDateISO: '2026-07-13',
-  checkin: { legs: 1, feeling: 3, drive: 2, sleep_hours: null, time_available: 60, life_flags: [] },
+  checkin: {
+    legs: 1,
+    feeling: 3,
+    drive: 2,
+    sleep_hours: null,
+    time_available: 60,
+    life_flags: [],
+    perceived_effort: 10,
+    pain_level: 10,
+    post_energy: 'low',
+  },
 });
-const heavyLegsChange = heavyLegs.changes.find((change) => change.sessionId === 'heavy-legs-run');
-assert(heavyLegsChange?.after.intensity === 'Moderate', 'Heavy legs trims hard-session intensity instead of swapping to recovery');
-assert(heavyLegsChange?.after.distance_miles === heavyLegsChange?.before.distance_miles, 'Heavy legs intensity trim leaves planned volume unchanged');
+const heavyLegsBaseline = adaptation.buildAdaptationProposal({
+  plan: heavyLegsPlan,
+  planningDateISO: '2026-07-13',
+});
+assert(JSON.stringify(heavyLegs) === JSON.stringify(heavyLegsBaseline), 'subjective heavy legs, effort, pain, and energy leave the adaptation result unchanged');
+assert(heavyLegs.status === 'keep' && heavyLegs.changes.length === 0, 'subjective heavy legs cannot trim or replace a hard session');
+assert(!heavyLegs.evidence.some((item) => ['checkin', 'post_run_checkin'].includes(item.source)), 'heavy-legs questionnaire input is absent from adaptation evidence');
 
 section('invariant rejection');
 const invalidCandidate = clone(army);

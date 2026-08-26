@@ -24,9 +24,12 @@ async function run() {
     }),
   };
   let healthRow = null;
+  let reads = [];
   let writes = [];
+  let mutationOwnerId = null;
   const tx = {
-    async get(sql) {
+    async get(sql, params = []) {
+      reads.push({ sql, params });
       if (/SELECT id FROM daily_checkins/.test(sql)) return null;
       if (/FROM health_sync/.test(sql)) return healthRow;
       if (/FROM user_plans up/.test(sql) && /JOIN training_plans tp/.test(sql)) return planRow;
@@ -49,7 +52,13 @@ async function run() {
     loaded: true,
     exports: {
       dbGet: tx.get,
-      withPlanningInputMutation: async (_userId, callback) => callback(tx),
+      withUserMutation: async (userId, callback) => {
+        mutationOwnerId = userId;
+        return callback(tx);
+      },
+      withPlanningInputMutation: async () => {
+        throw new Error('passive compatibility storage must not advance planning authority');
+      },
     },
     children: [],
     paths: [],
@@ -69,7 +78,9 @@ async function run() {
     };
     async function postCheckin(row, bodyOverrides = {}) {
       healthRow = row;
+      reads = [];
       writes = [];
+      mutationOwnerId = null;
       statusCode = 200;
       payload = undefined;
       await handler({
@@ -89,8 +100,73 @@ async function run() {
       assert.equal(statusCode, 200);
       return {
         payload,
+        reads: [...reads],
+        writes: [...writes],
+        mutationOwnerId,
         savedCheckin: writes.find(({ sql }) => /INSERT INTO daily_checkins/.test(sql)),
-        savedOverride: writes.find(({ sql }) => /INSERT INTO checkin_overrides/.test(sql)),
+      };
+    }
+
+    function assertPassiveCompatibilityWrite(result, label) {
+      assert.equal(result.payload.action, 'keep', `${label} has no plan-mutation action`);
+      assert.equal(result.payload.readiness_delta, 0, `${label} has no readiness authority`);
+      assert.deepEqual(result.payload.drivers, [], `${label} supplies no plan-mutation drivers`);
+      assert.equal(Object.hasOwn(result.payload, 'patch'), false, `${label} returns no executable patch`);
+      assert.match(result.payload.adjustment, /unchanged/i, `${label} says the accepted training is unchanged`);
+      assert.equal(result.mutationOwnerId, ownerId, `${label} uses the owner-scoped compatibility mutation`);
+
+      const healthRead = result.reads.find(({ sql }) => /FROM health_sync/.test(sql));
+      assert(healthRead, `${label} resolves compatibility sleep through the real route`);
+      assert.match(healthRead.sql, /WHERE user_id=\?/, `${label} health lookup remains parameterized`);
+      assert.deepEqual(healthRead.params, [ownerId], `${label} health lookup remains owner-scoped`);
+
+      const checkinRead = result.reads.find(({ sql }) => /SELECT id FROM daily_checkins/.test(sql));
+      assert(checkinRead, `${label} checks compatibility storage through the real route`);
+      assert.match(
+        checkinRead.sql,
+        /WHERE user_id=\? AND checkin_date=\?/,
+        `${label} compatibility lookup remains parameterized and owner-scoped`,
+      );
+      assert.deepEqual(checkinRead.params, [ownerId, date], `${label} binds owner and local date separately`);
+
+      assert(result.savedCheckin, `${label} remains available for compatibility history/export`);
+      assert.match(
+        result.savedCheckin.sql,
+        /INSERT INTO daily_checkins \(id, user_id, checkin_date,[\s\S]*VALUES \(\?,\?,\?,\?,\?,\?,\?,\?,\?\)/,
+        `${label} compatibility write remains parameterized`,
+      );
+      assert.equal(result.savedCheckin.params[1], ownerId, `${label} compatibility write remains owner-scoped`);
+      assert.equal(result.savedCheckin.params[2], date, `${label} compatibility write binds the requested local date`);
+      assert.equal(
+        result.writes.some(({ sql }) => /checkin_overrides/i.test(sql)),
+        false,
+        `${label} never creates, updates, or deletes a legacy override`,
+      );
+      assert.equal(
+        result.writes.some(({ sql }) => /(?:UPDATE|INSERT INTO)\s+(?:user_plans|training_plans)/i.test(sql)),
+        false,
+        `${label} never mutates the accepted plan`,
+      );
+    }
+
+    const planSchema = require('../src/lib/planSchema');
+    const dailyExecution = require('../src/lib/dailyExecution');
+    function canonicalExecution() {
+      const acceptedPlan = JSON.parse(planRow.plan_data);
+      const resolved = dailyExecution.resolvePlanDayForDate({
+        plan: acceptedPlan,
+        dateISO: date,
+      });
+      return {
+        resolved,
+        execution: dailyExecution.buildDailyExecution({
+          plan: acceptedPlan,
+          dateISO: date,
+          selectedEntry: resolved.selectedEntry,
+          selectedWeek: resolved.selectedWeek,
+          selectedDayIndex: resolved.selectedDayIndex,
+          completedSessionIds: [],
+        }),
       };
     }
 
@@ -99,14 +175,17 @@ async function run() {
       synced_at: new Date().toISOString(),
       training_metrics_json: '{}',
     });
-    assert.equal(lowSleep.payload.action, 'rest', 'actual mobile POST handler turns fresh synced 3.5-hour sleep into recovery');
-    assert(lowSleep.savedCheckin, 'actual POST handler persists the check-in');
+    assertPassiveCompatibilityWrite(lowSleep, 'fresh synced 3.5-hour sleep');
     assert.equal(lowSleep.savedCheckin.params[7], 3.5, 'actual mobile POST handler persists the fresh synced sleep value');
-    assert(lowSleep.savedOverride, 'actual POST handler persists a bound safety override');
-    const lowSleepPatch = JSON.parse(lowSleep.savedOverride.params[4]);
-    assert.equal(lowSleepPatch.type, 'rest');
-    assert.equal(lowSleepPatch.workout_type, 'rest');
-    assert.equal(lowSleepPatch.distance_miles, 0);
+    const lowSleepExecution = canonicalExecution();
+    assert.equal(
+      planSchema.daySessions(lowSleepExecution.resolved.selectedEntry)[0].type,
+      'easy_run',
+      'fresh synced low sleep leaves the accepted run prescription unchanged',
+    );
+    assert.equal(lowSleepExecution.execution.checkinOverride, null, 'fresh synced low sleep adds no execution override');
+    assert.equal(lowSleepExecution.execution.run?.id, 'low-sleep-run', 'fresh synced low sleep preserves the canonical run identity');
+    assert.equal(lowSleepExecution.execution.run?.type, 'easy_run', 'fresh synced low sleep preserves executable canonical training');
 
     const invalidSleepRows = [
       {
@@ -137,11 +216,11 @@ async function run() {
 
     for (const testCase of invalidSleepRows) {
       const result = await postCheckin(testCase.row);
-      assert.equal(result.payload.action, 'keep', `${testCase.label} cannot invent a rest decision`);
-      assert(result.savedCheckin, `${testCase.label} still persists the user's check-in`);
+      assertPassiveCompatibilityWrite(result, testCase.label);
       assert.equal(result.savedCheckin.params[7], null, `${testCase.label} persists unknown sleep as null, not zero`);
-      assert(result.savedOverride, `${testCase.label} retains a bound keep decision for the scheduled workout`);
-      assert.equal(result.savedOverride.params[3], 'keep', `${testCase.label} persists keep rather than rest`);
+      const unchanged = canonicalExecution();
+      assert.equal(unchanged.execution.checkinOverride, null, `${testCase.label} adds no execution override`);
+      assert.equal(unchanged.execution.run?.type, 'easy_run', `${testCase.label} leaves the accepted run executable`);
     }
 
     const liftOnlyDay = {
@@ -162,28 +241,18 @@ async function run() {
         body: {},
       },
     ];
-    const planSchema = require('../src/lib/planSchema');
-    const dailyExecution = require('../src/lib/dailyExecution');
     for (const testCase of liftSafetyCases) {
       const result = await postCheckin(testCase.row, testCase.body);
-      assert.equal(result.payload.action, 'rest', `actual POST /checkin turns lift-only ${testCase.label} safety evidence into rest`);
-      const patch = JSON.parse(result.savedOverride.params[4]);
-      const resolved = dailyExecution.resolvePlanDayForDate({
-        plan: JSON.parse(planRow.plan_data),
-        dateISO: date,
-        patch,
-      });
-      assert.equal(planSchema.daySessions(resolved.selectedEntry)[0].type, 'rest', `lift-only ${testCase.label} persists a non-executable lift prescription`);
-      const execution = dailyExecution.buildDailyExecution({
-        plan: JSON.parse(planRow.plan_data),
-        dateISO: date,
-        selectedEntry: resolved.selectedEntry,
-        selectedWeek: resolved.selectedWeek,
-        selectedDayIndex: resolved.selectedDayIndex,
-        completedSessionIds: [],
-      });
-      assert.equal(execution.checkinOverride?.action, 'rest', `lift-only ${testCase.label} carries the day-level fail-closed directive`);
-      assert.equal(execution.lift?.type, 'rest', `lift-only ${testCase.label} cannot remain an executable strength session`);
+      assertPassiveCompatibilityWrite(result, `lift-only ${testCase.label}`);
+      const unchanged = canonicalExecution();
+      assert.equal(
+        planSchema.daySessions(unchanged.resolved.selectedEntry)[0].type,
+        'strength',
+        `lift-only ${testCase.label} leaves the accepted lift prescription unchanged`,
+      );
+      assert.equal(unchanged.execution.checkinOverride, null, `lift-only ${testCase.label} adds no execution override`);
+      assert.equal(unchanged.execution.lift?.id, 'low-sleep-lift', `lift-only ${testCase.label} preserves the canonical lift identity`);
+      assert.equal(unchanged.execution.lift?.type, 'strength', `lift-only ${testCase.label} leaves the accepted lift executable`);
     }
     console.log('CHECK-IN LOW-SLEEP ROUTE SMOKE OK');
   } finally {
