@@ -231,8 +231,10 @@ async function runServiceWorkerCacheSmoke() {
     status: 200,
     headers: { 'content-type': 'text/html; charset=UTF-8' },
   }))
-  await dispatchFetch(htmlAsJs, '/assets/missing.js')
+  const htmlAsJsResponse = await dispatchFetch(htmlAsJs, '/assets/missing.js')
   assert.equal(htmlAsJs.puts.length, 0, 'HTML returned for JavaScript is never cached')
+  assert.equal(htmlAsJsResponse.status, 503, 'HTML returned for JavaScript fails closed instead of reaching the page')
+  assert.match(htmlAsJsResponse.headers.get('content-type') || '', /^text\/plain/i, 'rejected JavaScript uses an explicit unavailable response')
 
   const validCss = buildWorkerHarness()
   validCss.setResponse(new Response('body{}', {
@@ -247,8 +249,10 @@ async function runServiceWorkerCacheSmoke() {
     status: 200,
     headers: { 'content-type': 'text/html; charset=UTF-8' },
   }))
-  await dispatchFetch(htmlAsCss, '/assets/missing.css')
+  const htmlAsCssResponse = await dispatchFetch(htmlAsCss, '/assets/missing.css')
   assert.equal(htmlAsCss.puts.length, 0, 'HTML returned for CSS is never cached')
+  assert.equal(htmlAsCssResponse.status, 503, 'HTML returned for CSS fails closed instead of reaching the page')
+  assert.match(htmlAsCssResponse.headers.get('content-type') || '', /^text\/plain/i, 'rejected CSS uses an explicit unavailable response')
 
   const cachedVaryingJs = buildWorkerHarness()
   cachedVaryingJs.setFetchError(new Error('offline'))

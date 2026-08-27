@@ -255,7 +255,6 @@ test('service worker purges old caches and never stores or serves HTML as JavaSc
   const staleAsset = await page.evaluate(async () => {
     const url = '/assets/forge-stale-chunk-probe.js'
     const response = await fetch(url, { cache: 'reload' })
-    await new Promise((resolve) => setTimeout(resolve, 100))
     return {
       status: response.status,
       contentType: response.headers.get('content-type') || '',
@@ -263,6 +262,8 @@ test('service worker purges old caches and never stores or serves HTML as JavaSc
     }
   })
 
+  expect(staleAsset.status, JSON.stringify(staleAsset)).toBe(503)
+  expect(staleAsset.contentType, JSON.stringify(staleAsset)).toMatch(/^text\/plain/i)
   expect(staleAsset.cached, JSON.stringify(staleAsset)).toBe(false)
 
   await context.setOffline(true)

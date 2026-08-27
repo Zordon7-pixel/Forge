@@ -214,6 +214,13 @@ function isCodeAsset(url) {
   return url.pathname.endsWith('.js') || url.pathname.endsWith('.css');
 }
 
+function unavailableAssetResponse() {
+  return new Response('Asset unavailable offline', {
+    status: 503,
+    headers: { 'Content-Type': 'text/plain; charset=UTF-8' },
+  });
+}
+
 async function matchStatic(request) {
   const cache = await caches.open(CACHE);
   return cache.match(request, { ignoreVary: true });
@@ -275,7 +282,10 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then(async (response) => {
-        if (response.ok && hasExpectedAssetType(url, response)) {
+        if (isCodeAsset(url) && !hasExpectedAssetType(url, response)) {
+          return unavailableAssetResponse();
+        }
+        if (response.ok) {
           try {
             const cache = await caches.open(CACHE);
             await cache.put(event.request, response.clone());
@@ -289,10 +299,7 @@ self.addEventListener('fetch', (event) => {
         const cached = await matchStatic(event.request);
         if (cached) return cached;
         if (isCodeAsset(url)) {
-          return new Response('Asset unavailable offline', {
-            status: 503,
-            headers: { 'Content-Type': 'text/plain; charset=UTF-8' },
-          });
+          return unavailableAssetResponse();
         }
         if (event.request.mode === 'navigate') {
           return matchStatic(new Request(new URL('/', self.location.origin)));
