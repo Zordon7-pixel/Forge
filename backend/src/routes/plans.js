@@ -2843,6 +2843,58 @@ function goalBackwardCandidateMaterial(plan, availableLocalDates) {
   ));
 }
 
+function goalBackwardRequiredRoadMaterial(
+  candidateMaterial,
+  completeCandidateMaterial,
+  decision,
+  eventKind,
+) {
+  if (!['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(String(eventKind || ''))) {
+    return candidateMaterial;
+  }
+  const selected = Array.isArray(candidateMaterial) ? [...candidateMaterial] : [];
+  const selectedIds = new Set(selected.map(goalBackwardMaterialId).filter(Boolean));
+  const unclaimedSelected = selected.filter((session) => goalBackwardMaterialId(session));
+  const missingPrimaryRoles = [];
+  for (const role of (Array.isArray(decision?.role_multiset) ? decision.role_multiset : [])) {
+    if (role?.role !== 'PRIMARY_KEY') continue;
+    const requiredMaterialId = typeof role.candidate_material_id === 'string'
+      ? role.candidate_material_id.trim() : '';
+    const materialIndex = unclaimedSelected.findIndex((session) => (
+      (!requiredMaterialId || goalBackwardMaterialId(session) === requiredMaterialId)
+        && (role.any_of || []).includes(legacyGoalBackwardFamily(session))
+    ));
+    if (materialIndex < 0) missingPrimaryRoles.push(role);
+    else unclaimedSelected.splice(materialIndex, 1);
+  }
+  if (!missingPrimaryRoles.length) return selected;
+  const source = (Array.isArray(completeCandidateMaterial) ? completeCandidateMaterial : [])
+    .filter((session) => {
+      const materialId = goalBackwardMaterialId(session);
+      const family = legacyGoalBackwardFamily(session);
+      return materialId && !selectedIds.has(materialId)
+        && family && GOAL_BACKWARD_RUNNING_FAMILIES.has(family);
+    })
+    .sort((left, right) => (
+      String(left?.date || '').localeCompare(String(right?.date || ''))
+        || String(goalBackwardMaterialId(left)).localeCompare(String(goalBackwardMaterialId(right)))
+    ));
+  for (const role of missingPrimaryRoles) {
+    const requiredMaterialId = typeof role.candidate_material_id === 'string'
+      ? role.candidate_material_id.trim() : '';
+    const materialIndex = source.findIndex((session) => (
+      (!requiredMaterialId || goalBackwardMaterialId(session) === requiredMaterialId)
+        && (role.any_of || []).includes(legacyGoalBackwardFamily(session))
+    ));
+    if (materialIndex < 0) continue;
+    const [material] = source.splice(materialIndex, 1);
+    const materialId = goalBackwardMaterialId(material);
+    selected.push(material);
+    selectedIds.add(materialId);
+  }
+  return selected;
+}
+
 function goalBackwardMaterialId(session) {
   const value = session?.session_id ?? session?.id;
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -3232,6 +3284,82 @@ function goalBackwardTopUpFullWeekRunningMaterial(candidateMaterial, requiredRun
   return result;
 }
 
+function goalBackwardSelectedMaterialIds(candidateMaterial, roles) {
+  const source = Array.isArray(candidateMaterial) ? candidateMaterial : [];
+  const usedIndexes = new Set();
+  const materialIds = [];
+  for (const role of (Array.isArray(roles) ? roles : [])) {
+    const requiredMaterialId = typeof role?.candidate_material_id === 'string'
+      ? role.candidate_material_id.trim() : '';
+    const materialIndex = source.findIndex((session, index) => (
+      !usedIndexes.has(index)
+        && (!requiredMaterialId || goalBackwardMaterialId(session) === requiredMaterialId)
+        && (role?.any_of || []).includes(legacyGoalBackwardFamily(session))
+    ));
+    if (materialIndex < 0) return [];
+    usedIndexes.add(materialIndex);
+    materialIds.push(goalBackwardMaterialId(source[materialIndex]));
+  }
+  return materialIds.filter(Boolean);
+}
+
+function goalBackwardTopUpRoadRunningMaterial(candidateMaterial, requiredRunningM, options = {}) {
+  const projectionPace = options.projectionPaceSecondsPerMile;
+  if (options.enabled !== true || !Number.isSafeInteger(requiredRunningM) || requiredRunningM < 1
+    || typeof projectionPace !== 'number' || !Number.isFinite(projectionPace)
+    || projectionPace < 180 || projectionPace > 2400) return candidateMaterial;
+  const selectedMaterialIds = goalBackwardSelectedMaterialIds(candidateMaterial, options.roles);
+  if (!selectedMaterialIds.length || selectedMaterialIds.length !== options.roles?.length) {
+    return candidateMaterial;
+  }
+  const selectedIds = new Set(selectedMaterialIds);
+  const canonicalMaterial = canonicalRoadCandidateMaterial(candidateMaterial, projectionPace);
+  const selected = canonicalMaterial.filter((material) => selectedIds.has(material.material_id));
+  if (selected.length !== selectedIds.size || selected.some((material) => (
+    GOAL_BACKWARD_RUNNING_FAMILIES.has(material.workout_family)
+      && (!Number.isSafeInteger(material.distance_m) || material.distance_m < 0)
+  ))) return candidateMaterial;
+  const currentRunningM = selected.reduce((sum, material) => (
+    sum + (GOAL_BACKWARD_RUNNING_FAMILIES.has(material.workout_family) ? material.distance_m : 0)
+  ), 0);
+  if (currentRunningM >= requiredRunningM) return candidateMaterial;
+  const adjustable = selected.filter((material) => (
+    ['recovery_run', 'easy_run', 'long_aerobic', 'steady_run'].includes(material.workout_family)
+  ));
+  if (!adjustable.length) return candidateMaterial;
+  const result = (Array.isArray(candidateMaterial) ? candidateMaterial : [])
+    .map((session) => ({ ...session }));
+  const weights = adjustable.map((material) => material.workout_family === 'long_aerobic' ? 2 : 1);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  let remainingDeficitM = requiredRunningM - currentRunningM;
+  adjustable.forEach((material, position) => {
+    const additionM = position === adjustable.length - 1
+      ? remainingDeficitM
+      : Math.floor((requiredRunningM - currentRunningM) * (weights[position] / totalWeight));
+    remainingDeficitM -= additionM;
+    const nextDistanceM = material.distance_m + additionM;
+    const nextMiles = nextDistanceM / 1609.344;
+    const minimumDurationMin = Math.ceil(
+      ((nextMiles * projectionPace * 1.1) / 60) * 10,
+    ) / 10;
+    const sourceIndex = result.findIndex((session) => (
+      goalBackwardMaterialId(session) === material.material_id
+    ));
+    if (sourceIndex < 0) return;
+    result[sourceIndex] = {
+      ...result[sourceIndex],
+      distance_miles: nextMiles,
+      duration_min: Math.max(
+        Number(result[sourceIndex].duration_min ?? result[sourceIndex].durationMin ?? 0),
+        minimumDurationMin,
+      ),
+    };
+    delete result[sourceIndex].distance_m;
+    delete result[sourceIndex].distanceMeters;
+  });
+  return result;
+}
+
 function goalBackwardSupportRequirement(primaryRoles, family) {
   const exact = primaryRoles.find((role) => (role.any_of || []).includes(family));
   if (exact) return exact.requirement_id;
@@ -3375,6 +3503,8 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
   const availableDaysCount = Number(options.availableDaysCount);
   const requestedRunDays = Number(options.requestedRunDays);
   const completedRunCount = Number(options.completedRunCount);
+  const supportingFamilies = Array.isArray(options.supportingFamilies)
+    ? new Set(options.supportingFamilies.map(String)) : null;
   const primaryRunningCount = primary.filter((role) => (role.any_of || []).some((family) => (
     GOAL_BACKWARD_RUNNING_FAMILIES.has(family)
       || GOAL_BACKWARD_PROJECTABLE_RUNNING_FAMILIES.has(family)
@@ -3435,6 +3565,7 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
     };
   }).filter((entry) => (
     !usedMaterialIndexes.has(entry.index) && entry.family && entry.runningM > 0
+      && (!supportingFamilies || supportingFamilies.has(entry.family))
   )).sort((left, right) => (
     right.runningM - left.runningM
       || left.family.localeCompare(right.family)
@@ -3729,6 +3860,12 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       !carriedLifecycleMaterialIds.has(goalBackwardMaterialId(session))
     )),
   ];
+  candidateMaterial = goalBackwardRequiredRoadMaterial(
+    candidateMaterial,
+    completeCandidateMaterial,
+    decision,
+    goals[0]?.event_kind,
+  );
   let requiredRunningDoseReceipt = null;
   if (clusterPolicy?.required !== true) {
     const projectionPaceSecondsPerMile =
@@ -3820,6 +3957,9 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         preserveHybridSessions: planningDateLocal === planningWeekStartLocal
           && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass),
         projectionPaceSecondsPerMile,
+        supportingFamilies: ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON']
+          .includes(String(goals[0]?.event_kind || '')) && availableLocalDates.length <= 4
+          ? ['recovery_run', 'easy_run', 'long_aerobic', 'steady_run'] : undefined,
         trainingAgeClass,
       },
     );
@@ -3834,6 +3974,19 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
           selectedMaterialIds: decision.role_multiset
             .map((role) => role.candidate_material_id)
             .filter(Boolean),
+        },
+      );
+      candidateMaterial = goalBackwardTopUpRoadRunningMaterial(
+        candidateMaterial,
+        requiredRunningM,
+        {
+          enabled: ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON']
+            .includes(String(goals[0]?.event_kind || ''))
+            && ['ESTABLISHED', 'PROVISIONAL'].includes(recentNormalStatus)
+            && (runLoadComplete || incompleteLoadFloorIsSufficient)
+            && ['NORMAL', 'MONITOR'].includes(safetyAction),
+          projectionPaceSecondsPerMile,
+          roles: decision.role_multiset,
         },
       );
     }

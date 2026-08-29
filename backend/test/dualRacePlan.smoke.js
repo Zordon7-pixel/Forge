@@ -2110,6 +2110,74 @@ async function checkHyroxCandidateImmediateAdoption() {
       get(name) { return this.headers[String(name).toLowerCase()]; },
     };
     const surfaceRequestBase = { ...requestBase, query: {} };
+    const priorArmyGoalTimeSeconds = raceRows.get('army').goal_time_seconds;
+    const priorLiftDaysPerWeek = profile.lift_days_per_week;
+    const priorTrainingAgeClass = profile.training_age_class;
+    const armyCandidateCountBefore = candidates.size;
+    const armyArtifactCountBefore = planningArtifacts.size;
+    const armyCandidateIdsBefore = new Set(candidates.keys());
+    const armyArtifactIdsBefore = new Set(planningArtifacts.keys());
+    const armyActivePlanBefore = currentAssignment().id;
+    let armyPreview = null;
+    let armyInspection = null;
+    let armyError = null;
+    raceRows.get('army').goal_time_seconds = 5340;
+    profile.lift_days_per_week = 4;
+    profile.training_age_class = 'ESTABLISHED';
+    try {
+      armyPreview = await plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock,
+        race_ids: ['army'],
+        target: {
+          trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+          runDaysPerWeek: 4,
+          liftDaysPerWeek: 4,
+          planMode: 'hybrid_maintain',
+          liftingEnabled: true,
+          equipment: ['barbell', 'dumbbell', 'rack', 'bench'],
+        },
+      }, {
+        goalBackwardDependencies: {
+          mode: 'on',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          inspectDecision: (result) => { armyInspection = result; },
+        },
+      });
+    } catch (error) {
+      armyError = error;
+    } finally {
+      raceRows.get('army').goal_time_seconds = priorArmyGoalTimeSeconds;
+      profile.lift_days_per_week = priorLiftDaysPerWeek;
+      if (priorTrainingAgeClass === undefined) delete profile.training_age_class;
+      else profile.training_age_class = priorTrainingAgeClass;
+    }
+    assert.equal(armyError, null, JSON.stringify({
+      error: armyError && { code: armyError.code, status: armyError.status, message: armyError.message },
+      violations: armyInspection?.candidates?.map((candidate) => candidate.validation.violations),
+    }));
+    assert.ok(armyPreview, 'the exact four-run/four-lift Army preview must be returned');
+    assert.equal(candidates.size, armyCandidateCountBefore + 1,
+      'the valid Army preview stores exactly one candidate');
+    assert.ok(planningArtifacts.size > armyArtifactCountBefore,
+      'the valid Army preview stores its complete planning artifact chain');
+    assert.equal(currentAssignment().id, armyActivePlanBefore,
+      'preview persistence must not apply or supersede the active plan');
+    assert.ok(armyInspection?.selected_candidate,
+      'the production route must select a hard-valid Army candidate');
+    assert.equal(armyInspection.selected_candidate.validation.valid, true);
+    assert.equal(armyPreview.plan.goal_backward_engine_version, 'goal-backward-coaching-v2.4');
+    assert.equal(
+      armyPreview.plan.selected_candidate_hash,
+      armyInspection.selected_candidate.candidate_hash,
+      'the served preview must be the selected applicable goal-backward plan',
+    );
+    for (const candidateId of [...candidates.keys()]) {
+      if (!armyCandidateIdsBefore.has(candidateId)) candidates.delete(candidateId);
+    }
+    for (const artifactId of [...planningArtifacts.keys()]) {
+      if (!armyArtifactIdsBefore.has(artifactId)) planningArtifacts.delete(artifactId);
+    }
     const eligibilityTelemetry = [];
     const currentCandidateCountBeforeIneligible = candidates.size;
     const ineligibleGoalBackward = await plansRouter._test.previewPlanForUser(ownerId, {
@@ -2186,6 +2254,9 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(planningArtifacts.size, artifactCountBeforeArtifactFailure, 'artifact failure persists no partial artifacts');
     assert.equal(currentAssignment().id, activePlanBeforeForcedFailure, 'artifact failure changes no active plan');
 
+    const candidateCountBeforeUnsafeEvidence = candidates.size;
+    const artifactCountBeforeUnsafeEvidence = planningArtifacts.size;
+    const activePlanBeforeUnsafeEvidence = currentAssignment().id;
     profile.training_age_class = 'BEGINNER';
     let beginnerResult = null;
     await assert.rejects(
@@ -2210,6 +2281,12 @@ async function checkHyroxCandidateImmediateAdoption() {
     );
     assert.equal(beginnerResult?.decision.training_age_class, 'BEGINNER');
     assert.equal(beginnerResult?.selected_candidate, null);
+    assert.equal(candidates.size, candidateCountBeforeUnsafeEvidence,
+      'unsafe evidence stores no candidate');
+    assert.equal(planningArtifacts.size, artifactCountBeforeUnsafeEvidence,
+      'unsafe evidence stores no planning artifact');
+    assert.equal(currentAssignment().id, activePlanBeforeUnsafeEvidence,
+      'unsafe evidence applies no active-plan mutation');
     assert.ok(beginnerResult?.candidates.some((candidate) => candidate.validation.violations.some((violation) => (
       violation.code === 'CROSS_MODAL_FATIGUE_LIMIT'
         || (violation.code === 'REQUIRED_EXPOSURE_UNPLACEABLE'
