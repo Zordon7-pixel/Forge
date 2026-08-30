@@ -211,7 +211,9 @@ export function goalBackwardV24PlanFixture({
     purpose,
     feasibility: { status: planData.overall_feasibility, reason_codes: planData.reasons },
     safety: { action: safetyAction, scope: safetyScope, reason_codes: safetyReasonCodes },
-    weeks: [{ week: 1, start_date: dateISO, phase: canonicalSession.phase, purpose }],
+    // Match PostgreSQL JSONB's canonical key order instead of the construction
+    // order used by the served plan's JavaScript projection.
+    weeks: [{ week: 1, phase: canonicalSession.phase, purpose, start_date: dateISO }],
     sessions: [canonicalSession],
   }
   return {

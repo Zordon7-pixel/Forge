@@ -1529,9 +1529,17 @@ async function checkHyroxCandidateImmediateAdoption() {
   let fixedNowIso = '2026-08-14T16:00:00.000Z';
   let databaseJsonShape = 'serialized';
 
+  function postgresJsonbObjectOrder(value) {
+    if (Array.isArray(value)) return value.map(postgresJsonbObjectOrder);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.keys(value)
+      .sort((left, right) => Buffer.byteLength(left) - Buffer.byteLength(right) || left.localeCompare(right))
+      .map((key) => [key, postgresJsonbObjectOrder(value[key])]));
+  }
+
   function databaseJsonValue(value) {
-    return databaseJsonShape === 'postgres' && typeof value === 'string'
-      ? JSON.parse(value) : value;
+    if (databaseJsonShape !== 'postgres' || typeof value !== 'string') return value;
+    return postgresJsonbObjectOrder(JSON.parse(value));
   }
 
   class FixedDate extends RealDate {
@@ -3325,6 +3333,205 @@ async function checkHyroxCandidateImmediateAdoption() {
     }
 
     await checkArmyAuthoritativeSurfaceLifecycle();
+
+    async function checkFreshEightRunCombinedSurfaceLifecycle() {
+      restoreAcceptedReconcileBaseline();
+      const lifecycleBaseline = {
+        profile: clone(profile),
+        plans: cloneMap(trainingPlans),
+        assignments: cloneMap(userPlans),
+        candidates: cloneMap(candidates),
+        artifacts: cloneMap(planningArtifacts),
+        races: cloneMap(raceRows),
+        runs: clone(recentRuns),
+        lifts: clone(recentLifts),
+        workouts: clone(completedWorkouts),
+        health: healthRow ? clone(healthRow) : null,
+        fixedNowIso,
+        databaseJsonShape,
+      };
+      const restoreLifecycleBaseline = () => {
+        Object.keys(profile).forEach((key) => delete profile[key]);
+        Object.assign(profile, clone(lifecycleBaseline.profile));
+        restoreMap(trainingPlans, lifecycleBaseline.plans);
+        restoreMap(userPlans, lifecycleBaseline.assignments);
+        restoreMap(candidates, lifecycleBaseline.candidates);
+        restoreMap(planningArtifacts, lifecycleBaseline.artifacts);
+        restoreMap(raceRows, lifecycleBaseline.races);
+        recentRuns.splice(0, recentRuns.length, ...clone(lifecycleBaseline.runs));
+        recentLifts.splice(0, recentLifts.length, ...clone(lifecycleBaseline.lifts));
+        completedWorkouts.splice(0, completedWorkouts.length, ...clone(lifecycleBaseline.workouts));
+        healthRow = lifecycleBaseline.health ? clone(lifecycleBaseline.health) : null;
+        fixedNowIso = lifecycleBaseline.fixedNowIso;
+        databaseJsonShape = lifecycleBaseline.databaseJsonShape;
+      };
+
+      try {
+        const combinedDate = '2026-08-30';
+        const combinedHyroxId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        const combinedArmyId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+        fixedNowIso = '2026-08-30T15:08:00.000Z';
+        Object.assign(profile, {
+          timezone: 'America/New_York',
+          weekly_miles_current: 16,
+          weekly_miles: 16,
+          fitness_level: 'intermediate',
+          run_days_per_week: 4,
+          lift_days_per_week: 2,
+          primary_goal: 'hybrid',
+          preferred_workout_days: JSON.stringify(['Tue', 'Thu', 'Sat', 'Sun']),
+          max_heart_rate: 190,
+        });
+        trainingPlans.clear();
+        userPlans.clear();
+        candidates.clear();
+        planningArtifacts.clear();
+        recentRuns.splice(0, recentRuns.length, ...[
+          ['2026-08-04', 4.0, 2160],
+          ['2026-08-08', 6.0, 3300],
+          ['2026-08-12', 4.0, 2160],
+          ['2026-08-15', 6.0, 3300],
+          ['2026-08-18', 4.5, 2460],
+          ['2026-08-22', 7.0, 3900],
+          ['2026-08-25', 5.0, 2700],
+          ['2026-08-28', 4.0, 2160],
+        ].map(([date, distance, duration], index) => ({
+          id: `fresh-combined-run-${index + 1}`,
+          user_id: ownerId,
+          date,
+          distance_miles: distance,
+          duration_seconds: duration,
+          avg_heart_rate: 142 + index,
+          max_heart_rate: 165 + index,
+          cadence_spm: 166,
+          calories: 450 + index * 30,
+          type: 'easy',
+          health_source: 'manual',
+          created_at: `${date}T11:00:00.000Z`,
+        })));
+        recentLifts.splice(0, recentLifts.length);
+        completedWorkouts.splice(0, completedWorkouts.length);
+        healthRow = null;
+        raceRows.set(combinedArmyId, {
+          ...raceRows.get('army'),
+          id: combinedArmyId,
+          race_name: 'Army 10-Miler',
+          race_date: '2026-10-11',
+          event_local_date: '2026-10-11',
+          event_timezone: 'America/New_York',
+          location: 'Washington, DC',
+          event_kind: 'run_race',
+          distance_miles: 10,
+          goal_time_seconds: 5400,
+          status: 'upcoming',
+          event_revision: 1,
+          goal_revision: 1,
+        });
+        raceRows.set(combinedHyroxId, {
+          ...raceRows.get('hyrox'),
+          id: combinedHyroxId,
+          race_name: 'HYROX Washington DC',
+          race_date: '2026-09-06',
+          event_local_date: '2026-09-06',
+          event_timezone: 'America/New_York',
+          location: 'Washington, DC',
+          event_kind: 'hyrox',
+          event_format: 'doubles',
+          event_category: 'men',
+          goal_time_seconds: 3600,
+          rules_version: '2026-2027',
+          status: 'upcoming',
+          event_revision: 1,
+          goal_revision: 1,
+          event_config_json: JSON.stringify({
+            schemaVersion: 1,
+            canonicalUnits: 'metric',
+            equipment: [],
+            runningPriority: 'improve',
+            runDaysPerWeek: 4,
+            trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+          }),
+        });
+        const lifecycleRequest = {
+          user: { id: ownerId },
+          query: { date: combinedDate },
+          headers: {
+            'x-forged-local-date': combinedDate,
+            'x-forged-timezone-offset-minutes': '240',
+          },
+          get(name) { return this.headers[String(name).toLowerCase()]; },
+        };
+        const combinedPreview = await invoke(preview, {
+          ...lifecycleRequest,
+          body: {
+            planning_date_local: combinedDate,
+            timezone_offset_minutes: 240,
+            race_ids: [combinedHyroxId, combinedArmyId],
+            target: {
+              planMode: 'hyrox_build',
+              runDaysPerWeek: 4,
+              trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+              liftingEnabled: true,
+              hyroxEquipment: [],
+            },
+          },
+        });
+        assert.equal(combinedPreview.statusCode, 201, JSON.stringify(combinedPreview.payload));
+        const applyBody = {
+          planning_date_local: combinedDate,
+          timezone_offset_minutes: 240,
+          choice: 'train_for_target',
+          candidate_hash: combinedPreview.payload.candidate_hash,
+          ...combinedPreview.payload.apply_bindings,
+        };
+        const combinedApply = await invoke(apply, {
+          ...lifecycleRequest,
+          params: { candidateId: combinedPreview.payload.candidate_id },
+          body: applyBody,
+        });
+        assert.equal(combinedApply.statusCode, 200, JSON.stringify(combinedApply.payload));
+
+        const { validateSurfaceManifest } = await import('../../frontend/src/lib/dailyExecutionCore.js');
+        const firstRead = await invoke(readMyPlan, { ...lifecycleRequest, body: {} });
+        assert.equal(firstRead.statusCode, 200, JSON.stringify(firstRead.payload));
+        assert.deepEqual(firstRead.payload.plan.plan_data.goals.map((goal) => goal.raceId), [
+          combinedHyroxId, combinedArmyId,
+        ]);
+        assert.equal(firstRead.payload.surface_manifest?.status, 'accepted');
+        assert.equal(validateSurfaceManifest({
+          plan: firstRead.payload.plan,
+          userPlan: firstRead.payload.user_plan,
+          manifest: firstRead.payload.surface_manifest,
+        }).status, 'accepted',
+        'a fresh eight-run combined route payload must render the canonical Weekly Run Brief');
+
+        databaseJsonShape = 'postgres';
+        const reloadRead = await invoke(readMyPlan, { ...lifecycleRequest, body: {} });
+        assert.equal(reloadRead.statusCode, 200);
+        assert.deepEqual(reloadRead.payload.surface_manifest, firstRead.payload.surface_manifest);
+        assert.equal(validateSurfaceManifest({
+          plan: reloadRead.payload.plan,
+          userPlan: reloadRead.payload.user_plan,
+          manifest: reloadRead.payload.surface_manifest,
+        }).status, 'accepted',
+        'the JSONB reload must retain an accepted combined-plan surface');
+
+        const assignmentCount = userPlans.size;
+        const replay = await invoke(apply, {
+          ...lifecycleRequest,
+          params: { candidateId: combinedPreview.payload.candidate_id },
+          body: applyBody,
+        });
+        assert.equal(replay.statusCode, 200, JSON.stringify(replay.payload));
+        assert.equal(replay.payload.replay, true);
+        assert.equal(replay.payload.user_plan_id, combinedApply.payload.user_plan_id);
+        assert.equal(userPlans.size, assignmentCount);
+      } finally {
+        restoreLifecycleBaseline();
+      }
+    }
+
+    await checkFreshEightRunCombinedSurfaceLifecycle();
     const unrepairableCases = [
       ['missing active assignment', () => { currentAssignment().status = 'superseded'; }],
       ['missing applied candidate', () => { candidates.delete(previewResponse.payload.candidate_id); }],
@@ -5915,6 +6122,17 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.deepEqual(finalHyroxCurrent.payload.plan.plan_data.goals.map((goal) => goal.raceId), [
       'hyrox', 'army',
     ]);
+    assert.equal(finalHyroxCurrent.payload.surface_manifest?.status, 'accepted',
+      'a newly applied HYROX plus Army successor must expose an accepted canonical surface');
+    assert.ok(finalHyroxCurrent.payload.surface_manifest?.sessions?.length > 0,
+      'the accepted HYROX plus Army surface must remain executable');
+    const { validateSurfaceManifest } = await import('../../frontend/src/lib/dailyExecutionCore.js');
+    assert.equal(validateSurfaceManifest({
+      plan: finalHyroxCurrent.payload.plan,
+      userPlan: finalHyroxCurrent.payload.user_plan,
+      manifest: finalHyroxCurrent.payload.surface_manifest,
+    }).status, 'accepted',
+    'the actual /plans/my payload must satisfy the same canonical surface contract used by /plan');
     assert.equal(raceRows.has('yonkers'), false);
     assert.equal(finalHyroxCurrent.payload.plan.plan_data.goals[0].division, 'doubles');
     assert.equal(finalHyroxCurrent.payload.plan.plan_data.goals[0].category, 'men');

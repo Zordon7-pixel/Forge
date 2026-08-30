@@ -59,8 +59,47 @@ function validHash(value) {
   return /^[a-f0-9]{64}$/.test(normalizedHash(value));
 }
 
-function sameValue(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+function sameValue(left, right, seen = new WeakMap()) {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+
+  const prior = seen.get(left);
+  if (prior) return prior === right;
+  seen.set(left, right);
+
+  try {
+    if (Array.isArray(left)) {
+      if (left.length !== right.length) return false;
+      for (let index = 0; index < left.length; index += 1) {
+        const leftDescriptor = Object.getOwnPropertyDescriptor(left, String(index));
+        const rightDescriptor = Object.getOwnPropertyDescriptor(right, String(index));
+        if (!leftDescriptor || !rightDescriptor
+          || !Object.hasOwn(leftDescriptor, 'value') || !Object.hasOwn(rightDescriptor, 'value')
+          || !sameValue(leftDescriptor.value, rightDescriptor.value, seen)) return false;
+      }
+      return true;
+    }
+
+    const leftDescriptors = Object.getOwnPropertyDescriptors(left);
+    const rightDescriptors = Object.getOwnPropertyDescriptors(right);
+    const enumerableKeys = (descriptors) => Object.keys(descriptors)
+      .filter((key) => descriptors[key]?.enumerable)
+      .sort();
+    const leftKeys = enumerableKeys(leftDescriptors);
+    const rightKeys = enumerableKeys(rightDescriptors);
+    if (leftKeys.length !== rightKeys.length
+      || leftKeys.some((key, index) => key !== rightKeys[index])) return false;
+    return leftKeys.every((key) => {
+      const leftDescriptor = leftDescriptors[key];
+      const rightDescriptor = rightDescriptors[key];
+      return Object.hasOwn(leftDescriptor, 'value')
+        && Object.hasOwn(rightDescriptor, 'value')
+        && sameValue(leftDescriptor.value, rightDescriptor.value, seen);
+    });
+  } catch (_error) {
+    return false;
+  }
 }
 
 function sessionId(session) {

@@ -21,6 +21,7 @@ import {
   planSessionIdFromState,
   currentWeekFromState,
   isRetryableCompletionFailure,
+  validateSurfaceManifest,
 } from '../src/lib/dailyExecutionCore.js';
 import {
   resolveTodayPlanAccess,
@@ -337,6 +338,103 @@ console.log('\n== completion retry policy ==');
 assert(isRetryableCompletionFailure(new Error('offline')) === true, 'network completion failure is retryable');
 assert(isRetryableCompletionFailure({ response: { status: 503 } }) === true, 'server completion failure is retryable');
 assert(isRetryableCompletionFailure({ response: { status: 400 } }) === false, 'deterministic 4xx completion failure is not queued forever');
+
+console.log('\n== JSONB canonical surface equality ==');
+const jsonbIdentity = {
+  decision_id: 'decision-jsonb-week-order',
+  decision_hash: '1'.repeat(64),
+  candidate_id: 'candidate-jsonb-week-order',
+  candidate_revision: 1,
+  candidate_hash: '2'.repeat(64),
+  plan_id: 'plan-jsonb-week-order',
+  plan_revision: 1,
+  canonical_session_set_hash: '3'.repeat(64),
+  athlete_state_revision: 11,
+  safety_state_hash: '4'.repeat(64),
+  goal_revisions: { race: 1 },
+};
+const jsonbSession = {
+  session_id: 'hyrox-1-station',
+  session_revision: 1,
+  plan_id: jsonbIdentity.plan_id,
+  plan_revision: jsonbIdentity.plan_revision,
+  decision_id: jsonbIdentity.decision_id,
+  role: 'PRIMARY_KEY',
+  workout_family: 'hyrox_station_skill',
+  scheduled_local_date: '2026-09-06',
+  steps: [{ order: 1, instruction: 'Complete the reviewed station recipe.' }],
+  target_provenance: [{ source: 'race_goal' }],
+  purpose_reason_codes: ['RACE_SPECIFICITY'],
+  adjustment_criteria: [],
+  stop_criteria: [],
+  safety_scope: [],
+  executability: 'EXECUTABLE',
+  capability: { classification: 'FULLY_STRUCTURED' },
+  content_hash: '5'.repeat(64),
+};
+const jsonbPlan = {
+  plan_data: {
+    canonical_workout_schema_version: 1,
+    plan_id: jsonbIdentity.plan_id,
+    plan_revision: jsonbIdentity.plan_revision,
+    decision_id: jsonbIdentity.decision_id,
+    decision_hash: jsonbIdentity.decision_hash,
+    selected_candidate_id: jsonbIdentity.candidate_id,
+    selected_candidate_hash: jsonbIdentity.candidate_hash,
+    canonical_session_set_hash: jsonbIdentity.canonical_session_set_hash,
+    overall_feasibility: 'supported',
+    reasons: [],
+    weeks: [{
+      week: 1,
+      startDate: '2026-08-24',
+      phase: '',
+      purpose: '',
+      days: [{ date: '2026-09-06', sessions: [jsonbSession] }],
+    }],
+  },
+};
+const jsonbManifest = {
+  schema_version: 'goal_backward_surface_manifest_v1',
+  surface_revision: 1,
+  feature_mode: 'on',
+  v24_surface_enabled: true,
+  status: 'accepted',
+  identity: jsonbIdentity,
+  purpose: '',
+  feasibility: { status: 'supported', reason_codes: [] },
+  safety: { action: 'NORMAL', scope: [], reason_codes: [] },
+  // PostgreSQL JSONB returns object keys in a canonical order that is allowed
+  // to differ from JavaScript construction order while preserving the value.
+  weeks: [{ week: 1, phase: '', purpose: '', start_date: '2026-08-24' }],
+  sessions: [jsonbSession],
+};
+assert(validateSurfaceManifest({
+  plan: jsonbPlan,
+  userPlan: { plan_version: 1 },
+  manifest: jsonbManifest,
+}).status === 'accepted', 'JSONB key ordering cannot block a semantically exact reviewed surface');
+const changedJsonbManifest = structuredClone(jsonbManifest);
+changedJsonbManifest.weeks[0].phase = 'build';
+assert(validateSurfaceManifest({
+  plan: jsonbPlan,
+  userPlan: { plan_version: 1 },
+  manifest: changedJsonbManifest,
+}).status === 'blocked', 'a semantic week change still fails closed');
+let hostileWeekGetterCalls = 0;
+const hostileJsonbManifest = structuredClone(jsonbManifest);
+Object.defineProperty(hostileJsonbManifest.weeks[0], 'phase', {
+  enumerable: true,
+  get() {
+    hostileWeekGetterCalls += 1;
+    return '';
+  },
+});
+assert(validateSurfaceManifest({
+  plan: jsonbPlan,
+  userPlan: { plan_version: 1 },
+  manifest: hostileJsonbManifest,
+}).status === 'blocked', 'an accessor-bearing JSON value fails closed');
+assert(hostileWeekGetterCalls === 0, 'semantic comparison never executes an accessor');
 
 console.log('\n== v2.4 fail-closed workout starts ==');
 const manifestIdentity = {

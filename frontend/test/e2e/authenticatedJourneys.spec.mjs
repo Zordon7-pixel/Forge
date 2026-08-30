@@ -3108,3 +3108,41 @@ test('v2.4 full-rest safety and manual capability stay fail-closed on both mobil
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
+
+test('a PostgreSQL JSONB-ordered accepted surface renders the Weekly Run Brief on mobile', async ({ page }, testInfo) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const planFixture = goalBackwardV24PlanFixture({
+    dateISO: today,
+    day: todayDay,
+    featureMode: 'on',
+    safetyAction: 'NORMAL',
+    safetyScope: [],
+    safetyReasonCodes: [],
+    executability: 'EXECUTABLE',
+    workoutFamily: 'hyrox_station_skill',
+    capability: 'FULLY_STRUCTURED',
+  })
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', planFixture],
+      ['GET /api/plans/adaptation/current', { proposal: null }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  const brief = page.getByRole('region', { name: 'Weekly Run Brief' })
+  await expect(brief).toBeVisible()
+  await expect(brief).toContainText('Canonical station skill')
+  await expect(page.getByText('Plan details are temporarily unavailable')).toHaveCount(0)
+  await expect(page.getByText('This plan needs a reviewed rebuild before its workouts can be used.')).toHaveCount(0)
+  const layout = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }))
+  expect(layout.scroll).toBeLessThanOrEqual(layout.viewport)
+  await page.screenshot({
+    path: testInfo.outputPath('jsonb-surface-weekly-brief.png'),
+    fullPage: true,
+  })
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
