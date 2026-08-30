@@ -125,6 +125,50 @@ function restExecution() {
   }
 }
 
+function minimumEffectiveRecoveryAlternativeExecution() {
+  const recoveryGuidance = {
+    id: 'token-quality-run',
+    kind: 'rest',
+    type: 'rest',
+    workout_type: 'rest',
+    title: 'Rest, easy walking, or mobility',
+    description: 'Recent missed-session history supports recovery. The reduced dose would not deliver the intended recovery session, so Forge does not label a token run as productive. Rest or comfortable low-strain movement is the truthful choice.',
+    distance_miles: 0,
+    completed: false,
+    recovery_alternative: {
+      policy: 'minimum_effective_recovery_session_v1',
+      minimum_run_minutes: 20,
+      minimum_run_miles: 1.5,
+      reduced_run_minutes: 11,
+      reduced_run_miles: 0.8,
+      options: [
+        { type: 'rest', duration_minutes: 0 },
+        { type: 'walking', duration_range_minutes: [20, 30] },
+        { type: 'mobility', duration_range_minutes: [5, 10] },
+      ],
+    },
+  }
+  return {
+    today: { date: today, day: todayDay, type: 'rest', rest: true, sessions: [] },
+    execution: {
+      hasPlan: true,
+      hasDay: true,
+      isRest: true,
+      isPlannedRest: true,
+      restSource: 'planned',
+      mode: 'run_only',
+      phase: 'build',
+      week: 1,
+      date: today,
+      day: todayDay,
+      sessions: [],
+      run: null,
+      lift: null,
+      recoveryGuidance,
+    },
+  }
+}
+
 function checkinRecoveryExecution() {
   const recoveryRun = {
     ...plannedRun,
@@ -630,6 +674,28 @@ test('unscheduled rest guidance stays passive and never claims scheduled rest', 
   await page.getByRole('button', { name: 'View recovery', exact: true }).click()
   await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
 
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('minimum-effective recovery guidance shows the reviewed rest, walk, or mobility choice without a token run', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/today', minimumEffectiveRecoveryAlternativeExecution()],
+    ]),
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Rest & recover', exact: true })).toBeVisible()
+  await expect(page.getByText(/Rest, easy walking, or mobility.*reduced dose would not deliver the intended recovery session/i)).toBeVisible()
+  await expect(page.getByText(/missed-session history supports recovery/i)).toBeVisible()
+  await expect(page.getByText(/0\.8\s*mi|11\s*min/i)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'View rest day', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Recovery is the plan today', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 

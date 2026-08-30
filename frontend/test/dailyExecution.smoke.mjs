@@ -114,6 +114,35 @@ const legacyCheckinRecoveryBody = {
     lift: null,
   },
 };
+const minimumEffectiveRecoveryBody = {
+  today: { day: 'Sun', date: '2026-08-30', type: 'rest', rest: true, sessions: [] },
+  execution: {
+    hasPlan: true,
+    hasDay: true,
+    isRest: true,
+    isPlannedRest: true,
+    restSource: 'planned',
+    sessions: [],
+    run: null,
+    lift: null,
+    recoveryGuidance: {
+      id: 'token-quality-run',
+      kind: 'rest',
+      type: 'rest',
+      workout_type: 'rest',
+      title: 'Rest, easy walking, or mobility',
+      description: 'Missed-session history supports recovery. The reduced dose would not deliver the intended recovery session, so Forge does not label a token run as productive.',
+      distance_miles: 0,
+      recovery_alternative: {
+        policy: 'minimum_effective_recovery_session_v1',
+        minimum_run_minutes: 20,
+        minimum_run_miles: 1.5,
+        reduced_run_minutes: 11,
+        reduced_run_miles: 0.8,
+      },
+    },
+  },
+};
 
 console.log('\n== normalizeExecution (hybrid) ==');
 const h = normalizeExecution(hybridBody);
@@ -184,6 +213,14 @@ const legacyRecoveryRec = recommendationFromExecution(legacyRecovery);
 assert(isRestExecutionAuthority(legacyRecovery) === true, 'legacy empty check-in rest remains canonical rest authority');
 assert(legacyRecoveryRec?.type === 'rest' && legacyRecoveryRec?.recommendationType === 'rest', 'legacy empty check-in rest remains truthful recovery guidance');
 assert(legacyRecoveryRec?.reason === 'Changed to rest from daily check-in', 'legacy empty check-in rest preserves its check-in reason');
+const minimumEffectiveRecovery = normalizeExecution(minimumEffectiveRecoveryBody);
+const minimumEffectiveRecoveryRec = recommendationFromExecution(minimumEffectiveRecovery);
+assert(minimumEffectiveRecovery.recoveryGuidance?.recovery_alternative?.minimum_run_minutes === 20, 'reviewed minimum-effective recovery guidance survives normalization');
+assert(isRestExecutionAuthority(minimumEffectiveRecovery) === true, 'reviewed recovery alternative remains non-executable rest authority');
+assert(minimumEffectiveRecoveryRec?.recommendationType === 'rest', 'reviewed recovery alternative stays a rest recommendation');
+assert(/Rest, easy walking, or mobility/.test(minimumEffectiveRecoveryRec?.reason || ''), 'reviewed alternatives remain visible in customer guidance');
+assert(/reduced dose would not deliver/.test(minimumEffectiveRecoveryRec?.reason || ''), 'the source-bound recovery explanation remains visible');
+assert(!/0\.8\s*mi|11\s*min/i.test(minimumEffectiveRecoveryRec?.reason || ''), 'the rejected token dose is never presented as the workout');
 const stepsRec = recommendationFromExecution(normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, sessions: [], run: { id: 'run-steps', kind: 'run', steps: ['Warm up', '3 x 5 min', 'Cool down'] } } }));
 assert(stepsRec && stepsRec.structure.length === 3, 'run steps remain visible when structure is absent');
 const liftOnly = normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, week: 3, sessions: [{ id: 'lift-9', kind: 'lift', title: 'Upper' }], run: null, lift: { id: 'lift-9', kind: 'lift', title: 'Upper' } } });

@@ -195,6 +195,19 @@ function restSourceForPlanEntries(storedEntry, visibleEntry) {
   return planSchema.daySessions(storedEntry).length === 0 ? 'planned' : 'removed';
 }
 
+// A minimum-effective-dose adaptation stores an explicit non-executable
+// rest/walk/mobility choice in the reviewed plan. Keep it out of `sessions`
+// (and therefore every workout-start surface), but preserve the source-bound
+// explanation for Today/Plan instead of collapsing it to a generic rest day.
+function recoveryGuidanceForDay(selectedEntry) {
+  if (!Array.isArray(selectedEntry?.sessions)) return null;
+  const source = selectedEntry.sessions.find((session) => (
+    planSchema.kindFromSession(session) === 'rest'
+    && session?.recovery_alternative?.policy === 'minimum_effective_recovery_session_v1'
+  ));
+  return source ? { ...source, kind: 'rest', completed: false } : null;
+}
+
 // Build the canonical daily-execution object. Callers supply the already
 // override-merged day entry, its week, the user's completed session ids, and
 // the HR profile row (or null). Everything here is pure.
@@ -247,6 +260,7 @@ function buildDailyExecution(opts) {
 
   const run = sessions.find((s) => s.kind === 'run') || null;
   const lift = sessions.find((s) => s.kind === 'lift') || null;
+  const recoveryGuidance = recoveryGuidanceForDay(selectedEntry);
 
   return {
     hasPlan: true,
@@ -268,6 +282,7 @@ function buildDailyExecution(opts) {
     sessions,
     run,
     lift,
+    ...(recoveryGuidance ? { recoveryGuidance } : {}),
   };
 }
 

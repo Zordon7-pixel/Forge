@@ -330,6 +330,9 @@ export function normalizeExecution(body) {
     type: exec.type || (body && body.today && body.today.type) || null,
     workoutType: exec.workoutType || exec.workout_type || (body && body.today && body.today.workout_type) || null,
     checkinOverride: exec.checkinOverride || exec.checkin_override || (body && body.today && body.today.checkin_override) || null,
+    recoveryGuidance: exec.recoveryGuidance && typeof exec.recoveryGuidance === 'object'
+      ? exec.recoveryGuidance
+      : null,
     date: exec.date || null,
     day: exec.day || null,
     sessions,
@@ -367,6 +370,7 @@ function recoveryGuidanceSession(execution) {
   if (!execution || typeof execution !== 'object') return null;
   if (execution.restSource === 'removed') return null;
   const candidates = [
+    execution.recoveryGuidance,
     execution.run,
     execution.lift,
     ...(Array.isArray(execution.sessions) ? execution.sessions : []),
@@ -501,23 +505,26 @@ export function scheduledLiftFromExecution(execution) {
 // A run is preferred over a lift for the run-centric coach card.
 export function recommendationFromExecution(execution) {
   if (!execution || !execution.hasPlan || !execution.hasDay) return null;
+  const recovery = recoveryGuidanceSession(execution);
+  if (recovery) {
+    const policyReason = recovery.recovery_alternative
+      ? [recovery.title, recovery.description].filter(Boolean).join('. ')
+      : recovery.description || recovery.notes || "Recovery is today's guidance."
+    return {
+      recommendationType: 'rest',
+      type: 'rest',
+      reason: policyReason,
+      structure: [],
+      planSessionId: recovery.id || null,
+      source: 'calendar',
+    };
+  }
   if (execution.isRest && execution.isPlannedRest) {
     return {
       recommendationType: 'rest',
       type: 'rest',
       reason: 'Rest and recovery are scheduled today.',
       structure: [],
-      source: 'calendar',
-    };
-  }
-  const recovery = recoveryGuidanceSession(execution);
-  if (recovery) {
-    return {
-      recommendationType: 'rest',
-      type: 'rest',
-      reason: recovery.description || recovery.notes || "Recovery is today's guidance.",
-      structure: [],
-      planSessionId: recovery.id || null,
       source: 'calendar',
     };
   }
