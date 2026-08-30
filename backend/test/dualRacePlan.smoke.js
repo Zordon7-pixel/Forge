@@ -3094,6 +3094,237 @@ async function checkHyroxCandidateImmediateAdoption() {
       artifacts: [...planningArtifacts.entries()],
       races: [...raceRows.entries()],
     });
+
+    async function checkArmyAuthoritativeSurfaceLifecycle() {
+      restoreAcceptedReconcileBaseline();
+      const lifecycleBaseline = {
+        profile: clone(profile),
+        plans: cloneMap(trainingPlans),
+        assignments: cloneMap(userPlans),
+        candidates: cloneMap(candidates),
+        artifacts: cloneMap(planningArtifacts),
+        races: cloneMap(raceRows),
+        runs: clone(recentRuns),
+        lifts: clone(recentLifts),
+        workouts: clone(completedWorkouts),
+        health: healthRow ? clone(healthRow) : null,
+        fixedNowIso,
+        databaseJsonShape,
+      };
+      const restoreLifecycleBaseline = () => {
+        Object.keys(profile).forEach((key) => delete profile[key]);
+        Object.assign(profile, clone(lifecycleBaseline.profile));
+        restoreMap(trainingPlans, lifecycleBaseline.plans);
+        restoreMap(userPlans, lifecycleBaseline.assignments);
+        restoreMap(candidates, lifecycleBaseline.candidates);
+        restoreMap(planningArtifacts, lifecycleBaseline.artifacts);
+        restoreMap(raceRows, lifecycleBaseline.races);
+        recentRuns.splice(0, recentRuns.length, ...clone(lifecycleBaseline.runs));
+        recentLifts.splice(0, recentLifts.length, ...clone(lifecycleBaseline.lifts));
+        completedWorkouts.splice(0, completedWorkouts.length, ...clone(lifecycleBaseline.workouts));
+        healthRow = lifecycleBaseline.health ? clone(lifecycleBaseline.health) : null;
+        fixedNowIso = lifecycleBaseline.fixedNowIso;
+        databaseJsonShape = lifecycleBaseline.databaseJsonShape;
+      };
+
+      try {
+        const armyPlanningDate = '2026-08-31';
+        fixedNowIso = '2026-08-31T16:00:00.000Z';
+        Object.assign(profile, {
+          timezone: 'America/New_York',
+          training_age_class: 'ESTABLISHED',
+          weekly_miles_current: 20,
+          run_days_per_week: 4,
+          lift_days_per_week: 4,
+          preferred_workout_days: JSON.stringify(['Tue', 'Thu', 'Sat', 'Sun']),
+        });
+        Object.assign(raceRows.get('army'), {
+          race_name: 'Army 10-Miler',
+          race_date: '2026-10-11',
+          event_local_date: '2026-10-11',
+          event_timezone: 'America/New_York',
+          event_kind: 'run_race',
+          distance_miles: 10,
+          goal_time_seconds: 5340,
+          status: 'upcoming',
+        });
+        recentRuns.splice(0, recentRuns.length, ...[
+          '2026-08-04', '2026-08-06', '2026-08-08', '2026-08-09',
+          '2026-08-11', '2026-08-13', '2026-08-15', '2026-08-16',
+          '2026-08-18', '2026-08-20', '2026-08-22', '2026-08-23',
+          '2026-08-25', '2026-08-27', '2026-08-29', '2026-08-30',
+        ].map((date, index) => ({
+          id: `army-established-run-${index + 1}`,
+          user_id: ownerId,
+          date,
+          distance_miles: 5,
+          duration_seconds: 3000,
+          type: index % 4 === 2 ? 'long' : 'easy',
+          health_source: 'manual',
+          created_at: `${date}T12:00:00.000Z`,
+        })));
+        recentLifts.splice(0, recentLifts.length, ...[
+          '2026-08-05', '2026-08-07', '2026-08-12', '2026-08-14',
+          '2026-08-19', '2026-08-21', '2026-08-26', '2026-08-28',
+        ].map((date, index) => ({
+          id: `army-established-lift-${index + 1}`,
+          user_id: ownerId,
+          date,
+          workout_duration_seconds: 2400,
+          created_at: `${date}T11:40:00.000Z`,
+        })));
+
+        const staleAssignment = currentAssignment();
+        const stalePlanRow = trainingPlans.get(staleAssignment.plan_id);
+        const stalePlan = JSON.parse(stalePlanRow.plan_data);
+        stalePlan.canonical_session_set_hash = `sha256:${'0'.repeat(64)}`;
+        stalePlanRow.plan_data = JSON.stringify(stalePlan);
+        stalePlanRow.plan_json = stalePlanRow.plan_data;
+        const unrelatedHyroxGoal = clone(raceRows.get('hyrox'));
+        const staleProgress = staleAssignment.progress_json;
+        const lifecycleRequest = {
+          user: { id: ownerId },
+          query: { date: armyPlanningDate },
+          headers: {
+            'x-forged-local-date': armyPlanningDate,
+            'x-forged-timezone-offset-minutes': '240',
+          },
+          get(name) { return this.headers[String(name).toLowerCase()]; },
+        };
+        const blockedPredecessor = await invoke(readMyPlan, { ...lifecycleRequest, body: {} });
+        assert.equal(blockedPredecessor.statusCode, 200);
+        assert.equal(blockedPredecessor.payload.surface_manifest.status, 'blocked');
+        assert.deepEqual(blockedPredecessor.payload.surface_manifest.sessions, []);
+        const writesBeforeUnsupportedReconcile = transactionWriteCount;
+        const unsupportedReconcile = await invoke(surfaceReconcile, {
+          ...lifecycleRequest,
+          query: {},
+          body: {},
+        });
+        assert.equal(unsupportedReconcile.statusCode, 409);
+        assert.equal(transactionWriteCount, writesBeforeUnsupportedReconcile,
+          'a stale canonical content mismatch remains explicit-rebuild-only');
+
+        const candidatesBeforePreview = candidates.size;
+        const artifactsBeforePreview = planningArtifacts.size;
+        const armyPreview = await invoke(preview, {
+          ...lifecycleRequest,
+          body: {
+            planning_date_local: armyPlanningDate,
+            timezone_offset_minutes: 240,
+            race_ids: ['army'],
+            target: {
+              trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+              runDaysPerWeek: 4,
+              liftDaysPerWeek: 4,
+              planMode: 'hybrid_maintain',
+              strengthGoal: 'maintain',
+              liftingEnabled: true,
+              equipment: ['barbell', 'dumbbell', 'rack', 'bench'],
+            },
+          },
+        });
+        assert.equal(armyPreview.statusCode, 201,
+          `the exact Army lifecycle must generate: ${JSON.stringify(armyPreview.payload)}`);
+        assert.equal(candidates.size, candidatesBeforePreview + 1,
+          'the exact reviewed Army preview stores one candidate');
+        assert.equal(planningArtifacts.size, artifactsBeforePreview + 7,
+          'the exact reviewed Army preview stores one complete artifact chain');
+        const armyCandidate = candidates.get(armyPreview.payload.candidate_id);
+        assert.equal(armyCandidate.status, 'preview');
+        assert.equal(currentAssignment().id, staleAssignment.id,
+          'preview alone cannot replace the stale predecessor');
+
+        const armyApplyBody = {
+          planning_date_local: armyPlanningDate,
+          timezone_offset_minutes: 240,
+          choice: 'train_for_target',
+          candidate_hash: armyPreview.payload.candidate_hash,
+          ...armyPreview.payload.apply_bindings,
+        };
+        const armyApply = await invoke(apply, {
+          ...lifecycleRequest,
+          params: { candidateId: armyPreview.payload.candidate_id },
+          body: armyApplyBody,
+        });
+        assert.equal(armyApply.statusCode, 200, JSON.stringify(armyApply.payload));
+        assert.equal(staleAssignment.status, 'superseded');
+        assert.equal(staleAssignment.progress_json, staleProgress,
+          'the stale predecessor keeps its progress after the reviewed rebuild');
+        assert.deepEqual(raceRows.get('hyrox'), unrelatedHyroxGoal,
+          'the Army rebuild does not alter the unrelated HYROX race goal');
+
+        const firstRead = await invoke(readMyPlan, { ...lifecycleRequest, body: {} });
+        assert.equal(firstRead.statusCode, 200, JSON.stringify(firstRead.payload));
+        assert.equal(firstRead.payload.surface_manifest.status, 'accepted');
+        assert.ok(firstRead.payload.surface_manifest.sessions.length > 0);
+        assert.equal(firstRead.payload.surface_manifest.sessions.every((session) => (
+          session.session_id
+            && session.scheduled_local_date
+            && session.executability === 'EXECUTABLE'
+            && Array.isArray(session.steps)
+            && session.steps.length > 0
+            && session.derived_totals
+        )), true, 'the accepted Army surface contains complete executable canonical sessions');
+        const activeAssignments = [...userPlans.values()].filter((assignment) => (
+          assignment.user_id === ownerId && assignment.status === 'active'
+        ));
+        assert.equal(activeAssignments.length, 1, 'the reviewed rebuild leaves exactly one active assignment');
+        assert.equal(activeAssignments[0].id, armyApply.payload.user_plan_id);
+        const appliedPlan = JSON.parse(trainingPlans.get(armyApply.payload.plan_id).plan_data);
+        assert.deepEqual(appliedPlan.goals.map((goal) => goal.raceId), ['army'],
+          'the sole active rebuilt assignment is the Army plan');
+        const canonicalArtifact = [...planningArtifacts.values()].find((artifact) => (
+          artifact.plan_generation_candidate_id === armyCandidate.id
+            && artifact.artifact_kind === 'canonical_session_set'
+        ));
+        const canonicalSessionSet = JSON.parse(canonicalArtifact.payload_json);
+        const identity = firstRead.payload.surface_manifest.identity;
+        const hashIdentity = (value) => String(value || '').replace(/^sha256:/, '');
+        assert.deepEqual({
+          decision: [identity.decision_id, armyCandidate.decision_id, appliedPlan.decision_id,
+            canonicalSessionSet.decision_id],
+          candidate: [identity.candidate_hash, armyCandidate.selected_candidate_hash,
+            appliedPlan.selected_candidate_hash, canonicalSessionSet.candidate_hash].map(hashIdentity),
+          plan: [identity.plan_id, appliedPlan.plan_id, canonicalSessionSet.plan_id],
+          sessionSet: [identity.canonical_session_set_hash,
+            appliedPlan.canonical_session_set_hash, canonicalSessionSet.content_hash].map(hashIdentity),
+        }, {
+          decision: Array(4).fill(identity.decision_id),
+          candidate: Array(4).fill(hashIdentity(identity.candidate_hash)),
+          plan: Array(3).fill(identity.plan_id),
+          sessionSet: Array(3).fill(hashIdentity(identity.canonical_session_set_hash)),
+        }, 'candidate, decision, plan, and canonical session-set identities remain exact');
+
+        databaseJsonShape = 'postgres';
+        const reloadRead = await invoke(readMyPlan, { ...lifecycleRequest, body: {} });
+        assert.equal(reloadRead.statusCode, 200);
+        assert.deepEqual(reloadRead.payload.surface_manifest, firstRead.payload.surface_manifest,
+          'the equivalent post-restart JSONB re-read returns the same accepted surface');
+
+        const assignmentsBeforeReplay = userPlans.size;
+        const candidatesBeforeReplay = candidates.size;
+        const artifactsBeforeReplay = planningArtifacts.size;
+        const replay = await invoke(apply, {
+          ...lifecycleRequest,
+          params: { candidateId: armyPreview.payload.candidate_id },
+          body: armyApplyBody,
+        });
+        assert.equal(replay.statusCode, 200, JSON.stringify(replay.payload));
+        assert.equal(replay.payload.replay, true);
+        assert.equal(replay.payload.user_plan_id, armyApply.payload.user_plan_id);
+        assert.equal(userPlans.size, assignmentsBeforeReplay,
+          'idempotent Apply replay creates no duplicate assignment');
+        assert.equal(candidates.size, candidatesBeforeReplay,
+          'idempotent Apply replay creates no duplicate candidate');
+        assert.equal(planningArtifacts.size, artifactsBeforeReplay,
+          'idempotent Apply replay creates no duplicate artifacts');
+      } finally {
+        restoreLifecycleBaseline();
+      }
+    }
+
+    await checkArmyAuthoritativeSurfaceLifecycle();
     const unrepairableCases = [
       ['missing active assignment', () => { currentAssignment().status = 'superseded'; }],
       ['missing applied candidate', () => { candidates.delete(previewResponse.payload.candidate_id); }],
