@@ -1192,26 +1192,53 @@ function materializeQualityRunSteps(family, source, input) {
   const cooldownSeconds = totalDuration !== null && totalDuration >= beforeCooldown
     ? totalDuration - beforeCooldown
     : parsedCooldown;
+  const prescribedDistance = prescribedDistanceMeters(source);
+  const repeatCount = Math.max(0, repetitions - 1);
+  const weightedDurationSeconds = warmupSeconds
+    + repeatCount * (workSeconds + recoverySeconds)
+    + workSeconds
+    + cooldownSeconds;
+  const proportionalDistance = (durationSeconds) => (
+    prescribedDistance === null || weightedDurationSeconds < 1
+      ? null
+      : Math.floor((prescribedDistance * durationSeconds) / weightedDurationSeconds)
+  );
+  const warmupDistance = proportionalDistance(warmupSeconds);
+  const repeatedWorkDistance = proportionalDistance(workSeconds);
+  const repeatedRecoveryDistance = proportionalDistance(recoverySeconds);
+  const cooldownDistance = proportionalDistance(cooldownSeconds);
+  const finalWorkDistance = prescribedDistance === null ? null : Math.max(0,
+    prescribedDistance
+      - (warmupDistance || 0)
+      - repeatCount * ((repeatedWorkDistance || 0) + (repeatedRecoveryDistance || 0))
+      - (cooldownDistance || 0));
   const steps = [];
   steps.push(step(
     `${input.session_id}-warmup`,
     'warmup',
     steps.length + 1,
-    targetForStep({ family: 'easy_run', durationS: warmupSeconds, input, source }),
+    targetForStep({
+      family: 'easy_run', durationS: warmupSeconds, distanceM: warmupDistance, input, source,
+    }),
   ));
   if (repetitions > 1) {
     const children = [step(
       `${input.session_id}-work-repeat`,
       'interval',
       1,
-      targetForStep({ family, durationS: workSeconds, input, source }),
+      targetForStep({
+        family, durationS: workSeconds, distanceM: repeatedWorkDistance, input, source,
+      }),
       { workout_family: family, step_role: 'WORK' },
     )];
     if (recoverySeconds > 0) children.push(step(
       `${input.session_id}-recovery-repeat`,
       'recovery',
       2,
-      targetForStep({ family: 'recovery_run', durationS: recoverySeconds, input, source }),
+      targetForStep({
+        family: 'recovery_run', durationS: recoverySeconds,
+        distanceM: repeatedRecoveryDistance, input, source,
+      }),
     ));
     steps.push(step(`${input.session_id}-repeat`, 'repeat', steps.length + 1, null, {
       repeat_count: repetitions - 1,
@@ -1222,14 +1249,16 @@ function materializeQualityRunSteps(family, source, input) {
     `${input.session_id}-work-final`,
     'interval',
     steps.length + 1,
-    targetForStep({ family, durationS: workSeconds, input, source }),
+    targetForStep({ family, durationS: workSeconds, distanceM: finalWorkDistance, input, source }),
     { workout_family: family, step_role: 'WORK' },
   ));
   if (cooldownSeconds > 0) steps.push(step(
     `${input.session_id}-cooldown`,
     'cooldown',
     steps.length + 1,
-    targetForStep({ family: 'easy_run', durationS: cooldownSeconds, input, source }),
+    targetForStep({
+      family: 'easy_run', durationS: cooldownSeconds, distanceM: cooldownDistance, input, source,
+    }),
   ));
   return steps;
 }

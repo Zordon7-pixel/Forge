@@ -1083,6 +1083,79 @@ function goalBackwardSkeletonIdentity(input = {}) {
     if (material) usedMaterialIds.add(material.material_id);
     return material || null;
   });
+  // A late-week rolling window can legitimately contain no legacy quality
+  // constructor output even though the event policy still requires one. Keep
+  // that required exposure executable and dose-accountable by projecting its
+  // canonical distance from fresh observed pace evidence. The conservative
+  // 110% pace is the same fail-closed projection already used for time-based
+  // hybrid running material below; without that evidence the role remains
+  // unresolved instead of inventing mileage.
+  if (hybridProjectionPaceAvailable) {
+    decision.role_multiset.forEach((role, index) => {
+      if (assignedMaterials[index]
+        || String(role.role || '').toUpperCase() !== 'PRIMARY_KEY') return;
+      const placedFamily = placementFor(input.placements, role.requirement_id).workout_family;
+      const workoutFamily = (placedFamily && (role.any_of || []).includes(placedFamily)
+        ? [placedFamily] : (role.any_of || [])).find((family) => (
+        ['threshold_run', 'interval_run', 'race_rhythm_run'].includes(family)
+      ));
+      if (!workoutFamily) return;
+      const durationMin = 28;
+      const projectedRunningMeters = Math.floor(
+        (durationMin * 60 * 1609.344) / (hybridProjectionPace * 1.1),
+      );
+      if (!Number.isSafeInteger(projectedRunningMeters) || projectedRunningMeters < 1) return;
+      const projectionIdentity = {
+        requirement_id: role.requirement_id,
+        workout_family: workoutFamily,
+        duration_min: durationMin,
+        projected_running_m: projectedRunningMeters,
+        projection_pace_s_per_mile: hybridProjectionPace,
+      };
+      const materialId = `projected-road-quality-${canonicalHash(projectionIdentity).slice(0, 24)}`;
+      const projectedTitle = workoutFamily === 'threshold_run'
+        ? 'Threshold intervals'
+        : workoutFamily === 'interval_run' ? 'Intervals' : 'Race-rhythm intervals';
+      const projectedMaterial = {
+        material_id: materialId,
+        source_workout_id: null,
+        workout_family: workoutFamily,
+        legacy_scheduled_local_date: null,
+        source_kind: 'run',
+        source_title: projectedTitle,
+        duration_min: durationMin,
+        distance_m: projectedRunningMeters,
+        distance_miles: round(projectedRunningMeters / 1609.344, 6),
+        quality_work_duration_min: 8,
+        main_work_duration_min: null,
+        run_station_pair_count: null,
+        projection_method: 'observed_pace_conservative_110_percent_v1',
+        source_session: {
+          id: materialId,
+          kind: 'run',
+          type: 'quality',
+          workout_family: workoutFamily,
+          title: projectedTitle,
+          purpose: 'Place the required race-specific exposure in the rolling planning window.',
+          prescription_basis: 'time',
+          duration_min: durationMin,
+          distance_m: projectedRunningMeters,
+          distance_miles: round(projectedRunningMeters / 1609.344, 6),
+          distance_is_estimate: true,
+          canonical_prescribed_distance_m: projectedRunningMeters,
+          canonical_distance_derivation: 'observed_pace_conservative_110_percent_v1',
+          projection_pace_s_per_mile: hybridProjectionPace,
+          quality_work_duration_min: 8,
+          evidence_refs: (decision.evidence_used || []).map((entry) => (
+            typeof entry === 'string' ? entry : entry?.evidence_id ?? entry?.id
+          )).filter(Boolean),
+        },
+      };
+      materials.push(projectedMaterial);
+      assignedMaterials[index] = projectedMaterial;
+      usedMaterialIds.add(materialId);
+    });
+  }
   const materialRunningMeters = (material) => {
     const direct = material?.distance_m;
     if (typeof direct === 'number' && Number.isFinite(direct) && direct > 0) return direct;
@@ -1557,7 +1630,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
   const requestedMaximumSessionsPerDay = Number(input.maximum_sessions_per_day);
   const maximumSessionsPerDay = Number.isSafeInteger(requestedMaximumSessionsPerDay)
     ? Math.max(1, Math.min(2, requestedMaximumSessionsPerDay)) : 1;
-  const enforceSessionCapacityPerDay = maximumSessionsPerDay > 1;
+  const enforceSessionCapacityPerDay = true;
   const roleCapacityExceeded = roles.length > availableDates.length * maximumSessionsPerDay;
   const inputBounded = requestedAvailableDates.length > MAX_GOAL_BACKWARD_AVAILABLE_DATES
     || requestedMaximumSessionCount > MAX_GOAL_BACKWARD_ROLE_COUNT

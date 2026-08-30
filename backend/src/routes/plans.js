@@ -3804,12 +3804,16 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       distance_m: material.distance_m,
       distance_miles: material.distance_miles,
     }));
+    const completedThroughLocalDate = completedRunningCredit?.through_local_date || null;
+    const schedulableLocalDateCount = availableLocalDates.filter((date) => (
+      !completedThroughLocalDate || date > completedThroughLocalDate
+    )).length;
     const supportingStimuli = goalBackwardSupportingStimuli(
       supportCandidateMaterial,
       decision.role_multiset,
       requiredRunningM,
       {
-        availableDaysCount: availableLocalDates.length,
+        availableDaysCount: schedulableLocalDateCount,
         requestedRunDays: planningDateLocal === planningWeekStartLocal
           && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
           ? state.target?.runDaysPerWeek : undefined,

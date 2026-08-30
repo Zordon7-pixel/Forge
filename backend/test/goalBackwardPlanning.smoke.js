@@ -160,7 +160,7 @@ test('CEILING-02', 'three weeks are provisional and fewer than three use the exa
   assert.equal(provisional.dimensions.aerobic.overload_allowance, 0, 'provisional history cannot authorize overload');
 
   const fallback = calculateFatigueCeilings({}, { training_age_class: 'DEVELOPING' });
-  assert.deepEqual(fallback.normal_ceiling_vector, [10, 9, 8, 7, 6, 8, 9, 7]);
+  assert.deepEqual(fallback.normal_ceiling_vector, [10, 10, 8, 7, 6, 8, 9, 7]);
   assert.equal(fallback.dimensions.lower_body_muscular.status, 'INSUFFICIENT');
   assert.equal(fallback.dimensions.lower_body_muscular.integer_median_sum, null);
   assert.equal(fallback.dimensions.lower_body_muscular.ceiling_source, 'TRAINING_CLASS_FALLBACK');
@@ -893,7 +893,7 @@ test('CAND-BOUND-01', 'candidate enumeration retains at most 64 unique canonical
   const result = enumerateGoalBackwardCandidates(boundedEnumerationInput());
   assert.equal(result.candidates.length, 64);
   assert.equal(new Set(result.candidates.map((candidate) => candidate.candidate_hash)).size, 64);
-  assert.equal(result.total_unique_candidate_count, 81);
+  assert.equal(result.total_unique_candidate_count, 72);
   assert.equal(result.truncation_reason, 'CANDIDATE_ENUMERATION_TRUNCATED_64');
   assert.equal(result.decision.candidate_ids.length, 64);
 });

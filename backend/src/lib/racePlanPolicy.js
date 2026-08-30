@@ -306,7 +306,11 @@ const GOAL_BACKWARD_PLANNING_POLICY_V1 = deepFreeze({
     minimum_ceiling_increment: 2,
     training_class_fallback: {
       beginner_returning_sparse: [6, 6, 5, 4, 4, 4, 5, 4],
-      developing: [10, 9, 8, 7, 6, 8, 9, 7],
+      // Four-day road weeks with one quality run, one long run, and two easy
+      // runs total 10 running-impact points. The former ceiling of 9 made the
+      // supported four-day frequency structurally impossible even when hard
+      // day spacing and every other safety gate passed.
+      developing: [10, 10, 8, 7, 6, 8, 9, 7],
       established_advanced: [14, 14, 12, 10, 10, 12, 13, 10],
     },
   },

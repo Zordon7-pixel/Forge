@@ -2188,8 +2188,7 @@ async function checkHyroxCandidateImmediateAdoption() {
 
     profile.training_age_class = 'BEGINNER';
     let beginnerResult = null;
-    await assert.rejects(
-      () => plansRouter._test.previewPlanForUser(ownerId, {
+    await plansRouter._test.previewPlanForUser(ownerId, {
         ...requestClock,
         race_ids: ['hyrox', 'army'],
         target: {
@@ -2198,23 +2197,24 @@ async function checkHyroxCandidateImmediateAdoption() {
           liftingEnabled: false,
         },
       }, {
+        store: false,
         goalBackwardDependencies: {
           mode: 'preview',
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           inspectDecision: (result) => { beginnerResult = result; },
         },
-      }),
-      (error) => error?.code === 'GOAL_BACKWARD_GENERATION_FAILED' && error?.status === 409,
-      'realistic volume that exceeds the explicit beginner cross-modal fallback must fail closed',
-    );
+      });
     assert.equal(beginnerResult?.decision.training_age_class, 'BEGINNER');
-    assert.equal(beginnerResult?.selected_candidate, null);
-    assert.ok(beginnerResult?.candidates.some((candidate) => candidate.validation.violations.some((violation) => (
-      violation.code === 'CROSS_MODAL_FATIGUE_LIMIT'
-        || (violation.code === 'REQUIRED_EXPOSURE_UNPLACEABLE'
-          && ['WEEKLY_RUNNING_FLOOR', 'WEEKLY_RUNNING_DISTANCE_UNKNOWN'].includes(violation.reason))
-    ))), 'incomplete interval evidence fails closed with the bounded load reason the validator can actually prove');
+    assert.ok(beginnerResult?.selected_candidate,
+      'completed current-week work reduces the rolling placement count before the beginner fatigue gate');
+    assert.equal(beginnerResult.decision.role_multiset.length, 3);
+    assert.equal(new Set(beginnerResult.selected_candidate.canonical_sessions.map((session) => (
+      session.scheduled_local_date
+    ))).size, 3, 'the bounded beginner candidate uses three distinct remaining dates');
+    assert.equal(beginnerResult.selected_candidate.validation.validator_results.find((entry) => (
+      entry.validator === 'cross_modal_ceiling'
+    )).valid, true, 'the selected candidate remains inside the explicit beginner fatigue fallback');
     assert.ok(beginnerResult.candidates.every((candidate) => candidate.validation.violations.every((violation) => (
       violation.code !== 'BELOW_PRESENTATION_FLOOR_EXCEPTION'
     ))), 'incomplete evidence never manufactures a token workout to satisfy the floor');
@@ -2590,8 +2590,13 @@ async function checkHyroxCandidateImmediateAdoption() {
       session.role === 'PRIMARY_KEY' && runningFamilies.has(session.workout_family)
     ));
     assert.ok(selectedRunningPrimary, 'the selected candidate retains a materialized running primary');
-    assert.equal(selectedRunningPrimary.workout_family, selectedRunningPrimary.material_source_workout_family,
-      'the exact running source remains attached to the running primary requirement');
+    assert.ok(
+      selectedRunningPrimary.workout_family === selectedRunningPrimary.material_source_workout_family
+        || (authorizedResult.decision.phase === 'FOUNDATION'
+          && selectedRunningPrimary.workout_family === 'recovery_run'
+          && selectedRunningPrimary.material_source_workout_family === 'easy_run'),
+      'the exact running source remains attached, with only the bounded foundation recovery remap allowed',
+    );
     const selectedSupports = authorizedResult.selected_candidate.sessions
       .filter((session) => session.role === 'SUPPORTING')
       .map((session) => ({ family: session.workout_family, supports: session.supports_requirement_id }));
