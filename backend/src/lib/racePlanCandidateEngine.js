@@ -72,6 +72,77 @@ function round(value, digits = 1) {
   return Math.round((Number(value) + Number.EPSILON) * factor) / factor;
 }
 
+function maximumRoleMaterialAssignment(roles, materials) {
+  const sourceRoles = Array.isArray(roles) ? roles : [];
+  const assignments = Array(sourceRoles.length).fill(null);
+  const normalizedMaterials = [];
+  const materialIndexById = new Map();
+  for (const material of (Array.isArray(materials) ? materials : [])) {
+    const materialId = typeof material?.material_id === 'string'
+      ? material.material_id.trim() : '';
+    const workoutFamily = typeof material?.workout_family === 'string'
+      ? material.workout_family : '';
+    // A material identity is one assignable unit. Duplicate rows cannot make
+    // the same identity available to multiple roles.
+    if (!materialId || !workoutFamily || materialIndexById.has(materialId)) continue;
+    materialIndexById.set(materialId, normalizedMaterials.length);
+    normalizedMaterials.push({ material, materialId, workoutFamily });
+  }
+
+  const pinnedMaterialIndexes = new Set();
+  const unpinnedRoleIndexes = [];
+  sourceRoles.forEach((role, roleIndex) => {
+    const allowedFamilies = new Set(Array.isArray(role?.any_of) ? role.any_of : []);
+    const pinnedMaterialId = typeof role?.candidate_material_id === 'string'
+      ? role.candidate_material_id.trim() : '';
+    if (!pinnedMaterialId) {
+      unpinnedRoleIndexes.push(roleIndex);
+      return;
+    }
+    const materialIndex = materialIndexById.get(pinnedMaterialId);
+    const normalized = materialIndex === undefined ? null : normalizedMaterials[materialIndex];
+    if (!normalized || pinnedMaterialIndexes.has(materialIndex)
+      || !allowedFamilies.has(normalized.workoutFamily)) return;
+    assignments[roleIndex] = normalized.material;
+    pinnedMaterialIndexes.add(materialIndex);
+  });
+
+  const candidateIndexesByRole = new Map(unpinnedRoleIndexes.map((roleIndex) => {
+    const allowedFamilies = new Set(Array.isArray(sourceRoles[roleIndex]?.any_of)
+      ? sourceRoles[roleIndex].any_of : []);
+    return [roleIndex, normalizedMaterials.flatMap((material, materialIndex) => (
+      !pinnedMaterialIndexes.has(materialIndex) && allowedFamilies.has(material.workoutFamily)
+        ? [materialIndex] : []
+    ))];
+  }));
+  const roleOrder = [...unpinnedRoleIndexes].sort((left, right) => (
+    candidateIndexesByRole.get(left).length - candidateIndexesByRole.get(right).length
+      || left - right
+  ));
+  const roleByMaterialIndex = new Map();
+  const assign = (roleIndex, visitedMaterialIndexes) => {
+    for (const materialIndex of candidateIndexesByRole.get(roleIndex)) {
+      if (visitedMaterialIndexes.has(materialIndex)) continue;
+      visitedMaterialIndexes.add(materialIndex);
+      const priorRoleIndex = roleByMaterialIndex.get(materialIndex);
+      if (priorRoleIndex !== undefined && !assign(priorRoleIndex, visitedMaterialIndexes)) continue;
+      roleByMaterialIndex.set(materialIndex, roleIndex);
+      assignments[roleIndex] = normalizedMaterials[materialIndex].material;
+      return true;
+    }
+    return false;
+  };
+  for (const roleIndex of roleOrder) assign(roleIndex, new Set());
+  return assignments;
+}
+
+function completeRoleMaterialAssignment(roles, materials) {
+  const sourceRoles = Array.isArray(roles) ? roles : [];
+  const assignments = maximumRoleMaterialAssignment(sourceRoles, materials);
+  return assignments.length === sourceRoles.length && assignments.every(Boolean)
+    ? assignments : null;
+}
+
 function recentRunRows(history = {}) {
   return [history.recentRuns, history.meaningfulRuns, history.runs]
     .find(Array.isArray) || [];
@@ -1070,19 +1141,11 @@ function goalBackwardSkeletonIdentity(input = {}) {
     input.legacy_road_candidate_material || [],
     hybridProjectionPace,
   );
-  const usedMaterialIds = new Set();
+  const assignedMaterials = maximumRoleMaterialAssignment(decision.role_multiset, materials);
+  const usedMaterialIds = new Set(assignedMaterials.filter(Boolean).map((material) => (
+    material.material_id
+  )));
   const hybridProjectionPaceAvailable = hybridProjectionPace >= 180 && hybridProjectionPace <= 2400;
-  const assignedMaterials = decision.role_multiset.map((role) => {
-    const boundMaterialId = typeof role.candidate_material_id === 'string'
-      ? role.candidate_material_id.trim() : '';
-    const material = materials.find((entry) => (
-      !usedMaterialIds.has(entry.material_id)
-        && (!boundMaterialId || entry.material_id === boundMaterialId)
-        && (role.any_of || []).includes(entry.workout_family)
-    ));
-    if (material) usedMaterialIds.add(material.material_id);
-    return material || null;
-  });
   // A late-week rolling window can legitimately contain no legacy quality
   // constructor output even though the event policy still requires one. Keep
   // that required exposure executable and dose-accountable by projecting its
@@ -1093,6 +1156,7 @@ function goalBackwardSkeletonIdentity(input = {}) {
   if (hybridProjectionPaceAvailable) {
     decision.role_multiset.forEach((role, index) => {
       if (assignedMaterials[index]
+        || (typeof role.candidate_material_id === 'string' && role.candidate_material_id.trim())
         || String(role.role || '').toUpperCase() !== 'PRIMARY_KEY') return;
       const placedFamily = placementFor(input.placements, role.requirement_id).workout_family;
       const workoutFamily = (placedFamily && (role.any_of || []).includes(placedFamily)
@@ -1168,11 +1232,18 @@ function goalBackwardSkeletonIdentity(input = {}) {
     sum + (material && RUNNING_GOAL_BACKWARD_FAMILIES.has(material.workout_family)
       ? materialRunningMeters(material) : 0)
   ), 0);
-  const projectionRoleIndex = decision.role_multiset.findIndex((role, index) => (
-    !assignedMaterials[index]
+  const projectionRoleIndex = decision.role_multiset.findIndex((role, index) => {
+    const projectionBindingId = typeof role.candidate_material_id === 'string'
+      ? role.candidate_material_id.trim() : '';
+    const projectionBinding = projectionBindingId
+      ? materials.find((material) => material.material_id === projectionBindingId) : null;
+    const validProjectionBinding = !projectionBindingId
+      || projectableHybridRunningMaterial(projectionBinding);
+    return !assignedMaterials[index]
+      && validProjectionBinding
       && String(role.role || '').toUpperCase() === 'SUPPORTING'
-      && (role.any_of || []).includes('easy_run')
-  ));
+      && (role.any_of || []).includes('easy_run');
+  });
   const requiredRunningMeters = Number(decision.minimum_weekly_demand?.running_m);
   if (projectionRoleIndex >= 0 && hybridProjectionPaceAvailable
     && Number.isSafeInteger(requiredRunningMeters) && exactRunningMeters < requiredRunningMeters) {
@@ -1914,6 +1985,7 @@ module.exports = {
   applyPlanningCurve,
   buildGoalBackwardCandidateSkeleton,
   canonicalRoadCandidateMaterial,
+  completeRoleMaterialAssignment,
   materializeGoalBackwardCandidate,
   buildRacePlanCandidate,
   candidateRankingTuple,
@@ -1921,6 +1993,7 @@ module.exports = {
   enumerateGoalBackwardCandidates,
   enforceDemandingSpacing,
   legacyGoalBackwardFamily,
+  maximumRoleMaterialAssignment,
   ordinaryEasyMedians,
   semanticCandidateErrors,
   trustedActivityDates,

@@ -27,8 +27,10 @@ const { localDateForOffset } = require('../lib/requestPlanningDate');
 const {
   buildRacePlanCandidate,
   canonicalRoadCandidateMaterial,
+  completeRoleMaterialAssignment,
   enumerateGoalBackwardCandidates,
   legacyGoalBackwardFamily,
+  maximumRoleMaterialAssignment,
   semanticCandidateErrors,
 } = require('../lib/racePlanCandidateEngine');
 const {
@@ -2843,6 +2845,26 @@ function goalBackwardCandidateMaterial(plan, availableLocalDates) {
   ));
 }
 
+function goalBackwardRoleMaterialEntries(candidateMaterial) {
+  return (Array.isArray(candidateMaterial) ? candidateMaterial : []).flatMap((session, index) => {
+    const materialId = goalBackwardMaterialId(session);
+    const workoutFamily = legacyGoalBackwardFamily(session);
+    return materialId && workoutFamily ? [{
+      material_id: materialId,
+      workout_family: workoutFamily,
+      source_index: index,
+      source_session: session,
+    }] : [];
+  });
+}
+
+function goalBackwardCompleteRoleMaterialAssignment(roles, candidateMaterial) {
+  return completeRoleMaterialAssignment(
+    Array.isArray(roles) ? roles : [],
+    goalBackwardRoleMaterialEntries(candidateMaterial),
+  );
+}
+
 function goalBackwardRequiredRoadMaterial(
   candidateMaterial,
   completeCandidateMaterial,
@@ -2854,20 +2876,9 @@ function goalBackwardRequiredRoadMaterial(
   }
   const selected = Array.isArray(candidateMaterial) ? [...candidateMaterial] : [];
   const selectedIds = new Set(selected.map(goalBackwardMaterialId).filter(Boolean));
-  const unclaimedSelected = selected.filter((session) => goalBackwardMaterialId(session));
-  const missingPrimaryRoles = [];
-  for (const role of (Array.isArray(decision?.role_multiset) ? decision.role_multiset : [])) {
-    if (role?.role !== 'PRIMARY_KEY') continue;
-    const requiredMaterialId = typeof role.candidate_material_id === 'string'
-      ? role.candidate_material_id.trim() : '';
-    const materialIndex = unclaimedSelected.findIndex((session) => (
-      (!requiredMaterialId || goalBackwardMaterialId(session) === requiredMaterialId)
-        && (role.any_of || []).includes(legacyGoalBackwardFamily(session))
-    ));
-    if (materialIndex < 0) missingPrimaryRoles.push(role);
-    else unclaimedSelected.splice(materialIndex, 1);
-  }
-  if (!missingPrimaryRoles.length) return selected;
+  const primaryRoles = (Array.isArray(decision?.role_multiset) ? decision.role_multiset : [])
+    .filter((role) => role?.role === 'PRIMARY_KEY');
+  if (goalBackwardCompleteRoleMaterialAssignment(primaryRoles, selected)) return selected;
   const source = (Array.isArray(completeCandidateMaterial) ? completeCandidateMaterial : [])
     .filter((session) => {
       const materialId = goalBackwardMaterialId(session);
@@ -2879,16 +2890,12 @@ function goalBackwardRequiredRoadMaterial(
       String(left?.date || '').localeCompare(String(right?.date || ''))
         || String(goalBackwardMaterialId(left)).localeCompare(String(goalBackwardMaterialId(right)))
     ));
-  for (const role of missingPrimaryRoles) {
-    const requiredMaterialId = typeof role.candidate_material_id === 'string'
-      ? role.candidate_material_id.trim() : '';
-    const materialIndex = source.findIndex((session) => (
-      (!requiredMaterialId || goalBackwardMaterialId(session) === requiredMaterialId)
-        && (role.any_of || []).includes(legacyGoalBackwardFamily(session))
-    ));
-    if (materialIndex < 0) continue;
-    const [material] = source.splice(materialIndex, 1);
+  const assignment = goalBackwardCompleteRoleMaterialAssignment(primaryRoles, [...selected, ...source]);
+  if (!assignment) return selected;
+  for (const assignedMaterial of assignment) {
+    const material = assignedMaterial.source_session;
     const materialId = goalBackwardMaterialId(material);
+    if (selectedIds.has(materialId)) continue;
     selected.push(material);
     selectedIds.add(materialId);
   }
@@ -3230,6 +3237,44 @@ function goalBackwardMaterialRunningMeters(session) {
   return Number.isFinite(miles) && miles >= 0 ? Math.round(miles * 1609.344) : 0;
 }
 
+// Canonical road materialization rounds source miles back to whole meters,
+// while the accepted plan surface preserves the source miles/minutes. A
+// six-decimal upward mile conversion keeps those two contracts stable and
+// meter-equivalent; whole minutes match the sibling top-up presentation.
+const GOAL_BACKWARD_TOP_UP_PRECISION = Object.freeze({
+  exact_road_distance_miles_digits: 6,
+  duration_min_digits: 0,
+});
+
+function goalBackwardRoundUpPrescription(value, digits) {
+  if (typeof value !== 'number' || !Number.isFinite(value)
+    || !Number.isSafeInteger(digits) || digits < 0 || digits > 9) return null;
+  const factor = 10 ** digits;
+  const scaled = value * factor;
+  const floatingTolerance = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+  const rounded = Math.ceil(scaled - floatingTolerance) / factor;
+  return Number.isFinite(rounded) ? rounded : null;
+}
+
+function goalBackwardExactRoadTopUpPrescription(distanceM, projectionPaceSecondsPerMile) {
+  if (!Number.isSafeInteger(distanceM) || distanceM < 1
+    || typeof projectionPaceSecondsPerMile !== 'number'
+    || !Number.isFinite(projectionPaceSecondsPerMile)) return null;
+  const distanceDigits = GOAL_BACKWARD_TOP_UP_PRECISION.exact_road_distance_miles_digits;
+  const distanceUnit = 10 ** -distanceDigits;
+  let distanceMiles = goalBackwardRoundUpPrescription(distanceM / 1609.344, distanceDigits);
+  if (!(distanceMiles > 0)) return null;
+  if (Math.round(distanceMiles * 1609.344) < distanceM) {
+    distanceMiles = goalBackwardRoundUpPrescription(distanceMiles + distanceUnit, distanceDigits);
+  }
+  const durationMin = goalBackwardRoundUpPrescription(
+    (distanceMiles * projectionPaceSecondsPerMile * 1.1) / 60,
+    GOAL_BACKWARD_TOP_UP_PRECISION.duration_min_digits,
+  );
+  if (!(durationMin > 0) || Math.round(distanceMiles * 1609.344) < distanceM) return null;
+  return { distance_miles: distanceMiles, minimum_duration_min: durationMin };
+}
+
 function goalBackwardTopUpFullWeekRunningMaterial(candidateMaterial, requiredRunningM, options = {}) {
   if (options.enabled !== true || !Number.isSafeInteger(requiredRunningM) || requiredRunningM < 1) {
     return candidateMaterial;
@@ -3285,22 +3330,8 @@ function goalBackwardTopUpFullWeekRunningMaterial(candidateMaterial, requiredRun
 }
 
 function goalBackwardSelectedMaterialIds(candidateMaterial, roles) {
-  const source = Array.isArray(candidateMaterial) ? candidateMaterial : [];
-  const usedIndexes = new Set();
-  const materialIds = [];
-  for (const role of (Array.isArray(roles) ? roles : [])) {
-    const requiredMaterialId = typeof role?.candidate_material_id === 'string'
-      ? role.candidate_material_id.trim() : '';
-    const materialIndex = source.findIndex((session, index) => (
-      !usedIndexes.has(index)
-        && (!requiredMaterialId || goalBackwardMaterialId(session) === requiredMaterialId)
-        && (role?.any_of || []).includes(legacyGoalBackwardFamily(session))
-    ));
-    if (materialIndex < 0) return [];
-    usedIndexes.add(materialIndex);
-    materialIds.push(goalBackwardMaterialId(source[materialIndex]));
-  }
-  return materialIds.filter(Boolean);
+  const assignment = goalBackwardCompleteRoleMaterialAssignment(roles, candidateMaterial);
+  return assignment ? assignment.map((material) => material.material_id) : [];
 }
 
 function goalBackwardTopUpRoadRunningMaterial(candidateMaterial, requiredRunningM, options = {}) {
@@ -3327,36 +3358,41 @@ function goalBackwardTopUpRoadRunningMaterial(candidateMaterial, requiredRunning
     ['recovery_run', 'easy_run', 'long_aerobic', 'steady_run'].includes(material.workout_family)
   ));
   if (!adjustable.length) return candidateMaterial;
-  const result = (Array.isArray(candidateMaterial) ? candidateMaterial : [])
-    .map((session) => ({ ...session }));
   const weights = adjustable.map((material) => material.workout_family === 'long_aerobic' ? 2 : 1);
   const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
   let remainingDeficitM = requiredRunningM - currentRunningM;
-  adjustable.forEach((material, position) => {
+  const adjustments = [];
+  for (let position = 0; position < adjustable.length; position += 1) {
+    const material = adjustable[position];
     const additionM = position === adjustable.length - 1
       ? remainingDeficitM
       : Math.floor((requiredRunningM - currentRunningM) * (weights[position] / totalWeight));
     remainingDeficitM -= additionM;
     const nextDistanceM = material.distance_m + additionM;
-    const nextMiles = nextDistanceM / 1609.344;
-    const minimumDurationMin = Math.ceil(
-      ((nextMiles * projectionPace * 1.1) / 60) * 10,
-    ) / 10;
-    const sourceIndex = result.findIndex((session) => (
+    const prescription = goalBackwardExactRoadTopUpPrescription(nextDistanceM, projectionPace);
+    const sourceIndex = candidateMaterial.findIndex((session) => (
       goalBackwardMaterialId(session) === material.material_id
     ));
-    if (sourceIndex < 0) return;
+    if (!prescription || sourceIndex < 0) return candidateMaterial;
+    adjustments.push({ prescription, sourceIndex });
+  }
+  const result = (Array.isArray(candidateMaterial) ? candidateMaterial : [])
+    .map((session) => ({ ...session }));
+  for (const { prescription, sourceIndex } of adjustments) {
+    const currentDurationMin = Number(
+      result[sourceIndex].duration_min ?? result[sourceIndex].durationMin ?? 0
+    );
     result[sourceIndex] = {
       ...result[sourceIndex],
-      distance_miles: nextMiles,
-      duration_min: Math.max(
-        Number(result[sourceIndex].duration_min ?? result[sourceIndex].durationMin ?? 0),
-        minimumDurationMin,
-      ),
+      distance_miles: prescription.distance_miles,
+      duration_min: goalBackwardRoundUpPrescription(Math.max(
+        Number.isFinite(currentDurationMin) && currentDurationMin >= 0 ? currentDurationMin : 0,
+        prescription.minimum_duration_min,
+      ), GOAL_BACKWARD_TOP_UP_PRECISION.duration_min_digits),
     };
     delete result[sourceIndex].distance_m;
     delete result[sourceIndex].distanceMeters;
-  });
+  }
   return result;
 }
 
@@ -3524,16 +3560,17 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
   let selectedRunningM = 0;
   let selectedRunningCount = 0;
   const supporting = [];
-  for (const role of primary) {
-    const materialIndex = candidateMaterial.findIndex((session, index) => (
-      !usedMaterialIndexes.has(index) && (role.any_of || []).includes(legacyGoalBackwardFamily(session))
-    ));
-    if (materialIndex < 0) continue;
-    usedMaterialIndexes.add(materialIndex);
-    const selectedFamily = legacyGoalBackwardFamily(candidateMaterial[materialIndex]);
+  const primaryAssignment = maximumRoleMaterialAssignment(
+    primary,
+    goalBackwardRoleMaterialEntries(candidateMaterial),
+  );
+  for (const material of primaryAssignment) {
+    if (!material) continue;
+    usedMaterialIndexes.add(material.source_index);
+    const selectedFamily = material.workout_family;
     if (GOAL_BACKWARD_RUNNING_FAMILIES.has(selectedFamily)
-      || goalBackwardProjectableRunningMaterial(candidateMaterial[materialIndex], selectedFamily)) {
-      selectedRunningM += goalBackwardMaterialRunningMeters(candidateMaterial[materialIndex]);
+      || goalBackwardProjectableRunningMaterial(material.source_session, selectedFamily)) {
+      selectedRunningM += goalBackwardMaterialRunningMeters(material.source_session);
       selectedRunningCount += 1;
     }
   }
@@ -8276,6 +8313,9 @@ router._test = {
   goalBackwardSafetyState,
   goalBackwardActiveAppliedPlan,
   goalBackwardRemovalCarryForwardMaterial,
+  goalBackwardRequiredRoadMaterial,
+  goalBackwardSelectedMaterialIds,
+  goalBackwardTopUpRoadRunningMaterial,
   canonicalCarryGoalIds,
   goalBackwardRequiredRunningDoseReceipt,
   goalBackwardRequiredRunningDoseReceiptFromServerValuesForTest,
