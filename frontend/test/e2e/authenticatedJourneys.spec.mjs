@@ -169,6 +169,14 @@ function minimumEffectiveRecoveryAlternativeExecution() {
   }
 }
 
+function minimumEffectiveRecoveryWithLiftExecution() {
+  const body = executionWith({ run: null, lift: plannedLift })
+  // Stale-server defense: corrected /plans/today omits this field when the
+  // lift survives, but the client must still keep the lift actionable.
+  body.execution.recoveryGuidance = minimumEffectiveRecoveryAlternativeExecution().execution.recoveryGuidance
+  return body
+}
+
 function checkinRecoveryExecution() {
   const recoveryRun = {
     ...plannedRun,
@@ -696,6 +704,27 @@ test('minimum-effective recovery guidance shows the reviewed rest, walk, or mobi
   await expect(page.getByRole('heading', { name: 'Recovery is the plan today', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
   expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('minimum-effective run alternative never suppresses its prescribed lift sibling', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/today', minimumEffectiveRecoveryWithLiftExecution()],
+    ]),
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Strength maintenance', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Rest & recover', exact: true })).toHaveCount(0)
+  await expect(page.getByText(/0\.8\s*mi|11\s*min/i)).toHaveCount(0)
+  const start = page.getByRole('button', { name: 'Start workout', exact: true })
+  await expect(start).toBeVisible()
+  await start.click()
+  await expect(page).toHaveURL(/\/log-lift$/)
+  await expect(page.getByRole('button', { name: 'From your plan', exact: true })).toBeVisible()
+
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 

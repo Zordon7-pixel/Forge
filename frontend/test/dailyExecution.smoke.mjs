@@ -143,6 +143,22 @@ const minimumEffectiveRecoveryBody = {
     },
   },
 };
+const minimumEffectiveRecoveryWithLiftBody = {
+  today: { day: 'Sun', date: '2026-08-30', type: 'strength', sessions: [] },
+  execution: {
+    hasPlan: true,
+    hasDay: true,
+    isRest: false,
+    isPlannedRest: false,
+    restSource: null,
+    sessions: [{ id: 'source-bound-lift', kind: 'lift', type: 'strength', title: 'Strength maintenance', completed: false }],
+    run: null,
+    lift: { id: 'source-bound-lift', kind: 'lift', type: 'strength', title: 'Strength maintenance', completed: false },
+    // Defensive stale-server fixture: current backend omits this terminal field
+    // whenever an executable sibling remains.
+    recoveryGuidance: minimumEffectiveRecoveryBody.execution.recoveryGuidance,
+  },
+};
 
 console.log('\n== normalizeExecution (hybrid) ==');
 const h = normalizeExecution(hybridBody);
@@ -221,6 +237,13 @@ assert(minimumEffectiveRecoveryRec?.recommendationType === 'rest', 'reviewed rec
 assert(/Rest, easy walking, or mobility/.test(minimumEffectiveRecoveryRec?.reason || ''), 'reviewed alternatives remain visible in customer guidance');
 assert(/reduced dose would not deliver/.test(minimumEffectiveRecoveryRec?.reason || ''), 'the source-bound recovery explanation remains visible');
 assert(!/0\.8\s*mi|11\s*min/i.test(minimumEffectiveRecoveryRec?.reason || ''), 'the rejected token dose is never presented as the workout');
+const minimumEffectiveRecoveryWithLift = normalizeExecution(minimumEffectiveRecoveryWithLiftBody);
+const minimumEffectiveRecoveryWithLiftRec = recommendationFromExecution(minimumEffectiveRecoveryWithLift);
+assert(minimumEffectiveRecoveryWithLift.recoveryGuidance === null, 'terminal recovery guidance is discarded when a non-rest sibling remains visible');
+assert(isRestExecutionAuthority(minimumEffectiveRecoveryWithLift) === false, 'a run alternative cannot relabel its lift sibling as terminal rest');
+assert(hasExecutableSession(minimumEffectiveRecoveryWithLift) === true, 'the surviving lift remains executable');
+assert(minimumEffectiveRecoveryWithLiftRec?.recommendationType === 'strength', 'the surviving lift remains today\'s recommendation');
+assert(scheduledLiftFromExecution(minimumEffectiveRecoveryWithLift)?.id === 'source-bound-lift', 'the surviving lift keeps its exact plan handoff');
 const stepsRec = recommendationFromExecution(normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, sessions: [], run: { id: 'run-steps', kind: 'run', steps: ['Warm up', '3 x 5 min', 'Cool down'] } } }));
 assert(stepsRec && stepsRec.structure.length === 3, 'run steps remain visible when structure is absent');
 const liftOnly = normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, week: 3, sessions: [{ id: 'lift-9', kind: 'lift', title: 'Upper' }], run: null, lift: { id: 'lift-9', kind: 'lift', title: 'Upper' } } });

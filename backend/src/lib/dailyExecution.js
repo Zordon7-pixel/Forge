@@ -199,7 +199,10 @@ function restSourceForPlanEntries(storedEntry, visibleEntry) {
 // rest/walk/mobility choice in the reviewed plan. Keep it out of `sessions`
 // (and therefore every workout-start surface), but preserve the source-bound
 // explanation for Today/Plan instead of collapsing it to a generic rest day.
-function recoveryGuidanceForDay(selectedEntry) {
+function recoveryGuidanceForDay(selectedEntry, visibleSessions = []) {
+  // This field is terminal day guidance. A sibling run/lift remains the day's
+  // executable authority, so never let a replaced token run suppress it.
+  if (visibleSessions.length > 0) return null;
   if (!Array.isArray(selectedEntry?.sessions)) return null;
   const source = selectedEntry.sessions.find((session) => (
     planSchema.kindFromSession(session) === 'rest'
@@ -260,7 +263,7 @@ function buildDailyExecution(opts) {
 
   const run = sessions.find((s) => s.kind === 'run') || null;
   const lift = sessions.find((s) => s.kind === 'lift') || null;
-  const recoveryGuidance = recoveryGuidanceForDay(selectedEntry);
+  const recoveryGuidance = recoveryGuidanceForDay(selectedEntry, sessions);
 
   return {
     hasPlan: true,

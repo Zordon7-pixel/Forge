@@ -315,6 +315,9 @@ export function normalizeExecution(body) {
   const acceptedLift = surface.status === 'accepted' && lift
     ? executionSession(surface.sessionsById.get(sessionId(lift)), lift)
     : lift;
+  const hasExecutableSibling = [acceptedRun, acceptedLift, ...sessions].some((session) => (
+    isExecutableSession(session) && !isRestSession(session)
+  ));
   return {
     hasPlan: exec.hasPlan === true,
     hasDay: exec.hasDay === true,
@@ -330,7 +333,9 @@ export function normalizeExecution(body) {
     type: exec.type || (body && body.today && body.today.type) || null,
     workoutType: exec.workoutType || exec.workout_type || (body && body.today && body.today.workout_type) || null,
     checkinOverride: exec.checkinOverride || exec.checkin_override || (body && body.today && body.today.checkin_override) || null,
-    recoveryGuidance: exec.recoveryGuidance && typeof exec.recoveryGuidance === 'object'
+    recoveryGuidance: !hasExecutableSibling
+      && exec.recoveryGuidance
+      && typeof exec.recoveryGuidance === 'object'
       ? exec.recoveryGuidance
       : null,
     date: exec.date || null,

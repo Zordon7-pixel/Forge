@@ -62,6 +62,20 @@ function liftOnlyPlan() {
   };
 }
 
+function hybridRunLiftPlan() {
+  const plan = sourcePlan();
+  plan.planMode = 'hybrid_maintain';
+  plan.weeks[0].days[0].sessions.push({
+    id: 'source-bound-lift',
+    kind: 'lift',
+    type: 'strength',
+    workout_type: 'strength',
+    title: 'Strength maintenance',
+    focus: 'full body',
+  });
+  return plan;
+}
+
 function assignmentRow(plan, suffix) {
   return {
     id: `reopened-plan-${suffix}`,
@@ -110,6 +124,34 @@ async function main() {
     alternative?.recovery_alternative?.options?.map((option) => option.type),
     ['rest', 'walking', 'mobility'],
   );
+
+  const hybridObjectiveRecovery = adaptation.buildAdaptationProposal({
+    plan: hybridRunLiftPlan(),
+    planningDateISO: PLANNING_DATE,
+    planVersion: 'reopened-policy-hybrid-v1',
+    completion: { missedWorkouts: 2, missedRuns: 1, freshness: 'recent' },
+  });
+  assert.equal(hybridObjectiveRecovery.status, 'proposal');
+  const hybridRecoveryDay = hybridObjectiveRecovery.proposedPlan.weeks[0].days[0];
+  assert.deepEqual(
+    hybridRecoveryDay.sessions.map((session) => session.kind),
+    ['rest', 'lift'],
+    'the run alternative does not remove its independently prescribed lift sibling',
+  );
+  const hybridExecutionUnit = require('../src/lib/dailyExecution').buildDailyExecution({
+    plan: hybridObjectiveRecovery.proposedPlan,
+    dateISO: PLANNING_DATE,
+    selectedEntry: hybridRecoveryDay,
+    selectedWeek: hybridObjectiveRecovery.proposedPlan.weeks[0],
+    selectedDayIndex: 0,
+    completedSessionIds: [],
+    hrProfile: null,
+    restSource: null,
+  });
+  assert.equal(hybridExecutionUnit.isRest, false);
+  assert.deepEqual(hybridExecutionUnit.sessions.map((session) => session.id), ['source-bound-lift']);
+  assert.equal(hybridExecutionUnit.lift?.id, 'source-bound-lift');
+  assert.equal(hybridExecutionUnit.recoveryGuidance, undefined, 'non-executable run guidance cannot override a visible lift sibling');
 
   const dbPath = require.resolve('../src/db');
   const plansPath = require.resolve('../src/routes/plans');
@@ -178,6 +220,15 @@ async function main() {
     assert.equal(liftOnly.execution.lift?.id, 'source-bound-lift');
     assert.equal(liftOnly.execution.recoveryGuidance, undefined, 'no objective recovery proposal means no generated recovery choice');
 
+    activeRow = assignmentRow(hybridObjectiveRecovery.proposedPlan, 'hybrid-objective-recovery');
+    const hybridRecovery = await readToday(handler);
+    assert.equal(hybridRecovery.execution.hasDay, true);
+    assert.equal(hybridRecovery.execution.isRest, false, 'a surviving lift keeps the hybrid day executable');
+    assert.deepEqual(hybridRecovery.execution.sessions.map((session) => session.id), ['source-bound-lift']);
+    assert.equal(hybridRecovery.execution.run, null);
+    assert.equal(hybridRecovery.execution.lift?.id, 'source-bound-lift');
+    assert.equal(hybridRecovery.execution.recoveryGuidance, undefined, 'the exported route does not emit terminal recovery guidance beside an executable lift');
+
     activeRow = assignmentRow(objectiveRecovery.proposedPlan, 'objective-recovery');
     const recovery = await readToday(handler);
     assert.equal(recovery.execution.hasDay, true);
@@ -193,7 +244,7 @@ async function main() {
       recovery.execution.recoveryGuidance?.recovery_alternative?.options?.map((option) => option.type),
       ['rest', 'walking', 'mobility'],
     );
-    assert.equal(reads.length, 4, 'each exact route read resolves one assignment and one optional HR profile');
+    assert.equal(reads.length, 6, 'each exact route read resolves one assignment and one optional HR profile');
   } finally {
     global.Date = RealDate;
     delete require.cache[plansPath];
