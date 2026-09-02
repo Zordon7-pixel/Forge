@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildRestDayReasons, buildWeeklyRecapView, dashboardCustomerText } from '../src/lib/dashboardBrief.js'
+import { buildDailyBriefContext, buildRestDayReasons, buildWeeklyRecapView, dashboardCustomerText } from '../src/lib/dashboardBrief.js'
 
 const read = (relativePath) => readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8')
 const dashboard = read('src/pages/Dashboard.jsx')
@@ -64,6 +64,13 @@ assert.deepEqual(readinessFallback[1], {
   detail: 'Recent training load supports a lighter day.',
 }, 'a real readiness driver is used only when recent recap evidence is unavailable')
 
+assert.deepEqual(buildDailyBriefContext(restFixture), [
+  { key: 'readiness', label: 'Readiness', value: '79', detail: 'Recent training load supports a lighter day.' },
+  { key: 'recent-training', label: 'Recent training', value: '7.2 mi · 2 runs', detail: 'Aug 10 - Aug 16' },
+  { key: 'next-event', label: 'Next event', value: 'Army Ten-Miler', detail: 'Oct 11' },
+], 'opened Daily Brief context uses only loaded readiness, recap, and event fields')
+assert.deepEqual(buildDailyBriefContext({ readinessData: { available: false }, weeklyRecap: null, nextRace: null }), [], 'missing Daily Brief context is omitted instead of fabricated')
+
 const recapView = buildWeeklyRecapView(recapFixture)
 assert.equal(recapView.weekLabel, recapFixture.weekLabel)
 assert.deepEqual(recapView.teaserItems, ['7.2 mi', '2 runs', '830 cal'])
@@ -87,7 +94,9 @@ assert.match(dashboard, /event\.stopPropagation\(\)[\s\S]*recap-seen-/, 'teaser 
 assert.match(dashboard, /aria-haspopup="dialog"/, 'the recap opener advertises the dialog interaction')
 assert.match(coachsLog, /className="signature-coachs-log card-hero"/, 'Daily Brief reuses the Today card family')
 assert.match(dashboard, /className="card-hero dashboard-weekly-recap"/, 'Weekly Recap teaser reuses the Today card family')
-assert.match(dashboard, /<DailyCoachFlow/, 'Review today’s plan remains on the Dashboard')
+assert.doesNotMatch(dashboard, /<DailyCoachFlow/, 'the duplicate Today training card is removed from the Dashboard')
+assert.doesNotMatch(dashboard, /<TodayDetailSheet/, 'the duplicate Today detail sheet is removed from the Dashboard')
+assert.match(coachsLog, /className="signature-log-toggle"[\s\S]*aria-expanded=\{expanded\}/, 'the Daily Brief card exposes one full-card disclosure control')
 assert.match(dashboard, /<TomorrowPlanCard/, 'the Dashboard includes the evening Tomorrow handoff')
 assert.match(dashboard, /shouldPromoteTomorrow\(dashboardNow\)/, 'Tomorrow stays gated by device-local time')
 assert.match(dashboard, /localTomorrowDateISO\(requestNow\)/, 'Tomorrow fetch uses device-local date math')

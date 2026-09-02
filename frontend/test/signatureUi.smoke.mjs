@@ -80,7 +80,8 @@ for (const [state, copy] of [
 ]) {
   assert.ok(readinessCard.includes(copy), `${state} readiness copy remains truthful`)
 }
-assert.match(coachsLog, /aria-expanded=\{expanded\}/, 'Coach\'s Daily Brief exposes disclosure state to assistive technology')
+assert.match(coachsLog, /className="signature-log-toggle"[\s\S]*aria-expanded=\{expanded\}/, 'Coach\'s Daily Brief exposes full-card disclosure state to assistive technology')
+assert.match(coachsLog, /buildDailyBriefContext\(\{ weeklyRecap, readinessData, nextRace \}\)/, 'the opened brief reuses loaded readiness, recap, and race context')
 assert.match(coachsLog, /matchingSession\(execution, recommendation\)/, 'the log binds the recommendation to daily execution')
 assert.match(coachsLog, /if \(!recommendation[^\n]+return null/, 'the log is omitted when no canonical mission exists')
 assert.match(coachsLog, /recommendation\?\.durationMinutes/, 'duration is conditional on an existing recommendation field')
@@ -106,6 +107,7 @@ assert.match(dashboard, /<div className="signature-dashboard-stack">\s*<CoachsLo
 assert.match(dashboard, /<ReadinessBreakdownModal[\s\S]*readinessState=\{readinessState\}[\s\S]*readiness=\{travelReadiness\}/, 'Dashboard passes its existing readiness state and normalized value to the overlay')
 assert.match(dashboard, /recommendation=\{effectiveRecommendation\}/, 'Dashboard passes its existing canonical recommendation to the log')
 assert.match(dashboard, /execution=\{execution\}/, 'Dashboard passes its existing daily execution to the log')
+assert.doesNotMatch(dashboard, /<DailyCoachFlow|<TodayDetailSheet/, 'Dashboard does not duplicate today’s workout outside Train')
 assert.equal((dashboard.match(/['"]\/recovery\/readiness['"]/g) || []).length, 1, 'Dashboard retains exactly one readiness request path')
 assert.equal((dashboard.match(/fetchDailyExecution\(localDateISO\(\)\)/g) || []).length, 1, 'Dashboard retains exactly one daily-execution request path')
 

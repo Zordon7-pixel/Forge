@@ -35,6 +35,58 @@ function displayDate(value) {
     : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+export function buildDailyBriefContext({ weeklyRecap, readinessData, nextRace } = {}) {
+  const context = []
+
+  if (readinessData?.available !== false) {
+    const readinessScore = finiteNumber(readinessData?.score)
+    const readinessBand = dashboardCustomerText(readinessData?.band, { casing: 'title' })
+    const readinessDriver = Array.isArray(readinessData?.drivers)
+      ? readinessData.drivers.map((value) => dashboardCustomerText(value)).find(Boolean)
+      : ''
+    const readinessValue = [
+      readinessScore !== null ? String(Math.round(readinessScore)) : '',
+      readinessBand,
+    ].filter(Boolean).join(' · ')
+    if (readinessValue || readinessDriver) {
+      context.push({
+        key: 'readiness',
+        label: 'Readiness',
+        value: readinessValue,
+        detail: readinessDriver,
+      })
+    }
+  }
+
+  const recapMiles = finiteNumber(weeklyRecap?.totalMiles)
+  const recapRuns = finiteNumber(weeklyRecap?.totalRuns)
+  const recentTraining = [
+    recapMiles !== null ? displayMiles(recapMiles) : '',
+    recapRuns !== null ? `${recapRuns} run${recapRuns === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ')
+  if (recentTraining) {
+    context.push({
+      key: 'recent-training',
+      label: 'Recent training',
+      value: recentTraining,
+      detail: dashboardCustomerText(weeklyRecap?.weekLabel, { casing: 'title' }),
+    })
+  }
+
+  const raceName = dashboardCustomerText(nextRace?.race_name || nextRace?.name, { casing: 'title' })
+  const raceDate = displayDate(nextRace?.race_date || nextRace?.date)
+  if (raceName || raceDate) {
+    context.push({
+      key: 'next-event',
+      label: 'Next event',
+      value: raceName,
+      detail: raceDate,
+    })
+  }
+
+  return context
+}
+
 function recapHighlight(recap) {
   const pr = Array.isArray(recap?.prsThisWeek)
     ? recap.prsThisWeek.map((value) => dashboardCustomerText(value)).find(Boolean)

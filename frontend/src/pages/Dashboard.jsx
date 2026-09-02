@@ -3,7 +3,7 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router'
 import { CalendarClock, ChevronRight, Dumbbell, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
+import InsightsSheet, { CalendarDayDetailSheet, ReadinessBreakdownModal, RecentActivityCard, WatchSyncWidget } from '../components/InsightsSheet'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import {
@@ -12,13 +12,12 @@ import {
   isAdaptationDecisionRetryRequired,
   isSettledAdaptationProposal,
 } from '../lib/adaptationDecision'
-import track from '../lib/track'
 import LoadingRunner from '../components/LoadingRunner'
 import Skeleton from '../components/Skeleton'
 import { useOnlineStatus } from '../lib/useOnlineStatus'
 import HealthService from '../services/HealthService'
 import { useProContext } from '../context/ProContext'
-import { authorizeWorkoutStart, fetchDailyExecution, recommendationFromExecution, hasExecutableSession, liftRouteState, runRouteState, workoutStartDecision, workoutStartErrorMessage, localDateISO } from '../lib/dailyExecution'
+import { fetchDailyExecution, recommendationFromExecution, localDateISO } from '../lib/dailyExecution'
 import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { HEALTH_SYNC_RESULT_EVENT, shouldRefreshPageForHealthSyncEvent } from '../lib/healthSync'
@@ -65,12 +64,6 @@ function useCountUp(target, duration = 900) {
   return count
 }
 
-function getRecommendationLabel(recommendation) {
-  return recommendation
-    ? String(recommendation.recommendationType || "today's session").replace('_', ' ')
-    : "today's session"
-}
-
 function getWeekKey() {
   const now = new Date()
   const weekStart = new Date(Date.UTC(now.getFullYear(), 0, 1))
@@ -96,8 +89,6 @@ function runOccurredOnDate(run, dateISO) {
   const parsed = new Date(text)
   return !Number.isNaN(parsed.getTime()) && localDateISO(parsed) === dateISO
 }
-
-const TODAY_CARD_VIEWED_KEY = 'forge_track_today_card_viewed'
 
 function trainingGapEvidence(proposal) {
   return (proposal?.evidence || []).find((item) => ['run_gap', 'training_gap'].includes(item?.signal)) || null
@@ -274,7 +265,6 @@ export default function Dashboard() {
   const { t } = useTranslation()
   const [stats, setStats] = useState(null), [runs, setRuns] = useState([]), [lifts, setLifts] = useState([]), [workoutSessions, setWorkoutSessions] = useState([])
   const [warning, setWarning] = useState(false), [loading, setLoading] = useState(true), [period, setPeriod] = useState('week')
-  const [checkedInToday, setCheckedInToday] = useState(false), [hasWatchData, setHasWatchData] = useState(false)
   const [goalMode, setGoalMode] = useState('auto'), [manualGoalMiles, setManualGoalMiles] = useState(null), [editingGoal, setEditingGoal] = useState(false), [goalInput, setGoalInput] = useState('')
   const [showReadinessModal, setShowReadinessModal] = useState(false), [selectedCalendarDay, setSelectedCalendarDay] = useState(null), [watchSyncNotice, setWatchSyncNotice] = useState(null)
   const [otherActivities, setOtherActivities] = useState([])
@@ -290,8 +280,6 @@ export default function Dashboard() {
     }
   }, [location.search, navigate])
   const [checkinData, setCheckinData] = useState(null)
-  const [dailySteps, setDailySteps] = useState(null)
-  const [dailyStepsSource, setDailyStepsSource] = useState('manual')
   const [activeInjury, setActiveInjury] = useState(null)
   const [injurySafetyAvailable, setInjurySafetyAvailable] = useState(false)
   const [injuryBannerDismissed, setInjuryBannerDismissed] = useState(false)
@@ -299,14 +287,12 @@ export default function Dashboard() {
   const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
   const [weeklyRecapOpen, setWeeklyRecapOpen] = useState(false)
   const [showSyncedFlash, setShowSyncedFlash] = useState(false)
-  const [showTodayDetail, setShowTodayDetail] = useState(false)
   const [showMoreInsights, setShowMoreInsights] = useState(false)
   const [coachsLogExpanded, setCoachsLogExpanded] = useState(false)
   const [nextRecommendation, setNextRecommendation] = useState(null)
   const [execution, setExecution] = useState(null)
   const [tomorrowExecution, setTomorrowExecution] = useState(null)
   const [dashboardNow, setDashboardNow] = useState(() => new Date())
-  const [workoutStartError, setWorkoutStartError] = useState('')
   const [ageGradedPerformance, setAgeGradedPerformance] = useState(null)
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
   const [readinessState, setReadinessState] = useState({ loading: true, error: false, locked: false, data: null })
@@ -393,23 +379,10 @@ export default function Dashboard() {
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         setRuns(runsList)
-        setHasWatchData(runsList.some((r) => r.avg_heart_rate || r.watch_mode || r.route_coords))
         setLifts(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])
         setWorkoutSessions(Array.isArray(workoutsRes.data?.sessions) ? workoutsRes.data.sessions : [])
         setWarning(warningRes.data?.warning === true)
-        const checkinSteps = checkinRes.data?.step_count ?? checkinRes.data?.steps
-        if (Number.isFinite(Number(checkinSteps))) {
-          setDailySteps(Number(checkinSteps))
-          setDailyStepsSource('manual')
-        } else {
-          const statsSteps = statsRes.data?.day?.steps ?? statsRes.data?.today?.steps
-          if (Number.isFinite(Number(statsSteps))) {
-            setDailySteps(Number(statsSteps))
-            setDailyStepsSource('manual')
-          }
-        }
         if (checkinRes.data) {
-          setCheckedInToday(true)
           setCheckinData(checkinRes.data)
         }
         if (goalRes.data) {
@@ -471,11 +444,6 @@ export default function Dashboard() {
 
     const handleHealthSyncCompleted = (event) => {
       const metrics = event?.detail?.metrics
-      const healthSteps = Number(metrics?.stepsToday || 0)
-      if (Number.isFinite(healthSteps) && healthSteps > 0) {
-        setDailySteps(healthSteps)
-        setDailyStepsSource('watch')
-      }
       if (metrics) setHealthSync({ loading: false, available: true, reason: null, metrics })
       if (shouldRefreshPageForHealthSyncEvent(event)) {
         fetchDashboardData()
@@ -528,17 +496,6 @@ export default function Dashboard() {
   }, [dashboardNow, fetchDashboardData])
 
   useEffect(() => {
-    if (loading) return
-    try {
-      if (sessionStorage.getItem(TODAY_CARD_VIEWED_KEY) === '1') return
-      sessionStorage.setItem(TODAY_CARD_VIEWED_KEY, '1')
-    } catch (err) {
-      console.debug('[Dashboard] today_card_viewed session guard unavailable:', err?.message)
-    }
-    track('today_card_viewed')
-  }, [loading])
-
-  useEffect(() => {
     let active = true
     let retryTimer = null
 
@@ -557,11 +514,6 @@ export default function Dashboard() {
         if (!active) return
 
         if (result?.available && result?.metrics) {
-          const healthSteps = Number(result.metrics.stepsToday || 0)
-          if (Number.isFinite(healthSteps) && healthSteps > 0) {
-            setDailySteps(healthSteps)
-            setDailyStepsSource('watch')
-          }
           try {
             if (!profileAlreadySynced) await HealthService.syncToProfile(result.metrics)
             if (active) setHealthSyncNotice('')
@@ -655,13 +607,6 @@ export default function Dashboard() {
   }, [])
 
 
-  const readinessBreakdown = useMemo(() => {
-    if (!resolveReadiness(readinessState.data).available || !Array.isArray(readinessState.data?.drivers)) return []
-    return readinessState.data.drivers
-      .filter((reason) => typeof reason === 'string' && reason.trim())
-      .map((reason, index) => ({ label: `Recovery signal ${index + 1}`, reason }))
-  }, [readinessState.data])
-
   // Monthly challenge
   const monthlyGoal = useMemo(() => {
     if (!stats) return null
@@ -710,140 +655,6 @@ export default function Dashboard() {
   const complianceColor = compliance?.score >= 80 ? 'var(--success)' : compliance?.score >= 50 ? 'var(--accent)' : 'var(--danger)'
   const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
   const injuryDismissed = injuryBannerDismissed || (activeInjury && activeInjury.id && localStorage.getItem(`forge-injury-dismissed-${activeInjury.id}`) === '1')
-  const handleWatchSyncPayload = useCallback((payload) => {
-    if (!payload) return
-    const syncedSteps = payload.step_count ?? payload.steps
-    const numericSteps = Number(syncedSteps)
-    if (Number.isFinite(numericSteps) && numericSteps >= 0) {
-      setDailySteps(Math.round(numericSteps))
-      setDailyStepsSource('watch')
-    }
-  }, [])
-
-  const verifyWorkoutStart = useCallback(async ({ sessionId = null, activity, expectedAccess } = {}) => {
-    const decision = await authorizeWorkoutStart({ sessionId, activity, expectedAccess })
-    if (!decision.allowed) {
-      setWorkoutStartError(workoutStartErrorMessage(decision.reasonCode))
-      return null
-    }
-    setWorkoutStartError('')
-    return decision
-  }, [])
-
-  const handleStartWorkout = useCallback(async () => {
-    // H5: when today has an executable calendar session, hand off the canonical
-    // scheduled run/lift (with its plan session id) instead of the legacy rec.
-    if (hasExecutableSession(execution)) {
-      if (calendarRec && calendarRec.recommendationType === 'strength') {
-        const handoff = liftRouteState(execution)
-        if (!handoff) {
-          setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
-          return
-        }
-        const decision = await verifyWorkoutStart({
-          sessionId: handoff.planSessionId,
-          activity: { kind: 'lift', workoutFamily: handoff.scheduledLift?.workout_family },
-          expectedAccess: handoff.workoutStartAccess,
-        })
-        if (!decision) return
-        track('recommendation_followed', { via: 'today_card_start', source: 'calendar' })
-        return navigate('/log-lift', { state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}) } })
-      }
-      const handoff = runRouteState(execution)
-      if (!handoff) {
-        setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
-        return
-      }
-      const decision = await verifyWorkoutStart({
-        sessionId: handoff.planSessionId,
-        activity: { kind: 'run' },
-        expectedAccess: handoff.workoutStartAccess,
-      })
-      if (!decision) return
-      track('recommendation_followed', { via: 'today_card_start', source: 'calendar' })
-      return navigate('/log-run', { state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}) } })
-    }
-    if (calendarOwnsToday) return navigate('/plan')
-    if (!nextRecommendation) return navigate('/run')
-    track('recommendation_followed', { via: 'today_card_start' })
-    if (nextRecommendation.recommendationType === 'rest') return navigate('/plan')
-    if (nextRecommendation.recommendationType === 'strength') return navigate('/log-lift')
-    const params = new URLSearchParams()
-    if (Number(nextRecommendation.suggestedDistance || 0) > 0) params.set('distance', String(nextRecommendation.suggestedDistance))
-    if (nextRecommendation.recommendationType) params.set('type', String(nextRecommendation.recommendationType))
-    if (nextRecommendation.suggestedPace) params.set('pace', String(nextRecommendation.suggestedPace))
-    navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
-  }, [navigate, nextRecommendation, execution, calendarRec, calendarOwnsToday, verifyWorkoutStart])
-
-  const handleStartTodayRun = useCallback(async () => {
-    if (!execution?.run) return
-    const handoff = runRouteState(execution)
-    if (!handoff) {
-      setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
-      return
-    }
-    const decision = await verifyWorkoutStart({
-      sessionId: handoff.planSessionId,
-      activity: { kind: 'run' },
-      expectedAccess: handoff.workoutStartAccess,
-    })
-    if (!decision) return
-    track('recommendation_followed', { via: 'today_details_run', source: 'calendar' })
-    navigate('/log-run', { state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}) } })
-  }, [navigate, execution, verifyWorkoutStart])
-
-  const handleStartTodayLift = useCallback(async () => {
-    if (!execution?.lift) return
-    const handoff = liftRouteState(execution)
-    if (!handoff) {
-      setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
-      return
-    }
-    const decision = await verifyWorkoutStart({
-      sessionId: handoff.planSessionId,
-      activity: { kind: 'lift', workoutFamily: handoff.scheduledLift?.workout_family },
-      expectedAccess: handoff.workoutStartAccess,
-    })
-    if (!decision) return
-    track('recommendation_followed', { via: 'today_details_lift', source: 'calendar' })
-    navigate('/log-lift', {
-      state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}) },
-    })
-  }, [navigate, execution, verifyWorkoutStart])
-
-  const handlePlanTodayRoute = useCallback(async () => {
-    if (!execution?.run) return
-    const handoff = runRouteState(execution)
-    if (!handoff) {
-      setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
-      return
-    }
-    const decision = await verifyWorkoutStart({
-      sessionId: handoff.planSessionId,
-      activity: { kind: 'run' },
-      expectedAccess: handoff.workoutStartAccess,
-    })
-    if (!decision) return
-    track('route_planner_opened', { via: 'today_details', source: 'calendar' })
-    navigate('/log-run', { state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}), openRoutePlanner: true } })
-  }, [navigate, execution, verifyWorkoutStart])
-
-  const handleStartUnplannedRun = useCallback(async () => {
-    const initial = workoutStartDecision({ execution, activity: { kind: 'run' } })
-    if (!initial.allowed) {
-      setWorkoutStartError(workoutStartErrorMessage(initial.reasonCode))
-      return
-    }
-    const decision = await verifyWorkoutStart({
-      activity: { kind: 'run' },
-      expectedAccess: initial.access,
-    })
-    if (!decision) return
-    track('unplanned_run_selected', { via: 'today_rest_day' })
-    setShowTodayDetail(false)
-    navigate('/log-run?tab=manual&intent=rest-day')
-  }, [navigate, execution, verifyWorkoutStart])
-
   const decideTrainingGap = useCallback(async (decision) => {
     const isPreview = !trainingGapProposal?.id && trainingGapProposal?.decisionStatus === 'preview'
     if ((!trainingGapProposal?.id && !isPreview) || trainingGapDecision || !['accept', 'keep'].includes(decision)) return
@@ -1051,23 +862,6 @@ export default function Dashboard() {
         dateISO={localDateISO()}
       />
 
-      {workoutStartError && (
-        <p role="alert" className="rounded-xl p-3 text-sm font-semibold" style={{ background: 'var(--danger-dim)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.35)' }}>
-          {workoutStartError}
-        </p>
-      )}
-
-      <DailyCoachFlow /* H5: effectiveRecommendation prefers calendar */
-        checkedInToday={checkedInToday}
-        readinessData={readinessState.data}
-        recommendation={effectiveRecommendation}
-        execution={execution}
-        hasRunRecordedToday={hasRunRecordedToday}
-        onStartWorkout={handleStartWorkout}
-        onStartUnplannedRun={handleStartUnplannedRun}
-        onDetails={() => setShowTodayDetail(true)}
-      />
-
       {shouldPromoteTomorrow(dashboardNow) && (
         <TomorrowPlanCard
           plan={tomorrowPlan}
@@ -1088,34 +882,6 @@ export default function Dashboard() {
           <button type="button" className="pressable" onClick={() => navigate('/community?tab=runs')} style={{ width: '100%', minHeight: 44, marginTop: 12, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 850 }}>{t('groupRuns.openCommunity')}</button>
         </section>
       )}
-
-      <TodayDetailSheet
-        open={showTodayDetail}
-        onClose={() => setShowTodayDetail(false)}
-        checkedInToday={checkedInToday}
-        readinessData={readinessState.data}
-        readinessBreakdown={readinessBreakdown}
-        recommendation={effectiveRecommendation}
-        execution={execution}
-        hasRunRecordedToday={hasRunRecordedToday}
-        checkinData={checkinData}
-        dailySteps={dailySteps}
-        dailyStepsSource={dailyStepsSource}
-        activeInjury={activeInjury}
-        watchSyncNotice={watchSyncNotice}
-        compliance={compliance}
-        onStartWorkout={handleStartWorkout}
-        onStartRun={handleStartTodayRun}
-        onStartLift={handleStartTodayLift}
-        onPlanRoute={handlePlanTodayRoute}
-        onStartUnplannedRun={handleStartUnplannedRun}
-        onWarmup={() => navigate('/prep?mode=warmup')}
-        onReflect={() => navigate('/history')}
-        onOpenReadiness={() => {
-          setShowTodayDetail(false)
-          setShowReadinessModal(true)
-        }}
-      />
 
       {watchSyncNotice && (
         <div className="rounded-xl p-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
@@ -1163,7 +929,7 @@ export default function Dashboard() {
       <InsightsSheet
         open={showMoreInsights}
         onClose={() => setShowMoreInsights(false)}
-        watchSyncWidget={<WatchSyncWidget onSyncPayload={handleWatchSyncPayload} />}
+        watchSyncWidget={<WatchSyncWidget />}
         weeklyRecap={weeklyRecap}
         navigate={navigate}
         ageGradedPerformance={ageGradedPerformance}

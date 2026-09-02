@@ -640,37 +640,46 @@ body {
   to { stroke-dasharray: var(--signature-arc-fill); }
 }
 
-.signature-log-disclosure {
+.signature-log-toggle {
   min-width: 44px;
   min-height: 44px;
   cursor: pointer;
   touch-action: manipulation;
 }
 
-.signature-log-disclosure {
+.signature-log-toggle {
   display: flex;
   width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 8px;
-  padding: 8px 0 0;
+  padding: 18px;
   border: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
   background: transparent;
-  color: #fffaf0;
-  font-size: 12px;
-  font-weight: 850;
+  color: var(--text-primary);
   text-align: left;
 }
 
-.signature-log-disclosure > span {
-  color: #fb923c;
-  font-size: 20px;
+.signature-log-heading {
+  display: grid;
+  min-width: 0;
+}
+
+.signature-log-toggle-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 21px;
+  font-weight: 800;
   line-height: 1;
 }
 
-.signature-log-rationale[hidden] {
+.signature-log-details[hidden] {
   display: none;
 }
 
@@ -706,7 +715,7 @@ body {
 
 .signature-coachs-log {
   position: relative;
-  padding: 18px;
+  padding: 0;
   color: var(--text-primary);
 }
 
@@ -715,12 +724,28 @@ body {
 }
 
 .signature-log-title {
+  display: block;
   margin: 6px 0 0;
   color: var(--text-primary);
   font-size: 22px;
   font-weight: 950;
   line-height: 1.1;
   overflow-wrap: anywhere;
+}
+
+.signature-log-hint {
+  display: block;
+  margin-top: 7px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.signature-log-details {
+  min-width: 0;
+  padding: 0 18px 18px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .signature-mission-facts {
@@ -753,21 +778,64 @@ body {
   overflow-wrap: anywhere;
 }
 
-.signature-log-disclosure {
-  border-top-color: var(--border-subtle);
-  color: var(--text-primary);
-}
-
-.signature-log-disclosure > span {
-  color: var(--accent);
-}
-
 .signature-log-rationale {
-  padding-top: 3px;
+  padding-top: 7px;
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.signature-log-context {
+  min-width: 0;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.signature-log-context-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.signature-log-context dl {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  margin: 11px 0 0;
+}
+
+.signature-log-context dl > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(92px, 0.45fr) minmax(0, 1fr);
+  gap: 3px 10px;
+}
+
+.signature-log-context dt {
+  grid-row: 1 / span 2;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.signature-log-context dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.signature-log-context .signature-log-context-detail {
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .signature-coachs-log :is(button):focus-visible {
@@ -1197,13 +1265,12 @@ body {
     padding-top: 7px;
   }
 
-  .signature-log-disclosure {
-    margin-top: 4px;
-    padding-top: 4px;
+  .signature-log-toggle {
+    padding: 13px;
   }
 
-  .signature-coachs-log {
-    padding: 13px;
+  .signature-log-details {
+    padding: 0 13px 13px;
   }
 
   .signature-log-title {
@@ -1222,6 +1289,10 @@ body {
 
   .signature-rest-reasons {
     gap: 8px;
+  }
+
+  .signature-log-context dl > div {
+    grid-template-columns: minmax(82px, 0.42fr) minmax(0, 1fr);
   }
 
   .dashboard-weekly-recap-open {

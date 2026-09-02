@@ -15,7 +15,7 @@ check(source.includes('Everything okay?'), 'training-gap card asks before changi
 check(source.includes('Ease my return') && source.includes('Keep original'), 'both consent choices are visible')
 check(source.includes('`/plans/adaptation/${trainingGapProposal.id}/${decision}`'), 'choices use the existing owner-scoped adaptation decision route')
 check(source.includes('proposal_revision: trainingGapProposal.revision') && source.includes('proposal_plan_version: trainingGapProposal.planVersion'), 'choices are bound to the exact proposal the athlete reviewed')
-check(source.indexOf('<TrainingGapPrompt') < source.indexOf('<DailyCoachFlow'), 'training-gap decision appears before the normal Today flow')
+check(source.indexOf('<TrainingGapPrompt') < source.indexOf('<TomorrowPlanCard'), 'training-gap decision appears before the next-day handoff')
 
 console.log(`PASSED: ${passed}  FAILED: 0`)
 console.log('TRAINING GAP PROMPT SMOKE OK')

@@ -553,8 +553,8 @@ for (const project of [
   })
 }
 
-check('start pages revalidate canonical safety before navigation and plan-linked completion', () => {
-  assert.match(dashboardSource, /authorizeWorkoutStart/)
+check('workout surfaces revalidate canonical safety while Dashboard owns no workout start path', () => {
+  assert.doesNotMatch(dashboardSource, /authorizeWorkoutStart|onStartWorkout|onStartRun|onStartLift/)
   assert.match(logRunSource, /authorizeWorkoutStart/)
   assert.match(logRunSource, /workoutStartAccess/)
   assert.match(activeWorkoutSource, /authorizeWorkoutStart/)

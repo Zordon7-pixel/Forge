@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import { formatHrZone } from '../lib/dailyExecutionCore'
 import { humanizeMachineValue } from '../lib/goalBackwardPresentation'
-import { buildRestDayReasons } from '../lib/dashboardBrief'
+import { buildDailyBriefContext, buildRestDayReasons } from '../lib/dashboardBrief'
 
 function customerText(value, { casing = 'sentence' } = {}) {
   const raw = String(value ?? '').trim()
@@ -66,7 +66,7 @@ export default function CoachsLogCard({
   expanded = false,
   onExpandedChange,
 }) {
-  const rationaleId = useId()
+  const detailId = useId()
   if (!recommendation || execution?.surface?.status === 'blocked') return null
 
   const session = matchingSession(execution, recommendation)
@@ -76,58 +76,78 @@ export default function CoachsLogCard({
   const metrics = missionMetrics(recommendation, session)
   const rationale = missionRationale(recommendation)
   const restReasons = buildRestDayReasons({ recommendation, execution, weeklyRecap, readinessData, nextRace })
+  const context = buildDailyBriefContext({ weeklyRecap, readinessData, nextRace })
   const isRestDay = restReasons.length > 0
+  const visibleContext = isRestDay
+    ? context.filter((item) => item.key === 'readiness')
+    : context
 
   return (
     <section className="signature-coachs-log card-hero" aria-labelledby="signature-coachs-log-title" data-dashboard-card-family="brief" data-signature-coachs-log>
-      <p className="signature-log-kicker">Coach&apos;s daily brief</p>
-      <h2 id="signature-coachs-log-title" className="signature-log-title">{title}</h2>
+      <button
+        type="button"
+        className="signature-log-toggle"
+        aria-expanded={expanded}
+        aria-controls={detailId}
+        aria-label={`${expanded ? 'Close' : 'Open'} Coach's daily brief for ${title}`}
+        onClick={() => onExpandedChange?.(!expanded)}
+      >
+        <span className="signature-log-heading">
+          <span className="signature-log-kicker">Coach&apos;s daily brief</span>
+          <h2 id="signature-coachs-log-title" className="signature-log-title">{title}</h2>
+          <span className="signature-log-hint">{expanded ? 'Coaching details' : 'Tap to view coaching details'}</span>
+        </span>
+        <span className="signature-log-toggle-icon" aria-hidden="true">{expanded ? '−' : '+'}</span>
+      </button>
 
-      {metrics.length > 0 && (
-        <dl className="signature-mission-facts">
-          {metrics.map((metric) => (
-            <div key={metric.key} data-mission-fact={metric.key}>
-              <dt>{metric.label}</dt>
-              <dd>{metric.value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-
-      {isRestDay && (
-        <div className="signature-rest-rationale" aria-labelledby={rationaleId}>
-          <p id={rationaleId} className="signature-rest-rationale-title">Why today matters</p>
-          <ul className="signature-rest-reasons" aria-label="Rest day reasons">
-            {restReasons.map((reason) => (
-              <li key={reason.key}>
-                <span className="signature-rest-reason-marker" aria-hidden="true" />
-                <span>
-                  <strong>{reason.label}</strong>
-                  <span>{reason.detail}</span>
-                </span>
-              </li>
+      <div id={detailId} className="signature-log-details" hidden={!expanded}>
+        {metrics.length > 0 && (
+          <dl className="signature-mission-facts">
+            {metrics.map((metric) => (
+              <div key={metric.key} data-mission-fact={metric.key}>
+                <dt>{metric.label}</dt>
+                <dd>{metric.value}</dd>
+              </div>
             ))}
-          </ul>
-        </div>
-      )}
+          </dl>
+        )}
 
-      {!isRestDay && rationale && (
-        <>
-          <button
-            type="button"
-            className="signature-log-disclosure"
-            aria-expanded={expanded}
-            aria-controls={rationaleId}
-            onClick={() => onExpandedChange?.(!expanded)}
-          >
-            Why today matters
-            <span aria-hidden="true">{expanded ? '−' : '+'}</span>
-          </button>
-          <div id={rationaleId} className="signature-log-rationale" hidden={!expanded}>
-            <p>{rationale}</p>
+        {(isRestDay || rationale) && (
+          <div className="signature-rest-rationale">
+            <p className="signature-rest-rationale-title">Why today matters</p>
+            {isRestDay ? (
+              <ul className="signature-rest-reasons" aria-label="Rest day reasons">
+                {restReasons.map((reason) => (
+                  <li key={reason.key}>
+                    <span className="signature-rest-reason-marker" aria-hidden="true" />
+                    <span>
+                      <strong>{reason.label}</strong>
+                      <span>{reason.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="signature-log-rationale"><p>{rationale}</p></div>
+            )}
           </div>
-        </>
-      )}
+        )}
+
+        {visibleContext.length > 0 && (
+          <div className="signature-log-context" aria-label="Today's coaching context">
+            <p className="signature-log-context-title">Today&apos;s context</p>
+            <dl>
+              {visibleContext.map((item) => (
+                <div key={item.key} data-brief-context={item.key}>
+                  <dt>{item.label}</dt>
+                  {item.value && <dd>{item.value}</dd>}
+                  {item.detail && <dd className="signature-log-context-detail">{item.detail}</dd>}
+                </div>
+              ))}
+            </dl>
+          </div>
+        )}
+      </div>
     </section>
   )
 }
