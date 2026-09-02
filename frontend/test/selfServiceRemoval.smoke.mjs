@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {
+  ACTIVE_PLAN_DELETE_CONFIRMATION,
   PLAN_RESET_CONFIRMATION,
   SELF_SERVICE_REMOVAL_TIMEOUT_MS,
+  deleteActivePlan,
   removeOwnedRace,
   removeScheduledWorkout,
   resetOwnedRace,
@@ -32,6 +34,22 @@ function responseError(status, code, message = 'Request failed') {
   return Object.assign(new Error(message), {
     response: { status, data: { code, error: message } },
   })
+}
+
+{
+  const calls = []
+  const api = {
+    async delete(path, config) {
+      calls.push({ path, config })
+      return { data: { active_plan_deleted: true, history_preserved: true, saved_races_preserved: true } }
+    },
+  }
+  const result = await deleteActivePlan({ api })
+  assert.equal(ACTIVE_PLAN_DELETE_CONFIRMATION, 'DELETE_ACTIVE_PLAN')
+  assert.equal(result.active_plan_deleted, true)
+  assert.equal(calls[0].path, '/plans/my')
+  assert.deepEqual(calls[0].config.data, { confirmation: 'DELETE_ACTIVE_PLAN' })
+  assert.ok(Number(calls[0].config.timeout) > 0, 'plan deletion has a bounded request deadline')
 }
 
 {
@@ -239,6 +257,14 @@ assert.equal(SELF_SERVICE_REMOVAL_TIMEOUT_MS, 45000)
 }
 
 assert.match(planSource, /window\.confirm\(`Remove \$\{label\} from this training plan\? Recorded workouts and health history will stay intact\.`\)/)
+assert.match(planSource, /window\.confirm\(`Delete \$\{planName\}\? The training calendar will be removed\. Completed workouts, health data, and saved races will stay\.`\)/)
+assert.match(planSource, /deleteActivePlan\(\{ api \}\)/)
+assert.match(planSource, /refreshed && !refreshed\.plan/)
+const calendarSource = fs.readFileSync(new URL('../src/components/calendar/ForgedCalendar.jsx', import.meta.url), 'utf8')
+const calendarStyles = fs.readFileSync(new URL('../src/components/calendar/forgedCalendar.css', import.meta.url), 'utf8')
+assert.match(calendarSource, /className="forged-plan-delete"/)
+assert.match(calendarSource, /aria-label=\{`Delete \$\{planName \|\| goal\.name \|\| 'training plan'\}`\}/)
+assert.match(calendarStyles, /\.forged-plan-delete[\s\S]*position:\s*absolute;[\s\S]*right:\s*12px;[\s\S]*top:\s*12px;[\s\S]*width:\s*44px;/)
 assert.match(planSource, /const removalSessionId = String\(session\?\.removalSessionId \|\| ''\)/)
 assert.match(planSource, /removeScheduledWorkout\(\{ api, sessionId: removalSessionId \}\)/)
 assert.doesNotMatch(planSource, /removeScheduledWorkout\(\{ api, sessionId: session\.id \}\)/)

@@ -13,6 +13,35 @@
   --fc-skip: #EF4444;
 }
 .forged-cal-header { display: block; min-width: 0; }
+.forged-plan-card { position: relative; }
+.forged-cal-header[data-has-delete="true"] { padding-right: 48px; }
+.forged-plan-delete {
+  align-items: center;
+  appearance: none;
+  background: var(--danger-dim, rgba(239, 68, 68, 0.12));
+  border: 1px solid color-mix(in srgb, var(--danger, #EF4444) 55%, var(--border-subtle));
+  border-radius: 10px;
+  color: var(--danger, #EF4444);
+  cursor: pointer;
+  display: flex;
+  height: 44px;
+  justify-content: center;
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  width: 44px;
+  z-index: 1;
+}
+.forged-plan-delete:disabled { cursor: wait; opacity: 0.55; }
+.forged-plan-delete-error {
+  background: var(--danger-dim, rgba(239, 68, 68, 0.12));
+  border-radius: 8px;
+  color: var(--danger, #EF4444);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+}
 
 /* ---- Segmented view switch ---- */
 .forged-seg {

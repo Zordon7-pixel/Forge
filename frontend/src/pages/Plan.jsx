@@ -24,7 +24,7 @@ import {
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { deriveRacePlanReconciliation } from '../lib/travelTraining'
-import { removeScheduledWorkout } from '../lib/selfServiceRemoval'
+import { deleteActivePlan, removeScheduledWorkout } from '../lib/selfServiceRemoval'
 import { buildWeeklyRunBrief } from '../lib/weeklyRunBrief'
 import { executionAllowsSession, fetchDailyExecution } from '../lib/dailyExecution'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
@@ -164,6 +164,9 @@ export default function Plan() {
   const [removingSessionId, setRemovingSessionId] = useState(null)
   const [sessionRemovalError, setSessionRemovalError] = useState('')
   const [sessionRemovalNotice, setSessionRemovalNotice] = useState('')
+  const [deletingPlan, setDeletingPlan] = useState(false)
+  const [planDeleteError, setPlanDeleteError] = useState('')
+  const [planDeleteNotice, setPlanDeleteNotice] = useState('')
   const [todayExecution, setTodayExecution] = useState(null)
   const [todayExecutionStatus, setTodayExecutionStatus] = useState('loading')
   const weekSyncInFlight = useRef(null)
@@ -582,6 +585,46 @@ export default function Plan() {
       }
     } finally {
       setRemovingSessionId(null)
+    }
+  }
+
+  const deleteCurrentPlan = async () => {
+    if (!myPlan || deletingPlan) return
+    const planName = myPlan.name || 'this training plan'
+    if (!window.confirm(`Delete ${planName}? The training calendar will be removed. Completed workouts, health data, and saved races will stay.`)) return
+    setDeletingPlan(true)
+    setPlanDeleteError('')
+    setPlanDeleteNotice('')
+    try {
+      const result = await deleteActivePlan({ api })
+      if (result?.active_plan_deleted !== true || result?.history_preserved !== true) {
+        throw new Error('Forge did not confirm that the plan was deleted safely.')
+      }
+      const refreshed = await loadAll({ includeAdaptation: false })
+      if (!refreshed || refreshed.plan) {
+        throw new Error('Forge could not confirm that the training plan is gone.')
+      }
+      setSelectedDayISO(null)
+      setSelectedWeekIndex(null)
+      setPlanDeleteNotice(`${planName} was deleted. Completed workouts, health data, and saved races were preserved.`)
+    } catch (err) {
+      console.error('[Plan] active plan deletion failed:', err?.message || err)
+      const reason = err?.response?.data?.error || err?.message || `Could not delete ${planName}.`
+      try {
+        const refreshed = await loadAll({ includeAdaptation: false })
+        if (refreshed && !refreshed.plan) {
+          setSelectedDayISO(null)
+          setSelectedWeekIndex(null)
+          setPlanDeleteNotice(`${planName} was deleted. Forge confirmed it after refreshing your account.`)
+          return
+        }
+        setPlanDeleteError(`${reason} The plan is still active.`)
+      } catch (confirmationError) {
+        console.error('[Plan] active plan deletion confirmation failed:', confirmationError?.message || confirmationError)
+        setPlanDeleteError(`${reason} Refresh before trying again.`)
+      }
+    } finally {
+      setDeletingPlan(false)
     }
   }
 
@@ -1011,6 +1054,7 @@ export default function Plan() {
           <div className="rounded-xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Build your training calendar</h2>
             <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Choose a run-only or hybrid goal. Your race, workouts, and transparent adjustments will live in this calendar.</p>
+            {planDeleteNotice && <p role="status" aria-live="polite" className="mt-3 rounded-lg p-3 text-sm" style={{ background: 'rgba(22,163,74,0.12)', color: 'var(--success)' }}>{planDeleteNotice}</p>}
             <div className="mt-4 flex flex-col sm:flex-row gap-2">
               <button type="button" onClick={() => navigate('/plan-catalog')} className="rounded-lg px-4 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>
                 Create / manage plan
@@ -1153,6 +1197,7 @@ export default function Plan() {
             <>
               <ForgedCalendar
                 model={calendarModel}
+                planName={myPlan.name}
                 currentWeekIndex={weekIndex}
                 weekCount={weekCount}
                 completedSet={completedSet}
@@ -1162,6 +1207,9 @@ export default function Plan() {
                 onPrevWeek={() => goToWeek(Math.max(1, currentWeek - 1))}
                 onNextWeek={() => goToWeek(Math.min(weekCount || currentWeek, currentWeek + 1))}
                 onOpenDay={(day) => setSelectedDayISO(day.dateISO)}
+                onDeletePlan={deleteCurrentPlan}
+                deletingPlan={deletingPlan}
+                deleteError={planDeleteError}
                 onEditGoal={activeRace ? () => {
                   if ((calendarModel.goals || []).length > 1) {
                     navigate('/races')

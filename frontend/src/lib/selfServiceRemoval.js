@@ -1,5 +1,6 @@
 export const SELF_SERVICE_REMOVAL_TIMEOUT_MS = 45000
 export const PLAN_RESET_CONFIRMATION = 'CLEAR_ACTIVE_PLAN_AND_REMOVE_RACE'
+export const ACTIVE_PLAN_DELETE_CONFIRMATION = 'DELETE_ACTIVE_PLAN'
 
 const RESET_REQUIRED_RESPONSES = new Set([
   'GOAL_BACKWARD_GENERATION_FAILED',
@@ -144,6 +145,19 @@ export async function removeScheduledWorkout({ api, sessionId, timeoutMs = SELF_
     (config) => api.delete(`/plans/my/sessions/${encodedSessionId}`, config),
     timeoutMs,
     'Workout removal',
+  )
+  ensureImmediateResponse(data)
+  return data
+}
+
+export async function deleteActivePlan({ api, timeoutMs = SELF_SERVICE_REMOVAL_TIMEOUT_MS }) {
+  const { data } = await requestWithDeadline(
+    (config) => api.delete('/plans/my', {
+      ...config,
+      data: { confirmation: ACTIVE_PLAN_DELETE_CONFIRMATION },
+    }),
+    timeoutMs,
+    'Training plan deletion',
   )
   ensureImmediateResponse(data)
   return data

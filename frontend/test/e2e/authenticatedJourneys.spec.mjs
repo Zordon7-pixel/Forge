@@ -2986,6 +2986,53 @@ test('two-race schedule rebuild preserves both goals when the race list is empty
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('plan card top-right delete control removes only the active plan on both mobile projects', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const activePlan = activePlanWithTodaySessions([plannedRun])
+  let deleted = false
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', () => deleted ? { plan: null, user_plan: null } : activePlan],
+      ['DELETE /api/plans/my', (request) => {
+        deleted = true
+        return {
+          ok: true,
+          active_plan_deleted: true,
+          history_preserved: true,
+          saved_races_preserved: true,
+          received: request.body,
+        }
+      }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  const card = page.locator('.forged-plan-card')
+  const deleteButton = page.getByRole('button', { name: `Delete ${activePlan.plan.name}`, exact: true })
+  await expect(card).toBeVisible()
+  await expect(deleteButton).toBeVisible()
+  const [cardBox, deleteBox] = await Promise.all([card.boundingBox(), deleteButton.boundingBox()])
+  expect(deleteBox?.width || 0).toBeGreaterThanOrEqual(44)
+  expect(deleteBox?.height || 0).toBeGreaterThanOrEqual(44)
+  expect(Math.abs((deleteBox?.x || 0) + (deleteBox?.width || 0) - ((cardBox?.x || 0) + (cardBox?.width || 0) - 12))).toBeLessThanOrEqual(1)
+  expect(Math.abs((deleteBox?.y || 0) - ((cardBox?.y || 0) + 12))).toBeLessThanOrEqual(1)
+
+  page.once('dialog', async (dialog) => {
+    expect(dialog.type()).toBe('confirm')
+    expect(dialog.message()).toContain('Completed workouts, health data, and saved races will stay.')
+    await dialog.accept()
+  })
+  await deleteButton.click()
+
+  await expect(page.getByRole('heading', { name: 'Build your training calendar', exact: true })).toBeVisible()
+  await expect(page.getByText(`${activePlan.plan.name} was deleted. Completed workouts, health data, and saved races were preserved.`, { exact: true })).toBeVisible()
+  const requests = requestsFor(apiState, 'DELETE', '/api/plans/my')
+  expect(requests).toHaveLength(1)
+  expect(requests[0].body).toEqual({ confirmation: 'DELETE_ACTIVE_PLAN' })
+  expect(requestsFor(apiState, 'GET', '/api/plans/my').length).toBeGreaterThanOrEqual(2)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('v2.4 preview stays review-only and exposes canonical truth on both mobile projects', async ({ page }, testInfo) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const planFixture = goalBackwardV24PlanFixture({

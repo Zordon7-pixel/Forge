@@ -203,6 +203,31 @@ function assertRaceOwnershipRouteContract() {
   assert.match(plans, /constraints\.requiredRaceId[\s\S]*CANDIDATE_RACE_MISMATCH/);
 }
 
+function assertActivePlanDeletionRouteContract() {
+  const plans = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
+  const route = plans.match(/router\.delete\('\/my', auth, async[\s\S]*?\n\}\);\n\nrouter\.put\('\/my\/race-link'/)?.[0] || '';
+  assert.ok(route, 'active plan delete route is registered before the race-link route');
+  assert.match(plans, /const ACTIVE_PLAN_DELETE_CONFIRMATION = 'DELETE_ACTIVE_PLAN'/);
+  assert.equal(
+    require('../src/routes/plans')._test.isExactActivePlanDeleteConfirmation({ confirmation: 'DELETE_ACTIVE_PLAN' }),
+    true,
+    'the exact confirmation is accepted',
+  );
+  assert.equal(
+    require('../src/routes/plans')._test.isExactActivePlanDeleteConfirmation({ confirmation: 'DELETE_ACTIVE_PLAN', extra: true }),
+    false,
+    'open-ended delete bodies are rejected',
+  );
+  assert.match(route, /withPlanningInputMutation\(req\.user\.id/);
+  assert.match(route, /clearActivePlanForUser\(req\.user\.id, tx/);
+  assert.match(route, /plan_generation_candidates SET status='superseded'/);
+  assert.match(route, /plan_adjustment_proposals SET status='superseded'/);
+  assert.match(route, /history_preserved:\s*true/);
+  assert.match(route, /saved_races_preserved:\s*true/);
+  assert.doesNotMatch(route, /DELETE FROM (?:runs|lifts|workout_sessions|race_events|health_snapshots|training_plans|user_plans)/i,
+    'plan deletion archives assignment state without deleting training, health, race, or plan history');
+}
+
 async function assertScheduledWorkoutRoute() {
   const dbModulePath = require.resolve('../src/db');
   const plansRoutePath = require.resolve('../src/routes/plans');
@@ -845,6 +870,7 @@ async function run() {
   assertStoredCompletionContract();
   assertRemovalIdentityContract();
   assertRaceOwnershipRouteContract();
+  assertActivePlanDeletionRouteContract();
   await assertScheduledWorkoutRoute();
   console.log('SELF-SERVICE REMOVAL BACKEND SMOKE OK');
 }

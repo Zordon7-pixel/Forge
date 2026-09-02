@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import {
   Activity, Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, Pencil,
-  Compass, ShieldCheck,
+  Compass, ShieldCheck, X,
 } from 'lucide-react'
 import {
   buildMonthGrid, addMonths, dayMarks, dayStatus, countdownDays, WEEKDAYS,
@@ -485,6 +485,7 @@ function WeekRow({ day, briefDay, isToday, completedSet, recordedRuns = [], onOp
 
 export default function ForgedCalendar({
   model,
+  planName,
   currentWeekIndex,
   weekCount,
   completedSet,
@@ -493,6 +494,9 @@ export default function ForgedCalendar({
   onNextWeek,
   onOpenDay,
   onEditGoal,
+  onDeletePlan,
+  deletingPlan = false,
+  deleteError = '',
   recordedRunsByDate,
   weeklyBrief,
   canPrev,
@@ -541,8 +545,20 @@ export default function ForgedCalendar({
     <div className="forged-cal" style={{ width: '100%', maxWidth: '100%', minWidth: 0, overflowX: 'clip' }}>
       <SurfaceManifestSummary surface={model?.surface} />
       {/* Header */}
-      <div className="rounded-lg p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="forged-cal-header">
+      <div className="forged-plan-card rounded-lg p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        {typeof onDeletePlan === 'function' && (
+          <button
+            type="button"
+            className="forged-plan-delete"
+            onClick={onDeletePlan}
+            disabled={deletingPlan}
+            aria-label={`Delete ${planName || goal.name || 'training plan'}`}
+            title="Delete training plan"
+          >
+            <X size={20} aria-hidden="true" />
+          </button>
+        )}
+        <div className="forged-cal-header" data-has-delete={typeof onDeletePlan === 'function' || undefined}>
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
               {typeof onEditGoal === 'function' ? (
@@ -581,6 +597,7 @@ export default function ForgedCalendar({
             }}>Month</button>
           </div>
         </div>
+        {deleteError && <p role="alert" className="forged-plan-delete-error">{deleteError}</p>}
         {(model?.goals || []).length > 1 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" style={{ marginTop: 12 }} aria-label="Protected race goals">
             {model.goals.map((raceGoal, index) => (

@@ -1625,6 +1625,14 @@ async function clearActivePlanForUser(userId, tx, options = {}) {
   return Object.freeze({ cleared: true, markerId });
 }
 
+const ACTIVE_PLAN_DELETE_CONFIRMATION = 'DELETE_ACTIVE_PLAN';
+
+function isExactActivePlanDeleteConfirmation(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const keys = Object.keys(body);
+  return keys.length === 1 && body.confirmation === ACTIVE_PLAN_DELETE_CONFIRMATION;
+}
+
 async function ensureWritablePlan(active, userId, tx) {
   if (active.source === 'assigned' && !active.row.user_id) {
     const cloneId = uuidv4();
@@ -7285,6 +7293,62 @@ router.get('/my', auth, async (req, res) => {
   }
 });
 
+router.delete('/my', auth, async (req, res) => {
+  if (!isExactActivePlanDeleteConfirmation(req.body)) {
+    return res.status(400).json({
+      error: 'Confirm before deleting the active training plan.',
+      code: 'INVALID_PLAN_DELETE_CONFIRMATION',
+    });
+  }
+
+  try {
+    const planningDateISO = getPlanningDateFromRequest(req);
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const planClear = await clearActivePlanForUser(req.user.id, tx, {
+        planningDateLocal: planningDateISO,
+      });
+      if (!planClear.cleared) {
+        return planningInputUnchanged({
+          status: 404,
+          error: 'No active training plan was found.',
+          code: 'PLAN_NOT_FOUND',
+        });
+      }
+      await tx.run(
+        "UPDATE plan_generation_candidates SET status='superseded' WHERE user_id=? AND status='preview'",
+        [req.user.id],
+      );
+      await tx.run(
+        "UPDATE plan_adjustment_proposals SET status='superseded', decided_at=CURRENT_TIMESTAMP WHERE user_id=? AND status='pending'",
+        [req.user.id],
+      );
+      return {
+        status: 200,
+        ok: true,
+        active_plan_deleted: true,
+        history_preserved: true,
+        saved_races_preserved: true,
+      };
+    });
+
+    if (result.error) {
+      return res.status(result.status || 409).json({ error: result.error, code: result.code });
+    }
+    return res.status(result.status || 200).json({
+      ok: result.ok,
+      active_plan_deleted: result.active_plan_deleted,
+      history_preserved: result.history_preserved,
+      saved_races_preserved: result.saved_races_preserved,
+    });
+  } catch (err) {
+    console.error('[plans/my/delete] failed:', err.message);
+    return res.status(500).json({
+      error: 'Could not delete the active training plan. Nothing was changed.',
+      code: 'PLAN_DELETE_FAILED',
+    });
+  }
+});
+
 router.put('/my/race-link', auth, async (req, res) => {
   try {
     const planningDateISO = getPlanningDateFromRequest(req);
@@ -8331,6 +8395,7 @@ router._test = {
   emitPlanReleaseTelemetry,
   currentGoalBackwardApplyEnvelope,
   clearActivePlanForUser,
+  isExactActivePlanDeleteConfirmation,
   getActivePlanForMutation,
   getActivePlanForUser,
   normalizeActivePlanIdentitiesForMutation,
