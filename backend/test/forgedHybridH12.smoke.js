@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { computeZones, zoneForHr } = require('../src/lib/hrZones');
 const { analyzeRunHistory } = require('../src/lib/runHistory');
-const { activityKind, isRunActivity, runActivitySql } = require('../src/lib/runActivity');
+const { activityKind, isRunActivity, runActivitySql, runListActivityFilter } = require('../src/lib/runActivity');
 const { buildRunImportKeys } = require('../src/lib/runImportKey');
 const { normalizeWorkoutMetrics } = require('../src/lib/workoutMetrics');
 const autoUpdatePRs = require('../src/services/prAuto');
@@ -23,6 +23,7 @@ check(activityKind({ type: 'walk', watch_activity_type: 'Walking' }) === 'walk',
 check(activityKind({ type: 'easy', watch_activity_type: 'Cycling' }) === 'cycling', 'legacy cycling rows are not treated as runs');
 check(activityKind({ type: 'easy' }) === 'run' && isRunActivity({ type: 'tempo' }), 'manual easy/tempo rows remain runs');
 check(!isRunActivity({ type: 'swimming' }) && !isRunActivity({ watch_normalized_type: 'walk_outdoor' }), 'cross-training and walks are excluded from run intelligence');
+check(activityKind({ activity_kind: 'walk', type: 'easy' }) === 'walk', 'canonical activity kind prevents a walk from falling back to a run');
 check(autoUpdatePRs.buildRunPrCandidates({ type: 'walk', distance_miles: 5, duration_seconds: 3600 }).length === 0, 'manual walks cannot create running PR candidates');
 const tenMileCandidates = autoUpdatePRs.buildRunPrCandidates({ type: 'run', distance_miles: 10.02, duration_seconds: 5700 });
 check(tenMileCandidates.some((candidate) => candidate.label === '10 Mile PR'), 'synced Army Ten-Miler-distance runs create a 10-mile PR candidate');
@@ -30,6 +31,7 @@ const adjacentDistanceCandidates = autoUpdatePRs.buildRunPrCandidates({ type: 'r
 check(adjacentDistanceCandidates.filter((candidate) => /(?:15K|10 Mile) PR/.test(candidate.label)).length === 1, 'one run maps to only its nearest standard race distance');
 const activitySql = runActivitySql('r');
 check(activitySql.includes("r.watch_activity_type") && activitySql.includes("NOT LIKE '%walk%'") && activitySql.includes("NOT LIKE '%cycl%'"), 'shared SQL guard checks raw and normalized activity types');
+check(runListActivityFilter('run')?.sql?.includes("NOT LIKE '%walk%'") && runListActivityFilter('all')?.sql === null && runListActivityFilter('walk') === null, 'run-only activity list filtering is allowlisted and excludes walks before SQL LIMIT');
 
 section('watch-exact heart-rate zones');
 const customMinimums = [96, 117, 137, 156, 176];
@@ -114,6 +116,7 @@ check(/activityLabel\(item\)/.test(insightsSource), 'recent activity cards displ
 check(/T12:00:00/.test(insightsSource) && /T12:00:00/.test(runDetailSource), 'date-only HealthKit workouts render on the local calendar day');
 check(/zone\.openEnded/.test(hrZonesSource), 'the custom Zone 5 boundary renders as open-ended');
 check(/activityKindChanged[\s\S]*shouldRecomputePrs[\s\S]*\|\| activityKindChanged/.test(runsRouteSource), 'changing a run into a walk recomputes and removes stale run PRs');
+check(/req\.query\.activity_kind/.test(runsRouteSource) && /activity_kind:\s*activityKind\(run\)/.test(runsRouteSource), 'run list API accepts an explicit run-only filter and returns canonical activity identity');
 check((prAutoSource.match(/UPDATE personal_records[^;]+WHERE id = \? AND user_id = \?/g) || []).length === 2, 'automatic PR updates remain scoped to the authenticated user');
 
 console.log(`\n${passed} passed, ${failed} failed`);

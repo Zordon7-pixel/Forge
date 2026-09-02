@@ -1,5 +1,5 @@
 export function activityTypeText(activity = {}) {
-  return [activity.type, activity.run_type, activity.workout_type, activity.watch_activity_type, activity.watch_normalized_type]
+  return [activity.type, activity.run_type, activity.workout_type, activity.activity_kind, activity.watch_activity_type, activity.watch_normalized_type]
     .filter((value) => value !== null && value !== undefined)
     .map((value) => String(value).trim().toLowerCase().replace(/[_-]+/g, ' '))
     .join(' ')
@@ -30,6 +30,14 @@ export function isWalkActivity(activity = {}) {
 
 export function isRunningActivity(activity = {}) {
   return activityKind(activity) === 'run'
+}
+
+export function runningActivities(activities = []) {
+  return (Array.isArray(activities) ? activities : []).filter(isRunningActivity)
+}
+
+export function latestRunningActivity(activities = []) {
+  return runningActivities(activities)[0] || null
 }
 
 export function activityLabel(activity = {}) {

@@ -219,7 +219,7 @@ export default function Plan() {
           console.error('[Plan] race list load failed:', err?.message || err)
           return null
         }),
-        api.get('/runs', { params: runDateRange ? { ...runDateRange, limit: 500 } : { limit: 50 } }).catch((err) => {
+        api.get('/runs', { params: runDateRange ? { ...runDateRange, limit: 500, activity_kind: 'run' } : { limit: 50, activity_kind: 'run' } }).catch((err) => {
           console.error('[Plan] recorded runs load failed:', err?.message || err)
           return null
         }),

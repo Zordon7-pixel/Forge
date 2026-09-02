@@ -3,6 +3,7 @@ function activityTypeText(activity = {}) {
     activity.type,
     activity.run_type,
     activity.workout_type,
+    activity.activity_kind,
     activity.watch_activity_type,
     activity.watch_normalized_type,
   ]
@@ -49,4 +50,18 @@ function runActivitySql(alias = '') {
   ].map((term) => `${typeText} NOT LIKE '%${term}%'`).join('\n    AND ');
 }
 
-module.exports = { activityKind, activityTypeText, isRunActivity, isWalkActivity, runActivitySql };
+function runListActivityFilter(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized || normalized === 'all') return { kind: 'all', sql: null };
+  if (normalized === 'run') return { kind: 'run', sql: runActivitySql() };
+  return null;
+}
+
+module.exports = {
+  activityKind,
+  activityTypeText,
+  isRunActivity,
+  isWalkActivity,
+  runActivitySql,
+  runListActivityFilter,
+};

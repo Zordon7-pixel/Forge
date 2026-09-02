@@ -5,6 +5,7 @@ import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { Lock, Pencil, Trophy } from 'lucide-react'
 import { useProContext } from '../context/ProContext'
+import { latestRunningActivity, runningActivities } from '../lib/activityType'
 
 const baseCardStyle = {
   background: 'var(--bg-card)',
@@ -167,21 +168,21 @@ export default function PRWall() {
     setLoading(true)
     setError('')
     try {
-      const runsRes = await api.get('/runs?limit=1')
-      const runs = runsRes.data?.runs || []
-      if (runs[0]?.id) {
-        await api.post('/prs/auto-detect', { run_id: runs[0].id }).catch(() => {})
+      const runsRes = await api.get('/runs', { params: { limit: 1, activity_kind: 'run' } })
+      const latestRun = latestRunningActivity(runsRes.data?.runs || [])
+      if (latestRun?.id) {
+        await api.post('/prs/auto-detect', { run_id: latestRun.id }).catch(() => {})
       }
 
       const [prsRes, allRunsRes, timePRRes, hybridRes] = await Promise.all([
         api.get('/prs'),
-        api.get('/runs'),
+        api.get('/runs', { params: { activity_kind: 'run' } }),
         api.get('/prs/time').catch(() => ({ data: { times: [] } })),
         api.get('/hybrid-prs').catch(() => ({ data: { prs: [] } }))
       ])
 
       const prList = prsRes.data?.prs || []
-      const allRuns = allRunsRes.data?.runs || []
+      const allRuns = runningActivities(allRunsRes.data?.runs || [])
       const times = timePRRes.data?.times || []
       const miles = allRuns.reduce((sum, run) => sum + (Number(run.distance_miles) || 0), 0)
 

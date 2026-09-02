@@ -7,6 +7,7 @@ import { getPaceZone } from '../lib/athleteLanguage'
 import AiGuidanceNote from '../components/AiGuidanceNote'
 import { fetchDailyExecution, recommendationFromExecution, runRouteState } from '../lib/dailyExecution'
 import { getSmartQuickAction } from '../lib/smartQuickAction'
+import { latestRunningActivity } from '../lib/activityType'
 
 const SMART_ACTION_ICONS = {
   calendar: CalendarDays,
@@ -24,7 +25,7 @@ export default function RunHub() {
 
   useEffect(() => {
     Promise.all([
-      api.get('/runs'),
+      api.get('/runs', { params: { activity_kind: 'run' } }),
       fetchDailyExecution().catch((err) => {
         console.error('[RunHub] canonical daily execution fetch failed:', err?.message || err)
         return null
@@ -33,7 +34,7 @@ export default function RunHub() {
     ])
       .then(([runsRes, dailyExecution, recRes]) => {
         const runs = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
-        setLatestRun(runs[0] || null)
+        setLatestRun(latestRunningActivity(runs))
         setExecution(dailyExecution)
         setRecommendation(dailyExecution?.hasPlan
           ? recommendationFromExecution(dailyExecution)

@@ -6,6 +6,7 @@ import ExercisePickerModal from '../components/ExercisePickerModal'
 import MovementDemo from '../components/MovementDemo'
 import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '../utils/validation'
 import { authorizeWorkoutStart, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, workoutStartAccessFromState, workoutStartErrorMessage } from '../lib/dailyExecution'
+import { latestRunningActivity } from '../lib/activityType'
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
 const DEFAULT_REST_SECONDS = 90
@@ -263,8 +264,8 @@ export default function ActiveWorkout() {
   }, [])
 
   useEffect(() => {
-    api.get('/runs').then((r) => {
-      const latest = (r.data?.runs || [])[0]
+    api.get('/runs', { params: { activity_kind: 'run' } }).then((r) => {
+      const latest = latestRunningActivity(r.data?.runs || [])
       if (latest?.avg_heart_rate) {
         setHrInfo({ bpm: latest.avg_heart_rate, ts: latest.created_at || latest.date })
       }

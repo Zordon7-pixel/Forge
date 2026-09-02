@@ -21,7 +21,12 @@ const {
   getCompetitiveTier,
 } = require('../lib/ageGrading');
 const { buildHealthSignals } = require('../lib/healthSignals');
-const { activityKind, isRunActivity, runActivitySql } = require('../lib/runActivity');
+const {
+  activityKind,
+  isRunActivity,
+  runActivitySql,
+  runListActivityFilter,
+} = require('../lib/runActivity');
 const { resolveRunEffort, withCalculatedEffort } = require('../lib/runEffort');
 const {
   explicitNoPlanMatchSnapshot,
@@ -271,16 +276,26 @@ router.get('/', auth, async (req, res) => {
 
     const requestedLimit = Number.parseInt(req.query.limit, 10);
     const limit = Math.min(hasDateRange ? 500 : 200, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 50));
+    const activityFilter = runListActivityFilter(req.query.activity_kind);
+    if (!activityFilter) {
+      return res.status(400).json({ error: 'activity_kind must be all or run' });
+    }
+    const activityWhere = activityFilter.sql ? ` AND ${activityFilter.sql}` : '';
     const runs = hasDateRange
       ? await dbAll(
-        'SELECT * FROM runs WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date DESC, created_at DESC LIMIT ?',
+        `SELECT * FROM runs WHERE user_id = ? AND date >= ? AND date <= ?${activityWhere} ORDER BY date DESC, created_at DESC LIMIT ?`,
         [req.user.id, startDate, endDate, limit]
       )
       : await dbAll(
-        'SELECT * FROM runs WHERE user_id = ? ORDER BY date DESC, created_at DESC LIMIT ?',
+        `SELECT * FROM runs WHERE user_id = ?${activityWhere} ORDER BY date DESC, created_at DESC LIMIT ?`,
         [req.user.id, limit]
       );
-    res.json({ runs: runs.map((run) => withCalculatedEffort(withoutWorkoutMetricStreams(run))) });
+    res.json({
+      runs: runs.map((run) => withCalculatedEffort({
+        ...withoutWorkoutMetricStreams(run),
+        activity_kind: activityKind(run),
+      })),
+    });
   } catch (err) {
     console.error('[runs/list] failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch runs' });
@@ -1205,6 +1220,7 @@ router.post('/missed', auth, async (req, res) => {
 
 router._test = {
   updateRunHandler,
+  runListActivityFilter,
 };
 
 module.exports = router;
