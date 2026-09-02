@@ -43,11 +43,15 @@ function isRunActivity(activity = {}) {
 function runActivitySql(alias = '') {
   const prefix = alias ? `${alias}.` : '';
   const typeText = `LOWER(COALESCE(${prefix}type, '') || ' ' || COALESCE(${prefix}watch_activity_type, '') || ' ' || COALESCE(${prefix}watch_normalized_type, ''))`;
-  return [
+  const nonRunTypeChecks = [
     'walk', 'cycl', 'bike', 'swim', 'hik', 'row', 'elliptical', 'stair',
     'stepper', 'yoga', 'pilates', 'hiit', 'high intensity interval', 'strength',
-    'weightlifting', 'resistance', 'workout', 'other',
+    'weightlifting', 'resistance',
   ].map((term) => `${typeText} NOT LIKE '%${term}%'`).join('\n    AND ');
+  const genericActivityChecks = ['type', 'watch_activity_type', 'watch_normalized_type']
+    .map((column) => `LOWER(TRIM(COALESCE(${prefix}${column}, ''))) NOT IN ('workout', 'other')`)
+    .join('\n    AND ');
+  return `${nonRunTypeChecks}\n    AND ${genericActivityChecks}`;
 }
 
 function runListActivityFilter(value) {

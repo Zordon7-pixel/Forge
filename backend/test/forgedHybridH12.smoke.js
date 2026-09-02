@@ -31,6 +31,7 @@ const adjacentDistanceCandidates = autoUpdatePRs.buildRunPrCandidates({ type: 'r
 check(adjacentDistanceCandidates.filter((candidate) => /(?:15K|10 Mile) PR/.test(candidate.label)).length === 1, 'one run maps to only its nearest standard race distance');
 const activitySql = runActivitySql('r');
 check(activitySql.includes("r.watch_activity_type") && activitySql.includes("NOT LIKE '%walk%'") && activitySql.includes("NOT LIKE '%cycl%'"), 'shared SQL guard checks raw and normalized activity types');
+check(!activitySql.includes("NOT LIKE '%workout%'") && activitySql.includes("NOT IN ('workout', 'other')"), 'HealthKit running enum names are not rejected merely because they contain Workout');
 check(runListActivityFilter('run')?.sql?.includes("NOT LIKE '%walk%'") && runListActivityFilter('all')?.sql === null && runListActivityFilter('walk') === null, 'run-only activity list filtering is allowlisted and excludes walks before SQL LIMIT');
 
 section('watch-exact heart-rate zones');
