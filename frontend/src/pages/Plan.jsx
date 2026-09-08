@@ -19,7 +19,7 @@ import ForgedDayView from '../components/calendar/ForgedDayView'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
 import {
   buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, racePlanReview,
-  deriveForwardOnlyPlanWeek, derivePlanWeekSyncTarget, resolvePlanWeekSelection, todayISO,
+  deriveForwardOnlyPlanWeek, derivePlanWeekSyncTarget, racePlanGenerationTarget, resolvePlanWeekSelection, todayISO,
 } from '../lib/planCalendar'
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
@@ -667,17 +667,25 @@ export default function Plan() {
     }
     const planData = myPlan?.plan_data || {}
     const strengthPolicy = planData.strengthPolicy || {}
+    const completionFirst = goals.some((goal) => {
+      const race = findRaceForGoal(goal)
+      return Number(goal?.goalTimeSeconds || 0) > 0 && Number(race?.goal_time_seconds || 0) === 0
+    })
     setPlanReviewBusy(true)
     setPlanReviewError('')
     try {
+      const profileResponse = await api.get('/auth/me').catch((err) => {
+        console.error('[Plan] hybrid profile load failed:', err?.message || err)
+        return null
+      })
+      const hybridTarget = racePlanGenerationTarget(myPlan, profileResponse?.data?.user)
       await previewAndApplyPlan('/plans/generate-for-races', {
         race_ids: raceIds,
+        choice: completionFirst ? 'completion_first' : 'adjust_goal',
         target: {
+          ...hybridTarget,
           trainingDays: planData.schedulePreferences?.trainingDays || [],
           runDaysPerWeek: planData.schedulePreferences?.runDaysPerWeek || null,
-          planMode: planData.planMode || 'run_only',
-          liftingEnabled: Boolean(strengthPolicy.enabled),
-          liftDaysPerWeek: strengthPolicy.sessionsPerWeek || 0,
           strengthGoal: strengthPolicy.goal || 'maintain',
           equipment: Array.isArray(strengthPolicy.equipment) ? strengthPolicy.equipment : [],
         },

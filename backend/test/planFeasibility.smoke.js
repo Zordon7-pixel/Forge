@@ -1,8 +1,9 @@
 const assert = require('node:assert/strict');
 const { buildRacePlanCandidate, semanticCandidateErrors } = require('../src/lib/racePlanCandidateEngine');
-const { validateConcurrentPlan } = require('../src/lib/concurrentPlan');
+const { buildRunPerformanceProfile, racePlanWindow, validateConcurrentPlan } = require('../src/lib/concurrentPlan');
 const { addDays, daysBetween } = require('../src/lib/racePlanPolicy');
 const { evaluateGoalBackwardFeasibility, evaluatePlanFeasibility } = require('../src/lib/planFeasibility');
+const plansRouter = require('../src/routes/plans');
 const runWorkoutTaxonomy = require('../src/lib/runWorkoutTaxonomy');
 
 const PLANNING_DATE = '2026-08-03';
@@ -143,6 +144,97 @@ const noAnchorCandidate = buildRacePlanCandidate(noAnchor, { planningDateLocal: 
 assert.notEqual(noAnchorCandidate.plan.overall_feasibility, 'supported', 'a timed PR goal without a performance anchor cannot be presented as supported');
 assert.ok(noAnchorCandidate.plan.reasons.includes('NO_PERFORMANCE_ANCHOR'));
 assertions += 2;
+
+const recentWeightedProfile = buildRunPerformanceProfile([
+  { id: 'nine-month-pr', date: '2025-11-03', distance_miles: 10, duration_seconds: 5100, health_source: 'strava', type: 'run' },
+  { id: 'recent-ten-mile', date: '2026-07-27', distance_miles: 10, duration_seconds: 6000, health_source: 'apple_health', type: 'run' },
+], { todayISO: PLANNING_DATE, targetDistanceMiles: 10 });
+assert.equal(recentWeightedProfile.targetAnchor?.runId, 'recent-ten-mile', 'a nine-month PR cannot beat a recent slower run for current doability');
+assert.equal(recentWeightedProfile.historicalTargetAnchor?.runId, 'nine-month-pr', 'the old PR remains historical context');
+assert.equal(recentWeightedProfile.records.find((record) => record.key === '10_mile')?.runId, 'nine-month-pr', 'historical record truth remains intact');
+assertions += 3;
+
+function fiveWeekFixture(name) {
+  const race = { ...RACES[2], name, weeks: 5 };
+  const context = contextFor(race, 'established', 'hybrid_maintain');
+  context.target.raceDate = addDays(PLANNING_DATE, 34);
+  context.target.weeks = racePlanWindow(context.target.raceDate, PLANNING_DATE).weeks;
+  context.target.raceId = name.toLowerCase().replaceAll(' ', '-');
+  return context;
+}
+
+const feasibilityFixtures = [
+  {
+    name: 'stale anchor',
+    context: (() => {
+      const value = fiveWeekFixture('Stale anchor');
+      value.history.performanceProfile.targetAnchor.date = '2026-01-01';
+      return value;
+    })(),
+    reason: 'ANCHOR_EXPIRED',
+  },
+  {
+    name: 'stretch goal',
+    context: (() => {
+      const value = fiveWeekFixture('Stretch goal');
+      value.history.performanceProfile.targetAnchor.equivalentTimeSeconds = Math.round(value.target.goalTimeSeconds * 1.2);
+      value.history.performanceProfile.targetAnchor.equivalentPaceSecondsPerMile = Math.round(value.target.goalTimeSeconds * 1.2 / value.target.distanceMiles);
+      return value;
+    })(),
+    reason: 'ASSESSMENT_REQUIRED',
+  },
+  {
+    name: 'short runway',
+    context: (() => {
+      const value = fiveWeekFixture('Short runway');
+      value.target.raceDate = addDays(PLANNING_DATE, 12);
+      value.target.weeks = racePlanWindow(value.target.raceDate, PLANNING_DATE).weeks;
+      return value;
+    })(),
+    reason: 'QUALITY_EXPOSURE_MISSING',
+  },
+  {
+    name: 'missing assessment',
+    context: (() => {
+      const value = fiveWeekFixture('Missing assessment');
+      delete value.history.performanceProfile;
+      return value;
+    })(),
+    reason: 'NO_PERFORMANCE_ANCHOR',
+  },
+  {
+    name: 'fresh same-distance',
+    context: fiveWeekFixture('Fresh same-distance'),
+    reason: null,
+  },
+];
+
+for (const fixture of feasibilityFixtures) {
+  const expectedWindow = racePlanWindow(fixture.context.target.raceDate, PLANNING_DATE);
+  const candidate = buildRacePlanCandidate(fixture.context, { planningDateLocal: PLANNING_DATE });
+  assert.equal(candidate.plan.weeks.length, expectedWindow.weeks, `${fixture.name}: candidate spans the race window`);
+  assert.notEqual(candidate.plan.weeks.length, 1, `${fixture.name}: candidate never collapses to the adaptive one-week path`);
+  assert.ok(['supported', 'stretch'].includes(candidate.plan.overall_feasibility), `${fixture.name}: reviewed candidate remains on an applicable target/foundation path`);
+  if (fixture.reason) assert.ok(candidate.plan.reasons.includes(fixture.reason), `${fixture.name}: retains ${fixture.reason}`);
+  assertions += fixture.reason ? 4 : 3;
+}
+
+const originalGoalContext = fiveWeekFixture('Goal loosen original');
+const originalGoalCandidate = buildRacePlanCandidate(originalGoalContext, { planningDateLocal: PLANNING_DATE });
+const loosenedGoalContext = JSON.parse(JSON.stringify(originalGoalContext));
+loosenedGoalContext.target.goalTimeSeconds = 6000;
+const loosenedGoalCandidate = buildRacePlanCandidate(loosenedGoalContext, { planningDateLocal: PLANNING_DATE });
+const prescribedGoalPaces = (plan) => plan.weeks.flatMap((week) => week.days)
+  .flatMap((day) => day.sessions)
+  .map((session) => Number(session.goal_pace_seconds_per_mile || 0))
+  .filter((pace) => pace > 0);
+assert.equal(loosenedGoalCandidate.plan.weeks.length, racePlanWindow(loosenedGoalContext.target.raceDate, PLANNING_DATE).weeks, 'loosened goal rebuild still spans race week');
+assert.ok(['supported', 'stretch'].includes(loosenedGoalCandidate.plan.overall_feasibility), 'loosened goal rebuild remains applicable');
+assert.ok(Math.min(...prescribedGoalPaces(loosenedGoalCandidate.plan)) > Math.min(...prescribedGoalPaces(originalGoalCandidate.plan)), 'loosened goal rebuild applies easier exact goal paces');
+assert.equal(loosenedGoalCandidate.plan.goal.goalTimeSeconds, 6000, 'loosened goal replaces the prior target in the rebuilt plan');
+assert.equal(plansRouter._test.candidateChoiceMatchesPreview({ request: { choice: 'adjust_goal' } }, 'adjust_goal'), true, 'adjusted-goal apply matches its reviewed preview');
+assert.equal(plansRouter._test.candidateChoiceMatchesPreview({ request: { choice: 'completion_first' } }, 'train_for_target'), false, 'apply cannot silently change a completion-first review choice');
+assertions += 6;
 
 const originalGoalBackwardMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
 try {

@@ -11,7 +11,7 @@ function candidatePlan(preview = {}) {
   return preview?.plan?.plan_data || preview?.candidate?.plan_data || {}
 }
 
-function decisionCopy(feasibility) {
+function decisionCopy(feasibility, reasons = []) {
   if (feasibility === 'unsafe') {
     return {
       eyebrow: 'Target needs review',
@@ -20,10 +20,13 @@ function decisionCopy(feasibility) {
     }
   }
   if (feasibility === 'stretch') {
+    const foundation = reasons.some((reason) => ['ANCHOR_EXPIRED', 'ASSESSMENT_REQUIRED', 'NO_PERFORMANCE_ANCHOR', 'PEAK_DEMAND_UNREACHABLE', 'QUALITY_EXPOSURE_MISSING', 'CHECKPOINT_UNPLACEABLE'].includes(reason))
     return {
       eyebrow: 'Stretch target',
-      title: 'Review this plan change',
-      summary: 'This target needs a successful checkpoint. Apply it only if you want to train toward the target while Forged Hybrid keeps evaluating the evidence.',
+      title: foundation ? 'Build through race week' : 'Review this plan change',
+      summary: foundation
+        ? 'The target is not currently supported by the available evidence or runway. Apply this full foundation plan through race week while Forged Hybrid uses the reason codes and checkpoints to keep training conservative.'
+        : 'This target needs a successful checkpoint. Apply it only if you want to train toward the target while Forged Hybrid keeps evaluating the evidence.',
     }
   }
   return {
@@ -82,9 +85,11 @@ export default function PlanCandidateDecisionSheet() {
 
   const plan = useMemo(() => candidatePlan(preview), [preview])
   const feasibility = String(plan?.overall_feasibility || '').toLowerCase()
-  const copy = decisionCopy(feasibility)
   const reasons = Array.isArray(plan?.reasons) ? plan.reasons.slice(0, 3) : []
+  const copy = decisionCopy(feasibility, Array.isArray(plan?.reasons) ? plan.reasons : [])
   const canApply = candidateFeasibilityCanApply(plan)
+  const candidateChoice = ['adjust_goal', 'completion_first'].includes(preview?.choice)
+    ? preview.choice : 'train_for_target'
   const effectiveDate = displayDate(preview?.effective_from || preview?.candidate?.effective_from)
 
   if (!preview) return null
@@ -146,7 +151,7 @@ export default function PlanCandidateDecisionSheet() {
         <div className="mt-5 grid gap-2">
           {canApply && (
             <button type="button" onClick={() => settle('apply')} className="min-h-12 rounded-xl px-4 py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>
-              {feasibility === 'stretch' ? 'Keep target and apply' : 'Apply reviewed plan'}
+              {candidateChoice === 'completion_first' ? 'Apply completion-first plan' : candidateChoice === 'adjust_goal' ? 'Apply adjusted-goal plan' : feasibility === 'stretch' ? 'Keep target and apply' : 'Apply reviewed plan'}
             </button>
           )}
           <button type="button" onClick={reviewGoal} className="min-h-12 rounded-xl px-4 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Review race target</button>

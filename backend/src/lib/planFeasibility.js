@@ -303,15 +303,20 @@ function paceFeasibility(goal, calendar, context) {
     return { status: 'not_applicable', reasons: [] };
   }
   const anchor = context.history?.performanceProfile?.targetAnchor || null;
+  const historicalAnchor = context.history?.performanceProfile?.historicalTargetAnchor || null;
   const classification = anchorClass(anchor, goal);
   const freshness = { same_distance: 180, nearby_standard: 120, benchmark: 42, broad_estimate: 28 }[classification];
   const ageDays = anchor?.date ? daysBetween(anchor.date, context.todayISO) : null;
   const reasons = [];
   if (!anchor || !classification || ageDays == null) {
-    return { status: calendar.fullTrainingWeeks > 0 ? 'stretch' : 'unsafe', anchorClass: null, reasons: ['NO_PERFORMANCE_ANCHOR'] };
+    const historicalClass = anchorClass(historicalAnchor, goal);
+    const historicalAgeDays = historicalAnchor?.date ? daysBetween(historicalAnchor.date, context.todayISO) : null;
+    return historicalClass && historicalAgeDays !== null
+      ? { status: 'stretch', anchorClass: historicalClass, anchorAgeDays: historicalAgeDays, reasons: ['ANCHOR_EXPIRED'] }
+      : { status: 'stretch', anchorClass: null, reasons: ['NO_PERFORMANCE_ANCHOR'] };
   }
   if (ageDays < 0 || ageDays > freshness) {
-    return { status: 'unsafe', anchorClass: classification, anchorAgeDays: ageDays, reasons: ['ANCHOR_EXPIRED'] };
+    return { status: 'stretch', anchorClass: classification, anchorAgeDays: ageDays, reasons: ['ANCHOR_EXPIRED'] };
   }
   const anchorSeconds = Number(anchor.equivalentTimeSeconds || anchor.equivalent_time_seconds || 0);
   if (!(anchorSeconds > 0)) return { status: 'stretch', anchorClass: classification, reasons: ['BROAD_EQUIVALENCY_ONLY'] };
@@ -328,7 +333,8 @@ function paceFeasibility(goal, calendar, context) {
   else if (classification === 'nearby_standard') reasons.push('PACE_EQUIVALENCY_USED');
   const status = improvement <= supportedLimit && classification !== 'broad_estimate'
     ? 'supported'
-    : improvement <= stretchLimit ? 'stretch' : 'unsafe';
+    : 'stretch';
+  if (improvement > stretchLimit) reasons.push('ASSESSMENT_REQUIRED');
   return {
     status,
     anchorClass: classification,
@@ -360,7 +366,7 @@ function qualityExposure(plan, goal, calendar) {
   const ratios = Object.keys(required).map((key) => Math.min(1, counts[key] / required[key]));
   const ratio = ratios.length ? Math.min(...ratios) : 1;
   return {
-    status: ratio >= 1 ? 'supported' : ratio >= RACE_PLAN_POLICY_V1.progression.stretchDemandFloor ? 'stretch' : 'unsafe',
+    status: ratio >= 1 ? 'supported' : 'stretch',
     counts,
     required,
     ratio: round(ratio, 3),
@@ -383,8 +389,7 @@ function workloadFeasibility(plan, goal, calendar, model, context) {
   const ratio = Math.min(weeklyRatio, longRatio);
   const evidenceCap = model.baseline.confidence === 'trusted' && model.endurance.confidence === 'trusted'
     ? 'supported' : 'stretch';
-  let status = ratio >= 1 ? evidenceCap
-    : ratio >= RACE_PLAN_POLICY_V1.progression.stretchDemandFloor ? 'stretch' : 'unsafe';
+  let status = ratio >= 1 ? evidenceCap : 'stretch';
   if (contextSafetyBlocked(context)) status = 'unsafe';
   return {
     status,
@@ -394,7 +399,8 @@ function workloadFeasibility(plan, goal, calendar, model, context) {
     requiredLongMiles,
     weeklyRatio: round(weeklyRatio, 3),
     longRatio: round(longRatio, 3),
-    reasons: status === 'unsafe' ? ['PEAK_DEMAND_UNREACHABLE'] : [],
+    reasons: status === 'unsafe' || ratio < RACE_PLAN_POLICY_V1.progression.stretchDemandFloor
+      ? ['PEAK_DEMAND_UNREACHABLE'] : [],
   };
 }
 
@@ -590,10 +596,7 @@ function evaluatePlanFeasibility(plan, context = {}, planningModel = null) {
       ...quality.reasons,
       ...(conflict ? ['RACE_SPACING_CONFLICT'] : []),
     ])];
-    if (overall === 'stretch' && !checkpoint) {
-      overall = 'unsafe';
-      reasons.push('CHECKPOINT_UNPLACEABLE');
-    }
+    if (overall === 'stretch' && !checkpoint) reasons.push('CHECKPOINT_UNPLACEABLE');
     return {
       raceId: goal.raceId,
       name: goal.name,

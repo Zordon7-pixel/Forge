@@ -14,6 +14,7 @@ const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
 const HARD_RUN_PATTERN = /(long|quality|tempo|threshold|interval|hill|hard|speed|vo2|race|benchmark|time-trial|zone 3|zone 4|zone 5)/i;
 const PERFORMANCE_RECENCY_DAYS = 365;
+const TARGET_ANCHOR_RECENCY_DAYS = 180;
 const STANDARD_PERFORMANCE_DISTANCES = Object.freeze([
   { key: 'mile', label: '1 Mile', miles: 1 },
   { key: '5k', label: '5K', miles: 3.107 },
@@ -223,11 +224,16 @@ function buildRunPerformanceProfile(rows = [], options = {}) {
     const ageDays = dateDistanceDays(todayISO, run.date);
     return ageDays !== null && ageDays >= 0 && ageDays <= PERFORMANCE_RECENCY_DAYS;
   });
+  const currentAnchorRuns = recent.filter((run) => dateDistanceDays(todayISO, run.date) <= TARGET_ANCHOR_RECENCY_DAYS);
+  const historicalAnchorRuns = normalized.filter((run) => dateDistanceDays(todayISO, run.date) > TARGET_ANCHOR_RECENCY_DAYS);
   const records = STANDARD_PERFORMANCE_DISTANCES
     .map((distance) => bestDistanceRecord(normalized, distance))
     .filter(Boolean);
-  const targetAnchor = chooseTargetAnchor(recent, targetDistanceMiles);
-  const historicalTargetAnchor = targetAnchor ? null : chooseTargetAnchor(normalized, targetDistanceMiles);
+  const targetAnchor = chooseTargetAnchor(currentAnchorRuns, targetDistanceMiles);
+  const historicalTargetAnchor = chooseTargetAnchor(
+    targetAnchor ? historicalAnchorRuns : normalized,
+    targetDistanceMiles,
+  );
   return {
     sampleCount: normalized.length,
     recentSampleCount: recent.length,
@@ -236,6 +242,7 @@ function buildRunPerformanceProfile(rows = [], options = {}) {
     targetAnchor,
     historicalTargetAnchor,
     recencyDays: PERFORMANCE_RECENCY_DAYS,
+    targetAnchorRecencyDays: TARGET_ANCHOR_RECENCY_DAYS,
   };
 }
 

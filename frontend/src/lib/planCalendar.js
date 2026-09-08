@@ -180,6 +180,31 @@ export function getPlanMode(plan) {
   return 'run_only'
 }
 
+export function racePlanGenerationTarget(plan, profile = {}) {
+  const data = planData(plan)
+  const policy = data.strengthPolicy || data.strength_policy || {}
+  const hasProfilePreference = profile?.lift_days_per_week !== undefined && profile?.lift_days_per_week !== null
+  if (!plan && !hasProfilePreference) return {}
+  const profileLiftDays = Math.max(0, Math.min(4, Math.round(Number(profile?.lift_days_per_week || 0))))
+  const hasPlan = Boolean(plan && Object.keys(data).length)
+  const currentMode = hasPlan ? getPlanMode(plan) : 'run_only'
+  const planMode = profileLiftDays > 0
+    ? (currentMode === 'hybrid_build' ? 'hybrid_build' : 'hybrid_maintain')
+    : currentMode
+  const liftingEnabled = planMode !== 'run_only'
+  const currentPlanLiftDays = currentMode !== 'run_only'
+    ? Number(policy.sessionsPerWeek ?? policy.sessions_per_week ?? 0) : 0
+  const liftDaysPerWeek = liftingEnabled
+    ? Math.max(1, Math.min(4, Math.round(currentPlanLiftDays || profileLiftDays)))
+    : 0
+  return {
+    planMode,
+    liftingEnabled,
+    liftDaysPerWeek,
+    ...(Number(profile?.run_days_per_week) > 0 ? { runDaysPerWeek: Number(profile.run_days_per_week) } : {}),
+  }
+}
+
 export function planModeLabel(mode) {
   return PLAN_MODE_LABELS[mode] || 'Run only'
 }

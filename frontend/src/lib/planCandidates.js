@@ -25,6 +25,8 @@ export async function previewAndApplyPlan(path, body = {}, config = {}) {
   }
   const applyBindings = preview.data?.apply_bindings && typeof preview.data.apply_bindings === 'object'
     && !Array.isArray(preview.data.apply_bindings) ? preview.data.apply_bindings : {}
+  const previewedChoice = ['adjust_goal', 'completion_first'].includes(preview.data?.choice)
+    ? preview.data.choice : 'train_for_target'
 
   const applied = await reviewPlanCandidateBeforeApply(
     preview.data,
@@ -33,7 +35,7 @@ export async function previewAndApplyPlan(path, body = {}, config = {}) {
       {
         ...applyBindings,
         candidate_hash: candidateHash,
-        choice: 'train_for_target',
+        choice: previewedChoice,
         ...clock,
       },
       config,

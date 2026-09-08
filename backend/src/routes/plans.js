@@ -2198,11 +2198,16 @@ function normalizeCandidateRequest(body = {}) {
   if (operation === 'remove_race' && raceIds.includes(removeRaceId)) {
     throw candidateError(400, 'REMOVAL_RACE_RETAINED', 'The removal candidate cannot retain the selected race.');
   }
+  const choice = String(body.choice || 'train_for_target').trim();
+  if (!['train_for_target', 'adjust_goal', 'completion_first'].includes(choice)) {
+    throw candidateError(400, 'INVALID_CANDIDATE_CHOICE', 'Choose a supported plan path.');
+  }
   return {
     race_ids: raceIds,
     target: stripClientCourseFacts(body.target || {}),
     operation,
     remove_race_id: removeRaceId,
+    choice,
   };
 }
 
@@ -2688,6 +2693,7 @@ function publicCandidatePayload(candidate) {
     candidate_id: candidate.id,
     effective_from: candidate.effectiveFrom,
     generation_source: 'race_plan_candidate_engine',
+    choice: candidate.choice || 'train_for_target',
     replaces_active_plan: Boolean(candidate.replacesActivePlan),
     plan: {
       id: candidate.id,
@@ -5016,13 +5022,19 @@ function applicableGoalBackwardFeasibility(currentPlan, goalBackwardResult) {
         entry, ['source_revision', 'goal_revision', 'goalRevision'], binding.goalRevision,
       )) return null;
     seenPlanFeasibilities.add(raceId);
+    const reasons = Array.isArray(entry.reasons) ? entry.reasons : [];
+    const legacyUnsafe = reasons.includes('ANCHOR_EXPIRED')
+      || reasons.includes('CHECKPOINT_UNPLACEABLE')
+      || Number(entry?.pace?.requiredImprovement) > Number(entry?.pace?.stretchLimit)
+      || Number(entry?.workload?.ratio) < RACE_PLAN_POLICY_V1.progression.stretchDemandFloor
+      || Number(entry?.quality?.ratio) < RACE_PLAN_POLICY_V1.progression.stretchDemandFloor;
     mappedGoalFeasibilities.push({
       ...entry,
-      legacy_feasibility: entry.feasibility,
-      legacy_reasons: Array.isArray(entry.reasons) ? entry.reasons : [],
+      legacy_feasibility: legacyUnsafe ? 'unsafe' : entry.feasibility,
+      legacy_reasons: reasons,
       feasibility: decisionEntry.status,
       reasons: [...new Set([
-        ...(Array.isArray(entry.reasons) ? entry.reasons : []),
+        ...reasons,
         ...(Array.isArray(decisionEntry.reason_codes) ? decisionEntry.reason_codes : []),
       ])],
       next_required_assessment: decisionEntry.next_required_assessment || null,
@@ -5162,6 +5174,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     planningDateLocal: clock.planningDateLocal,
     races: initial.races,
     replacesActivePlan: Boolean(initial.active),
+    choice: request.choice,
   };
   let goalBackwardMode = resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies, {
     allowSyntheticShadow: true,
@@ -5573,6 +5586,11 @@ function candidateFeasibilityCanApply(plan = {}) {
   return !goals.some((goal) => concurrentPlan.isValidISODate(goal?.date || goal?.raceDate || goal?.race_date));
 }
 
+function candidateChoiceMatchesPreview(snapshot = {}, choice = '') {
+  const previewedChoice = String(snapshot?.request?.choice || 'train_for_target');
+  return previewedChoice === String(choice || '');
+}
+
 function assertCandidatePlanningDateCurrent(row, now = new Date()) {
   const currentLocalDate = localDateForOffset(now, row.timezone_offset_minutes);
   if (currentLocalDate !== row.planning_date_local) {
@@ -5662,8 +5680,8 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
   const suppliedHash = String(body.candidate_hash || '').trim();
   const acceptedDate = normalizePlanningDate(body.planning_date_local, { defaultToToday: true });
   if (!acceptedDate) throw candidateError(400, 'INVALID_PLANNING_DATE', 'Use the current phone date.');
-  if (choice !== 'train_for_target') {
-    throw candidateError(409, 'CANDIDATE_CHOICE_REQUIRES_PREVIEW', 'Preview the revised goal before applying that choice.');
+  if (!['train_for_target', 'adjust_goal', 'completion_first'].includes(choice)) {
+    throw candidateError(400, 'INVALID_CANDIDATE_CHOICE', 'Choose a supported reviewed plan path.');
   }
   if (!suppliedHash.startsWith('sha256:')) {
     throw candidateError(400, 'CANDIDATE_HASH_REQUIRED', 'candidate_hash is required.');
@@ -5724,6 +5742,10 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
         return planningInputUnchanged({ status: 409, error: 'Candidate does not match this race.', code: 'CANDIDATE_RACE_MISMATCH' });
       }
     }
+    const storedSnapshot = parseCandidateJson(row.planning_snapshot_json, {});
+    if (!candidateChoiceMatchesPreview(storedSnapshot, choice)) {
+      return planningInputUnchanged({ status: 409, error: 'The reviewed plan choice changed. Preview again.', code: 'CANDIDATE_CHOICE_MISMATCH' });
+    }
     if (row.status === 'applied') {
       if (row.applied_choice !== choice || row.candidate_hash !== suppliedHash) {
         return planningInputUnchanged({ status: 409, error: 'Candidate was already applied with different inputs.', code: 'CANDIDATE_REPLAY_CONFLICT' });
@@ -5746,7 +5768,6 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       return planningInputUnchanged({ status: 409, error: 'Candidate hash does not match.', code: 'CANDIDATE_HASH_MISMATCH' });
     }
 
-    const storedSnapshot = parseCandidateJson(row.planning_snapshot_json, {});
     const storedPlan = parseCandidateJson(row.candidate_plan_json, null);
     const storedFeasibility = String(storedPlan?.overall_feasibility || '').toLowerCase();
     if (storedFeasibility === 'unsafe') {
@@ -8390,6 +8411,7 @@ router._test = {
   canonicalWorkoutStartDecision,
   canonicalSurfaceManifestForActive,
   candidateFeasibilityCanApply,
+  candidateChoiceMatchesPreview,
   candidateEffectiveFrom,
   computeGoalBackwardShadowDiagnostics,
   emitPlanReleaseTelemetry,

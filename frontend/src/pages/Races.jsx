@@ -9,6 +9,7 @@ import { hyroxDivisionLabel, isHyroxRace, preferredActiveSecondaryRaceId } from 
 import { phonePlanningClock, previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { activePlanRaceIds as planRaceIds, verifyRaceRemovalActivation } from '../lib/planActivation'
+import { racePlanGenerationTarget } from '../lib/planCalendar'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
 import { removeOwnedRace, resetOwnedRace } from '../lib/selfServiceRemoval'
 
@@ -168,6 +169,7 @@ export default function Races() {
   const { isPro } = useProContext()
   const [races, setRaces] = useState([])
   const [activePlan, setActivePlan] = useState(null)
+  const [profile, setProfile] = useState(null)
   const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: RACE_DISTANCE_OPTIONS['5K'], location: '', goal_time_seconds: 0 })
   const [catalogForm, setCatalogForm] = useState({ q: '', distance: '', month: '', state: '' })
   const [catalogRaces, setCatalogRaces] = useState([])
@@ -194,11 +196,15 @@ export default function Races() {
       params: { forge_refresh: Date.now() },
     } : undefined
     let activePlanReadConfirmed = true
-    const [raceResponse, planResponse] = await Promise.all([
+    const [raceResponse, planResponse, profileResponse] = await Promise.all([
       api.get('/races', freshConfig),
       api.get('/plans/my', freshConfig).catch((err) => {
         console.error('[Races] active plan load failed:', err?.message || err)
         activePlanReadConfirmed = false
+        return null
+      }),
+      api.get('/auth/me', freshConfig).catch((err) => {
+        console.error('[Races] profile load failed:', err?.message || err)
         return null
       }),
     ])
@@ -206,6 +212,7 @@ export default function Races() {
     const nextActivePlan = planResponse?.data?.plan || null
     setRaces(nextRaces)
     setActivePlan(nextActivePlan)
+    if (profileResponse?.data?.user) setProfile(profileResponse.data.user)
     return { races: nextRaces, activePlan: nextActivePlan, activePlanReadConfirmed }
   }
   useEffect(() => { load() }, [])
@@ -298,7 +305,15 @@ export default function Races() {
       await load()
       if (affectsPlan && protectedGoal) {
         try {
-          await previewAndApplyPlan('/plans/generate-for-races', { race_ids: activePlanRaceIds })
+          const goalChanged = Number(raceEditor.goal_time_seconds || 0) !== Number(payload.goal_time_seconds || 0)
+          const choice = goalChanged
+            ? (Number(payload.goal_time_seconds || 0) > 0 ? 'adjust_goal' : 'completion_first')
+            : 'train_for_target'
+          await previewAndApplyPlan('/plans/generate-for-races', {
+            race_ids: activePlanRaceIds,
+            target: racePlanGenerationTarget(activePlan, profile),
+            choice,
+          })
           await load()
           setMessage('Race details and the reviewed replacement calendar were applied.')
         } catch (err) {
@@ -441,8 +456,9 @@ export default function Races() {
         return
       }
       const raceIds = alreadyIncluded ? activePlanRaceIds : [...activePlanRaceIds, raceId]
-      if (raceIds.length > 1) await previewAndApplyPlan('/plans/generate-for-races', { race_ids: raceIds })
-      else await previewAndApplyPlan(`/plans/generate-for-race/${race.id}`)
+      const target = racePlanGenerationTarget(activePlan, profile)
+      if (raceIds.length > 1) await previewAndApplyPlan('/plans/generate-for-races', { race_ids: raceIds, target })
+      else await previewAndApplyPlan(`/plans/generate-for-race/${race.id}`, { target })
       await load()
       onSuccess()
     } catch (err) {

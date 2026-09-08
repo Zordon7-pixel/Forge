@@ -11,6 +11,7 @@ import {
   requestPlanCandidateReview,
 } from '../src/lib/planCandidateReview.js'
 import { candidateFeasibilityCanApply } from '../src/lib/planCandidateFeasibility.js'
+import { planModeLabel, racePlanGenerationTarget } from '../src/lib/planCalendar.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
@@ -47,6 +48,7 @@ assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'stretch' }), t
 assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'not_applicable', goals: [] }), true, 'non-race blocks do not require a race feasibility verdict')
 assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'not_applicable', goals: [{ date: '2026-10-11' }] }), false, 'dated race plans cannot bypass feasibility')
 assert.equal(candidateFeasibilityCanApply({ overall_feasibility: '' }), false)
+assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'stretch', application_path: 'foundation', reasons: ['ANCHOR_EXPIRED'] }), true)
 assert.equal(planCandidateRequiresReview({ plan: { plan_data: { overall_feasibility: 'stretch' } } }), true, 'a first-plan stretch target requires athlete review')
 assert.equal(planCandidateRequiresReview({ plan: { plan_data: { overall_feasibility: 'supported' } } }), false)
 assert.equal(planCandidateRequiresReview({ replaces_active_plan: true, plan: { plan_data: { overall_feasibility: 'supported' } } }), true)
@@ -59,6 +61,7 @@ assert.ok(
 )
 assert.match(sheet, /feasibility === 'unsafe'[\s\S]*canApply = candidateFeasibilityCanApply\(plan\)/, 'unsafe plans never receive an apply action')
 assert.match(sheet, /Apply reviewed plan[\s\S]*Review race target[\s\S]*Keep current plan/, 'the athlete sees explicit apply, review, and keep choices')
+assert.match(sheet, /foundation[\s\S]*reason/i, 'an unreachable target is presented as a reason-backed foundation plan')
 assert.match(sheet, /current plan stays in place today[\s\S]*This plan starts/, 'replacement review explains the protected-day cutover before apply')
 assert.match(sheet, /activateModalDialog/, 'the review sheet uses the shared focus and scroll-lock controller')
 assert.equal((planPage.match(/isPlanCandidateReviewCancelled\(err\)[\s\S]{0,180}current plan was kept/g) || []).length, 3, 'all Plan cancellation paths confirm the current plan was kept')
@@ -85,6 +88,21 @@ releaseStretchReview('apply')
 assert.deepEqual(await pendingStretchApply, { applied: true })
 assert.equal(stretchApplyCalls, 1, 'explicit athlete approval applies exactly once')
 unregisterStretch()
+
+assert.match(helper, /previewedChoice[\s\S]*choice: previewedChoice/, 'an edited goal carries its reviewed adjust_goal or completion_first choice into apply')
+
+const preferredHybridTarget = racePlanGenerationTarget(null, {
+  run_days_per_week: 4,
+  lift_days_per_week: 4,
+})
+assert.equal(preferredHybridTarget.planMode, 'hybrid_maintain')
+assert.equal(preferredHybridTarget.liftingEnabled, true)
+assert.equal(preferredHybridTarget.liftDaysPerWeek, 4)
+assert.notEqual(preferredHybridTarget.planMode, 'run_only', 'four-run/four-lift preference never emits RUN_ONLY')
+assert.notEqual(planModeLabel(preferredHybridTarget.planMode), 'Run only', 'four-run/four-lift preference never renders a Run only header')
+assert.match(racesPage, /racePlanGenerationTarget[\s\S]*generateRacePlan/, 'race generation sends the hybrid target contract')
+assert.match(planPage, /racePlanGenerationTarget\(myPlan,[\s\S]*\.\.\.hybridTarget/, 'the in-plan race edit rebuild refreshes hybrid metadata from the preferred week')
+assert.match(planPage, /completionFirst[\s\S]*choice: completionFirst \? 'completion_first' : 'adjust_goal'/, 'the in-plan race edit rebuild records the loosened goal path')
 
 for (const decision of ['cancel', 'review_goal']) {
   let cancelledApplyCalls = 0
