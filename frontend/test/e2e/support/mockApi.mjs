@@ -8,13 +8,30 @@ export const DEFAULT_USER = {
   entitlement: { effectivePremiumAccess: true, accessSource: 'beta', paidTier: null },
 }
 
+export function qaLocalDateISO(date = new Date()) {
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
+}
+
+export function qaDateAfter(dateISO, days) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateISO || ''))
+  if (!match) throw new Error(`Invalid QA local date: ${dateISO}`)
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days, 12))
+    .toISOString()
+    .slice(0, 10)
+}
+
+export async function setQaBrowserClock(page, dateISO = qaLocalDateISO()) {
+  await page.clock.setFixedTime(new Date(`${dateISO}T12:00:00.000Z`))
+}
+
 export function createQaToken(claims = {}) {
   const payload = {
     id: DEFAULT_USER.id,
     email: DEFAULT_USER.email,
     name: DEFAULT_USER.name,
     onboarded: true,
-    exp: Math.floor(Date.now() / 1000) + 3600,
+    exp: Math.floor(Date.now() / 1000) + 86400,
     ...claims,
   }
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')

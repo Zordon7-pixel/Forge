@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { installAuthenticatedApi } from './support/mockApi.mjs'
+import { installAuthenticatedApi, setQaBrowserClock } from './support/mockApi.mjs'
 
 const ROUTES = [
-  { path: '/', label: 'Today', heading: "Open today's plan" },
+  { path: '/', label: 'Today', heading: 'Recent Activity' },
   { path: '/run', label: 'Train', heading: 'Train' },
   { path: '/log-lift', label: 'Lift', heading: 'Start Workout' },
   { path: '/health', label: 'Body', heading: 'Body' },
@@ -15,6 +15,7 @@ const ROUTES = [
 let apiState
 
 test.beforeEach(async ({ page }) => {
+  await setQaBrowserClock(page)
   apiState = await installAuthenticatedApi(page)
 })
 
@@ -35,6 +36,7 @@ for (const { path, label, heading } of ROUTES) {
     await expect(page.getByText('Loading Forged Hybrid')).toHaveCount(0, { timeout: 15_000 })
     await expect(page.getByText('Forged Hybrid — Startup Error')).toHaveCount(0)
     expect(new URL(page.url()).pathname).toBe(path)
+    await expect(page.getByRole('main')).toBeVisible()
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Send feedback' })).toBeVisible()
 

@@ -3,16 +3,14 @@ import {
   createQaToken,
   goalBackwardV24PlanFixture,
   installAuthenticatedApi,
+  qaDateAfter,
+  qaLocalDateISO,
   qaResponse,
+  setQaBrowserClock,
   signatureUiDashboardFixture,
 } from './support/mockApi.mjs'
 
 test.describe.configure({ timeout: 60_000 })
-
-function localDateISO(date = new Date()) {
-  const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
-}
 
 function dayLabel(date = new Date()) {
   return date.toLocaleDateString('en-US', { weekday: 'short' })
@@ -36,6 +34,18 @@ function assertCleanApiAndRuntime(state, errors) {
   expect(errors, 'Authenticated journeys must not emit page or console errors').toEqual([])
 }
 
+async function openDailyBrief(page, title) {
+  const brief = page.getByRole('region', { name: title, exact: true })
+  await expect(brief.getByRole('heading', { name: title, exact: true })).toBeVisible()
+  const toggle = brief.getByRole('button', { name: `Open Coach's daily brief for ${title}`, exact: true })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await toggle.click()
+  const expandedToggle = brief.getByRole('button', { name: `Close Coach's daily brief for ${title}`, exact: true })
+  await expect(expandedToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(expandedToggle).toHaveAccessibleName(`Close Coach's daily brief for ${title}`)
+  return brief
+}
+
 async function openAllTechnicalVerificationAndReadBody(page) {
   const summaries = page.locator('summary').filter({ hasText: 'Technical verification' })
   const count = await summaries.count()
@@ -47,15 +57,22 @@ async function openAllTechnicalVerificationAndReadBody(page) {
   return { count, text: await page.locator('body').innerText() }
 }
 
-const today = localDateISO()
+const today = qaLocalDateISO()
 const todayDay = dayLabel()
 const tomorrowDate = (() => {
   const date = new Date()
   date.setDate(date.getDate() + 1)
   return date
 })()
-const tomorrow = localDateISO(tomorrowDate)
+const tomorrow = qaLocalDateISO(tomorrowDate)
 const tomorrowDay = dayLabel(tomorrowDate)
+const hyroxEventDate = qaDateAfter(today, 28)
+const yonkersRaceDate = qaDateAfter(hyroxEventDate, 14)
+const armyRaceDate = qaDateAfter(hyroxEventDate, 35)
+
+test.beforeEach(async ({ page }) => {
+  await setQaBrowserClock(page, today)
+})
 
 const plannedRun = {
   id: 'journey-run-session',
@@ -628,26 +645,24 @@ test('planned rest day remains accepted while an optional extra run starts witho
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([])],
       ['GET /api/plans/today', restExecution()],
     ]),
   })
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: "Review today's plan" })).toBeVisible()
-  await expect(page.getByText('Rest and recovery are scheduled today. Recovery is the accepted plan unless you choose to train.', { exact: true })).toBeVisible()
+  const brief = await openDailyBrief(page, 'Rest & recover')
+  await expect(brief.getByText('Planned recovery', { exact: true })).toBeVisible()
+  await expect(brief.getByText('Rest and recovery are scheduled today.', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'View rest day', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Start extra run', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start extra run)$/i })).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'View rest day', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Recovery is the plan today' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
-  await page.getByText('Recovery tools', { exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Warm-up', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Start extra run', exact: true }).last()).toBeVisible()
-  await page.getByRole('button', { name: 'Close', exact: true }).click()
-
-  await page.getByRole('button', { name: 'Start extra run', exact: true }).click()
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  await expect(page.getByRole('heading', { name: 'Planned rest day', exact: true })).toBeVisible()
+  const start = page.getByRole('button', { name: 'Start a run', exact: true })
+  await expect(start).toBeVisible()
+  await start.click()
   await expect(page).toHaveURL(/\/log-run\?tab=manual&intent=rest-day/)
   await expect(page.getByRole('heading', { name: 'Why are you running?' })).toBeVisible()
   await expect(page.getByText('No missed run is available in this training week.', { exact: true })).toBeVisible()
@@ -680,11 +695,12 @@ test('unscheduled rest guidance stays passive and never claims scheduled rest', 
   })
 
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  const brief = await openDailyBrief(page, 'Rest & recover')
+  await expect(brief.getByText('Recovery adjustment', { exact: true })).toBeVisible()
+  await expect(brief.getByText('Rest is recommended from recent training.', { exact: true })).toBeVisible()
+  await expect(page.getByText('3.00 mi', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
-  await expect(page.getByText('An extra run is already logged today. Recovery is still the guidance for today.', { exact: true })).toBeVisible()
   await expect(page.getByText(/Rest and recovery are scheduled today/)).toHaveCount(0)
-  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
   await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
@@ -699,14 +715,10 @@ test('minimum-effective recovery guidance shows the reviewed rest, walk, or mobi
   })
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Rest & recover', exact: true })).toBeVisible()
-  await expect(page.getByText(/Rest, easy walking, or mobility.*reduced dose would not deliver the intended recovery session/i)).toBeVisible()
-  await expect(page.getByText(/missed-session history supports recovery/i)).toBeVisible()
+  const brief = await openDailyBrief(page, 'Rest & recover')
+  await expect(brief.getByText(/Rest, easy walking, or mobility.*reduced dose would not deliver the intended recovery session/i)).toBeVisible()
+  await expect(brief.getByText(/missed-session history supports recovery/i)).toBeVisible()
   await expect(page.getByText(/0\.8\s*mi|11\s*min/i)).toHaveCount(0)
-  await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
-
-  await page.getByRole('button', { name: 'View rest day', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Recovery is the plan today', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
   expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
@@ -716,15 +728,20 @@ test('minimum-effective run alternative never suppresses its prescribed lift sib
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([plannedLift])],
       ['GET /api/plans/today', minimumEffectiveRecoveryWithLiftExecution()],
     ]),
   })
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Strength maintenance', exact: true })).toBeVisible()
+  await openDailyBrief(page, 'Strength maintenance')
   await expect(page.getByRole('heading', { name: 'Rest & recover', exact: true })).toHaveCount(0)
   await expect(page.getByText(/0\.8\s*mi|11\s*min/i)).toHaveCount(0)
-  const start = page.getByRole('button', { name: 'Start workout', exact: true })
+  await expect(page.getByRole('button', { name: /^(Start run|Start lift|Start workout|Start\/log)$/i })).toHaveCount(0)
+
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  const start = page.getByRole('button', { name: 'Start Lift', exact: true })
   await expect(start).toBeVisible()
   await start.click()
   await expect(page).toHaveURL(/\/log-lift$/)
@@ -754,11 +771,10 @@ test('legacy check-in recovery remains guidance and never offers the rest-labell
   })
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: "Recovery is today's guidance" })).toBeVisible()
-  await expect(page.getByText('An extra run is already logged today. Recovery is still the guidance for today.', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
-  await expect(page.getByRole('heading', { name: "Recovery is today's guidance" }).last()).toBeVisible()
+  const brief = await openDailyBrief(page, 'Rest & recover')
+  await expect(brief.getByText('Recovery adjustment', { exact: true })).toBeVisible()
+  await expect(brief.getByText("Rest day from today's check-in.", { exact: true })).toBeVisible()
+  await expect(page.getByText('3.00 mi', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start run', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
@@ -792,13 +808,12 @@ test('legacy empty rest payload stays truthful and closes every workout handoff'
   })
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: "Recovery is today's guidance", exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  const brief = await openDailyBrief(page, 'Rest & recover')
+  await expect(brief.getByText('Recovery adjustment', { exact: true })).toBeVisible()
+  await expect(brief.getByText('Changed to rest from daily check-in', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /^(Check in|Edit check-in)$/i })).toHaveCount(0)
   await expect(page.getByText("Today's plan is not ready", { exact: true })).toHaveCount(0)
   await expect(page.getByText('No workout is available yet. Review your check-in or open the calendar.', { exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
-  await expect(page.getByRole('heading', { name: "Recovery is today's guidance", exact: true }).last()).toBeVisible()
 
   const forbiddenButtons = [
     /^Start run$/i,
@@ -850,8 +865,8 @@ test('legacy flat all-removed day stays removed without check-in recovery attrib
   })
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'No workout remains today', exact: true })).toBeVisible()
-  await expect(page.getByText("The scheduled workout was removed from today's plan.", { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Rest & recover', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Recent Activity', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /^(Check in|Edit check-in)$/i })).toHaveCount(0)
   await expect(page.getByText("Recovery is today's guidance", { exact: false })).toHaveCount(0)
   await expect(page.getByText('Your check-in changed today to recovery', { exact: false })).toHaveCount(0)
@@ -900,10 +915,10 @@ test('passive safety authority cannot turn a rest-labelled run slot into an exec
   })
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: "Review today's plan", exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  const brief = await openDailyBrief(page, 'Rest & recover')
+  await expect(brief.getByText('Recovery adjustment', { exact: true })).toBeVisible()
+  await expect(brief.getByText("Rest day from today's check-in.", { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /^(Check in|Prepare to Run|Start Warm-Up|Skip, start the run)$/i })).toHaveCount(0)
-  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Start run', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Map route', exact: true })).toHaveCount(0)
@@ -925,12 +940,13 @@ test('lift-only safety rest cannot expose strength or workout starts even with a
   })
 
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  const brief = await openDailyBrief(page, 'Rest & recover')
+  await expect(brief.getByText('Recovery adjustment', { exact: true })).toBeVisible()
+  await expect(brief.getByText('Changed to rest from daily check-in', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Review Strength Workout', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
   await expect(page).not.toHaveURL(/\/log-lift/)
   await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
@@ -1523,7 +1539,7 @@ test('ambiguous race-removal response is reconciled from fresh account state and
   const race = {
     id: 'yonkers-race',
     race_name: 'Yonkers Half Marathon',
-    race_date: '2026-09-20',
+    race_date: yonkersRaceDate,
     distance_miles: 13.1,
     status: 'upcoming',
   }
@@ -1572,16 +1588,16 @@ test('the reopened Yonkers to HYROX lifecycle passes the exact pre-bootstrap aut
   await expect(page).toHaveURL(/\/login$/)
 
   const yonkers = {
-    id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20',
+    id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: yonkersRaceDate,
     event_kind: 'run_race', status: 'upcoming', distance_miles: 13.1,
   }
   let savedHyrox = {
-    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
-    event_local_date: '2026-09-06', event_timezone: 'America/New_York', event_kind: 'hyrox',
+    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: hyroxEventDate,
+    event_local_date: hyroxEventDate, event_timezone: 'America/New_York', event_kind: 'hyrox',
     event_format: 'individual_open', event_category: 'men', goal_time_seconds: null, status: 'upcoming',
   }
   const army = {
-    id: 'army-race', race_name: 'Army Ten-Miler', race_date: '2026-10-11',
+    id: 'army-race', race_name: 'Army Ten-Miler', race_date: armyRaceDate,
     event_kind: 'run_race', status: 'upcoming', distance_miles: 10, goal_time_seconds: 5400,
   }
   let stage = 'stale'
@@ -1674,7 +1690,7 @@ test('the reopened Yonkers to HYROX lifecycle passes the exact pre-bootstrap aut
   await expect(page.getByLabel('Optional secondary running race')).toHaveValue(army.id)
   await page.getByRole('button', { name: 'Preview combined HYROX plan', exact: true }).click()
   await expect(page.getByText('Doubles Men', { exact: true })).toBeVisible()
-  await expect(page.getByText('2026-09-06', { exact: true })).toBeVisible()
+  await expect(page.getByText(hyroxEventDate, { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true }).click()
 
   await expect(page.getByRole('heading', { name: 'Update your HYROX plan' })).toHaveCount(0)
@@ -1698,7 +1714,7 @@ test('failed linked race removal returns to a retryable terminal state at 320px'
   await page.setViewportSize({ width: 320, height: 568 })
   const runtimeErrors = collectRuntimeErrors(page)
   const race = {
-    id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20',
+    id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: yonkersRaceDate,
     distance_miles: 13.1, status: 'upcoming',
   }
   const apiState = await installAuthenticatedApi(page, {
@@ -1737,8 +1753,8 @@ test('HYROX setup stays horizontally locked', async ({ page }) => {
   const hyrox = {
     id: 'hyrox-horizontal-lock',
     race_name: 'HYROX Washington DC',
-    race_date: '2026-09-06',
-    event_local_date: '2026-09-06',
+    race_date: hyroxEventDate,
+    event_local_date: hyroxEventDate,
     event_timezone: 'America/New_York',
     event_kind: 'hyrox',
     event_format: 'individual_open',
@@ -1780,7 +1796,7 @@ test('HYROX setup stays horizontally locked', async ({ page }) => {
 
   await expect(dialog).toBeVisible()
   await expect(weekdayGrid).toBeVisible()
-  await expect(dateInput).toHaveValue('2026-09-06')
+  await expect(dateInput).toHaveValue(hyroxEventDate)
   for (const input of durationInputs) await expect(input).toHaveCount(1)
 
   const measureLayout = () => dialog.evaluate((node) => {
@@ -1962,16 +1978,16 @@ test('an existing HYROX event can correct its division and review a combined can
   const hyrox = {
     id: 'hyrox-dc',
     race_name: 'HYROX Washington DC',
-    race_date: '2026-09-06',
-    event_local_date: '2026-09-06',
+    race_date: hyroxEventDate,
+    event_local_date: hyroxEventDate,
     event_timezone: 'America/New_York',
     event_kind: 'hyrox',
     event_format: 'individual_open',
     event_category: 'men',
     status: 'upcoming',
   }
-  const yonkers = { id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20', event_kind: 'run_race', status: 'upcoming', distance_miles: 13.1 }
-  const army = { id: 'army-race', race_name: 'Army Ten-Miler', race_date: '2026-10-11', event_kind: 'run_race', status: 'upcoming', distance_miles: 10 }
+  const yonkers = { id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: yonkersRaceDate, event_kind: 'run_race', status: 'upcoming', distance_miles: 13.1 }
+  const army = { id: 'army-race', race_name: 'Army Ten-Miler', race_date: armyRaceDate, event_kind: 'run_race', status: 'upcoming', distance_miles: 10 }
   let hyroxPatch = null
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
@@ -2019,7 +2035,7 @@ test('an existing HYROX event can correct its division and review a combined can
   await expect(page.getByLabel('Optional secondary running race')).toHaveValue(army.id)
   const selectionReview = page.getByLabel('HYROX selection review')
   await expect(selectionReview.getByText('Doubles Men', { exact: true })).toBeVisible()
-  await expect(selectionReview.getByText('2026-09-06', { exact: true })).toBeVisible()
+  await expect(selectionReview.getByText(hyroxEventDate, { exact: true })).toBeVisible()
   await expect(page.getByText('Combined rebuild selected: Army Ten-Miler.', { exact: true })).toBeVisible()
   await expect(page.getByText(/Yonkers Half Marathon is not included because it is 14 days after HYROX; at least 21 days is required\. Change either event date/i)).toBeVisible()
 
@@ -2033,7 +2049,7 @@ test('an existing HYROX event can correct its division and review a combined can
   await page.getByRole('button', { name: 'Preview combined HYROX plan', exact: true }).click()
 
   await expect(page.getByText('Doubles Men', { exact: true })).toBeVisible()
-  await expect(page.getByText('2026-09-06', { exact: true })).toBeVisible()
+  await expect(page.getByText(hyroxEventDate, { exact: true })).toBeVisible()
   expect(hyroxPatch.event_format).toBe('doubles')
   expect(hyroxPatch.event_category).toBe('men')
   expect(hyroxPatch.event_config_json).toMatchObject({ runDaysPerWeek: 3, trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'] })
@@ -2050,8 +2066,8 @@ test('an existing owned HYROX event can apply a foundation without requiring dat
   const runtimeErrors = collectRuntimeErrors(page)
   let applied = false
   const hyrox = {
-    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
-    event_local_date: '2026-09-06', event_timezone: 'America/New_York', event_kind: 'hyrox',
+    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: hyroxEventDate,
+    event_local_date: hyroxEventDate, event_timezone: 'America/New_York', event_kind: 'hyrox',
     event_format: 'doubles', event_category: 'men', goal_time_seconds: 3540, status: 'upcoming',
   }
   const before = {
@@ -2106,8 +2122,8 @@ test('a successful two-week HYROX bridge suppresses an empty phase row and keeps
   expect(page.viewportSize()).toEqual(expectedViewport)
   const runtimeErrors = collectRuntimeErrors(page)
   const hyrox = {
-    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
-    event_local_date: '2026-09-06', event_timezone: 'America/New_York', event_kind: 'hyrox',
+    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: hyroxEventDate,
+    event_local_date: hyroxEventDate, event_timezone: 'America/New_York', event_kind: 'hyrox',
     event_format: 'individual_open', event_category: 'men', goal_time_seconds: null, status: 'upcoming',
   }
   let previewCount = 0
@@ -2142,8 +2158,8 @@ test('a successful two-week HYROX bridge suppresses an empty phase row and keeps
             goals: [{ kind: 'hyrox', raceId: hyrox.id, name: hyrox.race_name }],
             weeks: emptyPhaseBridge
               ? [
-                  { week: 1, startDate: '2026-08-17', days: [] },
-                  { week: 2, startDate: '2026-08-24', days: [] },
+                  { week: 1, startDate: today, days: [] },
+                  { week: 2, startDate: qaDateAfter(today, 7), days: [] },
                 ]
               : [
                   { week: 1, phase: 'orientation_assessment', days: [] },
@@ -2242,8 +2258,8 @@ test('a failed reviewed HYROX apply keeps confirmed prior-calendar feedback besi
   await page.setViewportSize(expectedViewport)
   const runtimeErrors = collectRuntimeErrors(page)
   const hyrox = {
-    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
-    event_local_date: '2026-09-06', event_timezone: 'America/New_York', event_kind: 'hyrox',
+    id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: hyroxEventDate,
+    event_local_date: hyroxEventDate, event_timezone: 'America/New_York', event_kind: 'hyrox',
     event_format: 'doubles', event_category: 'men', goal_time_seconds: 3540, status: 'upcoming',
   }
   const active = {
@@ -2354,8 +2370,8 @@ test('a reviewed HYROX apply confirms exact assignment, goal truth, and no stale
   let savedHyrox = {
     id: 'hyrox-dc',
     race_name: 'HYROX Washington DC',
-    race_date: '2026-09-06',
-    event_local_date: '2026-09-06',
+    race_date: hyroxEventDate,
+    event_local_date: hyroxEventDate,
     event_timezone: 'America/New_York',
     event_kind: 'hyrox',
     event_format: 'individual_open',
@@ -2363,8 +2379,8 @@ test('a reviewed HYROX apply confirms exact assignment, goal truth, and no stale
     goal_time_seconds: 6900,
     status: 'upcoming',
   }
-  const yonkers = { id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20', event_kind: 'run_race', status: 'upcoming', distance_miles: 13.1 }
-  const army = { id: 'army-race', race_name: 'Army Ten-Miler', race_date: '2026-10-11', event_kind: 'run_race', status: 'upcoming', distance_miles: 10, goal_time_seconds: 5400 }
+  const yonkers = { id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: yonkersRaceDate, event_kind: 'run_race', status: 'upcoming', distance_miles: 13.1 }
+  const army = { id: 'army-race', race_name: 'Army Ten-Miler', race_date: armyRaceDate, event_kind: 'run_race', status: 'upcoming', distance_miles: 10, goal_time_seconds: 5400 }
   const replacementPlan = () => ({
     plan: {
       id: 'hyrox-army-plan',
@@ -2578,7 +2594,7 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
   const isoAt = (offset) => {
     const date = new Date(monday)
     date.setDate(monday.getDate() + offset)
-    return localDateISO(date)
+    return qaLocalDateISO(date)
   }
   const availableIndexes = [0, 1, 2, 3, 4, 5, 6].filter((index) => index !== todayIndex)
   const hyroxIndex = availableIndexes[0]
