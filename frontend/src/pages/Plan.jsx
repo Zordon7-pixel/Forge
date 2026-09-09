@@ -9,6 +9,7 @@ import {
   isSettledAdaptationProposal,
 } from '../lib/adaptationDecision'
 import { previewAndApplyPlan } from '../lib/planCandidates'
+import { executeRacePlanGoalRebuild } from '../lib/planRebuild'
 import { createSurfaceReconcileLatch, reconcileBlockedPlanSurface } from '../lib/planCandidateActivation'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { useProContext } from '../context/ProContext'
@@ -665,8 +666,6 @@ export default function Plan() {
       setPlanReviewError('Review the saved races before rebuilding this calendar.')
       return
     }
-    const planData = myPlan?.plan_data || {}
-    const strengthPolicy = planData.strengthPolicy || {}
     const completionFirst = goals.some((goal) => {
       const race = findRaceForGoal(goal)
       return Number(goal?.goalTimeSeconds || 0) > 0 && Number(race?.goal_time_seconds || 0) === 0
@@ -678,18 +677,13 @@ export default function Plan() {
         console.error('[Plan] hybrid profile load failed:', err?.message || err)
         return null
       })
-      const hybridTarget = racePlanGenerationTarget(myPlan, profileResponse?.data?.user)
-      await previewAndApplyPlan('/plans/generate-for-races', {
-        race_ids: raceIds,
-        choice: completionFirst ? 'completion_first' : 'adjust_goal',
-        target: {
-          ...hybridTarget,
-          trainingDays: planData.schedulePreferences?.trainingDays || [],
-          runDaysPerWeek: planData.schedulePreferences?.runDaysPerWeek || null,
-          strengthGoal: strengthPolicy.goal || 'maintain',
-          equipment: Array.isArray(strengthPolicy.equipment) ? strengthPolicy.equipment : [],
-        },
-      }, { timeout: 90000 })
+      await executeRacePlanGoalRebuild({
+        plan: myPlan,
+        profile: profileResponse?.data?.user,
+        raceIds,
+        completionFirst,
+        previewAndApply: previewAndApplyPlan,
+      })
       setScheduleError('')
       setRaceReconciliationError('')
       setRaceSaveNotice({ message: 'Training calendar rebuilt for the updated race target.' })

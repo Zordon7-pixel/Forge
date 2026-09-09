@@ -1,7 +1,7 @@
-import api from './api'
+import api from './api.js'
 import {
   reviewPlanCandidateBeforeApply,
-} from './planCandidateReview'
+} from './planCandidateReview.js'
 
 export function phonePlanningClock(date = new Date()) {
   const year = date.getFullYear()

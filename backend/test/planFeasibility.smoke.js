@@ -5,6 +5,7 @@ const { addDays, daysBetween } = require('../src/lib/racePlanPolicy');
 const { evaluateGoalBackwardFeasibility, evaluatePlanFeasibility } = require('../src/lib/planFeasibility');
 const plansRouter = require('../src/routes/plans');
 const runWorkoutTaxonomy = require('../src/lib/runWorkoutTaxonomy');
+const { createPlanCandidateLifecycleHarness } = require('./helpers/planCandidateLifecycleHarness');
 
 const PLANNING_DATE = '2026-08-03';
 const RACES = [
@@ -279,4 +280,114 @@ assert.equal(directV24.status, 'not_currently_supported');
 assert.equal(directV24.target.target_time_s, 1500);
 assertions += 2;
 
-console.log(`PLAN FEASIBILITY SMOKE OK (${assertions} matrices/checks)`);
+async function assertFoundationApplyLifecycle() {
+  const recentBase = historyRows(20, 7).map((run, index) => ({
+    id: `history-${index}`,
+    date: run.date,
+    distance_miles: run.distanceMiles,
+    duration_seconds: run.durationMinutes * 60,
+    type: run.type,
+    created_at: `${run.date}T12:00:00.000Z`,
+  })).filter((run) => run.date <= '2026-07-26');
+  const lifecycleFixtures = [
+    {
+      name: 'stale anchor',
+      raceDate: addDays(PLANNING_DATE, 34),
+      goalTimeSeconds: 5400,
+      runs: [{ id: 'historical-10m-pr', date: '2025-11-03', distance_miles: 10, duration_seconds: 5100, type: 'race' }],
+      reason: 'ANCHOR_EXPIRED',
+    },
+    {
+      name: 'stretch goal',
+      raceDate: addDays(PLANNING_DATE, 34),
+      goalTimeSeconds: 4800,
+      runs: [...recentBase, { id: 'fresh-slower-10m', date: '2026-07-20', distance_miles: 10, duration_seconds: 6000, type: 'easy' }],
+      reason: 'ASSESSMENT_REQUIRED',
+    },
+    {
+      name: 'short runway',
+      raceDate: addDays(PLANNING_DATE, 12),
+      goalTimeSeconds: 5250,
+      runs: [...recentBase, { id: 'fresh-10m', date: '2026-07-20', distance_miles: 10, duration_seconds: 5355, type: 'easy' }],
+      reason: 'QUALITY_EXPOSURE_MISSING',
+    },
+    {
+      name: 'missing assessment',
+      raceDate: addDays(PLANNING_DATE, 34),
+      goalTimeSeconds: 5400,
+      runs: [],
+      reason: 'NO_PERFORMANCE_ANCHOR',
+    },
+  ];
+  for (const fixture of lifecycleFixtures) {
+    const raceId = fixture.name.replaceAll(' ', '-');
+    const harness = createPlanCandidateLifecycleHarness({
+      planningDate: PLANNING_DATE,
+      profile: { weekly_miles_current: fixture.runs.length ? 20 : 0 },
+      races: [{
+        id: raceId,
+        race_name: fixture.name,
+        race_date: fixture.raceDate,
+        distance_miles: 10,
+        goal_time_seconds: fixture.goalTimeSeconds,
+      }],
+      runs: fixture.runs,
+    });
+    try {
+      const preview = await harness.preview({
+        race_ids: [raceId],
+        choice: 'adjust_goal',
+        target: {
+          trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'],
+          runDaysPerWeek: 4,
+          liftDaysPerWeek: 3,
+          liftingEnabled: true,
+          planMode: 'hybrid_maintain',
+        },
+      });
+      assert.equal(preview.plan.weeks.length, racePlanWindow(fixture.raceDate, PLANNING_DATE).weeks, `${fixture.name}: production preview spans race week`);
+      assert.ok(preview.plan.reasons.includes(fixture.reason), `${fixture.name}: production preview retains ${fixture.reason}`);
+      const result = await harness.apply(preview, 'adjust_goal');
+      const authoritative = harness.readApplied(result);
+      assert.equal(result.status, 200, `${fixture.name}: production apply reports success`);
+      assert.ok(result.payload.user_plan_id, `${fixture.name}: production apply returns the successor assignment`);
+      assert.equal(authoritative.plan.weeks.length, racePlanWindow(fixture.raceDate, PLANNING_DATE).weeks, `${fixture.name}: authoritative read-back spans race week`);
+      assert.ok(authoritative.plan.reasons.includes(fixture.reason), `${fixture.name}: authoritative read-back retains ${fixture.reason}`);
+      assert.equal(authoritative.assignment.status, 'active', `${fixture.name}: apply writes one active foundation assignment`);
+      assert.deepEqual(harness.ownerLockReceipts.slice(-2).map((receipt) => receipt.stage), ['entered', 'committed'], `${fixture.name}: apply commits beneath the owner lock`);
+    } finally {
+      harness.cleanup();
+    }
+  }
+
+  const negativeHarness = createPlanCandidateLifecycleHarness({
+    planningDate: PLANNING_DATE,
+    races: [{ id: 'negative', race_name: 'Negative control', race_date: addDays(PLANNING_DATE, 34), distance_miles: 10, goal_time_seconds: 5400 }],
+    runs: [],
+  });
+  try {
+    const preview = await negativeHarness.preview({
+      race_ids: ['negative'],
+      choice: 'adjust_goal',
+      target: { trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'], runDaysPerWeek: 4, liftDaysPerWeek: 3, liftingEnabled: true, planMode: 'hybrid_maintain' },
+    });
+    negativeHarness.setRejectCandidateStatusWrite(true);
+    await assert.rejects(
+      negativeHarness.apply(preview, 'adjust_goal'),
+      /Candidate apply status update failed/,
+      'the actual apply path cannot succeed when its candidate mutation is a no-op',
+    );
+    assert.equal([...negativeHarness.state.userPlans.values()].filter((row) => row.status === 'active').length, 0, 'failed apply rolls back the successor assignment');
+    assert.equal(negativeHarness.ownerLockReceipts.at(-1).stage, 'rolled_back', 'failed apply rolls back beneath the owner lock');
+  } finally {
+    negativeHarness.cleanup();
+  }
+  assertions += 27;
+}
+
+assertFoundationApplyLifecycle()
+  .then(() => console.log(`PLAN FEASIBILITY SMOKE OK (${assertions} matrices/checks)`))
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

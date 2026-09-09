@@ -1,11 +1,11 @@
 import axios from 'axios'
-import { clearToken, getToken } from './tokenStore'
+import { clearToken, getToken } from './tokenStore.js'
 
 export const API_MUTATION_STATE_EVENT = 'forge:api-mutation-state'
 
 // On native (Capacitor) builds the app runs on-device so relative URLs don't work.
 // VITE_API_URL must be set to the absolute Railway URL for production native builds.
-export const API_BASE_URL = import.meta.env.VITE_API_URL
+export const API_BASE_URL = import.meta.env?.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api'
 

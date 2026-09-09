@@ -7,6 +7,7 @@ import HyroxPlanSetup from '../components/hyrox/HyroxPlanSetup'
 import api from '../lib/api'
 import { hyroxDivisionLabel, isHyroxRace, preferredActiveSecondaryRaceId } from '../lib/hyroxSelfService'
 import { phonePlanningClock, previewAndApplyPlan } from '../lib/planCandidates'
+import { executeRacePlanGoalRebuild } from '../lib/planRebuild'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { activePlanRaceIds as planRaceIds, verifyRaceRemovalActivation } from '../lib/planActivation'
 import { racePlanGenerationTarget } from '../lib/planCalendar'
@@ -309,10 +310,12 @@ export default function Races() {
           const choice = goalChanged
             ? (Number(payload.goal_time_seconds || 0) > 0 ? 'adjust_goal' : 'completion_first')
             : 'train_for_target'
-          await previewAndApplyPlan('/plans/generate-for-races', {
-            race_ids: activePlanRaceIds,
-            target: racePlanGenerationTarget(activePlan, profile),
+          await executeRacePlanGoalRebuild({
+            plan: activePlan,
+            profile,
+            raceIds: activePlanRaceIds,
             choice,
+            previewAndApply: previewAndApplyPlan,
           })
           await load()
           setMessage('Race details and the reviewed replacement calendar were applied.')

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import {
   PlanCandidateReviewCancelled,
@@ -12,6 +13,12 @@ import {
 } from '../src/lib/planCandidateReview.js'
 import { candidateFeasibilityCanApply } from '../src/lib/planCandidateFeasibility.js'
 import { planModeLabel, racePlanGenerationTarget } from '../src/lib/planCalendar.js'
+import { executeRacePlanGoalRebuild } from '../src/lib/planRebuild.js'
+import { previewAndApplyPlan } from '../src/lib/planCandidates.js'
+import api from '../src/lib/api.js'
+
+const require = createRequire(import.meta.url)
+const { createPlanCandidateLifecycleHarness } = require('../../backend/test/helpers/planCandidateLifecycleHarness.js')
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
@@ -101,8 +108,76 @@ assert.equal(preferredHybridTarget.liftDaysPerWeek, 4)
 assert.notEqual(preferredHybridTarget.planMode, 'run_only', 'four-run/four-lift preference never emits RUN_ONLY')
 assert.notEqual(planModeLabel(preferredHybridTarget.planMode), 'Run only', 'four-run/four-lift preference never renders a Run only header')
 assert.match(racesPage, /racePlanGenerationTarget[\s\S]*generateRacePlan/, 'race generation sends the hybrid target contract')
-assert.match(planPage, /racePlanGenerationTarget\(myPlan,[\s\S]*\.\.\.hybridTarget/, 'the in-plan race edit rebuild refreshes hybrid metadata from the preferred week')
-assert.match(planPage, /completionFirst[\s\S]*choice: completionFirst \? 'completion_first' : 'adjust_goal'/, 'the in-plan race edit rebuild records the loosened goal path')
+assert.match(planPage, /executeRacePlanGoalRebuild\(/, 'Plan uses the behaviorally tested rebuild executor')
+assert.match(racesPage, /saveRaceEdit[\s\S]*executeRacePlanGoalRebuild\(/, 'Races edit-PR uses the behaviorally tested rebuild executor')
+
+const originalApiPost = api.post
+const unregisterLifecycleReview = registerPlanCandidateReviewer(async () => 'apply')
+try {
+  for (const liftDaysPerWeek of [3, 4]) {
+    const raceId = `runtime-edit-${liftDaysPerWeek}`
+    const harness = createPlanCandidateLifecycleHarness({
+      planningDate: '2026-08-03',
+      profile: { run_days_per_week: 4, lift_days_per_week: liftDaysPerWeek, weekly_miles_current: 20 },
+      races: [{
+        id: raceId,
+        race_name: `Runtime edit ${liftDaysPerWeek}`,
+        race_date: '2026-09-06',
+        distance_miles: 10,
+        goal_time_seconds: 6000,
+      }],
+      runs: [{
+        id: `recent-anchor-${liftDaysPerWeek}`,
+        date: '2026-07-27',
+        distance_miles: 10,
+        duration_seconds: 5700,
+        type: 'run',
+      }],
+    })
+    try {
+      api.post = harness.post
+      const applied = await executeRacePlanGoalRebuild({
+        plan: {
+          plan_data: {
+            planMode: 'run_only',
+            goal: { goalPaceSecondsPerMile: 525 },
+            schedulePreferences: { trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'], runDaysPerWeek: null },
+            strengthPolicy: { goal: 'maintain', equipment: ['dumbbell'] },
+          },
+        },
+        profile: { run_days_per_week: 4, lift_days_per_week: liftDaysPerWeek },
+        raceIds: [raceId],
+        choice: 'adjust_goal',
+        previewAndApply: previewAndApplyPlan,
+      })
+      const authoritative = harness.readApplied({ payload: applied.data })
+      const persistedPaces = authoritative.plan.weeks.flatMap((week) => week.days)
+        .flatMap((day) => day.sessions)
+        .map((session) => Number(session.goal_pace_seconds_per_mile || 0))
+        .filter((pace) => pace > 0)
+      assert.deepEqual(
+        harness.transportReceipts.map((receipt) => receipt.pathname),
+        ['/plans/generate-for-races', `/plans/candidates/${applied.data.candidate_id}/apply`],
+        `${liftDaysPerWeek} lifts executes frontend preview then backend apply`,
+      )
+      assert.equal(harness.transportReceipts[0].body.choice, 'adjust_goal')
+      assert.equal(harness.transportReceipts[0].body.target.runDaysPerWeek, 4, 'profile run preference cannot be shadowed by a null plan value')
+      assert.equal(harness.transportReceipts[0].body.target.liftDaysPerWeek, liftDaysPerWeek)
+      assert.equal(harness.transportReceipts[0].body.target.planMode, 'hybrid_maintain')
+      assert.notEqual(planModeLabel(harness.transportReceipts[0].body.target.planMode), 'Run only')
+      assert.equal(applied.data.ok, true)
+      assert.equal(authoritative.assignment.status, 'active')
+      assert.equal(authoritative.plan.goal.goalTimeSeconds, 6000)
+      assert.ok(Math.min(...persistedPaces) > 525, 'production generation and persisted read-back prove an easier pace')
+      assert.deepEqual(harness.ownerLockReceipts.slice(-2).map((receipt) => receipt.stage), ['entered', 'committed'])
+    } finally {
+      harness.cleanup()
+    }
+  }
+} finally {
+  api.post = originalApiPost
+  unregisterLifecycleReview()
+}
 
 for (const decision of ['cancel', 'review_goal']) {
   let cancelledApplyCalls = 0
@@ -125,4 +200,4 @@ for (const page of ['Onboarding.jsx', 'Plan.jsx', 'PlanCatalog.jsx', 'Races.jsx'
   assert.match(read(`frontend/src/pages/${page}`), /isPlanCandidateReviewCancelled\(err\)/, `${page} treats an athlete cancellation as a non-error`)
 }
 
-console.log('PLAN CANDIDATE REVIEW SMOKE OK (35)')
+console.log('PLAN CANDIDATE REVIEW SMOKE OK (runtime preview/apply/read-back covered)')

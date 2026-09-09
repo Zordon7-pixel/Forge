@@ -199,19 +199,33 @@ function bestDistanceRecord(runs, distance) {
   };
 }
 
-function chooseTargetAnchor(runs, targetDistanceMiles) {
+function targetAnchorSelectionScore(run, targetDistanceMiles, todayISO, freshnessWeighted) {
+  const equivalentSeconds = equivalentTimeSeconds(run, targetDistanceMiles);
+  if (!freshnessWeighted) return equivalentSeconds;
+  const ageDays = dateDistanceDays(todayISO, run.date);
+  if (ageDays === null || ageDays < 0) return Number.POSITIVE_INFINITY;
+  const boundedAge = clamp(ageDays, 0, TARGET_ANCHOR_RECENCY_DAYS);
+  const freshnessPenalty = 1 + (boundedAge / TARGET_ANCHOR_RECENCY_DAYS);
+  const distanceMismatchRatio = Math.abs(Number(run.miles) - targetDistanceMiles) / targetDistanceMiles;
+  const distanceUncertaintyPenalty = 1 + (distanceMismatchRatio * 0.25);
+  return equivalentSeconds * freshnessPenalty * distanceUncertaintyPenalty;
+}
+
+function chooseTargetAnchor(runs, targetDistanceMiles, options = {}) {
   const target = Number(targetDistanceMiles || 0);
   if (!(target > 0)) return null;
   const exact = runs.filter((run) => Math.abs(run.miles - target) / target <= 0.05);
-  const pool = exact.length
-    ? exact
-    : runs.filter((run) => run.miles >= 1 && run.miles / target >= 0.3 && run.miles / target <= 1.5);
+  const supported = runs.filter((run) => run.miles >= 1 && run.miles / target >= 0.3 && run.miles / target <= 1.5);
+  const pool = options.freshnessWeighted ? supported : (exact.length ? exact : supported);
   if (!pool.length) return null;
   const best = pool.slice().sort((left, right) => (
-    equivalentTimeSeconds(left, target) - equivalentTimeSeconds(right, target)
+    targetAnchorSelectionScore(left, target, options.todayISO, options.freshnessWeighted)
+      - targetAnchorSelectionScore(right, target, options.todayISO, options.freshnessWeighted)
     || String(right.date).localeCompare(String(left.date))
+    || String(left.id || '').localeCompare(String(right.id || ''))
   ))[0];
-  return performanceAnchor(best, target, exact.length ? 'observed_distance_band' : 'cross_distance_estimate');
+  const bestIsExact = Math.abs(best.miles - target) / target <= 0.05;
+  return performanceAnchor(best, target, bestIsExact ? 'observed_distance_band' : 'cross_distance_estimate');
 }
 
 function buildRunPerformanceProfile(rows = [], options = {}) {
@@ -229,10 +243,14 @@ function buildRunPerformanceProfile(rows = [], options = {}) {
   const records = STANDARD_PERFORMANCE_DISTANCES
     .map((distance) => bestDistanceRecord(normalized, distance))
     .filter(Boolean);
-  const targetAnchor = chooseTargetAnchor(currentAnchorRuns, targetDistanceMiles);
+  const targetAnchor = chooseTargetAnchor(currentAnchorRuns, targetDistanceMiles, {
+    todayISO,
+    freshnessWeighted: true,
+  });
   const historicalTargetAnchor = chooseTargetAnchor(
     targetAnchor ? historicalAnchorRuns : normalized,
     targetDistanceMiles,
+    { todayISO, freshnessWeighted: false },
   );
   return {
     sampleCount: normalized.length,
