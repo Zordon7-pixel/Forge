@@ -6,7 +6,8 @@ const root = path.resolve(__dirname, '..');
 const testDir = path.join(root, 'test');
 const files = readdirSync(testDir)
   .filter((file) => file.endsWith('.smoke.js'))
-  .sort();
+  .sort()
+  .concat('concurrentPlan.test.js');
 
 for (const file of files) {
   const argumentSets = file === 'racePlanQuality.smoke.js'
