@@ -61,4 +61,4 @@ assert.equal(
   'the older exact-distance effort remains historical record truth without regaining fitness authority',
 );
 
-console.log('CONCURRENT PLAN ANCHOR TEST OK (13 checks)');
+console.log('CONCURRENT PLAN ANCHOR TEST OK (11 checks)');
