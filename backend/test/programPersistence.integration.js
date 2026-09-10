@@ -135,7 +135,21 @@ async function main() {
     target: { runDaysPerWeek: frequency, liftDaysPerWeek: liftFrequency, liftingEnabled: true, planMode,
       trainingDays: all, runEligibleWeekdays: all, liftEligibleWeekdays: all },
   };
-  const generated = await request('POST', `/plans/generate-for-race/${race.data.race.id}`, generationRequest);
+  const previews = process.env.PROGRAM_TEST_DUPLICATE_PREVIEW === '1'
+    ? await Promise.all([request('POST', `/plans/generate-for-race/${race.data.race.id}`, generationRequest),
+      request('POST', `/plans/generate-for-race/${race.data.race.id}`, generationRequest)])
+    : [await request('POST', `/plans/generate-for-race/${race.data.race.id}`, generationRequest)];
+  if (process.env.PROGRAM_TEST_APPLY_SECOND_PREVIEW === '1') {
+    assert.equal(previews.length, 2, 'Second-preview apply is only a guarded duplicate-preview fixture');
+    previews.reverse();
+  }
+  const generated = previews[0];
+  if (previews.length === 2) {
+    assert.equal(previews[1].status, 201, JSON.stringify(previews[1].data));
+    assert.notEqual(previews[1].data.candidate_id, generated.data.candidate_id);
+    assert.notEqual(previews[1].data.surface_manifest.plan_generation_candidate_ref,
+      generated.data.surface_manifest.plan_generation_candidate_ref);
+  }
   const rows = await db.dbAll('SELECT id, status, candidate_plan_json FROM plan_generation_candidates WHERE user_id=?', [owner]);
   console.log(JSON.stringify({ gate: 'real-http-postgres', generationStatus: generated.status,
     code: generated.data.code || null, error: generated.data.error || null,
@@ -144,7 +158,7 @@ async function main() {
     ...(process.env.PROGRAM_TEST_DETAILS === '1' ? { weeklySelections } : {}),
     persistedCandidates: rows.map(row => ({ status: row.status, weeks: row.candidate_plan_json?.weeks?.length })) }));
   assert.equal(generated.status, 201, JSON.stringify(generated.data));
-  assert.equal(rows.length, 1);
+  assert.equal(rows.length, previews.length);
   assert.equal(rows[0].candidate_plan_json.weeks.length, expectedWeeks);
   assert.equal(rows[0].candidate_plan_json.programContract.timezone, 'America/New_York');
   assert.ok(rows[0].candidate_plan_json.weeks.flatMap(week => week.days.flatMap(day => day.sessions))
@@ -170,6 +184,21 @@ async function main() {
   assert.equal(current.status, 200, JSON.stringify(current.data));
   assert.equal(today.status, 200, JSON.stringify(today.data));
   const reloaded = current.data.plan.plan_data;
+  if (previews.length === 2) {
+    const acceptedBefore = JSON.stringify(await db.dbGet(`SELECT up.id,up.status,up.plan_version,up.progress_json,
+      tp.plan_json,tp.plan_data FROM user_plans up JOIN training_plans tp ON tp.id=up.plan_id WHERE up.user_id=? AND up.status='active'`, [owner]));
+    const competitor = previews[1].data;
+    const competitorApply = await request('POST', `/plans/candidates/${competitor.candidate_id}/apply`, {
+      ...competitor.apply_bindings, candidate_hash: competitor.candidate_hash,
+      planning_date_local: '2026-09-10', timezone_offset_minutes: 240, choice: 'train_for_target' });
+    assert.equal(competitorApply.status, 409, JSON.stringify(competitorApply.data));
+    assert.equal(JSON.stringify(await db.dbGet(`SELECT up.id,up.status,up.plan_version,up.progress_json,
+      tp.plan_json,tp.plan_data FROM user_plans up JOIN training_plans tp ON tp.id=up.plan_id WHERE up.user_id=? AND up.status='active'`, [owner])), acceptedBefore);
+    assert.equal((await request('GET', '/plans/current')).data.surface_manifest.status, 'accepted');
+    assert.equal((await request('GET', '/plans/today')).data.surface_manifest.status, 'accepted');
+    console.log(JSON.stringify({ gate: 'real-concurrent-preview-identity', status: 'PASS', previews: 2,
+      stale_competitor_code: competitorApply.data.code, accepted_content_preserved: true }));
+  }
   if (process.env.PROGRAM_TEST_KNOWN_LIFT === '1') {
     let knownLoads = 0;
     for (const session of reloaded.weeks.flatMap(w => w.days.flatMap(d => d.sessions)).filter(s => s.kind === 'lift')) {
@@ -308,7 +337,7 @@ async function main() {
     const before = await db.dbGet("SELECT id FROM user_plans WHERE user_id=? AND status='active'", [owner]);
     const acceptedBytes = async () => JSON.stringify(await db.dbGet(`SELECT up.id,up.status,up.plan_version,up.progress_json,
       tp.plan_json,tp.plan_data FROM user_plans up JOIN training_plans tp ON tp.id=up.plan_id WHERE up.id=? AND up.user_id=?`, [before.id, owner]));
-    const beforeBytes = await acceptedBytes();
+    let beforeBytes = await acceptedBytes();
     const ownerToken = token;
     const outsider = await request('POST', '/auth/register', { name: 'Disposable ownership negative',
       email: `${databaseName}-other@example.invalid`, password: crypto.randomBytes(24).toString('hex'),
@@ -317,6 +346,28 @@ async function main() {
     const wrongOwner = await request('POST', `/plans/candidates/${generated.data.candidate_id}/apply`, applyBody);
     assert.equal(wrongOwner.status, 404); token = ownerToken;
     assert.equal(await acceptedBytes(), beforeBytes);
+    const revisionPreview = await request('POST', `/plans/generate-for-race/${race.data.race.id}`, generationRequest);
+    assert.equal(revisionPreview.status, 201, JSON.stringify(revisionPreview.data));
+    const revisionBefore = (await db.dbGet('SELECT planning_input_revision FROM users WHERE id=?', [owner])).planning_input_revision;
+    const changedProfile = await request('PUT', '/auth/me/profile', { run_days_per_week: frequency === 4 ? 3 : 4 });
+    assert.equal(changedProfile.status, 200, JSON.stringify(changedProfile.data));
+    const restoredProfile = await request('PUT', '/auth/me/profile', { run_days_per_week: frequency });
+    assert.equal(restoredProfile.status, 200, JSON.stringify(restoredProfile.data));
+    assert.ok((await db.dbGet('SELECT planning_input_revision FROM users WHERE id=?', [owner])).planning_input_revision > revisionBefore);
+    const afterProfileBytes = await acceptedBytes();
+    const priorAccepted = JSON.parse(beforeBytes), afterProfile = JSON.parse(afterProfileBytes);
+    for (const key of ['id', 'status', 'plan_version', 'plan_json', 'plan_data']) assert.deepEqual(afterProfile[key], priorAccepted[key],
+      `The explicit profile change must not rewrite accepted ${key}`);
+    assert.equal(JSON.parse(afterProfile.progress_json).planReviewRequired.reason, 'run_frequency_changed',
+      'The authorized profile write may mark the retained plan for review');
+    beforeBytes = afterProfileBytes;
+    const staleRevisionApply = await request('POST', `/plans/candidates/${revisionPreview.data.candidate_id}/apply`, {
+      ...revisionPreview.data.apply_bindings, candidate_hash: revisionPreview.data.candidate_hash,
+      planning_date_local: '2026-09-10', timezone_offset_minutes: 240, choice: 'train_for_target' });
+    assert.equal(staleRevisionApply.status, 409, JSON.stringify(staleRevisionApply.data));
+    assert.equal(await acceptedBytes(), beforeBytes, 'Restoring preferences does not revive a stale preview or alter accepted content');
+    console.log(JSON.stringify({ gate: 'real-database-revision-apply-guard', status: 'PASS', code: staleRevisionApply.data.code,
+      active_content_preserved: true }));
     const rebuilt = await request('POST', `/plans/generate-for-race/${race.data.race.id}`, generationRequest);
     assert.equal(rebuilt.status, 201, JSON.stringify(rebuilt.data));
     assert.equal((await db.dbGet("SELECT id FROM user_plans WHERE user_id=? AND status='active'", [owner])).id, before.id);

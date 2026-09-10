@@ -20,6 +20,38 @@ assert.ok(seven.result.selected_candidate?.validation.valid, JSON.stringify(seve
 assert.equal(seven.accepted.weeks.length, 5);
 const selected = seven.result.selected_candidate;
 assert.equal(canonical.validateCanonicalSessionSet(selected.canonical_session_set).valid, true);
+const surfaceApi = require('../src/routes/plans')._test;
+const duplicateArtifacts = ['first-preview', 'second-preview'].map(id => surfaceApi.buildGoalBackwardArtifacts({
+  userId: seven.context.profile.id, planGenerationCandidateId: id, currentCandidateHash: selected.candidate_hash,
+  decision: seven.result.decision, candidates: seven.result.candidates, featureMode: 'on', plan: seven.accepted,
+}));
+const duplicateSurfaces = duplicateArtifacts.map(artifacts => artifacts.find(artifact => artifact.artifact_kind === 'surface_manifest'));
+assert.notEqual(duplicateSurfaces[0].content_hash, duplicateSurfaces[1].content_hash);
+assert.notEqual(duplicateSurfaces[0].id, duplicateSurfaces[1].id,
+  'Identical prescriptions from different previews cannot collide in the content-addressed surface uniqueness key');
+for (const [index, artifacts] of duplicateArtifacts.entries()) {
+  const surface = duplicateSurfaces[index];
+  const setArtifact = artifacts.find(artifact => artifact.artifact_kind === 'canonical_session_set');
+  assert.equal(surface.parent_artifact_id, setArtifact.id);
+  assert.equal(surface.plan_generation_candidate_id, setArtifact.plan_generation_candidate_id);
+  assert.equal(surface.payload_json.plan_generation_candidate_ref, setArtifact.payload_json.plan_generation_candidate_ref);
+  const identity = surface.payload_json.identity;
+  const candidateRow = { id: surface.plan_generation_candidate_id, status: 'applied',
+    decision_id: identity.decision_id, candidate_revision: identity.candidate_revision,
+    athlete_state_revision: identity.athlete_state_revision, safety_state_hash: identity.safety_state_hash,
+    goal_revisions_json: identity.goal_revisions, surface_revision: surface.revision,
+    selected_candidate_hash: identity.candidate_hash, applied_training_plan_id: 'db-plan', applied_user_plan_id: 'assignment' };
+  const activeRow = { plan_id: 'db-plan', user_plan_id: 'assignment', plan_version: identity.plan_revision,
+    status: 'active', plan_data: seven.accepted };
+  const diagnostic = manifest => surfaceApi.surfaceManifestAppliedPlanDiagnostic(manifest, candidateRow, activeRow, setArtifact.payload_json);
+  assert.equal(diagnostic(surface.payload_json).status_code, 'ACCEPTED');
+  for (const mutate of [manifest => { delete manifest.plan_generation_candidate_ref; delete manifest.program_storage_version; },
+    manifest => { manifest.plan_generation_candidate_ref = 'sha256:' + '0'.repeat(64); }]) {
+    const wrong = structuredClone(surface.payload_json); mutate(wrong);
+    assert.equal(diagnostic(wrong).predicates.SURFACE_CANDIDATE_REFERENCE_MATCH, false,
+      'Trusted accepted program/candidate identity requires the exact ref even when manifest markers are stripped');
+  }
+}
 const { goalBackwardRetainedWorkComparator, goalBackwardRemovalCarryForwardMaterial } = require('../src/routes/plans')._test;
 const eventSession = selected.sessions.find(session => session.workout_family === 'race');
 const removedRaceId = eventSession.event_identity.race_id;

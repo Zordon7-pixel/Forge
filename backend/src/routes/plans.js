@@ -4505,6 +4505,28 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
 }
 
 function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
+  const steps = computeGoalBackwardProgramSteps(input, dependencies);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+async function computeGoalBackwardShadowDiagnosticsAsync(input, dependencies = {}) {
+  const steps = computeGoalBackwardProgramSteps(input, dependencies);
+  while (true) {
+    const started = performance.now();
+    const step = steps.next();
+    dependencies.inspectCooperativeChunk?.({ phase: step.done ? 'complete' : step.value,
+      elapsed_ms: performance.now() - started });
+    if (step.done) return step.value;
+    // A new connection needs both acceptance and request-read poll turns.
+    // Give I/O a complete extra turn before the next bounded CPU chunk.
+    await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
+    dependencies.inspectCooperativeYield?.(step.value);
+  }
+}
+
+function* computeGoalBackwardProgramSteps(input, dependencies = {}) {
   dependencies.inspectInput?.(input);
   const { state, built, planningDateLocal } = input;
   // Lifecycle carry-forward and HYROX retain their independently gated paths.
@@ -4531,17 +4553,24 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
   const freeze = value => { if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.values(value).forEach(freeze); Object.freeze(value);
   } return value; };
-  // Private capability, allocated anew for each synchronous preview/apply.
+  // Private capability, allocated anew for each preview/apply computation.
   // Only the authenticated inventory is reused; caller flags cannot mint one.
   const programInventory = Object.freeze({ state, userId: input.userId,
     bindingHash: programInventoryBinding(input.userId, state), stableActivePlan: freeze(stableActivePlan),
     activeAppliedPlan: freeze(activeAppliedPlan), expansionMaterial: freeze(expansionMaterial) });
   authenticatedProgramInventories.add(programInventory);
+  function* checkpoint(phase) {
+    yield phase;
+    if (programInventory.bindingHash !== programInventoryBinding(input.userId, state)) {
+      invalidGoalExpansionCarrySource('PROGRAM_SNAPSHOT_CHANGED');
+    }
+  }
   const windows = [];
   const ownedEventDates = new Set(contract.goals.filter(goal => goal.athlete_id === input.userId && goal.race_id
     && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(goal.event_kind))
     .map(goal => goal.event_local_date));
   for (const week of built.plan.weeks) {
+    yield* checkpoint('weekly-window');
     const weekStart = week.startDate;
     const windowStart = weekStart < planningDateLocal ? planningDateLocal : weekStart;
     const windowEnd = addPolicyDays(weekStart, 6) < contract.end_date ? addPolicyDays(weekStart, 6) : contract.end_date;
@@ -4578,7 +4607,7 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
   const boundaryCache = new Map();
   const boundaryFailures = new Map();
   const failedSuffixStates = new Set();
-  const selectProgram = (index, priorSessions) => {
+  function* selectProgram(index, priorSessions) {
     if (index === windows.length) return true;
     const window = windows[index];
     const suffixKey = `${index}:${canonicalHash(priorSessions.filter(session =>
@@ -4587,6 +4616,7 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
     if (failedSuffixStates.has(suffixKey)) return false;
     for (const candidate of window.result.candidates.filter(entry => entry.validation?.valid)
       .sort((a, b) => Number(b.independent_source_seed) - Number(a.independent_source_seed))) {
+      yield* checkpoint('program-search');
       if (++expanded > 2048) return false;
       // Only the preceding six days can interact with this weekly window.
       const earliest = addPolicyDays(window.week.startDate, -6);
@@ -4617,20 +4647,21 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
         continue;
       }
       window.selected = candidate;
-      if (selectProgram(index + 1, sessions)) return true;
+      if (yield* selectProgram(index + 1, sessions)) return true;
     }
     if (!failedWindow || window.week.startDate > failedWindow) failedWindow = window.week.startDate;
     window.selected = null;
     failedSuffixStates.add(suffixKey);
     return false;
-  };
-  if (!selectProgram(0, []) && dependencies.exhaustiveProgramSearch !== true) {
-    return computeGoalBackwardShadowDiagnostics(input, { ...dependencies, exhaustiveProgramSearch: true });
+  }
+  if (!(yield* selectProgram(0, [])) && dependencies.exhaustiveProgramSearch !== true) {
+    return yield* computeGoalBackwardProgramSteps(input, { ...dependencies, exhaustiveProgramSearch: true });
   }
   if (windows.some(window => !window.selected)) return { ...windows[0].result, selected_candidate: null,
     program_contract: contract, failed_program_week: failedWindow,
     program_boundary_diagnostics: [...boundaryFailures.values()],
     program_failure: expanded > 2048 ? 'PROGRAM_SEARCH_BUDGET_EXHAUSTED' : 'ROLLING_WEEK_BOUNDARY_CONFLICT' };
+  yield* checkpoint('program-composition');
   const first = windows[0].result;
   const decisionHash = canonicalHash({ contract, windows: windows.map(({ result, selected }) => ({
     decision_hash: result.decision.decision_hash, candidate_hash: selected.candidate_hash,
@@ -4839,6 +4870,7 @@ function buildCanonicalSurfaceManifest(input = {}) {
   }));
   return {
     schema_version: 'goal_backward_surface_manifest_v1',
+    ...(input.planGenerationCandidateRef ? { plan_generation_candidate_ref: input.planGenerationCandidateRef } : {}),
     ...(sessionSet.program_storage_version ? { program_storage_version: sessionSet.program_storage_version,
       program_contract: sessionSet.program_contract } : {}),
     surface_revision: Math.max(1, Number(input.surfaceRevision || 1)),
@@ -5121,9 +5153,20 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
     && String(candidate.applied_user_plan_id) === String(activeRow.user_plan_id);
   const appliedPlanLinked = Boolean(candidate.applied_training_plan_id && activeRow?.plan_id)
     && String(candidate.applied_training_plan_id) === String(activeRow.plan_id);
+  // Legacy one-window manifests were published without this ref. Complete
+  // programs were not: their accepted plan/canonical contract requires it,
+  // even if a caller strips the marker or ref from the manifest itself.
+  const candidateRefRequired = activePlan.programContract?.version === 'complete-road-program-v1'
+    || canonicalSessionSet?.program_storage_version === 'materialized-program-storage-v1';
+  const candidateRefMatches = value => Boolean(candidate.id)
+    && diagnosticHash(value) === diagnosticHash(prefixedHash(candidate.id));
   const predicateEntries = [
     ['SURFACE_ARTIFACT_PRESENT', Boolean(manifest && typeof manifest === 'object' && !Array.isArray(manifest))],
     ['CANDIDATE_BINDING_PRESENT', Boolean(candidate.id)],
+    ['SURFACE_CANDIDATE_REFERENCE_MATCH', !candidateRefRequired && manifest?.plan_generation_candidate_ref == null
+      || candidateRefMatches(manifest?.plan_generation_candidate_ref)],
+    ['CANONICAL_CANDIDATE_REFERENCE_MATCH', !candidateRefRequired && canonicalSessionSet?.plan_generation_candidate_ref == null
+      || candidateRefMatches(canonicalSessionSet?.plan_generation_candidate_ref)],
     ['ASSIGNMENT_PRESENT', Boolean(activeRow && typeof activeRow === 'object' && !Array.isArray(activeRow))],
     ['CANDIDATE_STATUS_APPLIED', candidateStatus === 'APPLIED'],
     ['ASSIGNMENT_STATUS_ACTIVE', assignmentStatus === 'ACTIVE'],
@@ -5993,7 +6036,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     response,
     compute: async () => {
       try {
-        goalBackwardShadow = computeGoalBackwardShadowDiagnostics({
+        goalBackwardShadow = await computeGoalBackwardShadowDiagnosticsAsync({
           userId,
           state: initial,
           built,
@@ -6628,7 +6671,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     if (enforceV24Bindings) {
       let currentGoalBackward = null;
       try {
-        currentGoalBackward = computeGoalBackwardShadowDiagnostics({
+        currentGoalBackward = await computeGoalBackwardShadowDiagnosticsAsync({
           userId,
           state: current,
           built: fresh,
@@ -9262,6 +9305,7 @@ router._test = {
   candidateChoiceMatchesPreview,
   candidateEffectiveFrom,
   computeGoalBackwardShadowDiagnostics,
+  computeGoalBackwardShadowDiagnosticsAsync,
   emitPlanReleaseTelemetry,
   currentGoalBackwardApplyEnvelope,
   clearActivePlanForUser,

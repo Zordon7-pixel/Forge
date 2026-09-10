@@ -86,6 +86,7 @@ function run() {
     applied_user_plan_id: 'assignment-1',
   };
   const manifest = plansRouter._test.buildCanonicalSurfaceManifest({
+    planGenerationCandidateRef: `sha256:${require('../src/lib/racePlanPolicy').canonicalHash(candidate.id)}`,
     featureMode: 'on',
     surfaceRevision: 1,
     candidateRevision: 1,
@@ -162,6 +163,8 @@ function run() {
   assert.equal(successor.surfaceArtifact.revision, 2);
   assert.equal(successor.surfaceArtifact.parent_artifact_id, successor.canonicalArtifact.id);
   assert.equal(successor.surfaceArtifact.payload_json.sessions[0].title, 'Accepted recovery run');
+  assert.equal(successor.surfaceArtifact.payload_json.plan_generation_candidate_ref, manifest.plan_generation_candidate_ref,
+    'An adaptation successor retains its own preview-candidate binding');
 
   const reboundRow = {
     ...activeRow,
