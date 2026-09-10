@@ -2063,7 +2063,8 @@ function validateConcurrentPlan(candidate, context = {}) {
   const latestRunDate = acuteProtection?.anchorDate || acuteLoad?.protectiveRun?.date || acuteLoad?.latestRun?.date || null;
   if (!candidate || typeof candidate !== 'object') return { valid: false, errors: ['candidate is missing'] };
   const expectedOccupancy = require('./calendarOccupancy').scheduleOccupancy(runSchedule, liftSchedule, context.profile?.timezone || 'UTC');
-  if (!candidate.calendarOccupancy || !sameStructuredValue(candidate.calendarOccupancy, expectedOccupancy)) {
+  if (!candidate.calendarOccupancy || require('./racePlanPolicy').canonicalHash(candidate.calendarOccupancy)
+    !== require('./racePlanPolicy').canonicalHash(expectedOccupancy)) {
     errors.push('calendarOccupancy must match the authoritative modality contract');
   }
   if (Number(candidate.schemaVersion) !== planSchema.SCHEMA_VERSION) errors.push(`schemaVersion must be ${planSchema.SCHEMA_VERSION}`);

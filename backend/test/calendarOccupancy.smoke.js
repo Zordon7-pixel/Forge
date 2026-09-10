@@ -38,6 +38,9 @@ for (const [name, runDays, runs, liftDays, lifts, minimum] of cases) {
     assert.ok(minimum === 7 ? occupied === 7 : occupied <= 6, name);
   }
   assert.ok(s.accepted.programReconciliation.every(week => week.valid));
+  const reordered = structuredClone(s.built.plan);
+  reordered.calendarOccupancy = Object.fromEntries(Object.entries(reordered.calendarOccupancy).reverse());
+  assert.equal(validateConcurrentPlan(reordered, s.context).valid, true, 'JSONB key ordering does not change receipt authority');
   const forged = structuredClone(s.built.plan);
   forged.calendarOccupancy.classification = minimum === 7 ? 'REST_DATE_FEASIBLE' : 'FULL_WEEK_OCCUPANCY_REQUESTED';
   assert.equal(validateConcurrentPlan(forged, s.context).valid, false, 'Candidate classification never grants authority');
