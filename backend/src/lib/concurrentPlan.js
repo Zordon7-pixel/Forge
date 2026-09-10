@@ -1600,10 +1600,15 @@ function buildConcurrentPlan(context = {}) {
   const runSchedule = resolveRunSchedule(profile, target);
   if (!runSchedule.valid) throw new Error(runSchedule.error);
   const availableDays = runSchedule.trainingDays;
-  const runDays = selectRunDays(availableDays, runSchedule.runDaysPerWeek);
   const liftSchedule = resolveLiftSchedule(profile, target);
   if (!liftSchedule.valid) throw new Error(liftSchedule.error);
   const liftDaysPerWeek = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : liftSchedule.liftDaysPerWeek;
+  const occupancy = require('./calendarOccupancy').scheduleOccupancy(runSchedule,
+    { ...liftSchedule, liftDaysPerWeek }, profile.timezone || 'UTC');
+  const reservedRestDay = require('./calendarOccupancy').sharedRestDay(occupancy,
+    selectRunDays(availableDays, runSchedule.runDaysPerWeek));
+  const placementRunSchedule = { ...runSchedule, trainingDays: availableDays.filter(day => day !== reservedRestDay) };
+  const runDays = selectRunDays(placementRunSchedule.trainingDays, runSchedule.runDaysPerWeek);
   const strengthPolicy = mode === planSchema.PLAN_MODES.RUN_ONLY
     ? { enabled: false }
     : planSchema.normalizeStrengthPolicy({
@@ -1648,7 +1653,7 @@ function buildConcurrentPlan(context = {}) {
       weekStart,
       todayISO: context.todayISO,
       currentWeekLoad,
-      runSchedule,
+      runSchedule: weekStart < context.todayISO ? runSchedule : placementRunSchedule,
       raceDay,
       activityReconciliation: currentWeekActivityReconciliation,
     }) : null;
@@ -1752,11 +1757,11 @@ function buildConcurrentPlan(context = {}) {
         return date >= context.todayISO && !completedStrengthDates.has(date);
       })
       : liftSchedule.liftEligibleWeekdays;
-    if (runSchedule.runDaysPerWeek < 7 && liftDaysPerWeek < 7) {
+    if (occupancy.classification === 'REST_DATE_FEASIBLE' && !(isCurrentWeek && weekStart < context.todayISO)) {
       // With separate modality availability, choosing every non-run day first
       // can accidentally fill all seven dates. Retain one shared rest date
       // when the requested frequencies can still be delivered exactly.
-      const restDate = DAY_ORDER.find(day => !runByDay.has(day)
+      const restDate = reservedRestDay && !runByDay.has(reservedRestDay) ? reservedRestDay : DAY_ORDER.find(day => !runByDay.has(day)
         && liftAvailableDays.filter(candidate => candidate !== day).length >= effectiveLiftCount);
       if (restDate) liftAvailableDays = liftAvailableDays.filter(day => day !== restDate);
     }
@@ -1870,6 +1875,7 @@ function buildConcurrentPlan(context = {}) {
       runDaysSource: target.runDaysSource || runSchedule.runDaysSource,
       trainingDaysSource: target.trainingDaysSource || runSchedule.trainingDaysSource,
     },
+    calendarOccupancy: occupancy,
     weeks,
   };
   const protectedPlan = withMotivationalRunNames(applyAcuteRunProtection(plan, context));
@@ -2056,6 +2062,10 @@ function validateConcurrentPlan(candidate, context = {}) {
   const planWideQualityProtection = hasPlanWideQualityProtection(context);
   const latestRunDate = acuteProtection?.anchorDate || acuteLoad?.protectiveRun?.date || acuteLoad?.latestRun?.date || null;
   if (!candidate || typeof candidate !== 'object') return { valid: false, errors: ['candidate is missing'] };
+  const expectedOccupancy = require('./calendarOccupancy').scheduleOccupancy(runSchedule, liftSchedule, context.profile?.timezone || 'UTC');
+  if (!candidate.calendarOccupancy || !sameStructuredValue(candidate.calendarOccupancy, expectedOccupancy)) {
+    errors.push('calendarOccupancy must match the authoritative modality contract');
+  }
   if (Number(candidate.schemaVersion) !== planSchema.SCHEMA_VERSION) errors.push(`schemaVersion must be ${planSchema.SCHEMA_VERSION}`);
   if (candidate.planMode !== expectedMode) errors.push(`planMode must be ${expectedMode}`);
   if (Number(candidate.schedulePreferences?.runDaysPerWeek) !== runSchedule.runDaysPerWeek) {
@@ -2239,8 +2249,14 @@ function validateConcurrentPlan(candidate, context = {}) {
       });
       if (kinds.has('run') && kinds.has('lift') && !String(day.orderGuidance || '').trim()) errors.push(`${dayPath}.orderGuidance is required for same-day run and lift`);
     });
-    if (restDays < 1 && runSchedule.runDaysPerWeek !== 7 && liftSchedule.liftDaysPerWeek !== 7) {
-      errors.push(`${path} requires a full rest day unless seven running or lifting days were requested`);
+    const effectiveOccupancy = require('./calendarOccupancy').scheduleOccupancy(
+      { ...runSchedule, runDaysPerWeek: week.phase === 'taper' && week.runFrequencyAdjustment
+        ? week.runFrequencyAdjustment.prescribed : runSchedule.runDaysPerWeek },
+      { ...liftSchedule, liftDaysPerWeek: week.phase === 'race' ? Math.min(1, liftSchedule.liftDaysPerWeek)
+        : week.phase === 'taper' ? Math.min(2, liftSchedule.liftDaysPerWeek) : liftSchedule.liftDaysPerWeek },
+      context.profile?.timezone || 'UTC', week.startDate < context.todayISO ? 'PARTIAL' : week.phase.toUpperCase());
+    if (restDays < 1 && effectiveOccupancy.classification !== 'FULL_WEEK_OCCUPANCY_REQUESTED') {
+      errors.push(`${path} PLACEMENT_UNSATISFIABLE: a shared rest date is feasible for the authoritative modality contract`);
     }
     const maximumRuns = currentWeekQuota?.runDays.length ?? runSchedule.runDaysPerWeek;
     if (currentWeekQuota && runs > maximumRuns) {

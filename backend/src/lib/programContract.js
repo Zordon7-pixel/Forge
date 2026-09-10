@@ -18,6 +18,7 @@ function buildProgramContract({ target = {}, profile = {}, planningDateLocal, co
     timezone: profile.timezone || 'UTC',
     run_days_per_week: runs.runDaysPerWeek, lift_days_per_week: lifts.liftDaysPerWeek,
     run_eligible_weekdays: runs.trainingDays, lift_eligible_weekdays: lifts.liftEligibleWeekdays,
+    calendar_occupancy: require('./calendarOccupancy').scheduleOccupancy(runs, lifts, profile.timezone || 'UTC'),
     goals: ownedGoals,
     constraints, evidence_revision: evidenceRevision, evidence_fingerprint: evidenceFingerprint, active_identity: activeIdentity,
   };
@@ -71,6 +72,8 @@ function reconcileProgramWeek(contract, week, { completedRuns = 0, completedLift
       : partial && delivered === partialExpected ? 'REMAINING_ELIGIBLE_DATES' : null;
     const outcome = exact ? 'EXACT' : rule && delivered + completed <= requested ? 'DISCLOSED_ADJUSTMENT' : 'UNSATISFIABLE';
     return { modality: kind, requested, delivered, completed, outcome, rule,
+      authorized_count: phaseExpected !== null ? phaseExpected + completed
+        : partial ? Math.min(requested, capacity + completed) : requested,
       explanation: exact ? `${requested} ${kind} days delivered.` : rule
         ? `${requested} ${kind} days requested; ${delivered} remaining plus ${completed} completed. ${phaseReplanned ? week.roadPhaseAdjustment.explanation : rule === 'REMAINING_ELIGIBLE_DATES' ? 'This starting week is already in progress; no eligible dates remain for the missing sessions.' : phaseLift ? phaseLift.explanation : 'The exact race and useful preparation remain; below-floor training fragments are not counted as runs.'}`
         : `Requested ${requested} ${kind} days but generated ${delivered}. This program cannot be accepted.`,
@@ -78,8 +81,26 @@ function reconcileProgramWeek(contract, week, { completedRuns = 0, completedLift
       adjustment_evidence: phaseReplanned ? week.roadPhaseAdjustment : rule === 'RACE_WEEK_USEFUL_PRESCRIPTIONS' ? raceRunPrescription : phaseLift || null,
     };
   });
-  return { start_date: start, entries,
-    valid: entries.every((entry) => entry.outcome !== 'UNSATISFIABLE' && !entry.duplicate_modality_dates) };
+  const { calendarOccupancy } = require('./calendarOccupancy');
+  const originalOccupancy = calendarOccupancy({ runCount: contract.run_days_per_week, liftCount: contract.lift_days_per_week,
+    runEligibleWeekdays: contract.run_eligible_weekdays, liftEligibleWeekdays: contract.lift_eligible_weekdays,
+    timezone: contract.timezone });
+  const receiptValid = canonicalHash(originalOccupancy) === canonicalHash(contract.calendar_occupancy);
+  const occupancy = calendarOccupancy({ runCount: entries[0].authorized_count,
+    liftCount: entries[1].authorized_count,
+    runEligibleWeekdays: contract.run_eligible_weekdays, liftEligibleWeekdays: contract.lift_eligible_weekdays,
+    timezone: contract.timezone, weekKind: partial ? 'PARTIAL' : raceWeek ? 'RACE' : week.phase === 'taper' ? 'TAPER' : 'ORDINARY' });
+  const weekday = date => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(`${date}T12:00:00Z`).getUTCDay()];
+  const eligible = sessions.every(session => session.kind === 'run'
+    ? contract.run_eligible_weekdays.includes(weekday(session.date))
+      || session.workout_family === 'race' && contract.goals.some(goal => (goal.event_local_date || goal.race_date) === session.date)
+    : contract.lift_eligible_weekdays.includes(weekday(session.date)));
+  const occupied = new Set(sessions.map(session => session.date)).size;
+  const restValid = partial || occupied < 7 || occupancy.classification === 'FULL_WEEK_OCCUPANCY_REQUESTED';
+  return { start_date: start, entries, calendar_occupancy: occupancy,
+    occupancy_contract_valid: receiptValid, modality_eligibility_valid: eligible, rest_placement_valid: restValid,
+    valid: receiptValid && eligible && restValid
+      && entries.every((entry) => entry.outcome !== 'UNSATISFIABLE' && !entry.duplicate_modality_dates) };
 }
 
 function validateRollingProgramDose(sessions, ceilings) {

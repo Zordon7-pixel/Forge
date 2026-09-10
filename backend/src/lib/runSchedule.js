@@ -86,10 +86,11 @@ function resolveRunSchedule(profile = {}, target = {}, options = {}) {
   const requestedRunDays = runInput.supplied ? explicitRunDays : legacyRunDays;
 
   if (requestedRunDays > trainingDays.length) {
-    return invalid(
+    return { ...invalid(
       'runDaysPerWeek cannot exceed the number of selected trainingDays.',
       'RUN_FREQUENCY_EXCEEDS_TRAINING_DAYS'
-    );
+    ), details: { classification: 'MODALITY_AVAILABILITY_INSUFFICIENT', modality: 'run', requested: requestedRunDays,
+      available: trainingDays.length, eligible_weekdays: trainingDays } };
   }
 
   const runDaysPerWeek = requestedRunDays;
@@ -134,7 +135,9 @@ function resolveLiftSchedule(profile = {}, target = {}) {
   }
   const liftDaysPerWeek = target.liftingEnabled === false ? 0 : requestedCount;
   if (liftDaysPerWeek > liftEligibleWeekdays.length) {
-    return invalid('Lift days cannot exceed your eligible lifting weekdays.', 'LIFT_FREQUENCY_EXCEEDS_WEEKDAYS');
+    return { ...invalid('Lift days cannot exceed your eligible lifting weekdays.', 'LIFT_FREQUENCY_EXCEEDS_WEEKDAYS'),
+      details: { classification: 'MODALITY_AVAILABILITY_INSUFFICIENT', modality: 'lift', requested: liftDaysPerWeek,
+        available: liftEligibleWeekdays.length, eligible_weekdays: liftEligibleWeekdays } };
   }
   return { valid: true, liftDaysPerWeek, liftEligibleWeekdays,
     liftingEnabled: liftDaysPerWeek > 0,
