@@ -164,6 +164,28 @@ The same detached snapshot boundary is used when reconstructing the successor
 inside the final save transaction, so that path cannot lose immutable identity
 and repeat the entire predecessor chain for every validation consumer. Fresh
 database/parent matching remains outside the memo before the accepted write.
+An exact40b6 fifth successive max20 acceptance still took17,532ms. The subsequent
+profile identified repeated unary workout hashing and individual schema checks.
+Those two pure explicit-session functions also use the same request-local exact
+immutable-object inventory. They have no options, database reads, current-time
+decisions or owner/freshness authority; all such checks remain uncached. Mutable
+inputs and calls outside the adaptation request retain their original behavior.
+Unary reuse alone left the fifth acceptance at14,085ms, with insufficient margin
+against the unchanged15,000ms client deadline. Request-local snapshot interning
+therefore reuses complete structurally identical immutable program graphs after
+the existing closed snapshot boundary. Full own JSON bytes are an index, not an
+approval or selective-field identity: deep strict equality must also match.
+Eligibility rejects from reuse hidden/nonenumerable fields, undefined/nonfinite
+values, sparse/custom arrays, symbols, accessors, proxies, cycles and nonstandard
+prototypes. Normal array length is the only allowed nonenumerable field. Explicit
+own-data serialization never invokes object serialization hooks. In particular,
+hidden-field differences cannot exploit deep equality's nonenumerable omission,
+and serialized0/-0 collisions do not alias. Fresh context, owner, source,
+observation and revision bytes are included. A per-request16-entry/32MiB retained
+text limit falls back to ordinary computation when full; it changes no acceptance
+limit. No immutable graph or approval is shared across requests. The extended
+synthetic clock test renews its account via real login rather than changing token
+expiry or manufacturing sessions.
 
 Named tests and acceptance gaps are mapped in
 [activity-reduction-test-matrix.md](activity-reduction-test-matrix.md).

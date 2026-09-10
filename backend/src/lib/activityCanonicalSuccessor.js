@@ -21,11 +21,13 @@ function freezeOwnedJson(value) {
 function immutableProgramSet(value) {
   // Existing constructor output may safely share deeply immutable subgraphs.
   // The predicate rejects shallow freezing and mutable/custom internal state.
-  if (value && typeof value === 'object' && require('./immutableOwnJson').immutableOwnJson(value)) return value;
+  if (value && typeof value === 'object' && require('./immutableOwnJson').immutableOwnJson(value)) {
+    return require('./activityValidationScope').internImmutableProgramSnapshot(value);
+  }
   const owned = require('./goalBackwardRecoveryMaterial').ownMaterializedProgramSnapshot(value);
   // The closed snapshot rejects accessors, proxies, cycles and shared mutable
   // graphs before cloning. Preserve the public JSON object's normal prototype.
-  return owned ? freezeOwnedJson(clone(owned)) : null;
+  return owned ? require('./activityValidationScope').internImmutableProgramSnapshot(freezeOwnedJson(clone(owned))) : null;
 }
 
 function canonicalSetPayload(payload) {
@@ -208,7 +210,7 @@ function predecessorForUncached(set) {
   const originals = set.sessions.map(session => session.activity_reduction
     && session.activity_reduction.context.parent_canonical_set_hash === header.content_hash
     ? clone(session.activity_reduction.original) : reboundUnchanged(session, header.plan_revision));
-  return freezeOwnedJson({ ...clone(header), sessions: originals });
+  return require('./activityValidationScope').internImmutableProgramSnapshot(freezeOwnedJson({ ...clone(header), sessions: originals }));
 }
 
 function validateActivitySet(set, { authenticatedParent = null, authenticatedContext = null } = {}) {

@@ -479,7 +479,8 @@ function canonicalHashValue(value, depth = 0) {
 }
 
 function canonicalWorkoutHash(session = {}) {
-  return canonicalHash(canonicalHashValue(session));
+  return require('./activityValidationScope').memoizeImmutableActivity('workout-hash', session,
+    () => canonicalHash(canonicalHashValue(session)));
 }
 
 function totalMismatches(stored, derived) {
@@ -509,6 +510,11 @@ function validCriteria(value) {
 }
 
 function validateCanonicalSession(session = {}) {
+  return require('./activityValidationScope').memoizeImmutableActivity('canonical-session', session,
+    () => validateCanonicalSessionUncached(session));
+}
+
+function validateCanonicalSessionUncached(session = {}) {
   const violations = [];
   if (!isPlainObject(session)) {
     return deepFreeze({ valid: false, violations: [{ code: 'CANONICAL_SCHEMA_INVALID', path: 'session' }], reason_codes: ['CANONICAL_SCHEMA_INVALID'] });
