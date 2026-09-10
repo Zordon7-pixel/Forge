@@ -1715,6 +1715,7 @@ module.exports = {
   validateGoalBackwardCandidate,
   validateGoalBackwardAdaptationCandidate,
   validateInterference,
+  validateConstraints,
   validatePartialRaceOrderClusterExposure,
   validatePresentationFloor,
 };

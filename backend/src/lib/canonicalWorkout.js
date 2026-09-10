@@ -1637,6 +1637,12 @@ function validateCanonicalSessionSet(sessionSet = {}) {
     violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'MATERIAL_BASELINE_BINDING_HASH_INVALID' });
   }
   const sessions = Array.isArray(sessionSet.sessions) ? sessionSet.sessions : [];
+  if (sessionSet.activity_adaptation && !require('./activityCanonicalSuccessor').validateActivitySet(sessionSet)) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'ACTIVITY_ADAPTATION_AUTHORITY_INVALID' });
+  }
+  if (sessions.some(session => session.activity_reduction) && !sessionSet.activity_adaptation) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'ACTIVITY_ADAPTATION_AUTHORITY_REQUIRED' });
+  }
   if (sessionSet.program_storage_version && !sessionSet.prescribed_dose_versions) {
     violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'PRESCRIBED_DOSE_POLICY_REQUIRED' });
   }

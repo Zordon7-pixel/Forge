@@ -49,7 +49,8 @@ function reconcileProgramWeek(contract, week, { completedRuns = 0, completedLift
       const date = goal.event_local_date || goal.race_date;
       return typeof date === 'string' && date >= start && date <= end;
     });
-  const sessions = (week.days || []).flatMap((day) => (day.sessions || []).map((session) => ({ ...session, date: day.date })));
+  const sessions = (week.days || []).flatMap((day) => (day.sessions || []).map((session) => ({ ...session, date: day.date })))
+    .filter(session => ['run', 'lift'].includes(session.kind) && session.workout_family !== 'rest');
   const entries = [['run', contract.run_days_per_week, completedRuns], ['lift', contract.lift_days_per_week, completedLifts]].map(([kind, requested, completed]) => {
     const selected = sessions.filter((session) => session.kind === kind);
     const dates = new Set(selected.map((session) => session.date));

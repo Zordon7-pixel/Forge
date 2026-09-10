@@ -43,9 +43,20 @@ function activityAssessment({ athleteId, runs = [], corrections = [], planningDa
   const recentRunLoad = summarizeRecentRunLoad(canonicalRuns, { todayISO: planningDateLocal,
     weeklyBaseline, recoveryState, focusRunId: focused?.id || null,
     coverageComplete: ['COMPLETE', 'VALID_ZERO'].includes(load.load_input_state) });
+  // Settled-decision reuse concerns coaching meaning, not incidental provider
+  // enrichment. A derived pace/summary_source update cannot create a new dose
+  // or prompt. Raw observation hashes and input revisions still bind accept.
+  const meaningfulRuns = canonicalRuns.map(row => ({ id: row.id, evidence_ids: row.evidence_ids,
+    date: row.date, type: row.type, performance_evidence_type: row.performance_evidence_type,
+    distance_miles: row.distance_miles, duration_seconds: row.duration_seconds,
+    perceived_effort: row.perceived_effort, avg_heart_rate: row.avg_heart_rate,
+    pain_level: row.pain_level, post_energy: row.post_energy, heart_rate_zones: row.heart_rate_zones,
+    health_source: row.health_source, explicitly_unlinked: row.explicitly_unlinked }));
   return { athleteId: String(athleteId), load, canonicalRuns, recentRunLoad, sources,
     fingerprint: canonicalHash({ version: 'activity-assessment-v1', planningDateLocal, timezone,
-      load: load.load_input_hash, canonicalRuns,
+      identity: load.identity_decision_receipt, correction_state: load.correction_input_state,
+      correction_receipt_hash: load.correction_receipt_hash, coverage_state: load.coverage_state,
+      load_input_state: load.load_input_state, canonicalRuns: meaningfulRuns, recentRunLoad,
       links: runs.map(row => ({ id: row.id, plan_session_id: row.plan_session_id || null,
         planned_session_json: row.planned_session_json || null })).sort((a, b) => String(a.id).localeCompare(String(b.id))) }) };
 }
@@ -58,7 +69,7 @@ function linkedSnapshot(source) {
   } catch { return null; }
 }
 
-function qualifiedLink(source, item, session, id, date, assessment, planId) {
+function qualifiedLink(source, item, session, id, date, assessment, planId, predecessorHashes) {
   if (!id || !date || String(source.plan_session_id || '') !== id
     || String(source.date || '').slice(0, 10) !== date
     || source.user_id != null && String(source.user_id) !== assessment.athleteId) return false;
@@ -73,11 +84,13 @@ function qualifiedLink(source, item, session, id, date, assessment, planId) {
   const kind = snapshot.kind || snapshot.modality;
   if (kind && kind !== 'run') return false;
   const hash = snapshot.content_hash || snapshot.canonical_content_hash;
-  if (hash && hash !== session.content_hash) return false;
+  if (Number(session.canonical_workout_schema_version) === 1 && (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash))) return false;
+  if (hash && hash !== session.content_hash && !predecessorHashes?.get(id)?.has(hash)) return false;
   return true;
 }
 
-function runCompletionEvidence(sessions, assessment, completedIds = [], { planId = null } = {}) {
+function runCompletionEvidence(sessions, assessment, completedIds = [], { planId = null, acceptedPlan = null } = {}) {
+  const predecessorHashes = acceptedPlan ? require('./activityCanonicalSuccessor').completionPredecessorHashes(acceptedPlan) : null;
   const marked = new Set(completedIds.map(String));
   const used = new Set();
   return sessions.map(item => {
@@ -89,7 +102,7 @@ function runCompletionEvidence(sessions, assessment, completedIds = [], { planId
       || HARD_TYPES.has(String(session.type || session.workout_type || '').toLowerCase());
     const matches = id ? assessment.canonicalRuns.filter(row => !used.has(row.id) && !row.explicitly_unlinked
       && row.date === date
-      && (assessment.sources.get(row.id) || []).some(source => qualifiedLink(source, item, session, id, date, assessment, planId)))
+      && (assessment.sources.get(row.id) || []).some(source => qualifiedLink(source, item, session, id, date, assessment, planId, predecessorHashes)))
       : [];
     // Two separately logged fragments are real workload, not proof that a
     // continuous long run or interval prescription was executed. Prefer a

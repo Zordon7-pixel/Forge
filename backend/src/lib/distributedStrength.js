@@ -82,6 +82,15 @@ function validateDistributionReceipt(receipt) {
 function validateDistributedSession(session, siblings, { source = false } = {}) {
   const receipt = session.strength_distribution;
   if (!validateDistributionReceipt(receipt) || !session.supports_requirement_id && !source) return false;
+  if (session.strength_withholding) {
+    if (source || !require('./activityAdaptationAuthority').validateWithholdingChild(session)) return false;
+    if (!Array.isArray(siblings)) return true;
+    const group = siblings.filter(s => s.strength_distribution?.group_id === receipt.group_id);
+    return group.length === receipt.partition_count
+      && new Set(group.map(s => s.strength_distribution.partition_index)).size === receipt.partition_count
+      && group.every(s => s.strength_distribution.allocation_hash === receipt.allocation_hash
+        && validateDistributedSession(s, null));
+  }
   const allocation = receipt.allocations[receipt.partition_index];
   const localId = session.source_session_id || session.session_id || session.id;
   if (allocation.session_id !== localId) return false;

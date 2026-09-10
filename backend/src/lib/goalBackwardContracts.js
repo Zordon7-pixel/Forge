@@ -481,7 +481,7 @@ function validatePipelineArtifact(artifact, { maximumPayloadBytes } = {}) {
     const byDate = new Map();
     for (const session of programSessions) {
       const kinds = byDate.get(session.scheduled_local_date) || [];
-      kinds.push(String(session.workout_family).startsWith('strength_') ? 'lift' : 'run');
+      kinds.push(require('./activityAdaptationAuthority').dispositionModality(session));
       byDate.set(session.scheduled_local_date, kinds);
     }
     if ([...byDate.values()].some(kinds => kinds.length > 2 || new Set(kinds).size !== kinds.length)) {

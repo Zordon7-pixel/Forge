@@ -427,7 +427,7 @@ function validatedCompleteProgramPlan(plan) {
   const canonical = require('./canonicalWorkout');
   const seenDates = new Set();
   for (const session of sessions) {
-    const dayModality = `${session.scheduled_local_date}:${String(session.workout_family).startsWith('strength_') ? 'lift' : 'run'}`;
+    const dayModality = `${session.scheduled_local_date}:${require('./activityAdaptationAuthority').dispositionModality(session)}`;
     if (seenDates.has(dayModality) || canonical.flattenSteps(session.steps).length > 64
       || session.scheduled_local_date < plan.programContract.start_date || session.scheduled_local_date > plan.programContract.end_date) return false;
     seenDates.add(dayModality);

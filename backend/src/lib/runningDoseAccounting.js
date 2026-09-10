@@ -85,15 +85,23 @@ function runningPrescribedDose(session, familyVector) {
   const legacy = { valid: Boolean(familyVector), vector: familyVector && [...familyVector],
     state: 'PROTECTED_FAMILY_REFERENCE', version: VERSION, reference_id: REFERENCE.id };
   if (!FAMILIES.has(session?.workout_family)) return legacy;
+  if (session.activity_reduction && FAMILIES.has(session.activity_reduction.original?.workout_family)) {
+    const result = require('./activityAdaptationAuthority').retainedRunningDose(session);
+    if (session.content_hash && require('./canonicalWorkout').canonicalWorkoutHash(session) !== session.content_hash) return { ...legacy, valid: false };
+    return result || { ...legacy, valid: false, state: 'ACTIVITY_REDUCTION_INVALID' };
+  }
   if (session.running_dose_accounting_version === undefined) return { ...legacy,
     valid: !session.running_dose, state: session.running_dose ? 'RUNNING_DOSE_POLICY_DOWNGRADE' : 'CONSERVATIVE_LEGACY_FAMILY' };
   const invalid = { ...legacy, valid: false, state: 'INVALID_CANONICAL_RUNNING_DOSE' };
   const receipt = session.running_dose;
+  const activitySource = receipt?.source?.authority === require('./activityAdaptationAuthority').VERSION;
   if (session.running_dose_accounting_version !== VERSION || !receipt
     || receipt.reference_id !== REFERENCE.id || receipt.reference_hash !== REFERENCE_HASH
     || receipt.canonical_prescription_hash !== canonicalHash(prescription(session))
     || receipt.source_hash !== canonicalHash(receipt.source)
-    || !['COMPATIBLE_SERVER_HISTORY','CONSERVATIVE_TEMPLATE'].includes(receipt.source?.authority)
+    || (!['COMPATIBLE_SERVER_HISTORY','CONSERVATIVE_TEMPLATE'].includes(receipt.source?.authority) && !activitySource)
+    || activitySource && (!require('./activityAdaptationAuthority').validateRecoverySource(receipt.source)
+      || !require('./activityAdaptationAuthority').validateRecoveryChild(session, receipt.source.activity_recovery_registry))
     || receipt.source?.policy_version !== VERSION
     || receipt.source?.authority === 'COMPATIBLE_SERVER_HISTORY' && !receipt.source.evidence_snapshot_hash
     || session.content_hash && require('./canonicalWorkout').canonicalWorkoutHash(session) !== session.content_hash) return invalid;
@@ -159,6 +167,17 @@ function bindRunningDosePool(sessions, source) {
 }
 
 function validateRunningDosePools(sessions) {
+  if (sessions.some(session => session.activity_reduction)) {
+    const authority = require('./activityAdaptationAuthority');
+    if (sessions.some(session => session.activity_reduction && !authority.validateSessionReduction(session))) return false;
+    // Validate the immutable original pool first. The separate reduction receipt
+    // accounts for each withheld allocation; it does not rewrite its siblings.
+    const originals = sessions.map(session => session.activity_reduction
+      ? session.activity_reduction.original : session);
+    if (!validateRunningDosePools(originals)) return false;
+    return sessions.filter(session => FAMILIES.has(session.workout_family))
+      .every(session => runningPrescribedDose(session, [2,2,1,0,0,1,1,0]).valid);
+  }
   const groups = new Map();
   for (const session of sessions.filter(entry => FAMILIES.has(entry.workout_family))) {
     const receipt = session.running_dose;

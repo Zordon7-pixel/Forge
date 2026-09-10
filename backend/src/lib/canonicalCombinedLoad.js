@@ -97,4 +97,43 @@ function validateRollingCanonicalLoad(sessions, sources, { throughDate } = {}) {
   return { valid: windows.every(window => window.valid), windows };
 }
 
-module.exports = { VERSION, VERSIONS, buildCanonicalLoadSource, evaluateCanonicalCombinedLoad, validateRollingCanonicalLoad, sumBase };
+// Closed reduction adapter: the authenticated accepted predecessor is the
+// maximum prescription authority, never observed activity or a new template.
+// The original generation source ceilings were >= this accepted dose. Keeping
+// each prescription and every placed window <= its predecessor therefore
+// preserves those ceilings without minting or spending replacement capacity.
+function evaluateActivityCombinedLoad(successor, parent, { planningDate, completedIds = [] } = {}) {
+  const invalid = () => ({ valid: false, policy_version: VERSION,
+    reason_codes: ['ACTIVITY_COMBINED_SOURCE_INVALID'], windows: [] });
+  if (!require('./activityCanonicalSuccessor').validateActivitySet(successor, { authenticatedParent: parent })
+    || !require('./canonicalWorkout').validateCanonicalSessionSet(parent).valid
+    || planningDate !== successor.activity_adaptation.context.planning_date
+    || canonicalHash([...new Set(completedIds)].sort()) !== canonicalHash(successor.activity_adaptation.observation_artifact.qualified_completed_session_ids)) return invalid();
+  const completed = new Set(completedIds), inFuture = session => session.scheduled_local_date >= planningDate && !completed.has(session.session_id);
+  const original = parent.sessions.filter(inFuture), candidate = successor.sessions.filter(inFuture);
+  const starts = [...new Set(original.map(session => session.scheduled_local_date))].sort();
+  const { addDays } = require('./racePlanPolicy');
+  const windows = starts.flatMap(start => [0, 6].map(offset => {
+    const end = addDays(start, offset), within = rows => rows.filter(session => session.scheduled_local_date >= start && session.scheduled_local_date <= end);
+    const before = within(original), after = within(candidate);
+    const ceiling = aggregateWeeklyStress(before).weekly_dimension_sum, actual = aggregateWeeklyStress(after);
+    const absolute = require('./goalBackwardLoad').evaluateStressBudget(actual,
+      { normal_ceiling_vector: ceiling, authorized_ceiling_vector: ceiling });
+    const sourceBase = sumBase(before), actualBase = sumBase(after);
+    const duration = rows => rows.reduce((sum, session) => sum + (session.derived_totals?.duration_s || 0), 0);
+    return { start_date: start, end_date: end, source_base: sourceBase, actual_base: actualBase,
+      source_placed_ceiling: ceiling, actual_placed: actual.weekly_dimension_sum,
+      source_distance_m: knownRunDistance(before), actual_distance_m: knownRunDistance(after),
+      source_duration_s: duration(before), actual_duration_s: duration(after),
+      valid: actual.valid && absolute.valid && actualBase.every((value, index) => value <= sourceBase[index] + 1e-6)
+        && knownRunDistance(after) <= knownRunDistance(before) + 1e-6 && duration(after) <= duration(before) };
+  }));
+  return { valid: windows.every(window => window.valid), policy_version: VERSION,
+    authority: 'AUTHENTICATED_ACCEPTED_ACTIVITY_PREDECESSOR', source_hash: parent.content_hash,
+    comparison_kind: 'FUTURE_PRESCRIPTION_NONINCREASE', observed_v3_vector_state: 'NOT_AVAILABLE',
+    absolute_observed_plus_future_v3_budget_claimed: false, windows,
+    reason_codes: windows.every(window => window.valid) ? [] : ['CROSS_MODAL_FATIGUE_LIMIT'] };
+}
+
+module.exports = { VERSION, VERSIONS, buildCanonicalLoadSource, evaluateCanonicalCombinedLoad, validateRollingCanonicalLoad,
+  evaluateActivityCombinedLoad, sumBase };

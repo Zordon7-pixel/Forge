@@ -28,6 +28,15 @@ assert.deepEqual(duplicate.canonicalRuns[0].evidence_ids, ['provider-one', 'prov
 
 const linked = assess([{ ...base, id: 'linked', plan_session_id: 'planned-easy' }]);
 assert.equal(runCompletionEvidence([session], linked)[0].completed, true);
+const canonicalSession = { ...session, session: { ...session.session, canonical_workout_schema_version: 1, content_hash: 'a'.repeat(64) } };
+for (const hash of [undefined, '', 'not-a-hash', 'b'.repeat(64)]) {
+  const evidence = assess([{ ...base, id:'canonical-link', plan_session_id:'planned-easy',
+    planned_session_json:{...base.planned_session_json,content_hash:hash} }]);
+  assert.equal(runCompletionEvidence([canonicalSession], evidence)[0].completed, false, 'Canonical links require the exact nonempty authenticated prescription hash');
+  assert.equal(evidence.recentRunLoad.currentWeek.miles, 2);
+}
+assert.equal(runCompletionEvidence([canonicalSession], assess([{ ...base,id:'canonical-owned',plan_session_id:'planned-easy',
+  planned_session_json:{...base.planned_session_json,content_hash:'a'.repeat(64)} }]))[0].completed, true);
 for (const changed of [
   { date: '2026-09-08' },
   { planned_session_json: { ...base.planned_session_json, date: '2026-09-08' } },
@@ -79,4 +88,7 @@ const late = assess([{ ...base, id: 'late', health_start_at: '2026-09-10T02:00:0
 assert.equal(late.canonicalRuns[0].date, '2026-09-09', 'Originating device-local date wins over UTC date');
 assert.notEqual(linked.fingerprint, assess([{ ...base, id: 'linked', plan_session_id: 'planned-easy', perceived_effort: 8 }]).fingerprint);
 assert.notEqual(linked.fingerprint, assess([]).fingerprint);
+const enriched = assess([{...base,id:'linked',plan_session_id:'planned-easy',pace_avg:750,
+  workout_metrics_json:JSON.stringify({summary_source:'manual'})}]);
+assert.equal(enriched.fingerprint,linked.fingerprint,'Derived pace and transport summary attribution do not cause another coaching decision');
 console.log('activity identity, load and completion separation smoke: PASS');
