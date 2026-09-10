@@ -3,6 +3,7 @@ import { Brain, Maximize2, Minimize2, Minus, Plus, Zap } from 'lucide-react'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
 import AiGuidanceNote from './AiGuidanceNote'
 import ExerciseGuideAction from './ExerciseGuideAction'
+import LiftPrescriptionDetails from './LiftPrescriptionDetails'
 
 const TEXT_SCALES = [0.9, 1, 1.15, 1.3]
 
@@ -190,6 +191,7 @@ export default function StrengthWorkoutRecommendation({
                     <span style={{ fontSize: px(12) }}>Reps<br /><strong style={{ color: 'var(--text-primary)', fontSize: px(17) }}>{exercise?.reps || '-'}</strong></span>
                     <span style={{ fontSize: px(12) }}>Rest<br /><strong style={{ color: 'var(--text-primary)', fontSize: px(17) }}>{exercise?.rest || '-'}</strong></span>
                   </div>
+                  <LiftPrescriptionDetails exercise={exercise} fontSize={px(14)} />
                   {exercise?.cue && <p style={{ color: 'var(--text-muted)', fontSize: px(14), lineHeight: 1.5, margin: '10px 0 0' }}>{exercise.cue}</p>}
                   <div className="mt-3">
                     <ExerciseGuideAction exercise={exercise} sex={sex} />

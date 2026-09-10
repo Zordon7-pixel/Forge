@@ -25,7 +25,7 @@ import {
   technicalFactLabel,
 } from '../../lib/goalBackwardPresentation'
 import { trainingEvidenceKindLabel } from '../../lib/trainingEvidence'
-import { canonicalRunStructure } from '../../lib/weeklyRunBrief'
+import { canonicalRunStructure, canonicalTargetValue } from '../../lib/weeklyRunBrief'
 import './forgedCalendar.css'
 
 const TEXT_SCALES = [0.9, 1, 1.15, 1.3]
@@ -312,11 +312,7 @@ function customerValue(value) {
 }
 
 function canonicalTargetText(target = {}) {
-  if (!target || typeof target !== 'object') return ''
-  return Object.entries(target).map(([key, value]) => {
-    if (value === null || value === undefined || value === '') return ''
-    return `${humanizeMachineValue(key)}: ${Array.isArray(value) ? value.map(customerValue).join('–') : customerValue(value)}`
-  }).filter(Boolean).join(' · ')
+  return canonicalTargetValue(target)
 }
 
 function canonicalStepRows(steps = [], depth = 0) {

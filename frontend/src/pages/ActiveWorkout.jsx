@@ -4,6 +4,7 @@ import { Pause, Play, Plus, X } from 'lucide-react'
 import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
 import MovementDemo from '../components/MovementDemo'
+import LiftPrescriptionDetails from '../components/LiftPrescriptionDetails'
 import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '../utils/validation'
 import { authorizeWorkoutStart, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, workoutStartAccessFromState, workoutStartErrorMessage } from '../lib/dailyExecution'
 import { latestRunningActivity } from '../lib/activityType'
@@ -501,7 +502,10 @@ export default function ActiveWorkout() {
                   borderLeft: isCurrent ? '3px solid var(--accent)' : '3px solid transparent',
                   opacity: isDone ? 0.4 : 1
                 }}>
-                  <span className="flex-1 text-sm font-semibold" style={{ color: isCurrent ? 'var(--accent)' : 'var(--text-primary)', textDecoration: isDone ? 'line-through' : 'none' }}>{ex.name}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-semibold" style={{ color: isCurrent ? 'var(--accent)' : 'var(--text-primary)', textDecoration: isDone ? 'line-through' : 'none' }}>{ex.name}</span>
+                    {isCurrent && <LiftPrescriptionDetails exercise={ex} fontSize={12} />}
+                  </div>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{ex.sets}x{ex.reps}</span>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{ex.rest}</span>
                 </div>

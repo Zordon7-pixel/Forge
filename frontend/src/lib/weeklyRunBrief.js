@@ -285,6 +285,11 @@ export function canonicalTargetValue(target = {}) {
   if (!target || typeof target !== 'object') return ''
   return Object.entries(target).map(([key, value]) => {
     if (value === null || value === undefined || value === '') return ''
+    if (['duration_s', 'rest_s'].includes(key) && Number.isFinite(value) && value >= 0) {
+      const time = value % 60 === 0 ? `${value / 60} min` : `${Math.floor(value / 60)} min ${value % 60} sec`
+      return `${key === 'rest_s' ? 'Rest: ' : ''}${time}`
+    }
+    if (key === 'distance_m' && Number.isFinite(value)) return `${value} m`
     const label = key === 'rpe_range' ? 'RPE' : String(key).replaceAll('_', ' ')
     const range = value && typeof value === 'object' && !Array.isArray(value)
       && Number.isFinite(value.minimum) && Number.isFinite(value.maximum)

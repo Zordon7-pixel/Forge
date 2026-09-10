@@ -14,6 +14,8 @@ The closed material-change binding remains limited to 16,384 physical JSONB byte
 
 Accepted maximum-horizon HTTP reproduction: 20 weeks/263 canonical sessions, canonical set 1,897,981 JSON bytes / 2,270,544 JSONB bytes; manifest 1,867,283 / 2,237,479 bytes. Generation took 19,631 ms and exact apply 18,636 ms, below the explicit 90-second generation and 45-second apply deadlines. A separate 4,074,251-byte JSON / 4,990,956-byte physical JSONB payload was rejected before artifact writes. These are measured disposable fixtures, not a guarantee for arbitrary unbounded text.
 
+The preceding maximum-horizon receipt belongs to the first implementation candidate, not the later review correction. The corrected real HTTP/PostgreSQL 20-week expansion/removal gate also passed: expansion preview 31,590 ms / apply 33,426 ms; removal preview 32,144 ms / apply 31,061 ms. Removal preview is explicitly checked against its **actual 45-second** self-service deadline (not the 90-second generation deadline). Its removed canonical set measured 2,077,037 JSON bytes / 2,478,192 physical JSONB bytes; manifest 2,043,575 / 2,442,279. A 4,074,251-byte JSON / 4,974,784-byte JSONB negative was rejected before artifact writes. Final exact-commit gate logs remain required; these scoped disposable measurements are not live-phone or unbounded performance guarantees.
+
 `runAlwaysMigrations` installs the versioned constraint atomically and idempotently; replay is tested with accepted rows present. It does not rewrite, shrink or delete existing payloads.
 
 Read-only rollback preflight:

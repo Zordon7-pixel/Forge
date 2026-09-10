@@ -1234,6 +1234,40 @@ test('accepted plan hands off through warm-up and run save into a durable passiv
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('known lifting targets survive the settled plan handoff and active workout screen', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const lift = { ...plannedLift, main: [
+    { name: 'Dumbbell bench press', sets: 2, reps: '6', rest: '180 sec', load: '40 lb starting load',
+      rpe: '6–7 (3–4 RIR)', loadSource: 'Conservative estimate from a recent Dumbbell bench press set:45 lb x8',
+      progression: 'Repeat40 lb until every set stays at6–7 RPE or easier, then add2.5 lb.' },
+    { name: 'One-arm dumbbell row', sets: 2, reps: '8 each side', rest: '180 sec',
+      load: 'Choose a load that leaves3–4 RIR', rpe: '6–7 (3–4 RIR)' },
+  ] }
+  const session = { id: 'known-load-workout', muscle_groups: ['chest'], started_at: new Date().toISOString() }
+  const apiState = await installAuthenticatedApi(page, { responses: new Map([
+    ['GET /api/plans/my', activePlanWithTodaySessions([lift])],
+    ['GET /api/plans/today', executionWith({ run: null, lift })],
+    ['POST /api/workouts/start', { session }],
+    ['GET /api/workouts/known-load-workout', { session }],
+    ['GET /api/workouts/known-load-workout/sets', { sets: [] }],
+  ]) })
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  await page.getByRole('button', { name: 'Start Lift', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Start Workout', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'From your plan', exact: true })).toBeVisible()
+  await expect(page.getByText('40 lb starting load', { exact: true })).toBeVisible()
+  await expect(page.getByText(lift.main[0].loadSource, { exact: true })).toBeVisible()
+  await expect(page.getByText(lift.main[0].progression, { exact: true })).toBeVisible()
+  await expect(page.getByText(lift.main[0].rpe, { exact: true }).first()).toBeVisible()
+  await page.getByRole('button', { name: 'Start Workout', exact: true }).click()
+  await expect(page).toHaveURL(/\/workout\/active\/known-load-workout$/)
+  await expect(page.getByText('40 lb starting load', { exact: true })).toBeVisible()
+  await expect(page.getByText(lift.main[0].progression, { exact: true })).toBeVisible()
+  await expect.poll(() => page.locator('body').evaluate(body => body.scrollWidth <= window.innerWidth)).toBe(true)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('scheduled lift logs one set, opens the large rest timer, and completes the exact plan session', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const sets = []

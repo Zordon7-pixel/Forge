@@ -3,6 +3,7 @@ import { canonicalTargetValue, canonicalRunStructure } from '../src/lib/weeklyRu
 import { canonicalPrescribedDurationSeconds } from '../src/lib/planCalendar.js'
 assert.equal(canonicalTargetValue({ rpe_range: { minimum: 2, maximum: 4 } }), 'RPE: 2–4')
 assert.equal(canonicalTargetValue({ rpe_range: { minimum: 3, maximum: 3 } }), 'RPE: 3')
+assert.equal(canonicalTargetValue({ duration_s: 1200, rest_s: 90 }), '20 min · Rest: 1 min 30 sec')
 assert.equal(canonicalTargetValue({ future_target: { unknown: true } }), '')
 assert.ok(!canonicalTargetValue({ rpe_range: { minimum: 2, maximum: 4 }, nested: { a: {} } }).includes('[object Object]'))
 const steps = [{ step_id: 'private-step-id', type: 'run', order: 1, provenance: [{ decision_id: 'private-decision-hash' }],
