@@ -93,7 +93,10 @@ async function main() {
   const frequency = Number(process.env.PROGRAM_TEST_FREQUENCY || 4);
   const liftFrequency = Number(process.env.PROGRAM_TEST_LIFT_FREQUENCY || frequency);
   const planMode = process.env.PROGRAM_TEST_MODE || 'hybrid_maintain';
-  assert.ok([3, 4, 7].includes(frequency) && [2, 3, 4, 7].includes(liftFrequency), 'Explicit guarded acceptance frequencies');
+  assert.ok([3, 4, 5, 6, 7].includes(frequency) && [2, 3, 4, 7].includes(liftFrequency), 'Explicit guarded acceptance frequencies');
+  const runWeekdays = process.env.PROGRAM_TEST_RUN_WEEKDAYS?.split(',') || all;
+  const liftWeekdays = process.env.PROGRAM_TEST_LIFT_WEEKDAYS?.split(',') || all;
+  assert.ok([runWeekdays, liftWeekdays].every(days => days.length && new Set(days).size === days.length && days.every(day => all.includes(day))));
   assert.ok(['hybrid_maintain', 'hybrid_build'].includes(planMode));
   const raceDate = process.env.PROGRAM_TEST_HORIZON === '20' ? '2027-01-24' : '2026-10-11';
   const expectedWeeks = process.env.PROGRAM_TEST_HORIZON === '20' ? 20 : 5;
@@ -107,7 +110,7 @@ async function main() {
   assert.equal(seven.data.user.run_days_per_week, 7);
   assert.equal(seven.data.user.lift_days_per_week, 7);
   const profile = await request('PUT', '/auth/me/profile', { run_days_per_week: frequency, lift_days_per_week: liftFrequency,
-    preferred_workout_days: ['Tue','Thu','Sat','Sun'], run_eligible_weekdays: all, lift_eligible_weekdays: all,
+    preferred_workout_days: ['Tue','Thu','Sat','Sun'], run_eligible_weekdays: runWeekdays, lift_eligible_weekdays: liftWeekdays,
     ...(process.env.PROGRAM_TEST_RECOVERY === 'LOW' ? { comeback_mode: 1 } : {}),
     ...(process.env.PROGRAM_TEST_HISTORY === 'unknown' ? {} : { weekly_miles_current: process.env.PROGRAM_TEST_HISTORY === 'endurance' ? 28 : 14 }) });
   assert.equal(profile.status, 200, JSON.stringify(profile.data));
@@ -133,8 +136,22 @@ async function main() {
   const generationRequest = {
     planning_date_local: '2026-09-10', timezone_offset_minutes: 240, planning_timezone: 'America/New_York',
     target: { runDaysPerWeek: frequency, liftDaysPerWeek: liftFrequency, liftingEnabled: true, planMode,
-      trainingDays: all, runEligibleWeekdays: all, liftEligibleWeekdays: all },
+      trainingDays: runWeekdays, runEligibleWeekdays: runWeekdays, liftEligibleWeekdays: liftWeekdays },
   };
+  if (process.env.PROGRAM_TEST_RUN_WEEKDAYS || process.env.PROGRAM_TEST_LIFT_WEEKDAYS) {
+    for (const [modality, days, key] of [['run', runWeekdays, 'runDaysPerWeek'], ['lift', liftWeekdays, 'liftDaysPerWeek']]) {
+      if (days.length === 7) continue;
+      const rejected = await request('POST', `/plans/generate-for-race/${race.data.race.id}`,
+        { ...generationRequest, target: { ...generationRequest.target, [key]: days.length + 1 } });
+      assert.equal(rejected.status, 400);
+      assert.equal(rejected.data.code, 'MODALITY_AVAILABILITY_INSUFFICIENT');
+      assert.deepEqual(rejected.data.details, { classification: 'MODALITY_AVAILABILITY_INSUFFICIENT', modality,
+        requested: days.length + 1, available: days.length, eligible_weekdays: days });
+      assert.equal((await db.dbAll('SELECT id FROM plan_generation_candidates WHERE user_id=?', [owner])).length, 0);
+      assert.equal((await db.dbAll('SELECT id FROM user_plans WHERE user_id=?', [owner])).length, 0);
+    }
+    generationRequest.target.calendarOccupancy = { classification: 'FULL_WEEK_OCCUPANCY_REQUESTED', client: true };
+  }
   const previews = process.env.PROGRAM_TEST_DUPLICATE_PREVIEW === '1'
     ? await Promise.all([request('POST', `/plans/generate-for-race/${race.data.race.id}`, generationRequest),
       request('POST', `/plans/generate-for-race/${race.data.race.id}`, generationRequest)])
@@ -167,6 +184,20 @@ async function main() {
   const fullWeek = rows[0].candidate_plan_json.weeks[1];
   assert.equal(fullWeek.days.flatMap(day => day.sessions).filter(session => session.kind === 'run').length, frequency);
   assert.equal(fullWeek.days.flatMap(day => day.sessions).filter(session => session.kind === 'lift').length, liftFrequency);
+  const occupancy = require('../src/lib/calendarOccupancy').calendarOccupancy({ runCount: frequency, liftCount: liftFrequency,
+    runEligibleWeekdays: runWeekdays, liftEligibleWeekdays: liftWeekdays, timezone: 'America/New_York' });
+  assert.deepEqual(rows[0].candidate_plan_json.programContract.calendar_occupancy, occupancy);
+  for (const week of rows[0].candidate_plan_json.weeks) {
+    for (const day of week.days) for (const session of day.sessions) {
+      if (session.workout_family === 'race') { assert.equal(day.date, raceDate); continue; }
+      assert.ok((session.kind === 'run' ? runWeekdays : liftWeekdays).includes(day.day), 'Each modality stays on its own weekdays');
+    }
+    if (week.startDate > '2026-09-10' && !['taper', 'race'].includes(week.phase)) {
+      assert.equal(week.days.filter(day => day.sessions.some(session => session.kind === 'run')).length, frequency);
+      assert.equal(week.days.filter(day => day.sessions.some(session => session.kind === 'lift')).length, liftFrequency);
+      assert.ok(occupancy.classification === 'FULL_WEEK_OCCUPANCY_REQUESTED' || week.days.some(day => !day.sessions.length));
+    }
+  }
   // Preview must not replace an active assignment; apply/manifest assertions are
   // added once this real pipeline produces the complete canonical candidate.
   assert.equal((await db.dbAll('SELECT id FROM user_plans WHERE user_id=?', [owner])).length, 0);

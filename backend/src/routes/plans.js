@@ -2294,7 +2294,7 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
       throw candidateError(400, 'INVALID_HYROX_GOAL_ORDER', 'HYROX must be the near-term goal followed by at most one running race.');
     }
     const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
-    if (!runSchedule.valid) throw candidateError(400, 'INVALID_RUN_SCHEDULE', runSchedule.error);
+    if (!runSchedule.valid) throw candidateError(400, runSchedule.details?.classification || 'INVALID_RUN_SCHEDULE', runSchedule.error, runSchedule.details);
     if (![3, 4].includes(runSchedule.runDaysPerWeek)) {
       throw candidateError(400, 'INVALID_HYROX_RUN_FREQUENCY', 'HYROX plans require three or four run days per week.');
     }
@@ -2387,7 +2387,7 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
   }
   const finalRace = races[races.length - 1];
   const liftSchedule = resolveLiftSchedule(profile, requested);
-  if (!liftSchedule.valid) throw candidateError(400, liftSchedule.code, liftSchedule.error);
+  if (!liftSchedule.valid) throw candidateError(400, liftSchedule.details?.classification || liftSchedule.code, liftSchedule.error, liftSchedule.details);
   const raceWindow = concurrentPlan.racePlanWindow(finalRace.race_date, planningDateLocal);
   if (!raceWindow) throw candidateError(400, 'RACE_DATE_PASSED', 'Race dates must be today or later.');
   if (races[0].race_date < raceWindow.startDate) {
@@ -2398,7 +2398,7 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
     );
   }
   const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
-  if (!runSchedule.valid) throw candidateError(400, 'INVALID_RUN_SCHEDULE', runSchedule.error);
+  if (!runSchedule.valid) throw candidateError(400, runSchedule.details?.classification || 'INVALID_RUN_SCHEDULE', runSchedule.error, runSchedule.details);
   const raceTargets = races.map((race) => ({
     raceDate: race.race_date,
     raceId: race.id,
@@ -2437,9 +2437,9 @@ function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
     throw candidateError(400, 'OWNED_RACES_REQUIRED', 'Use owned race IDs to build a multi-race plan.');
   }
   const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
-  if (!runSchedule.valid) throw candidateError(400, 'INVALID_RUN_SCHEDULE', runSchedule.error);
+  if (!runSchedule.valid) throw candidateError(400, runSchedule.details?.classification || 'INVALID_RUN_SCHEDULE', runSchedule.error, runSchedule.details);
   const liftSchedule = resolveLiftSchedule(profile, requested);
-  if (!liftSchedule.valid) throw candidateError(400, liftSchedule.code, liftSchedule.error);
+  if (!liftSchedule.valid) throw candidateError(400, liftSchedule.details?.classification || liftSchedule.code, liftSchedule.error, liftSchedule.details);
   if (requested.hyroxEvent && ![3, 4].includes(runSchedule.runDaysPerWeek)) {
     throw candidateError(400, 'INVALID_HYROX_RUN_FREQUENCY', 'HYROX plans require three or four run days per week.');
   }
@@ -4578,7 +4578,11 @@ function* computeGoalBackwardProgramSteps(input, dependencies = {}) {
     const allDates = [];
     for (let date = windowStart; date <= windowEnd; date = addPolicyDays(date, 1)) allDates.push(date);
     const weekday = (date) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${date}T12:00:00Z`).getUTCDay()];
-    const dates = allDates.filter((date) => contract.run_eligible_weekdays.includes(weekday(date))
+    const reservedRestDay = weekStart >= planningDateLocal && !['race', 'taper'].includes(week.phase)
+      ? require('../lib/calendarOccupancy').sharedRestDay(contract.calendar_occupancy,
+        week.days.filter(day => day.sessions.some(session => session.kind === 'run')).map(day => day.day)) : null;
+    const placementDates = allDates.filter(date => weekday(date) !== reservedRestDay || ownedEventDates.has(date));
+    const dates = placementDates.filter((date) => contract.run_eligible_weekdays.includes(weekday(date))
       || contract.lift_eligible_weekdays.includes(weekday(date)) || ownedEventDates.has(date));
     const result = computeGoalBackwardSingleWindow({ ...input,
       planningDateLocal: windowStart }, { ...dependencies, inspectDecision: undefined, programInventory, programWindowDates: dates,
@@ -4589,8 +4593,8 @@ function* computeGoalBackwardProgramSteps(input, dependencies = {}) {
           eligible_dates: allDates.filter(date => contract.run_eligible_weekdays.includes(weekday(date))),
           completed_run_days: Number(week.currentWeekConstraint?.completedRunsAppliedToQuota || 0),
           input_hash: state.inputHash } : undefined,
-      programRunDates: allDates.filter((date) => contract.run_eligible_weekdays.includes(weekday(date))),
-      programLiftDates: allDates.filter((date) => contract.lift_eligible_weekdays.includes(weekday(date))) });
+      programRunDates: placementDates.filter((date) => contract.run_eligible_weekdays.includes(weekday(date))),
+      programLiftDates: placementDates.filter((date) => contract.lift_eligible_weekdays.includes(weekday(date))) });
     if (!result.selected_candidate) {
       const failed = { ...result, program_contract: contract, failed_program_week: weekStart };
       dependencies.inspectDecision?.(failed);
@@ -5987,6 +5991,19 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
   });
   if (!built.validation.valid) {
+    if (!initial.target.hyroxEvent && built.plan?.calendarOccupancy) {
+      const messages = built.validation.errors.map(error => String(error.message || error));
+      const text = messages.join(' ');
+      const classification = /calendarOccupancy|schema|identity|hash|must preserve/i.test(text) ? 'INVALID_PLAN_ARTIFACT'
+        : /injury|safety|recovery|protection|pain/i.test(text) ? 'SAFETY_RECOVERY_CONFLICT'
+        : /load|mileage|progression|dose/i.test(text) ? 'DOSE_LOAD_CONFLICT' : 'PLACEMENT_UNSATISFIABLE';
+      throw candidateError(422, classification, 'The requested dates and prescriptions conflict with the checks listed below. Your goal and active plan were not changed.',
+        { classification, failed_checks: messages, alternatives: classification === 'PLACEMENT_UNSATISFIABLE'
+          ? ['Allow another eligible weekday or a compatible same-day run/lift pairing.']
+          : classification === 'SAFETY_RECOVERY_CONFLICT' ? ['Retain the current recovery guidance; review training after the protective period.']
+            : classification === 'DOSE_LOAD_CONFLICT' ? ['Review the requested workload or allow a lower-dose alternative without changing the race aspiration.']
+              : ['Rebuild a fresh preview from the current saved preferences.'] });
+    }
     throw candidateError(422, 'PLAN_VALIDATION_FAILED', 'The requested plan did not pass safety validation.', built.validation.errors);
   }
   const trace = buildCandidateTrace(initial, built);
