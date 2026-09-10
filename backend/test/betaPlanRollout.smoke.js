@@ -754,6 +754,7 @@ async function run() {
     valid: true,
     runDaysPerWeek: 5,
     trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Sat'],
+    runEligibleWeekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Sat'],
     runDaysSource: 'profile',
     trainingDaysSource: 'profile',
     explicitSelection: false,

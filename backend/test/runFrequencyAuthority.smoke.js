@@ -11,7 +11,26 @@ const repoRoot = path.resolve(__dirname, '../..');
 const catalogSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/pages/PlanCatalog.jsx'), 'utf8');
 const planSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/pages/Plan.jsx'), 'utf8');
 assert.match(catalogSource, /const target = \{[\s\S]*trainingDays,[\s\S]*runDaysPerWeek: runCount/);
-assert.match(catalogSource, /Math\.min\(6, trainingDays\.length\)/);
+// Exercise the Catalog weekday handler: eligibility edits must never silently
+// rewrite an explicitly selected seven-run frequency.
+const vm = require('node:vm');
+const catalogDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const catalogState = { days: catalogDays.slice(), runs: 7 };
+const toggleStart = catalogSource.indexOf('  const toggleDay = (day) => {');
+const toggleEnd = catalogSource.indexOf('  const generatePlan = ', toggleStart);
+assert.ok(toggleStart > 0 && toggleEnd > toggleStart);
+const catalogSandbox = { preferenceEditRevision: { current: 0 },
+  sortDays: days => days,
+  setTrainingDays: update => { catalogState.days = typeof update === 'function' ? update(catalogState.days) : update; },
+  setRunDaysPerWeek: update => { catalogState.runs = typeof update === 'function' ? update(catalogState.runs) : update; } };
+vm.createContext(catalogSandbox);
+vm.runInContext(`${catalogSource.slice(toggleStart, toggleEnd)}; globalThis.toggle = toggleDay`, catalogSandbox);
+catalogSandbox.toggle('Mon');
+assert.equal(catalogState.runs, 7);
+assert.equal(catalogState.days.length, 6);
+assert.equal(resolveRunSchedule({}, { runDaysPerWeek: catalogState.runs, trainingDays: catalogState.days }).valid, false,
+  'Incompatible eligibility is surfaced for review, not silently reduced to six runs');
+assert.equal(resolveRunSchedule({}, { runDaysPerWeek: 7, trainingDays: catalogDays }).valid, true);
 assert.match(planSource, /planReviewRequired[\s\S]*Your plan needs a frequency review[\s\S]*The active calendar has not been rewritten[\s\S]*Review and rebuild calendar/);
 assert.match(planSource, /currentWeekConstraint[\s\S]*Your first week is partial[\s\S]*currentWeekConstraint\.explanation/);
 
@@ -441,10 +460,13 @@ async function checkProfileReviewMarker() {
   };
   const tx = {
     get: async (sql, params = []) => {
-      if (sql.includes('SELECT run_days_per_week, preferred_workout_days FROM users')) {
+      if (sql.includes('SELECT run_days_per_week, lift_days_per_week, preferred_workout_days, run_eligible_weekdays, lift_eligible_weekdays FROM users')) {
         return {
           run_days_per_week: user.run_days_per_week,
+          lift_days_per_week: user.lift_days_per_week,
           preferred_workout_days: user.preferred_workout_days,
+          run_eligible_weekdays: user.run_eligible_weekdays,
+          lift_eligible_weekdays: user.lift_eligible_weekdays,
         };
       }
       if (sql.includes('FROM user_plans up')) {

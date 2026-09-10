@@ -606,8 +606,6 @@ function authoritativePlanTarget(activePlan = {}, profile = {}) {
   }
 
   return { valid: true, profileSchedule: { trainingDays, runDaysPerWeek, liftDaysPerWeek }, target: {
-    runDaysPerWeek, liftDaysPerWeek, trainingDays, runEligibleWeekdays: trainingDays,
-    liftEligibleWeekdays: normalizeRolloutTrainingDays(profile.lift_eligible_weekdays ?? profile.preferred_workout_days),
     planMode: rawMode,
     liftingEnabled,
     strengthGoal: String(strength.goal || (rawMode === planSchema.PLAN_MODES.HYBRID_BUILD ? 'build' : 'maintain')),
