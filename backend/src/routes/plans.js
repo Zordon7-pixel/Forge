@@ -5234,9 +5234,9 @@ function buildAdaptationSurfaceSuccessor({
     const rawSessions = (proposedPlan.weeks || []).flatMap(week => planSchema.getDayEntries(week)
       .flatMap(day => Array.isArray(day.sessions) ? day.sessions : []));
     const sessionRows = new Map(rawSessions.map(session => [session.session_id, session]));
-    const nextSet = { ...clonePlanValue(proposedPlan.programCanonicalIdentity),
-      sessions: proposedPlan.programCanonicalIdentity.session_content_hashes.map(entry => sessionRows.get(entry.session_id)) };
-    if (sessionRows.size !== rawSessions.length || sessionRows.size !== nextSet.sessions.length
+    const nextSet = policy.canonicalSetPayload({ ...clonePlanValue(proposedPlan.programCanonicalIdentity),
+      sessions: proposedPlan.programCanonicalIdentity.session_content_hashes.map(entry => sessionRows.get(entry.session_id)) });
+    if (!nextSet || sessionRows.size !== rawSessions.length || sessionRows.size !== nextSet.sessions.length
       || !policy.validateActivitySet(nextSet, { authenticatedParent: parent })) {
       throw surfaceReconcileReviewRequired('ACTIVITY_SUCCESSOR_PARENT_BINDING_INVALID');
     }

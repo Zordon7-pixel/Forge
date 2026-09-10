@@ -160,6 +160,10 @@ authenticated parent/context comparisons and transaction/revision checks still r
 Separate requests—including concurrent ones—never share this validation inventory.
 Mutable, shallow-frozen, accessor, proxy, cyclic or custom-state graphs are not
 eligible. No timeout, training coefficient, ceiling or validator is removed.
+The same detached snapshot boundary is used when reconstructing the successor
+inside the final save transaction, so that path cannot lose immutable identity
+and repeat the entire predecessor chain for every validation consumer. Fresh
+database/parent matching remains outside the memo before the accepted write.
 
 Named tests and acceptance gaps are mapped in
 [activity-reduction-test-matrix.md](activity-reduction-test-matrix.md).
