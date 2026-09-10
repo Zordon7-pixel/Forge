@@ -967,7 +967,13 @@ const unstructuredSession = unstructuredTargetPace.weeks
   ));
 assert.ok(unstructuredSession, 'test fixture includes the second-race sharpening session');
 unstructuredSession.session.type = 'easy';
-const unstructuredValidation = concurrent.validateConcurrentPlan(unstructuredTargetPace, context);
+const qualifiedTargetPaceContext = { ...context, history: { ...context.history, recentRuns: [{
+  id: 'synthetic-recent-qualified-race', date: '2026-07-20', distance_miles: 10,
+  duration_seconds: 5400, type: 'race', source: 'manual',
+}] } };
+assert.ok(raceTargets.every(race => concurrent.hasCurrentQualifiedPerformanceForRace(
+  qualifiedTargetPaceContext.history, race, context.todayISO)), 'Numeric target-pace obligation has independent current performance authority');
+const unstructuredValidation = concurrent.validateConcurrentPlan(unstructuredTargetPace, qualifiedTargetPaceContext);
 assert.equal(unstructuredValidation.valid, false, 'goal-pace metadata on an unstructured easy run cannot satisfy the validator');
 assert.equal(
   unstructuredValidation.errors.some((error) => error.includes('structured target-pace session before 2026-10-11')),
