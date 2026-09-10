@@ -576,7 +576,8 @@ function normalizeRolloutTrainingDays(raw) {
 }
 
 function authoritativePlanTarget(activePlan = {}, profile = {}) {
-  const rawTrainingDays = parseJson(profile.preferred_workout_days, profile.preferred_workout_days);
+  const rawDays = profile.run_eligible_weekdays ?? profile.preferred_workout_days;
+  const rawTrainingDays = parseJson(rawDays, rawDays);
   const rawRunDays = profile.run_days_per_week;
   const rawLiftDays = profile.lift_days_per_week;
   if (!Array.isArray(rawTrainingDays) || rawTrainingDays.length < 1) {
@@ -586,7 +587,7 @@ function authoritativePlanTarget(activePlan = {}, profile = {}) {
   if (trainingDays.length !== new Set(rawTrainingDays.map((day) => String(day))).size) {
     return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
   }
-  const runDaysPerWeek = integer(rawRunDays, 1, 6);
+  const runDaysPerWeek = integer(rawRunDays, 1, 7);
   if (!runDaysPerWeek || runDaysPerWeek > trainingDays.length) {
     return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
   }
@@ -599,12 +600,14 @@ function authoritativePlanTarget(activePlan = {}, profile = {}) {
   let liftDaysPerWeek = 0;
   if (liftingEnabled) {
     if (strength.enabled !== true) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
-    liftDaysPerWeek = integer(rawLiftDays, 1, 4);
+    liftDaysPerWeek = integer(rawLiftDays, 1, 7);
     if (!liftDaysPerWeek) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
     if (!Array.isArray(strength.equipment)) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
   }
 
   return { valid: true, profileSchedule: { trainingDays, runDaysPerWeek, liftDaysPerWeek }, target: {
+    runDaysPerWeek, liftDaysPerWeek, trainingDays, runEligibleWeekdays: trainingDays,
+    liftEligibleWeekdays: normalizeRolloutTrainingDays(profile.lift_eligible_weekdays ?? profile.preferred_workout_days),
     planMode: rawMode,
     liftingEnabled,
     strengthGoal: String(strength.goal || (rawMode === planSchema.PLAN_MODES.HYBRID_BUILD ? 'build' : 'maintain')),

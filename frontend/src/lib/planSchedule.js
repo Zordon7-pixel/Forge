@@ -15,11 +15,11 @@ export function normalizeTrainingDays(value) {
 
 export function scheduleDraftFromPlan(planData = {}) {
   const preferences = planData?.schedulePreferences || {}
-  const selectedDays = normalizeTrainingDays(preferences.trainingDays)
+  const selectedDays = normalizeTrainingDays(preferences.runEligibleWeekdays || preferences.trainingDays)
   const trainingDays = selectedDays.length ? selectedDays : [...DEFAULT_TRAINING_DAYS]
   return {
     trainingDays,
-    runDaysPerWeek: clampInteger(preferences.runDaysPerWeek, 1, Math.min(6, trainingDays.length), Math.min(3, trainingDays.length)),
+    runDaysPerWeek: clampInteger(preferences.runDaysPerWeek, 1, 7, Math.min(3, trainingDays.length)),
   }
 }
 
@@ -33,19 +33,18 @@ export function toggleTrainingDay(draft, day) {
   const trainingDays = current.includes(day)
     ? current.filter((candidate) => candidate !== day)
     : normalizeTrainingDays([...current, day])
-  const maximumRuns = Math.max(1, Math.min(6, trainingDays.length))
   return {
     trainingDays,
-    runDaysPerWeek: clampInteger(draft?.runDaysPerWeek, 1, maximumRuns, maximumRuns),
+    runDaysPerWeek: draft?.runDaysPerWeek,
   }
 }
 
 export function validateScheduleDraft(draft) {
   const trainingDays = normalizeTrainingDays(draft?.trainingDays)
-  const runDaysPerWeek = Number(draft?.runDaysPerWeek)
+  const runDaysPerWeek = draft?.runDaysPerWeek
   if (!trainingDays.length) return 'Choose at least one eligible running day.'
-  if (!Number.isInteger(runDaysPerWeek) || runDaysPerWeek < 1 || runDaysPerWeek > 6) {
-    return 'Choose between one and six running days per week.'
+  if (!Number.isInteger(runDaysPerWeek) || runDaysPerWeek < 1 || runDaysPerWeek > 7) {
+    return 'Choose between one and seven running days per week.'
   }
   if (runDaysPerWeek > trainingDays.length) {
     return 'Weekly run frequency cannot exceed the number of eligible weekdays.'
@@ -91,6 +90,9 @@ export function buildScheduleRebuildRequest({ planData = {}, goal = {}, raceIds 
   const liftingEnabled = planMode !== 'run_only' && Boolean(strengthPolicy.enabled)
   const target = {
     trainingDays,
+    runEligibleWeekdays: trainingDays,
+    liftEligibleWeekdays: normalizeTrainingDays(planData?.schedulePreferences?.liftEligibleWeekdays
+      || strengthPolicy.preferredDays || trainingDays),
     runDaysPerWeek,
     planMode,
     liftingEnabled,

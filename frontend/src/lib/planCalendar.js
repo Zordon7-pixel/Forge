@@ -185,7 +185,7 @@ export function racePlanGenerationTarget(plan, profile = {}) {
   const policy = data.strengthPolicy || data.strength_policy || {}
   const hasProfilePreference = profile?.lift_days_per_week !== undefined && profile?.lift_days_per_week !== null
   if (!plan && !hasProfilePreference) return {}
-  const profileLiftDays = Math.max(0, Math.min(4, Math.round(Number(profile?.lift_days_per_week || 0))))
+  const profileLiftDays = Math.max(0, Math.min(7, Math.round(Number(profile?.lift_days_per_week || 0))))
   const hasPlan = Boolean(plan && Object.keys(data).length)
   const currentMode = hasPlan ? getPlanMode(plan) : 'run_only'
   const planMode = profileLiftDays > 0
@@ -195,12 +195,16 @@ export function racePlanGenerationTarget(plan, profile = {}) {
   const currentPlanLiftDays = currentMode !== 'run_only'
     ? Number(policy.sessionsPerWeek ?? policy.sessions_per_week ?? 0) : 0
   const liftDaysPerWeek = liftingEnabled
-    ? Math.max(1, Math.min(4, Math.round(currentPlanLiftDays || profileLiftDays)))
+    ? Math.max(1, Math.min(7, Math.round(currentPlanLiftDays || profileLiftDays)))
     : 0
   return {
     planMode,
     liftingEnabled,
     liftDaysPerWeek,
+    ...(Array.isArray(data.schedulePreferences?.runEligibleWeekdays)
+      ? { runEligibleWeekdays: data.schedulePreferences.runEligibleWeekdays } : {}),
+    ...(Array.isArray(data.schedulePreferences?.liftEligibleWeekdays)
+      ? { liftEligibleWeekdays: data.schedulePreferences.liftEligibleWeekdays } : {}),
     ...(Number(profile?.run_days_per_week) > 0 ? { runDaysPerWeek: Number(profile.run_days_per_week) } : {}),
   }
 }

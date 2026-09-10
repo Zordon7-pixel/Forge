@@ -95,6 +95,9 @@ export default function PlanCatalog() {
   const [generationStep, setGenerationStep] = useState('')
   const [error, setError] = useState('')
   const [trainingDays, setTrainingDays] = useState(['Tue', 'Thu', 'Sat'])
+  const [liftEligibleWeekdays, setLiftEligibleWeekdays] = useState(DAYS)
+  const preferenceEditRevision = useRef(0)
+  const prefillRequestRevision = useRef(0)
   const [runDaysPerWeek, setRunDaysPerWeek] = useState(3)
   const [liftingEnabled, setLiftingEnabled] = useState(false)
   const [strengthMode, setStrengthMode] = useState('hybrid_maintain')
@@ -158,16 +161,20 @@ export default function PlanCatalog() {
   }
 
   const loadPrefill = async () => {
+    const requestRevision = ++prefillRequestRevision.current
+    const editRevision = preferenceEditRevision.current
     setPrefillLoading(true)
     try {
       const { data } = await api.get('/plans/prefill')
+      if (requestRevision !== prefillRequestRevision.current || editRevision !== preferenceEditRevision.current) return
       const inferred = Array.isArray(data?.inferredTrainingDays) && data.inferredTrainingDays.length
         ? data.inferredTrainingDays
         : ['Tue', 'Thu', 'Sat']
       const available = sortDays(inferred)
-      const runCount = Math.max(1, Math.min(6, available.length, Number(data?.runDaysPerWeek || 3)))
-      const liftCount = Math.max(0, Math.min(available.length, Number(data?.liftDaysPerWeek || 0)))
+      const runCount = Number(data?.runDaysPerWeek || 3)
+      const liftCount = Number(data?.liftDaysPerWeek || 0)
       setTrainingDays(available)
+      setLiftEligibleWeekdays(sortDays(data?.liftEligibleWeekdays || available))
       setRunDaysPerWeek(runCount)
       setLiftingEnabled(Boolean(data?.liftingEnabled))
       setLiftDaysPerWeek(liftCount)
@@ -180,7 +187,7 @@ export default function PlanCatalog() {
       console.error('[PlanCatalog] prefill failed:', err.message)
       setError(err?.response?.data?.error || 'Could not load your usual training rhythm. You can still edit the plan.')
     } finally {
-      setPrefillLoading(false)
+      if (requestRevision === prefillRequestRevision.current) setPrefillLoading(false)
     }
   }
 
@@ -259,10 +266,9 @@ export default function PlanCatalog() {
   }
 
   const toggleDay = (day) => {
+    preferenceEditRevision.current += 1
     setTrainingDays((prev) => {
       const next = sortDays(prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day])
-      setRunDaysPerWeek((current) => Math.max(1, Math.min(6, current, Math.max(1, next.length))))
-      setLiftDaysPerWeek((current) => Math.min(current, next.length))
       return next
     })
   }
@@ -298,22 +304,25 @@ export default function PlanCatalog() {
       setError('Choose at least one available training day.')
       return
     }
-    if (!Number.isInteger(runCount) || runCount < 1 || runCount > 6 || runCount > trainingDays.length) {
-      setError('Run days must be a whole number from 1 to 6 and fit inside your eligible weekdays.')
+    if (!Number.isInteger(runCount) || runCount < 1 || runCount > 7 || runCount > trainingDays.length) {
+      setError('Run days must be a whole number from 1 to 7 and fit inside your eligible weekdays.')
       return
     }
-    if (liftingEnabled && (!Number.isInteger(liftCount) || liftCount < 1 || liftCount > trainingDays.length)) {
-      setError('Lift days must fit inside your available training days.')
+    if (liftingEnabled && (!Number.isInteger(liftCount) || liftCount < 1 || liftCount > 7 || liftCount > liftEligibleWeekdays.length)) {
+      setError('Lift days must be a whole number from 1 to 7 and fit inside your eligible lifting weekdays.')
       return
     }
 
     setGenerating(true)
     setGenerationStep(isRacePlan ? 'Saving race...' : 'Building your calendar...')
     setError('')
+    let savedRaceThisAttempt = false
     try {
       const target = {
         distanceMiles,
         trainingDays,
+        runEligibleWeekdays: trainingDays,
+        liftEligibleWeekdays,
         runDaysPerWeek: runCount,
         liftingEnabled,
         liftDaysPerWeek: liftCount,
@@ -350,6 +359,7 @@ export default function PlanCatalog() {
           ownedRace = data?.race || ownedRace
         }
         if (!ownedRace?.id) throw new Error('Race could not be saved before plan generation.')
+        savedRaceThisAttempt = true
         setRaceSelection({ type: 'owned', race: ownedRace })
         setGenerationStep('Building your race calendar...')
         await previewAndApplyPlan(
@@ -365,7 +375,7 @@ export default function PlanCatalog() {
       navigate('/plan')
     } catch (err) {
       if (isPlanCandidateReviewCancelled(err)) {
-        setError('Your current plan was kept. No calendar changes were made.')
+        setError(`${savedRaceThisAttempt ? 'Your race was saved. ' : ''}Your current training plan was kept. No plan calendar changes were made.`)
         return
       }
       if (err?.response?.status === 402) {
@@ -374,9 +384,9 @@ export default function PlanCatalog() {
       }
       console.error('[PlanCatalog] plan generation failed:', err.message)
       if (err?.code === 'ECONNABORTED') {
-        setError('The plan is taking longer than expected. Open Training Plan in a moment before trying again; Forged Hybrid may still be finishing it.')
+        setError(`${savedRaceThisAttempt ? 'Your race was saved, but your training plan was not changed. ' : ''}The plan preview took too long. You can retry using the saved race.`)
       } else {
-        setError(err?.response?.data?.error || err?.message || 'Unable to generate this plan right now.')
+        setError(`${savedRaceThisAttempt ? 'Your race was saved, but your training plan was not changed. ' : ''}${err?.response?.data?.error || err?.message || 'Unable to generate this plan right now.'}`)
       }
     } finally {
       setGenerating(false)
@@ -614,19 +624,30 @@ export default function PlanCatalog() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
                 <label style={{ display: 'grid', gap: 7 }}>
                   <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>How many days do you want to run?</span>
-                  <select value={runDaysPerWeek} onChange={(event) => setRunDaysPerWeek(Number(event.target.value))} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 15 }}>
-                    {Array.from({ length: Math.max(1, Math.min(6, trainingDays.length)) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} run day{count === 1 ? '' : 's'}</option>)}
+                  <select value={runDaysPerWeek} onChange={(event) => { preferenceEditRevision.current += 1; setRunDaysPerWeek(Number(event.target.value)) }} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 15 }}>
+                    {Array.from({ length: 7 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} run day{count === 1 ? '' : 's'}</option>)}
                   </select>
                 </label>
                 {liftingEnabled && (
                   <label style={{ display: 'grid', gap: 7 }}>
                     <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Lift days each week</span>
-                    <select value={Math.max(1, liftDaysPerWeek)} onChange={(event) => setLiftDaysPerWeek(Number(event.target.value))} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 15 }}>
-                      {Array.from({ length: Math.max(1, Math.min(4, trainingDays.length)) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} lift day{count === 1 ? '' : 's'}</option>)}
+                    <select value={Math.max(1, liftDaysPerWeek)} onChange={(event) => { preferenceEditRevision.current += 1; setLiftDaysPerWeek(Number(event.target.value)) }} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 15 }}>
+                      {Array.from({ length: 7 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} lift day{count === 1 ? '' : 's'}</option>)}
                     </select>
                   </label>
                 )}
               </div>
+
+              {liftingEnabled && <section aria-label="Eligible lifting weekdays">
+                <p style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Eligible lifting weekdays</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>Lifts use these weekdays. A run and lift may share a day when both are selected.</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 6 }}>
+                  {DAYS.map((day) => <button key={day} type="button" aria-label={`Lift ${day}`} aria-pressed={liftEligibleWeekdays.includes(day)} onClick={() => {
+                    preferenceEditRevision.current += 1
+                    setLiftEligibleWeekdays((current) => sortDays(current.includes(day) ? current.filter((value) => value !== day) : [...current, day]))
+                  }} style={{ minHeight: 44, minWidth: 0, borderRadius: 8, border: '1px solid var(--border-subtle)', background: liftEligibleWeekdays.includes(day) ? 'var(--accent-dim)' : 'var(--bg-input)', color: 'var(--text-primary)' }}>{day}</button>)}
+                </div>
+              </section>}
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                 <label style={{ display: 'grid', gap: 8 }}>
@@ -665,11 +686,12 @@ export default function PlanCatalog() {
                       <button key={option.mode} type="button" aria-pressed={active}
                         onClick={() => {
                           const enabled = option.mode !== 'run_only'
+                          preferenceEditRevision.current += 1
                           setLiftingEnabled(enabled)
                           if (enabled) {
                             setStrengthMode(option.mode)
                             const preferred = option.mode === 'hybrid_build' ? 3 : 2
-                            setLiftDaysPerWeek((current) => Math.max(1, Math.min(trainingDays.length, Math.max(Number(current || 0), preferred))))
+                            setLiftDaysPerWeek((current) => Number(current) > 0 ? Number(current) : preferred)
                           } else {
                             setLiftDaysPerWeek(0)
                           }

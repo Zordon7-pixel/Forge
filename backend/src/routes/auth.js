@@ -197,7 +197,7 @@ router.get('/me', auth, async (req, res) => {
     const user = await dbGet(
       `SELECT id, name, email, sex, age, weight_lbs, max_heart_rate, weekly_miles_current, goal_type,
        goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality,
-       run_days_per_week, lift_days_per_week, injury_mode, injury_description, injury_date,
+       run_days_per_week, lift_days_per_week, run_eligible_weekdays, lift_eligible_weekdays, injury_mode, injury_description, injury_date,
        injury_limitations, units, is_pro, subscription_status, subscription_ends_at FROM users WHERE id = ?`,
       [req.user.id]
     );
@@ -250,10 +250,26 @@ router.put('/me/profile', auth, async (req, res) => {
     if (max_heart_rate !== undefined && max_heart_rate !== null && (Number(max_heart_rate) < 100 || Number(max_heart_rate) > 220)) {
       return res.status(400).json({ error: 'Max heart rate must be between 100 and 220 bpm.' });
     }
-    const hasRunFrequency = run_days_per_week !== undefined && run_days_per_week !== null;
-    const normalizedRunFrequency = hasRunFrequency ? Number(run_days_per_week) : null;
-    if (hasRunFrequency && (!Number.isInteger(normalizedRunFrequency) || normalizedRunFrequency < 1 || normalizedRunFrequency > 6)) {
-      return res.status(400).json({ error: 'Run days per week must be a whole number from 1 to 6.' });
+    const hasRunFrequency = run_days_per_week !== undefined;
+    const normalizedRunFrequency = typeof run_days_per_week === 'number' ? run_days_per_week : NaN;
+    if (hasRunFrequency && (!Number.isInteger(normalizedRunFrequency) || normalizedRunFrequency < 1 || normalizedRunFrequency > 7)) {
+      return res.status(400).json({ error: 'Run days per week must be a whole number from 1 to 7.' });
+    }
+    const hasLiftFrequency = lift_days_per_week !== undefined;
+    const normalizedLiftFrequency = typeof lift_days_per_week === 'number' ? lift_days_per_week : NaN;
+    if (hasLiftFrequency && (!Number.isInteger(normalizedLiftFrequency) || normalizedLiftFrequency < 0 || normalizedLiftFrequency > 7)) {
+      return res.status(400).json({ error: 'Lift days per week must be a whole number from 0 to 7.' });
+    }
+    const modalityWeekdays = {};
+    for (const key of ['run_eligible_weekdays', 'lift_eligible_weekdays']) {
+      if (req.body[key] === undefined) continue;
+      const raw = req.body[key];
+      const normalized = normalizeTrainingDays(raw);
+      if (!Array.isArray(raw) || (key === 'run_eligible_weekdays' && !normalized.length)
+        || normalized.length !== new Set(raw.map((day) => String(day || '').trim().slice(0, 3).toLowerCase())).size) {
+        return res.status(400).json({ error: `${key} must contain valid weekdays.` });
+      }
+      modalityWeekdays[key] = normalized;
     }
     const hasPreferredDays = preferred_workout_days !== undefined && preferred_workout_days !== null;
     const normalizedPreferredDays = hasPreferredDays ? normalizeTrainingDays(preferred_workout_days) : null;
@@ -278,15 +294,23 @@ router.put('/me/profile', auth, async (req, res) => {
 
     const mutation = await withPlanningInputMutation(req.user.id, async (tx) => {
       const previous = await tx.get(
-        'SELECT run_days_per_week, preferred_workout_days FROM users WHERE id=? FOR UPDATE',
+        'SELECT run_days_per_week, lift_days_per_week, preferred_workout_days, run_eligible_weekdays, lift_eligible_weekdays FROM users WHERE id=? FOR UPDATE',
         [req.user.id]
       );
       if (!previous) return { notFound: true };
       const previousPreferredDays = normalizeTrainingDays(previous.preferred_workout_days);
       const nextRunFrequency = hasRunFrequency ? normalizedRunFrequency : Number(previous.run_days_per_week || 3);
-      const nextPreferredDays = hasPreferredDays ? normalizedPreferredDays : previousPreferredDays;
+      const nextPreferredDays = modalityWeekdays.run_eligible_weekdays
+        || (hasPreferredDays ? normalizedPreferredDays : normalizeTrainingDays(previous.run_eligible_weekdays).length
+          ? normalizeTrainingDays(previous.run_eligible_weekdays) : previousPreferredDays);
       if (nextPreferredDays.length > 0 && nextRunFrequency > nextPreferredDays.length) {
         return { validationError: 'Run days per week cannot exceed the selected preferred workout days.' };
+      }
+      const nextLiftDays = modalityWeekdays.lift_eligible_weekdays
+        || normalizeTrainingDays(previous.lift_eligible_weekdays);
+      if ((modalityWeekdays.lift_eligible_weekdays || nextLiftDays.length)
+        && (hasLiftFrequency ? normalizedLiftFrequency : Number(previous.lift_days_per_week || 0)) > nextLiftDays.length) {
+        return { validationError: 'Lift days per week cannot exceed the selected lifting weekdays.' };
       }
 
       const updateResult = await tx.run(`UPDATE users SET
@@ -305,6 +329,8 @@ router.put('/me/profile', auth, async (req, res) => {
         lifestyle = COALESCE(?, lifestyle),
         preferred_workout_time = COALESCE(?, preferred_workout_time),
         preferred_workout_days = COALESCE(?, preferred_workout_days),
+        run_eligible_weekdays = COALESCE(?, run_eligible_weekdays),
+        lift_eligible_weekdays = COALESCE(?, lift_eligible_weekdays),
         missed_workout_pref = COALESCE(?, missed_workout_pref),
         weekly_workout_days = COALESCE(?, weekly_workout_days),
         age = COALESCE(?, age),
@@ -322,12 +348,15 @@ router.put('/me/profile', auth, async (req, res) => {
         mappedComeback ?? null,
         coach_personality ?? null,
         hasRunFrequency ? normalizedRunFrequency : null,
-        lift_days_per_week ?? null,
+        hasLiftFrequency ? normalizedLiftFrequency : null,
         sex ?? null,
         schedule_type ?? null,
         lifestyle ?? null,
         preferred_workout_time ?? null,
         hasPreferredDays ? JSON.stringify(normalizedPreferredDays) : null,
+        modalityWeekdays.run_eligible_weekdays ? JSON.stringify(modalityWeekdays.run_eligible_weekdays)
+          : hasPreferredDays ? JSON.stringify(normalizedPreferredDays) : null,
+        modalityWeekdays.lift_eligible_weekdays ? JSON.stringify(modalityWeekdays.lift_eligible_weekdays) : null,
         missed_workout_pref ?? null,
         weekly_workout_days ?? null,
         age ?? null,
@@ -341,7 +370,11 @@ router.put('/me/profile', auth, async (req, res) => {
       const frequencyChanged = hasRunFrequency && Number(previous.run_days_per_week) !== normalizedRunFrequency;
       const weekdaysChanged = hasPreferredDays
         && JSON.stringify(previousPreferredDays) !== JSON.stringify(normalizedPreferredDays);
-      if (frequencyChanged || weekdaysChanged) {
+      const liftFrequencyChanged = hasLiftFrequency && Number(previous.lift_days_per_week) !== normalizedLiftFrequency;
+      const modalityDaysChanged = Object.entries(modalityWeekdays).some(([key, days]) => (
+        JSON.stringify(normalizeTrainingDays(previous[key])) !== JSON.stringify(days)
+      ));
+      if (frequencyChanged || weekdaysChanged || liftFrequencyChanged || modalityDaysChanged) {
         const reviewRequired = {
           reason: frequencyChanged ? 'run_frequency_changed' : 'training_days_changed',
           previousRunDaysPerWeek: Number(previous.run_days_per_week || 3),
@@ -403,7 +436,7 @@ router.put('/me/profile', auth, async (req, res) => {
         `SELECT id, name, email, onboarded, coach_personality, age, weight_lbs, max_heart_rate,
          weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes,
          comeback_mode, run_days_per_week, lift_days_per_week, sex, schedule_type, lifestyle,
-         preferred_workout_time, preferred_workout_days, missed_workout_pref,
+         preferred_workout_time, preferred_workout_days, run_eligible_weekdays, lift_eligible_weekdays, missed_workout_pref,
          weekly_workout_days, units, is_pro, subscription_status
          FROM users WHERE id = ?`,
         [req.user.id]

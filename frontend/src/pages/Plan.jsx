@@ -1377,7 +1377,7 @@ export default function Plan() {
                               setScheduleDraft((current) => ({ ...current, runDaysPerWeek: Number(event.target.value) }))
                               setScheduleError('')
                             }} className="min-h-11 rounded-lg px-3 text-sm" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
-                              {Array.from({ length: Math.max(1, Math.min(6, scheduleDraft.trainingDays.length)) }, (_, index) => index + 1).map((count) => (
+                              {Array.from({ length: 7 }, (_, index) => index + 1).map((count) => (
                                 <option key={count} value={count}>{count} run day{count === 1 ? '' : 's'}</option>
                               ))}
                             </select>

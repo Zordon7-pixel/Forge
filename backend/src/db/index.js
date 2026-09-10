@@ -217,6 +217,8 @@ async function initDb() {
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS lifestyle TEXT DEFAULT 'works_fulltime'",
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_workout_time TEXT DEFAULT 'evening'",
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_workout_days TEXT DEFAULT '[]'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS run_eligible_weekdays TEXT',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS lift_eligible_weekdays TEXT',
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS missed_workout_pref TEXT DEFAULT 'adjust_week'",
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_workout_days INTEGER DEFAULT 4',
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_mode INTEGER DEFAULT 0',

@@ -8,6 +8,8 @@ const { ensureUniqueActiveUserPlanIndex: ensureActivePlanIndex } = require('./ac
 const ensureUniqueActiveUserPlanIndex = (query = pg.query) => ensureActivePlanIndex(query);
 
 async function runAlwaysMigrations() {
+  await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS run_eligible_weekdays TEXT');
+  await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS lift_eligible_weekdays TEXT');
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS planning_input_revision BIGINT NOT NULL DEFAULT 0');
   await pg.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS plan_version BIGINT NOT NULL DEFAULT 1');
   await pg.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS lineage_id TEXT');
