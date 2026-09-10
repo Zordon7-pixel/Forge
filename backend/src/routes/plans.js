@@ -78,7 +78,7 @@ const {
 const { canonicalPrescriptionHash, compareMaterialChange } = require('../lib/goalBackwardValidators');
 const { validateInterference } = require('../lib/goalBackwardValidators');
 const { validateRollingHardDays } = require('../lib/goalBackwardLoad');
-const { buildProgramContract, reconcileProgramWeek, validateRollingProgramDose } = require('../lib/programContract');
+const { buildProgramContract, sourceBoundTaperRunAdjustment, reconcileProgramWeek, validateRollingProgramDose } = require('../lib/programContract');
 const { buildDecisionArtifactDiagnosticBundle } = require('../lib/racePlanDiagnostics');
 const {
   assertPersistablePlan,
@@ -4682,7 +4682,12 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
         day.orderGuidance = 'Run first; lift at least 6 hours later.';
       }
     }
+    const sourceAdjustment = sourceBoundTaperRunAdjustment(week,
+      windows[index].selected.workload_evidence.canonical_load_source,
+      windows[index].selected.workload_evidence.canonical_load_context_hash,
+      Number(week.currentWeekConstraint?.completedRunsAppliedToQuota || week.completedRunsAtGeneration || 0));
     return { ...week, week: index + 1, days,
+      ...(sourceAdjustment ? { runFrequencyAdjustment: sourceAdjustment } : {}),
       ...(windows[index].result.road_phase_replan ? { roadPhaseAdjustment: windows[index].result.road_phase_replan } : {}),
       ...(contract.run_days_per_week === 1 && !['race', 'taper'].includes(week.phase) ? {
         runFrequencyAdjustment: { policy: 'EXPLICIT_SINGLE_RUNNING_DAY_DOSE', requested: 1, prescribed: 1,

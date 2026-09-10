@@ -64,6 +64,25 @@ assert.ok(seven.accepted.programReconciliation.every(week => week.valid));
 assert.ok(seven.accepted.programReconciliation.at(-1).entries.every(entry => entry.outcome === 'DISCLOSED_ADJUSTMENT'));
 
 const source = selected.workload_evidence.canonical_load_source;
+const { sourceBoundTaperRunAdjustment, reconcileProgramWeek } = require('../src/lib/programContract');
+const sourceRuns = source.canonical_session_set.sessions.filter(session => session.kind === 'run');
+const taperWeek = { startDate: '2026-09-07', phase: 'taper',
+  runFrequencyAdjustment: { policy: 'TAPER_RUNNING_VOLUME_DISTRIBUTION', requested: 7, prescribed: 1,
+    explanation: 'Retain the independently selected useful taper work.' },
+  days: all.map((day, index) => ({ date: `2026-09-${String(7 + index).padStart(2, '0')}`, sessions: [] })) };
+const taperAdjustment = sourceBoundTaperRunAdjustment(taperWeek, source, source.context_hash);
+assert.equal(taperAdjustment.prescribed, sourceRuns.length, 'Adjustment follows the independent source, not constructor-only metadata');
+assert.equal(taperAdjustment.constructor_prescribed, 1);
+assert.equal(taperAdjustment.authoritative_source_hash, source.content_hash);
+assert.deepEqual(taperAdjustment.authoritative_session_ids, sourceRuns.map(session => session.session_id));
+assert.equal(sourceBoundTaperRunAdjustment(taperWeek, source, 'wrong-context'), null);
+assert.equal(sourceBoundTaperRunAdjustment({ ...taperWeek, phase: 'base' }, source, source.context_hash), null);
+assert.equal(sourceBoundTaperRunAdjustment(taperWeek, { ...source, content_hash: '0'.repeat(64) }, source.context_hash), null);
+const droppedSourceRunWeek = { ...taperWeek, runFrequencyAdjustment: taperAdjustment,
+  days: taperWeek.days.map(day => ({ ...day, sessions: sourceRuns.slice(1).filter(session => session.scheduled_local_date === day.date) })) };
+const sourceContract = { ...seven.accepted.programContract, planning_date: '2026-09-07', lift_days_per_week: 0 };
+assert.equal(reconcileProgramWeek(sourceContract, droppedSourceRunWeek).valid, false,
+  'Dropping a selected candidate run cannot rewrite the independently bound taper expectation');
 assert.equal(combined.evaluateCanonicalCombinedLoad(source.canonical_session_set.sessions, source, source.context_hash).valid, true);
 for (const mutate of [...['taxonomy','running','strength','combined'].map(key => value => { value.versions[key] = 'wrong-version'; }),
   value => { value.base_vector[0] += 1; }, value => { value.context_hash = 'wrong'; }]) {

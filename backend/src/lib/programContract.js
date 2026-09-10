@@ -24,6 +24,21 @@ function buildProgramContract({ target = {}, profile = {}, planningDateLocal, co
   return { ...contract, fingerprint: canonicalHash(contract) };
 }
 
+function sourceBoundTaperRunAdjustment(week, source, contextHash, completedRuns = 0) {
+  if (week.phase !== 'taper' || week.runFrequencyAdjustment?.policy !== 'TAPER_RUNNING_VOLUME_DISTRIBUTION') return null;
+  const sessions = source?.canonical_session_set?.sessions || [];
+  if (!require('./canonicalCombinedLoad').evaluateCanonicalCombinedLoad(sessions, source, contextHash).valid) return null;
+  const runs = sessions.filter(session => session.kind === 'run');
+  const dates = new Set(runs.map(session => session.scheduled_local_date));
+  if (runs.length !== dates.size || runs.some(session => session.scheduled_local_date < week.startDate
+    || session.scheduled_local_date > addDays(week.startDate, 6))
+    || !Number.isInteger(completedRuns) || completedRuns < 0) return null;
+  return { ...week.runFrequencyAdjustment, prescribed: dates.size + completedRuns,
+    constructor_prescribed: week.runFrequencyAdjustment.prescribed,
+    authoritative_source_hash: source.content_hash,
+    authoritative_session_ids: runs.map(session => session.session_id) };
+}
+
 function reconcileProgramWeek(contract, week, { completedRuns = 0, completedLifts = 0, raceRunPrescription = null } = {}) {
   const start = week.startDate;
   const end = addDays(start, 6);
@@ -79,4 +94,4 @@ function validateRollingProgramDose(sessions, ceilings) {
   return { valid: windows.every(window => window.valid), windows };
 }
 
-module.exports = { PROGRAM_CONTRACT_VERSION, buildProgramContract, reconcileProgramWeek, validateRollingProgramDose };
+module.exports = { PROGRAM_CONTRACT_VERSION, buildProgramContract, sourceBoundTaperRunAdjustment, reconcileProgramWeek, validateRollingProgramDose };
