@@ -1,4 +1,4 @@
-const CACHE = 'forge-v8';
+const CACHE = 'forge-v9';
 const API_CACHE = 'forge-api-v2';
 const API_GET_CACHE_PATHS = ['/api/user', '/api/workouts/recent'];
 const DB_NAME = 'forge-offline-queue';
@@ -187,6 +187,8 @@ function isReplayUnsafeMutation(request, url) {
   if (!isApiMutation(request, url)) return false;
   return /^\/api\/races\/[^/]+\/removal-(?:preview|apply|reset)$/.test(url.pathname)
     || /^\/api\/plans\/candidates\/[^/]+\/apply$/.test(url.pathname)
+    || url.pathname === '/api/runs/missed'
+    || url.pathname === '/api/plans/reschedule-missed'
     || /^\/api\/plans\/adaptation\/[^/]+\/(?:accept|keep)$/.test(url.pathname);
 }
 

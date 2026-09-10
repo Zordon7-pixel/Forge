@@ -31,6 +31,7 @@ const { resolveRunEffort, withCalculatedEffort } = require('../lib/runEffort');
 const {
   explicitNoPlanMatchSnapshot,
   findPlannedRunForDate,
+  findExplicitPlannedRun,
   hasMeaningfulPlannedRun,
   isExplicitlyUnlinkedRun,
 } = require('../lib/plannedRunMatch');
@@ -771,7 +772,7 @@ router.post('/', auth, async (req, res) => {
         resolvedPlanSessionId = scheduledRun.sessionId || resolvedPlanSessionId;
       }
     }
-    const storedPlannedSession = planMatchExplicitlyDisabled
+    let storedPlannedSession = planMatchExplicitlyDisabled
       ? explicitNoPlanMatchSnapshot()
       : resolvedPlannedSession;
     let prescribedTargetZone = typeof target_zone === 'string' && target_zone.length <= 20 ? target_zone.trim() || null : null;
@@ -785,6 +786,21 @@ router.post('/', auth, async (req, res) => {
     }
 
     const writeResult = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const replay = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
+      if (replay) return planningInputUnchanged({ inserted: false, run: replay, userProfile: null, prResult: null });
+      // The client may select an ID, not supply its own completion authority.
+      // Resolve the exact owned prescription again under the owner mutation lock.
+      if (normalizePlanSessionId(plan_session_id) && !planMatchExplicitlyDisabled) {
+        const exact = await findExplicitPlannedRun(req.user.id, normalizePlanSessionId(plan_session_id),
+          String(date).slice(0, 10), { get: tx.get });
+        if (!exact) {
+          const error = new Error('That scheduled run changed. Refresh it, or save this as an unlinked run.');
+          error.status = 409;
+          throw error;
+        }
+        resolvedPlanSessionId = exact.sessionId;
+        storedPlannedSession = exact;
+      }
       const insertResult = await tx.run(`INSERT INTO runs (
         id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
         run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
@@ -1206,16 +1222,7 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 router.post('/missed', auth, async (req, res) => {
-  const { reason } = req.body;
-  const adjustments = {
-    tired: "Logged. Your body needed rest today — that IS training. I've moved the session to tomorrow and lightened your week.",
-    no_time: "Got it. Moved to tomorrow. Your weekly volume stays on track.",
-    didnt_feel_like_it: "Happens to everyone. No judgment — I've rescheduled it. Show up tomorrow.",
-    something_came_up: "Life happens. Adjusted your week. You're still on track for your goal.",
-    weather: "Pushed to tomorrow. Check the forecast — might be a treadmill day.",
-    sick: "Rest up. I've cleared your schedule for 2 days. Nothing to worry about — health first."
-  };
-  res.json({ ok: true, message: adjustments[reason] || "Got it — adjusted your plan. Keep moving forward.", reason });
+  return require('./plans').recordMissedSessionHandler(req, res);
 });
 
 router._test = {

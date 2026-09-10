@@ -525,7 +525,7 @@ export default function History() {
           <button onClick={() => setShowMissedModal(true)}
             className="w-full py-3 rounded-xl text-sm mt-2"
             style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
-            Miss a workout? Let me know - I'll adjust your plan
+            Miss a workout? Record the session
           </button>
         </div>
       )}

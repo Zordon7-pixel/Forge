@@ -182,10 +182,34 @@ async function findPlannedRunForDate(userId, date, { get = dbGet } = {}) {
     : null;
 }
 
+async function findExplicitPlannedRun(userId, sessionId, date, { get = dbGet } = {}) {
+  if (!userId || !sessionId || !ISO_DATE.test(String(date || ''))) return null;
+  const active = await resolveActivePlanForDate(userId, get, { planningDateLocal: date });
+  const stored = active && parsePlanRow(active.row);
+  if (!stored) return null;
+  const visible = planSchema.visiblePlanForAssignment(stored, active.row);
+  const matches = [];
+  for (const week of visible.weeks || []) for (const day of planSchema.getDayEntries(week)) {
+    if (day.date !== date) continue;
+    for (const session of planSchema.daySessions(day)) {
+      if (planSchema.kindFromSession(session) !== 'run'
+        || String(session.session_id || session.id || '') !== String(sessionId)) continue;
+      matches.push(session);
+    }
+  }
+  if (matches.length !== 1) return null;
+  const session = matches[0];
+  return { ...plannedRunSnapshot(session, date, active.row.plan_id || active.row.id),
+    sessionId: String(sessionId), matchSource: 'explicit_owned_session', kind: 'run',
+    content_hash: session.content_hash || null, userPlanId: active.row.user_plan_id || null,
+    planRevision: active.row.plan_version || null };
+}
+
 module.exports = {
   allocatePlanSessionRunEvidence,
   explicitNoPlanMatchSnapshot,
   findPlannedRunForDate,
+  findExplicitPlannedRun,
   findPlanSessionRunEvidence,
   hasMeaningfulPlannedRun,
   isExplicitlyUnlinkedRun,

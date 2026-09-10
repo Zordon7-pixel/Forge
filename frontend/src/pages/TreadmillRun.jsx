@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import api from '../lib/api'
 import { isSwipeBackUnsafeSessionStatus } from '../lib/swipeBack'
+import { phonePlanningClock } from '../lib/planCandidates'
 
 const C = { accent: 'var(--accent)', card: 'var(--bg-card)', input: 'var(--bg-input)', muted: 'var(--text-muted)', primary: 'var(--text-primary)' }
 
@@ -20,7 +21,7 @@ export default function TreadmillRun() {
   const [speed, setSpeed] = useState(location.state?.speed || '')
   const [incline, setIncline] = useState(location.state?.incline || '0')
   const [treadmillType, setTreadmillType] = useState(location.state?.treadmillType || 'Generic')
-  const disablePlanMatch = location.state?.disablePlanMatch === true
+  const activityClock = useRef(phonePlanningClock())
   const [effort, setEffort] = useState(5)
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
@@ -41,6 +42,7 @@ export default function TreadmillRun() {
   }, [manualLaps])
 
   const start = () => {
+    activityClock.current = phonePlanningClock()
     setStatus('running')
     timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000)
   }
@@ -65,7 +67,7 @@ export default function TreadmillRun() {
     setSaving(true)
     try {
       await api.post('/runs', {
-        date: new Date().toISOString().slice(0, 10),
+        date: activityClock.current.planning_date_local,
         type: trackMode ? 'track' : 'treadmill',
         run_surface: 'treadmill',
         distance_miles: Number(distance),
@@ -90,7 +92,9 @@ export default function TreadmillRun() {
         calories: watchMetrics?.calories,
         treadmill_brand: watchMetrics?.treadmill_brand || treadmillType,
         treadmill_model: watchMetrics?.treadmill_model,
-        ...(disablePlanMatch ? { plan_session_id: null } : {}),
+        // This screen did not select a scheduled prescription. Nearby calendar
+        // work must not silently become completed when this ad-hoc run saves.
+        plan_session_id: null,
       })
       setFeedback('Run saved!')
       setTimeout(() => navigate('/'), 1500)

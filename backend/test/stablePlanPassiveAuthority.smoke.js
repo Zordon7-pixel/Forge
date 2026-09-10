@@ -321,7 +321,9 @@ async function adaptationUsesPassiveEvidenceOnly() {
   );
 
   const plansSource = fs.readFileSync(require.resolve('../src/routes/plans'), 'utf8');
-  assert.doesNotMatch(plansSource, /FROM daily_checkins/i, 'planner and adaptation assembly never read legacy check-ins');
+  assert.equal((plansSource.match(/FROM daily_checkins/gi) || []).length, 1,
+    'check-ins are read only into the fresh-input fingerprint, not as planning drivers');
+  assert.match(plansSource, /healthSignals: semanticHealth, openInjuries, checkins/);
 }
 
 async function bodyAndCoachUsePassiveDataOnly() {
@@ -814,6 +816,7 @@ async function adaptationDecisionsFailClosed() {
       assert.match(sql, /user_id=\?|user_id = \?/i, 'every adaptation mutation stays owner-scoped');
       if (/plan_adjustment_proposals SET status='accepted'/.test(sql)) proposalRow.status = 'accepted';
       if (/plan_adjustment_proposals SET status='kept'/.test(sql)) proposalRow.status = 'kept';
+      if (/plan_adjustment_proposals SET status='superseded'/.test(sql)) proposalRow.status = 'superseded';
       if (/UPDATE training_plans SET plan_data/.test(sql)) activeRow.plan_data = params[0];
       return { changes: 1 };
     },
@@ -868,9 +871,10 @@ async function adaptationDecisionsFailClosed() {
     await acceptHandler({
       user: { id: ownerId }, params: { proposalId: proposalRow.id }, body: decisionBody(),
     }, accepted.response);
-    assert.equal(accepted.state.statusCode, 200, JSON.stringify(accepted.state.payload));
-    assert.equal(JSON.parse(activeRow.plan_data).weeks[0].days[0].sessions[0].title, 'Accepted replacement');
-    assert(writes.some(({ sql }) => /UPDATE training_plans SET plan_data/.test(sql)), 'valid accept writes the reviewed replacement');
+    assert.equal(accepted.state.statusCode, 409, JSON.stringify(accepted.state.payload));
+    assert.equal(JSON.parse(activeRow.plan_data).weeks[0].days[0].sessions[0].title, 'Original run');
+    assert(!writes.some(({ sql }) => /UPDATE training_plans SET plan_data/.test(sql)),
+      'legacy stored proposal without fresh activity authority requires refresh, not blind acceptance');
 
     const writesAfterAccept = writes.length;
     const acceptReplay = responseFor();
@@ -887,7 +891,7 @@ async function adaptationDecisionsFailClosed() {
     await keepHandler({
       user: { id: ownerId }, params: { proposalId: proposalRow.id }, body: decisionBody(),
     }, kept.response);
-    assert.equal(kept.state.statusCode, 200);
+    assert.equal(kept.state.statusCode, 409, 'legacy proposal needs a fresh evidence-bound choice');
     assert.equal(activeRow.plan_data, JSON.stringify(originalPlan), 'keep leaves the accepted plan byte-equivalent');
     assert.equal(
       writes.slice(keepWritesStart).some(({ sql }) => /UPDATE (?:training_plans|user_plans)/.test(sql)),
@@ -980,7 +984,7 @@ async function previewAdaptationDecisionsAreAtomic() {
       return ownerMatches(params) ? { schedule_type: 'adaptive', missed_workout_pref: 'adjust_week' } : null;
     }
     if (/SELECT MAX\(date\) AS last_date FROM (?:runs|lifts)/.test(sql)) return { last_date: null };
-    if (/SELECT MAX\(substr\(started_at/.test(sql)) return { last_date: null };
+    if (/SELECT MAX\(substr\(started_at|SELECT MAX\(\(started_at/.test(sql)) return { last_date: null };
     if (/SELECT id FROM runs/.test(sql)) return null;
     throw new Error(`unexpected preview adaptation read: ${sql}`);
   };
@@ -989,7 +993,7 @@ async function previewAdaptationDecisionsAreAtomic() {
     if (/FROM plan_adjustment_proposals/.test(sql)) {
       return proposalRows.filter((row) => row.user_id === ownerId && ['accepted', 'kept'].includes(row.status));
     }
-    if (/FROM (?:injury_logs|runs|lifts|workout_sessions)/.test(sql)) return [];
+    if (/FROM (?:injury_logs|runs|lifts|workout_sessions|workout_sets|planning_evidence_corrections|daily_checkins)/.test(sql)) return [];
     throw new Error(`unexpected preview adaptation collection read: ${sql}`);
   };
   const runWrite = async (sql, params = []) => {
@@ -1022,14 +1026,16 @@ async function previewAdaptationDecisionsAreAtomic() {
     if (/UPDATE user_plans SET progress_json/.test(sql)) activeRow.progress_json = params[0];
     if (/UPDATE user_plans SET plan_version=plan_version\+1/.test(sql)) activeRow.plan_version += 1;
     if (/plan_adjustment_proposals\s+SET status=\?/.test(sql) && params[0] === 'accepted') {
-      const row = proposalRows.find((candidate) => candidate.id === params[1] && candidate.user_id === params[2]);
+      const row = proposalRows.find((candidate) => candidate.id === params[2] && candidate.user_id === params[3]);
       if (!row || row.status !== 'pending') return { changes: 0 };
       row.status = 'accepted';
+      row.reason = params[1];
     }
     if (/plan_adjustment_proposals\s+SET status=\?/.test(sql) && params[0] === 'kept') {
-      const row = proposalRows.find((candidate) => candidate.id === params[1] && candidate.user_id === params[2]);
+      const row = proposalRows.find((candidate) => candidate.id === params[2] && candidate.user_id === params[3]);
       if (!row || row.status !== 'pending') return { changes: 0 };
       row.status = 'kept';
+      row.reason = params[1];
     }
     return { changes: 1 };
   };

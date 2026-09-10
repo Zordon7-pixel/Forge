@@ -1026,6 +1026,7 @@ function canonicalizeRunLoadInput({
   corrections = [],
   correctionsComplete = true,
   correctionInputCount = null,
+  includeActivitySources = false,
 } = {}) {
   const snapshot = buildEvidenceSnapshot({
     athleteId,
@@ -1159,6 +1160,7 @@ function canonicalizeRunLoadInput({
       const source = sourceRows.get(activity.kept_evidence_id) || {};
       return {
         id: activity.canonical_activity_id,
+        ...(includeActivitySources ? { source_evidence_ids: [...activity.evidence_ids] } : {}),
         date: activityDate(activity, timezone),
         type: 'run',
         performance_evidence_type: ['race', 'time_trial', 'benchmark'].includes(String(source.type || '').toLowerCase())

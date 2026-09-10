@@ -243,10 +243,10 @@ test('service worker purges old caches and never stores or serves HTML as JavaSc
 
   await expect.poll(() => page.evaluate(async () => {
     const names = await caches.keys()
-    return names.includes('forge-v8') && !names.includes('forge-v5') && !names.includes('forge-v6') && !names.includes('forge-v7') && !names.includes('forge-api-v1')
+    return names.includes('forge-v9') && !names.includes('forge-v8') && !names.includes('forge-v5') && !names.includes('forge-v6') && !names.includes('forge-v7') && !names.includes('forge-api-v1')
   })).toBe(true)
   const cacheNames = await page.evaluate(() => caches.keys())
-  expect(cacheNames).toContain('forge-v8')
+  expect(cacheNames).toContain('forge-v9')
   expect(cacheNames).not.toContain('forge-v5')
   expect(cacheNames).not.toContain('forge-v6')
   expect(cacheNames).not.toContain('forge-v7')
@@ -285,7 +285,7 @@ test('a rendered login page survives an immediate offline reload', async ({ page
   await waitForServiceWorkerControl(page)
   await expect(page.getByRole('heading', { name: 'Log In', exact: true })).toBeVisible()
   await expect.poll(() => page.evaluate(async () => {
-    const cache = await caches.open('forge-v8')
+    const cache = await caches.open('forge-v9')
     const codeUrls = [
       ...document.querySelectorAll('script[type="module"][src], link[rel="stylesheet"][href]'),
     ].map((element) => element.src || element.href).concat(

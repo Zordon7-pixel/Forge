@@ -8,6 +8,8 @@ const { buildHealthSignals, buildReadinessBand, readinessTrendFromHistory } = re
 const planSchema = require('../lib/planSchema');
 const concurrentPlan = require('../lib/concurrentPlan');
 const adaptationEngine = require('../lib/adaptationEngine');
+const { activityAssessment, runCompletionEvidence } = require('../lib/activityReconciliation');
+const missedSessionOutcome = require('../lib/missedSessionOutcome');
 const dailyExecution = require('../lib/dailyExecution');
 const { getHrProfile } = require('../lib/hrZones');
 const { completedWeeklyMileageHistory } = require('../lib/runHistory');
@@ -643,7 +645,7 @@ function withPlanAnchorPayload(value, planJson) {
   return Object.keys(payload).length ? { ...value, ...payload } : value;
 }
 
-function planVersionFor(active, parsedPlan) {
+function planVersionFor(active, parsedPlan, activitySnapshot = null) {
   const progress = parseJsonValue(active?.row?.progress_json, {});
   const reconciliationState = Object.fromEntries(
     Object.entries(progress?.hybridSessionReconciliations || {})
@@ -658,6 +660,9 @@ function planVersionFor(active, parsedPlan) {
       userPlanId: active?.row?.user_plan_id || null,
       plan: parsedPlan || null,
       reconciliationState,
+      missedSessionOutcomes: progress.missedSessionOutcomes || {},
+      completedSessionIds: completedSessionIdsFromProgress(progress).sort(),
+      ...(activitySnapshot ? { activityFingerprint: activitySnapshot.fingerprint } : {}),
     }))
     .digest('hex')
     .slice(0, 32);
@@ -734,6 +739,8 @@ function plannedSessionsBetween(plan, startISO, endISO) {
           sessionId: planSchema.sessionIdentifier(day, session, sessionIndex, dayIndex),
           date,
           kind,
+          session,
+          storedCompleted: planSchema.isStoredSessionCompleted(day, session),
         });
       });
     });
@@ -741,10 +748,11 @@ function plannedSessionsBetween(plan, startISO, endISO) {
   return rows;
 }
 
-async function buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO, database = null) {
+async function buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO, database = null, options = {}) {
   const get = database?.get || dbGet;
   const all = database?.all || dbAll;
   const since = adaptationEngine.addDays(planningDateISO, -7);
+  const timezone = plan?.programContract?.timezone || 'UTC';
   const progress = parseJsonValue(active?.row?.progress_json, {});
   const visiblePlan = planWithoutRemovedSessions(plan, progress, active?.row);
   const planned = plannedSessionsBetween(visiblePlan, since, adaptationEngine.addDays(planningDateISO, -1));
@@ -752,44 +760,56 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   const reconciliations = progress?.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
     ? progress.hybridSessionReconciliations
     : {};
-  const [runs, lifts, workouts, lastRun, lastLift, lastWorkout] = await Promise.all([
-    all(`SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, since, planningDateISO]),
-    all('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
+  const [runs, lifts, workouts, lastRun, lastLift, lastWorkout, workoutSets] = await Promise.all([
+    options.assessment ? Promise.resolve(options.assessment.canonicalRuns) : all(
+      `SELECT id, date, type, distance_miles, duration_seconds, perceived_effort, pain_level, post_energy,
+              plan_session_id, planned_session_json, health_source, health_source_workout_id,
+              health_start_at, watch_sync_id, created_at, notes, watch_mode, workout_metrics_json,
+              heart_rate_zones, watch_activity_type, watch_normalized_type
+       FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, since, planningDateISO]),
+    all(`SELECT id, date, exercise_name, muscle_groups, sets, reps, weight_lbs, intensity, workout_duration_seconds, watch_sync_id
+         FROM lifts WHERE user_id=? AND date>=? AND date<=? ORDER BY date,id`, [userId, since, planningDateISO]),
     all(
-      'SELECT id, started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND started_at<=? AND ended_at IS NOT NULL',
-      [userId, `${since}T00:00:00`, `${planningDateISO}T23:59:59`]
+      "SELECT id, started_at, ended_at, total_seconds, muscle_groups FROM workout_sessions WHERE user_id=? AND (started_at::timestamptz AT TIME ZONE ?)::date>=?::date AND (started_at::timestamptz AT TIME ZONE ?)::date<=?::date AND ended_at IS NOT NULL ORDER BY started_at,id",
+      [userId, timezone, since, timezone, planningDateISO]
     ),
     get(`SELECT MAX(date) AS last_date FROM runs WHERE user_id=? AND date<=? AND ${runActivitySql()}`, [userId, planningDateISO]),
     get('SELECT MAX(date) AS last_date FROM lifts WHERE user_id=? AND date<=?', [userId, planningDateISO]),
     get(
-      'SELECT MAX(substr(started_at, 1, 10)) AS last_date FROM workout_sessions WHERE user_id=? AND started_at<=? AND ended_at IS NOT NULL',
-      [userId, `${planningDateISO}T23:59:59`]
+      "SELECT MAX((started_at::timestamptz AT TIME ZONE ?)::date)::text AS last_date FROM workout_sessions WHERE user_id=? AND (started_at::timestamptz AT TIME ZONE ?)::date<=?::date AND ended_at IS NOT NULL",
+      [timezone, userId, timezone, planningDateISO]
     ),
+    all(`SELECT ws.id,ws.session_id,ws.exercise_name,ws.muscle_group,ws.set_number,ws.reps,ws.weight_lbs
+         FROM workout_sets ws JOIN workout_sessions session ON session.id=ws.session_id AND session.user_id=ws.user_id
+         WHERE ws.user_id=? AND (session.started_at::timestamptz AT TIME ZONE ?)::date>=?::date
+           AND (session.started_at::timestamptz AT TIME ZONE ?)::date<=?::date AND session.ended_at IS NOT NULL
+         ORDER BY ws.session_id,ws.id`, [userId, timezone, since, timezone, planningDateISO]),
   ]);
 
-  const runDates = (runs || []).map((row) => String(row.date || '').slice(0, 10)).filter(Boolean);
-  const liftDates = [
-    ...(lifts || []).map((row) => String(row.date || '').slice(0, 10)),
-    ...(workouts || []).map((row) => String(row.started_at || '').slice(0, 10)),
-  ].filter(Boolean);
+  const assessment = options.assessment || activityAssessment({ athleteId: userId, runs,
+    planningDateLocal: planningDateISO, timezone: plan?.programContract?.timezone || 'UTC' });
+  const runCompletions = runCompletionEvidence(planned.filter(item => item.kind === 'run'), assessment, Array.from(completedIds),
+    { planId: active?.row?.plan_id || active?.row?.id });
+  const completedRuns = new Set(runCompletions.filter(item => item.completed).map(item => item.sessionId));
+  const attemptedRuns = new Set(runCompletions.filter(item => item.attempted && !item.completed).map(item => item.sessionId));
   const completionAllocation = hybridReconciliation.allocateSessionEvidence({
-    sessions: planned,
+    sessions: planned.filter(item => item.kind === 'lift'),
     completedSessionIds: Array.from(completedIds),
     reconciliations,
-    evidence: [
-      ...runDates.map((date) => ({ date, kind: 'run' })),
-      ...liftDates.map((date) => ({ date, kind: 'lift' })),
-    ],
-    maxDayDistance: 1,
+    // Unlinked sets/workouts count as observed load below, not completion of a
+    // nearby prescription. Keep explicit athlete reconciliation/progress only.
+    evidence: [],
+    maxDayDistance: 0,
   });
 
   let completed = 0;
   let excused = 0;
   let missedRuns = 0;
   let missedLifts = 0;
+  let unconfirmed = 0;
   for (const item of planned) {
     const evidenceKey = hybridReconciliation.sessionEvidenceKey(item);
-    if (completionAllocation.completedKeys.has(evidenceKey)) completed += 1;
+    if (item.storedCompleted || (item.kind === 'run' ? completedRuns.has(item.sessionId) : completionAllocation.completedKeys.has(evidenceKey))) completed += 1;
     else {
       const reconciliation = item.kind === 'lift'
         ? reconciliations[hybridReconciliation.reconciliationKey(item.date, item.sessionId)]
@@ -798,8 +818,14 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
         excused += 1;
         continue;
       }
-      if (item.kind === 'run') missedRuns += 1;
-      else missedLifts += 1;
+      const missed = progress.missedSessionOutcomes?.[missedSessionOutcome.outcomeKey(item.date, item.sessionId)];
+      const confirmedMissed = missed?.version === missedSessionOutcome.VERSION && missed.outcome === 'MISSED'
+        && missed.user_id === userId && missed.user_plan_id === active?.row?.user_plan_id
+        && missed.session_id === item.sessionId && missed.scheduled_local_date === item.date;
+      if (confirmedMissed) {
+        if (item.kind === 'run') missedRuns += 1;
+        else missedLifts += 1;
+      } else unconfirmed += 1;
     }
   }
 
@@ -827,11 +853,15 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   return {
     planned: planned.length,
     completed,
+    runCompletions,
+    unconfirmedRuns: attemptedRuns.size,
+    unconfirmedWorkouts: unconfirmed,
+    activityEvidenceHash: canonicalHash({ runs: assessment.fingerprint, lifts, workouts, workoutSets }),
     excused,
     missedRuns,
     missedLifts,
     missedWorkouts: missedRuns + missedLifts,
-    adherenceRate: planned.length > excused ? completed / (planned.length - excused) : null,
+    adherenceRate: completed + missedRuns + missedLifts > 0 ? completed / (completed + missedRuns + missedLifts) : null,
     freshness: `${since} to ${planningDateISO}`,
     lastRunDate: normalizedLastRunDate,
     daysSinceRun,
@@ -846,6 +876,7 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
 }
 
 async function buildAdaptationInputs(userId, plan, active, planningDateISO, options = {}) {
+  const observationInstant = options.observationInstant || new Date();
   const database = options.database || null;
   const strictReads = options.strictReads === true;
   const get = database?.get || dbGet;
@@ -858,7 +889,7 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
   const recentRunParams = focusRunId
     ? [userId, recentRunSince, planningDateISO, focusRunId]
     : [userId, recentRunSince, planningDateISO];
-  const [healthRow, injuries, completion, recentRuns, profile] = await Promise.all([
+  const [healthRow, injuries, recentRuns, profile, corrections, checkins] = await Promise.all([
     get('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
       console.error('[plans/adaptation] health sync lookup failed:', err.message);
       if (strictReads) throw err;
@@ -868,14 +899,12 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
       'SELECT id, date, body_part, pain_level, notes FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 3',
       [userId]
     ),
-    buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO, database).catch((err) => {
-      console.error('[plans/adaptation] completion summary failed:', err.message);
-      if (strictReads) throw err;
-      return {};
-    }),
     all(
       `SELECT id, date, distance_miles, duration_seconds, avg_heart_rate,
               pace_avg, health_source, created_at,
+              perceived_effort, pain_level, post_energy,
+              plan_session_id, planned_session_json, health_source_workout_id,
+              health_start_at, health_end_at, watch_sync_id,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
               type, watch_activity_type, watch_normalized_type
        FROM runs
@@ -887,11 +916,19 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
       if (strictReads) throw err;
       return [];
     }),
-    get('SELECT schedule_type, missed_workout_pref FROM users WHERE id=?', [userId]).catch((err) => {
+    get('SELECT schedule_type, missed_workout_pref, planning_input_revision FROM users WHERE id=?', [userId]).catch((err) => {
       console.error('[plans/adaptation] preference lookup failed:', err.message);
       if (strictReads) throw err;
       return null;
     }),
+    all(`SELECT id, user_id, raw_evidence_kind, raw_evidence_ref, revision,
+                corrected_canonical_value_json, canonical_unit, reason_code, reason,
+                attributed_by_user_id, attribution_json, supersedes_correction_id, created_at
+         FROM planning_evidence_corrections WHERE user_id=? AND raw_evidence_kind='run'
+         ORDER BY raw_evidence_ref, revision, id LIMIT 1001`, [userId]),
+    all(`SELECT id,checkin_date,feeling,legs,drive,time_available,sleep_hours,life_flags
+      FROM daily_checkins WHERE user_id=? AND checkin_date>=? AND checkin_date<=?
+      ORDER BY checkin_date,id`, [userId, adaptationEngine.addDays(planningDateISO, -7), planningDateISO]),
   ]);
   const openInjuries = (Array.isArray(injuries) ? injuries : []).map((injury) => ({
     id: injury.id,
@@ -906,20 +943,34 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
   }));
   const activeInjury = openInjuries.length ? openInjuries[0] : null;
   const healthSignals = buildAdaptationHealthSignals(healthRow, planningDateISO);
+  if (corrections.length > 1000) throw candidateError(409, 'ACTIVITY_ASSESSMENT_REVIEW_REQUIRED', 'The activity assessment is incomplete. Your plan has not changed.');
+  const assessment = activityAssessment({ athleteId: userId, runs: recentRuns, corrections,
+    observationInstant,
+    planningDateLocal: planningDateISO, timezone: plan?.programContract?.timezone || 'UTC',
+    weeklyBaseline: nullableNonNegativeNumber(plan?.inputSummary?.weeklyMileageBaseline, 300),
+    recoveryState: healthSignals.recoveryState, focusRunId: focusRunId || null });
+  const completion = await buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO, database, { assessment });
   const scheduleType = String(profile?.schedule_type || 'adaptive').toLowerCase();
   const missedWorkoutPref = String(profile?.missed_workout_pref || 'adjust_week').toLowerCase();
+  const progress = parseJsonValue(active?.row?.progress_json, {});
+  const semanticHealth = { ...healthSignals, metrics: Object.fromEntries(Object.entries(healthSignals.metrics || {})
+    .map(([key, metric]) => { const { asOf, ...meaning } = metric; return [key, meaning]; })) };
   return {
+    activitySnapshot: { version: 'activity-assessment-v1', fingerprint: canonicalHash({
+      activities: completion.activityEvidenceHash, healthSignals: semanticHealth, openInjuries, checkins,
+      scheduleType, missedWorkoutPref, completedSessionIds: completedSessionIdsFromProgress(progress).sort(),
+      reconciliations: progress.hybridSessionReconciliations || {}, missedOutcomes: progress.missedSessionOutcomes || {} }),
+      healthObservationFingerprint: canonicalHash(healthSignals),
+      planningInputRevision: Number(profile?.planning_input_revision || 0),
+      canonicalActivityCount: assessment.load.canonical_activity_count,
+      rawActivityCount: assessment.load.raw_row_count,
+      coverageState: assessment.load.load_input_state },
     healthSignals,
     completion: {
       ...(completion || {}),
       gapPromptEnabled: ['adaptive', 'flexible'].includes(scheduleType) && missedWorkoutPref !== 'skip',
     },
-    recentRunLoad: summarizeRecentRunLoad(recentRuns, {
-      todayISO: planningDateISO,
-      weeklyBaseline: nullableNonNegativeNumber(plan?.inputSummary?.weeklyMileageBaseline, 300),
-      recoveryState: healthSignals.recoveryState,
-      focusRunId: focusRunId || null,
-    }),
+    recentRunLoad: assessment.recentRunLoad,
     injuryState: activeInjury ? {
       active: true,
       bodyPart: activeInjury.bodyPart,
@@ -936,17 +987,17 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
 }
 
 async function buildCurrentAdaptationProposal(userId, plan, active, planningDateISO, planVersion, database = null, options = {}) {
-  const inputs = await buildAdaptationInputs(userId, plan, active, planningDateISO, {
+  const inputs = options.inputs || await buildAdaptationInputs(userId, plan, active, planningDateISO, {
     database,
     strictReads: options.strictReads === true,
   });
   const runGapKey = inputs.completion?.lastRunDate
-    ? `run-gap:${inputs.completion.lastRunDate}`
+    ? `run-gap:${inputs.completion.lastRunDate}:${inputs.activitySnapshot.fingerprint}`
     : null;
   inputs.completion = { ...(inputs.completion || {}), runGapEpisodeKey: runGapKey };
   const [completionDecisionExists, runGapEpisode] = await Promise.all([
-    hasDecidedCompletionAdaptation(userId, planningDateISO, database),
-    findRunGapEpisode(userId, runGapKey, database),
+    Promise.resolve(false), // A prior decision about different evidence is not today's authority.
+    options.ignoreEpisode ? Promise.resolve(null) : findRunGapEpisode(userId, runGapKey, database),
   ]);
   const runGapDisposition = adaptationEpisodeDisposition(runGapEpisode, planVersion);
   if (runGapDisposition === 'reuse') {
@@ -971,6 +1022,7 @@ async function buildCurrentAdaptationProposal(userId, plan, active, planningDate
     recentRunLoad: inputs.recentRunLoad,
     injuryState: inputs.injuryState,
   });
+  proposal.activitySnapshot = inputs.activitySnapshot;
   if (proposal.status !== 'proposal' || !Array.isArray(proposal.changes) || proposal.changes.length === 0) {
     return { proposal: null, persisted: false, reason: proposal.reason };
   }
@@ -981,6 +1033,8 @@ function encodeProposalReason(proposal) {
   return JSON.stringify({
     headline: proposal.headline,
     reason: proposal.reason,
+    activitySnapshot: proposal.activitySnapshot || null,
+    settledPlanVersion: proposal.settledPlanVersion || null,
   });
 }
 
@@ -989,7 +1043,8 @@ function decodeProposalReason(raw) {
   try {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && (parsed.headline || parsed.reason)) {
-      return { headline: parsed.headline || null, reason: parsed.reason || '' };
+      return { headline: parsed.headline || null, reason: parsed.reason || '',
+        activitySnapshot: parsed.activitySnapshot || null, settledPlanVersion: parsed.settledPlanVersion || null };
     }
   } catch (err) {
     console.error('[plans/adaptation] legacy reason parse skipped:', err.message);
@@ -1020,6 +1075,7 @@ function proposalFromRow(row) {
     userPlanId: row.user_plan_id || null,
     triggerRunId: row.trigger_run_id || null,
     episodeKey: row.episode_key || null,
+    activitySnapshot: meta.activitySnapshot || null,
     revision: proposalDecisionRevision(row),
   };
 }
@@ -1063,6 +1119,7 @@ function adaptationPreviewBinding(userId, proposal) {
       evidence: Array.isArray(proposal.evidence) ? proposal.evidence : [],
       headline: proposal.headline || null,
       reason: proposal.reason || '',
+      activitySnapshot: proposal.activitySnapshot || null,
     }))
     .digest('hex');
   const revision = crypto
@@ -1167,6 +1224,31 @@ async function findLatestAdaptation(userId, planningDateISO, planVersion, tx = n
      LIMIT 1`,
     [userId, planningDateISO, planVersion]
   );
+}
+
+async function settledActivityAssessment(userId, active, planningDateISO, planVersion, snapshot, tx = null) {
+  const rows = await (tx?.all || dbAll)(`SELECT reason FROM plan_adjustment_proposals
+    WHERE user_id=? AND user_plan_id=? AND planning_date=? AND status IN ('accepted','kept')
+    ORDER BY decided_at DESC,id DESC LIMIT 100`, [userId, active.row.user_plan_id, planningDateISO]);
+  return rows.some(row => {
+    const meta = decodeProposalReason(row.reason);
+    return meta.activitySnapshot?.fingerprint === snapshot.fingerprint && meta.settledPlanVersion === planVersion;
+  });
+}
+
+async function refreshStoredAdaptation(userId, active, parsed, row, tx) {
+  const date = normalizePlanningDate(row.planning_date);
+  if (!date) return null;
+  const original = { ...proposalFromRow(row), proposedPlan: parseJsonValue(row.proposed_json, null) };
+  if (!original.activitySnapshot) return null;
+  const inputs = await buildAdaptationInputs(userId, parsed, active, date, { database: tx, strictReads: true });
+  const version = planVersionFor(active, parsed, inputs.activitySnapshot);
+  if (version !== row.plan_version || !original.activitySnapshot
+    || original.activitySnapshot.planningInputRevision !== inputs.activitySnapshot.planningInputRevision) return null;
+  const current = await buildCurrentAdaptationProposal(userId, parsed, active, date, version, tx, { inputs, strictReads: true, ignoreEpisode: true });
+  if (!current.proposal || current.persisted) return null;
+  if (adaptationPreviewBinding(userId, current.proposal).previewFingerprint !== adaptationPreviewBinding(userId, original).previewFingerprint) return null;
+  return { proposal: current.proposal, inputs, version };
 }
 
 async function hasDecidedCompletionAdaptation(userId, planningDateISO, tx = null) {
@@ -7249,6 +7331,117 @@ function canonicalAdaptationPlan(active) {
   );
 }
 
+async function missedSessionOptions(userId, clock, database = null, activeInput = null) {
+  const active = activeInput || await getActivePlanForUser(userId, database, { planningDateLocal: clock.planningDateLocal });
+  if (!active?.row?.user_plan_id) throw candidateError(409, 'MISSED_ASSIGNMENT_REQUIRED', 'An active dated plan is needed to record a missed session.');
+  const plan = canonicalAdaptationPlan(active);
+  const progress = parseJsonValue(active.row.progress_json, {});
+  const planId = active.row.plan_id || active.row.id;
+  const constraints = await loadGoalBackwardPlanningConstraints(database || { all: dbAll }, userId, planId);
+  const completed = new Set(completedSessionIdsFromProgress(progress));
+  const rows = plannedSessionsBetween(plan, plan?.programContract?.start_date || '1900-01-01', clock.planningDateLocal);
+  const since = rows.map(item => item.date).sort()[0] || clock.planningDateLocal;
+  const all = database?.all || dbAll;
+  const runs = await all(`SELECT id,date,type,distance_miles,duration_seconds,perceived_effort,pain_level,post_energy,
+    plan_session_id,planned_session_json,health_source,health_source_workout_id,health_start_at,watch_sync_id,created_at,
+    watch_mode,notes,avg_heart_rate,heart_rate_zones,workout_metrics_json,watch_activity_type,watch_normalized_type
+    FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, since, clock.planningDateLocal]);
+  const corrections = await all(`SELECT * FROM planning_evidence_corrections WHERE user_id=? AND raw_evidence_kind='run'
+    ORDER BY raw_evidence_ref,revision,id LIMIT 1001`, [userId]);
+  if (corrections.length > 1000) throw candidateError(409, 'ACTIVITY_ASSESSMENT_REVIEW_REQUIRED', 'Current completion evidence needs review. No missed session was recorded.');
+  const assessment = activityAssessment({ athleteId: userId, runs, corrections, planningDateLocal: clock.planningDateLocal,
+    timezone: clock.planningTimezone || plan?.programContract?.timezone || 'UTC' });
+  const runEvidence = new Map(runCompletionEvidence(rows.filter(item => item.kind === 'run'), assessment,
+    [...completed], { planId }).map(item => [item.sessionId, item]));
+  const sessions = rows.map(item => {
+    const session = item.session;
+    const record = progress.missedSessionOutcomes?.[missedSessionOutcome.outcomeKey(item.date, item.sessionId)] || null;
+    const reconciliation = progress.hybridSessionReconciliations?.[hybridReconciliation.reconciliationKey(item.date, item.sessionId)];
+    const locked = [...constraints.locks, ...constraints.manual_edits].some(lock =>
+      lock.session_id === item.sessionId || !lock.session_id && lock.date_local === item.date);
+    const isComplete = completed.has(item.sessionId) || item.storedCompleted
+      || reconciliation?.response === 'completed_untracked' || runEvidence.get(item.sessionId)?.completed;
+    return { sessionId: item.sessionId, date: item.date, kind: item.kind,
+      title: session.title || session.name || (item.kind === 'run' ? 'Scheduled run' : 'Scheduled lift'),
+      contentHash: session.content_hash || canonicalHash(session),
+      eligible: !locked && !isComplete && !runEvidence.get(item.sessionId)?.attempted && !record && item.date <= clock.planningDateLocal,
+      locked, completed: isComplete, record };
+  });
+  return { active, progress, sessions, planVersion: planVersionFor(active, plan), planId,
+    assignmentId: active.row.user_plan_id, planningDate: clock.planningDateLocal,
+    timezone: clock.planningTimezone || plan?.programContract?.timezone || 'UTC' };
+}
+
+async function listMissedSessionsHandler(req, res) {
+  try {
+    const clock = acceptedPlanningClock(req.query || {});
+    if (clock.planningDateLocal !== localDateForOffset(new Date(), clock.timezoneOffsetMinutes)) {
+      throw candidateError(400, 'STALE_PLANNING_DATE', 'Refresh using your current phone date.');
+    }
+    const state = await missedSessionOptions(req.user.id, clock);
+    res.json({ sessions: state.sessions.filter(item => item.eligible || item.record),
+      plan_version: state.planVersion, plan_id: state.planId, user_plan_id: state.assignmentId,
+      planning_date_local: state.planningDate });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Unable to load missed sessions.', code: error.code });
+  }
+}
+
+async function recordMissedSessionHandler(req, res) {
+  try {
+    const body = req.body || {};
+    const clock = acceptedPlanningClock(body);
+    if (clock.planningDateLocal !== localDateForOffset(new Date(), clock.timezoneOffsetMinutes)) {
+      throw candidateError(400, 'STALE_PLANNING_DATE', 'Refresh using your current phone date.');
+    }
+    if (!missedSessionOutcome.REASONS.includes(body.reason) || typeof body.session_id !== 'string'
+      || !body.session_id || body.session_id.length > 200 || typeof body.scheduled_date !== 'string') {
+      throw candidateError(400, 'MISSED_SESSION_INPUT_REQUIRED', 'Choose the scheduled session and a reason.');
+    }
+    const result = await withPlanningInputMutation(req.user.id, async tx => {
+      const active = await getActivePlanForMutation(req.user.id, tx, { planningDateLocal: clock.planningDateLocal,
+        normalizePersistedIdentities: false });
+      if (!active) throw candidateError(404, 'MISSED_SESSION_NOT_FOUND', 'That scheduled session is no longer available.');
+      const state = await missedSessionOptions(req.user.id, clock, tx, active);
+      if (body.user_plan_id !== state.assignmentId || body.plan_id !== state.planId) {
+        throw candidateError(409, 'MISSED_PLAN_CHANGED', 'Your plan changed. Refresh before recording the missed session.');
+      }
+      const session = state.sessions.find(item => item.sessionId === body.session_id && item.date === body.scheduled_date);
+      if (!session) throw candidateError(404, 'MISSED_SESSION_NOT_FOUND', 'Choose a current or past scheduled session.');
+      if (session.record) {
+        if (session.record.reason === body.reason && session.record.session_content_hash === body.session_content_hash) {
+          return planningInputUnchanged(missedSessionOutcome.missedResponse(session.record, true));
+        }
+        throw candidateError(409, 'MISSED_OUTCOME_CONFLICT', 'This session already has a different recorded outcome.');
+      }
+      if (body.plan_version !== state.planVersion || body.session_content_hash !== session.contentHash) {
+        throw candidateError(409, 'MISSED_PLAN_CHANGED', 'Your plan changed. Refresh before recording the missed session.');
+      }
+      if (!session.eligible) throw candidateError(409, session.locked ? 'MISSED_SESSION_LOCKED' : 'MISSED_SESSION_COMPLETED',
+        'A completed or locked session cannot be marked missed.');
+      const records = { ...(state.progress.missedSessionOutcomes || {}) };
+      if (Object.keys(records).length >= missedSessionOutcome.MAX_RECORDS) {
+        throw candidateError(409, 'MISSED_OUTCOME_LIMIT', 'This plan’s missed-session record is full; no outcome was changed.');
+      }
+      const record = missedSessionOutcome.createMissedOutcome({ ownerId: req.user.id, active: active.row, session,
+        planningDate: clock.planningDateLocal, timezone: state.timezone, reason: body.reason });
+      records[missedSessionOutcome.outcomeKey(session.date, session.sessionId)] = record;
+      const saved = await tx.run('UPDATE user_plans SET progress_json=? WHERE id=? AND user_id=?',
+        [JSON.stringify({ ...state.progress, missedSessionOutcomes: records }), state.assignmentId, req.user.id]);
+      if (saved.changes !== 1) throw new Error('Missed session outcome was not saved');
+      const stored = await tx.get('SELECT progress_json FROM user_plans WHERE id=? AND user_id=?', [state.assignmentId, req.user.id]);
+      const readback = parseJsonValue(stored?.progress_json, {}).missedSessionOutcomes?.[missedSessionOutcome.outcomeKey(session.date, session.sessionId)];
+      if (!readback || canonicalHash(readback) !== canonicalHash(record)) throw new Error('Missed session readback did not match');
+      return missedSessionOutcome.missedResponse(readback);
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Unable to record this missed session. Your plan has not changed.', code: error.code });
+  }
+}
+
+router.get('/missed-sessions', auth, listMissedSessionsHandler);
+
 function findPlanSession(plan, activeRow, sessionId) {
   const wanted = String(sessionId || '');
   const identified = planWithRemovalSessionIdentities(plan, activeRow);
@@ -7486,14 +7679,20 @@ router.get('/adaptation/current', auth, async (req, res) => {
       return res.json({ proposal: null, reason: 'Transparent adaptation is available for schema-v2 dated calendars only.' });
     }
 
-    const planVersion = planVersionFor(active, parsed);
+    const inputs = await buildAdaptationInputs(req.user.id, parsed, active, planningDateISO, { strictReads: true });
+    const planVersion = planVersionFor(active, parsed, inputs.activitySnapshot);
+    if (await settledActivityAssessment(req.user.id, active, planningDateISO, planVersion, inputs.activitySnapshot)) {
+      return res.json({ proposal: null, outcome: 'keep', reason: 'Your choice is saved. No new activity requires another calendar decision.' });
+    }
     const existing = await findLatestAdaptation(req.user.id, planningDateISO, planVersion);
     if (existing) {
       const existingProposal = proposalFromRow(existing);
       if (existing.status !== 'pending' || existingProposal.changes.length === 0) {
         return res.json({ proposal: null, reason: 'Today\'s calendar check is complete.' });
       }
-      return res.json({ proposal: publicProposal(existingProposal) });
+      if (existingProposal.activitySnapshot?.planningInputRevision === inputs.activitySnapshot.planningInputRevision) {
+        return res.json({ proposal: publicProposal(existingProposal) });
+      }
     }
 
     const computed = await buildCurrentAdaptationProposal(
@@ -7501,7 +7700,9 @@ router.get('/adaptation/current', auth, async (req, res) => {
       parsed,
       active,
       planningDateISO,
-      planVersion
+      planVersion,
+      null,
+      { inputs, strictReads: true }
     );
     if (computed.persisted) return res.json({ proposal: publicProposal(computed.proposal) });
     if (!computed.proposal) return res.json({ proposal: null, reason: computed.reason });
@@ -7516,6 +7717,7 @@ router.get('/adaptation/current', auth, async (req, res) => {
       }),
     });
   } catch (err) {
+    if (err.status === 409) return res.status(409).json({ error: err.message, code: err.code, outcome: 'review', plan_changed: false });
     console.error('[plans/adaptation/current] failed:', err.message);
     res.status(500).json({ error: 'Failed to compute transparent adaptation' });
   }
@@ -7531,6 +7733,9 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
     const run = await dbGet(
       `SELECT id, date, type, distance_miles, duration_seconds,
               avg_heart_rate, pace_avg, health_source,
+              perceived_effort, pain_level, post_energy,
+              plan_session_id, planned_session_json, health_source_workout_id,
+              health_start_at, health_end_at, watch_sync_id,
               created_at, heart_rate_zones, workout_metrics_json, watch_mode,
               notes, watch_activity_type, watch_normalized_type
        FROM runs
@@ -7538,11 +7743,6 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
       [runId, req.user.id]
     );
     if (!run) return res.status(404).json({ error: 'Run not found' });
-
-    const existing = await findRunAdaptation(req.user.id, run.id);
-    if (existing && (existing.status === 'accepted' || existing.status === 'kept')) {
-      return res.json({ impact: publicProposal(proposalFromRow(existing)) });
-    }
 
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active) {
@@ -7575,16 +7775,16 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
       });
     }
 
-    const planVersion = planVersionFor(active, parsed);
-    const inputs = await buildAdaptationInputs(req.user.id, parsed, active, planningDateISO, { focusRunId: run.id });
+    const inputs = await buildAdaptationInputs(req.user.id, parsed, active, planningDateISO, { focusRunId: run.id, strictReads: true });
+    const planVersion = planVersionFor(active, parsed, inputs.activitySnapshot);
     const proposal = adaptationEngine.buildAdaptationProposal({
       plan: parsed,
       planningDateISO,
       planVersion,
-      healthSignals: { available: false },
-      completion: {},
+      healthSignals: inputs.healthSignals,
+      completion: inputs.completion,
       recentRunLoad: inputs.recentRunLoad,
-      injuryState: { active: false, openInjuries: [] },
+      injuryState: inputs.injuryState,
     });
     const runDistance = Number(run.distance_miles || 0);
     const runDurationMinutes = Math.round(Number(run.duration_seconds || 0) / 60);
@@ -7658,7 +7858,9 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
         return stale('The active plan no longer supports this adjustment.');
       }
 
-      const planVersion = planVersionFor(active, parsed);
+      const inputs = await buildAdaptationInputs(ownerId, parsed, active, previewRequest.planningDate,
+        { database: tx, strictReads: true });
+      const planVersion = planVersionFor(active, parsed, inputs.activitySnapshot);
       if (!secureAdaptationTokenEqual(planVersion, previewRequest.proposalPlanVersion, 32)) {
         return stale('The active plan changed after this adjustment was displayed.');
       }
@@ -7668,7 +7870,9 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
         planVersion,
         tx
       );
-      if (existing) {
+      if (existing && (existing.status !== 'pending'
+        || !proposalFromRow(existing).activitySnapshot
+        || proposalFromRow(existing).activitySnapshot?.planningInputRevision === inputs.activitySnapshot.planningInputRevision)) {
         return planningInputUnchanged({
           conflict: true,
           refreshRequired: existing.status === 'pending',
@@ -7688,7 +7892,7 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
         previewRequest.planningDate,
         planVersion,
         tx,
-        { strictReads: true }
+        { strictReads: true, inputs }
       );
       if (computed.persisted) {
         return stale('A current proposal already exists. Refresh before choosing.', 'ADAPTATION_PROPOSAL_CHANGED');
@@ -7705,6 +7909,10 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
           'ADAPTATION_PROPOSAL_CHANGED'
         );
       }
+
+      if (existing?.status === 'pending') await tx.run(
+        "UPDATE plan_adjustment_proposals SET status='superseded',decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
+        [existing.id, ownerId]);
 
       const row = await persistPreviewAdaptationProposal(
         ownerId,
@@ -7731,19 +7939,21 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
       if (decision === 'accept') {
         await updateAcceptedAdaptationPlan(active, ownerId, computed.proposal.proposedPlan, tx);
       }
+      const settledPlanVersion = planVersionFor(active, canonicalAdaptationPlan(active), inputs.activitySnapshot);
       const decidedStatus = decision === 'accept' ? 'accepted' : 'kept';
       const update = await tx.run(
         `UPDATE plan_adjustment_proposals
-         SET status=?, decided_at=CURRENT_TIMESTAMP
+         SET status=?, reason=?, decided_at=CURRENT_TIMESTAMP
          WHERE id=? AND user_id=? AND status='pending'`,
-        [decidedStatus, row.id, ownerId]
+        [decidedStatus, encodeProposalReason({ ...computed.proposal, settledPlanVersion }), row.id, ownerId]
       );
       if (update.changes !== 1) throw new Error('Preview adaptation decision lost concurrency race');
-      return {
+      const result = {
         ok: true,
         status: decidedStatus,
         proposal: proposalFromRow({ ...row, status: decidedStatus }),
       };
+      return decision === 'keep' ? planningInputUnchanged(result) : result;
     });
 
     if (result.conflict) return res.status(409).json({
@@ -7799,8 +8009,8 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
       });
       if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
       const parsed = canonicalAdaptationPlan(active);
-      const currentVersion = planVersionFor(active, parsed);
-      if (String(currentVersion) !== String(row.plan_version || '')) {
+      const refreshed = await refreshStoredAdaptation(req.user.id, active, parsed, row, tx);
+      if (!refreshed) {
         const update = await tx.run(
           "UPDATE plan_adjustment_proposals SET status='superseded', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
           [row.id, req.user.id]
@@ -7816,12 +8026,12 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
         });
       }
 
-      const proposedPlan = parseJsonValue(row.proposed_json, null);
+      const proposedPlan = refreshed.proposal.proposedPlan;
       if (!proposedPlan || typeof proposedPlan !== 'object') throw new Error('Stored proposed plan JSON is invalid');
       await updateAcceptedAdaptationPlan(active, req.user.id, proposedPlan, tx);
       const update = await tx.run(
-        "UPDATE plan_adjustment_proposals SET status='accepted', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
-        [row.id, req.user.id]
+        "UPDATE plan_adjustment_proposals SET status='accepted', reason=?, decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
+        [encodeProposalReason({ ...refreshed.proposal, settledPlanVersion: planVersionFor(active, canonicalAdaptationPlan(active), refreshed.inputs.activitySnapshot) }), row.id, req.user.id]
       );
       if (update.changes === 0) throw new Error('Proposal accept status update failed');
       return { ok: true, status: 'accepted', proposal: proposalFromRow({ ...row, status: 'accepted' }) };
@@ -7872,8 +8082,8 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
       });
       if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
       const parsed = canonicalAdaptationPlan(active);
-      const currentVersion = planVersionFor(active, parsed);
-      if (String(currentVersion) !== String(row.plan_version || '')) {
+      const refreshed = await refreshStoredAdaptation(req.user.id, active, parsed, row, tx);
+      if (!refreshed) {
         const update = await tx.run(
           "UPDATE plan_adjustment_proposals SET status='superseded', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
           [row.id, req.user.id]
@@ -7889,11 +8099,11 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
         });
       }
       const update = await tx.run(
-        "UPDATE plan_adjustment_proposals SET status='kept', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
-        [row.id, req.user.id]
+        "UPDATE plan_adjustment_proposals SET status='kept', reason=?, decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
+        [encodeProposalReason({ ...refreshed.proposal, settledPlanVersion: refreshed.version }), row.id, req.user.id]
       );
       if (update.changes === 0) throw new Error('Proposal keep status update failed');
-      return { ok: true, status: 'kept', proposal: proposalFromRow({ ...row, status: 'kept' }) };
+      return planningInputUnchanged({ ok: true, status: 'kept', proposal: proposalFromRow({ ...row, status: 'kept' }) });
     });
 
     if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
@@ -9287,6 +9497,8 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router.clearActivePlanForUser = clearActivePlanForUser;
 
 router._test = {
+  buildAdaptationInputs,
+  buildCompletionSummaryForAdaptation,
   adaptationEpisodeDisposition,
   applicableGoalBackwardPlan,
   isRevisionedGoalBackedRequest,
@@ -9354,4 +9566,5 @@ router._test = {
   withRequestPlanningClock,
 };
 
+router.recordMissedSessionHandler = recordMissedSessionHandler;
 module.exports = router;

@@ -10,6 +10,55 @@ import {
   signatureUiDashboardFixture,
 } from './support/mockApi.mjs'
 
+test('missed-session modal records exact outcomes without offline or stale false success', async ({ page }, testInfo) => {
+  const width = testInfo.project.name.includes('320') ? 320 : 393
+  await page.setViewportSize({ width, height: width === 320 ? 568 : 874 })
+  let loadAttempt = 0, saveAttempt = 0
+  const date = qaLocalDateISO()
+  const fixture = { plan_version:'version-1',plan_id:'plan-1',user_plan_id:'assignment-1',sessions:[
+    {sessionId:'run-1',date,kind:'run',title:'Easy recovery run',contentHash:'canonical-hash',eligible:true},
+  ] }
+  const errors = []
+  page.on('pageerror', error => errors.push(error.message))
+  const state = await installAuthenticatedApi(page, { responses:[
+    ['GET /api/plans/missed-sessions', () => ++loadAttempt === 1 ? qaResponse({error:'Load unavailable'},503) : fixture],
+    ['POST /api/runs/missed', entry => {
+      expect(entry.body).toMatchObject({session_id:'run-1',scheduled_date:date,session_content_hash:'canonical-hash',
+        plan_id:'plan-1',user_plan_id:'assignment-1',plan_version:'version-1',reason:'sick',planning_date_local:date})
+      if (++saveAttempt === 1) return qaResponse({queued:true,offline:true},202)
+      if (saveAttempt === 2) return qaResponse({error:'Plan changed. Choose a refreshed session.'},409)
+      return {ok:true,outcome:'recorded',plan_changed:false,record:{fingerprint:'saved'},message:'Marked this session as missed. Your plan has not changed.'}
+    }],
+  ] })
+  await page.goto('/history')
+  await page.getByRole('button',{name:'Miss a workout? Record the session'}).click()
+  const dialog = page.getByRole('dialog',{name:'Record a missed session'})
+  await expect(dialog.getByRole('alert')).toHaveText('Load unavailable')
+  await dialog.getByRole('button',{name:'Retry loading sessions'}).click()
+  await dialog.getByLabel('Scheduled session').selectOption(`${date}:run-1`)
+  await dialog.getByRole('button',{name:'Sick / injured'}).click()
+  const save = dialog.getByRole('button',{name:'Mark Session Missed'})
+  await save.click()
+  await expect(dialog.getByRole('alert')).toContainText('has not been saved')
+  await expect(dialog.getByText('Your plan has not changed.',{exact:true})).toHaveCount(0)
+  await save.click()
+  await expect(dialog.getByRole('alert')).toContainText('Plan changed')
+  await expect(dialog.getByLabel('Scheduled session')).toHaveValue('')
+  expect(loadAttempt).toBe(3)
+  await dialog.getByLabel('Scheduled session').selectOption(`${date}:run-1`)
+  await save.click()
+  await expect(dialog.getByText('Marked this session as missed. Your plan has not changed.',{exact:true})).toBeVisible()
+  await expect(dialog.getByRole('button',{name:'Review current coaching'})).toBeVisible()
+  const layout = await dialog.evaluate(node=>({width:node.scrollWidth,client:node.clientWidth,height:node.clientHeight,viewport:innerHeight}))
+  expect(layout.width).toBeLessThanOrEqual(layout.client+1)
+  expect(layout.height).toBeLessThanOrEqual(layout.viewport)
+  await page.screenshot({path:testInfo.outputPath('missed-session-truthful-outcome.png'),fullPage:true})
+  await dialog.getByRole('button',{name:'Close missed session'}).click()
+  await expect(dialog).toHaveCount(0)
+  expect(errors).toEqual([])
+  expect(state.unexpectedRequests).toEqual([])
+})
+
 test.describe.configure({ timeout: 60_000 })
 
 function dayLabel(date = new Date()) {
