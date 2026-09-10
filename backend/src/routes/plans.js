@@ -7465,6 +7465,10 @@ async function buildAdaptiveRecommendation(userId, preferences = {}) {
   }, recentRuns || [], recentLifts || [], activeInjuries || [], healthRow);
 }
 
+router.use('/adaptation', (req, res, next) => {
+  require('../lib/activityValidationScope').withActivityValidationScope(next);
+});
+
 router.get('/', auth, async (req, res) => {
   try {
     const rows = await dbAll(`

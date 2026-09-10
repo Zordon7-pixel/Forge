@@ -82,6 +82,15 @@ advancing September2026 clock. No production clock override exists.
 
 ## Evidence discipline
 
+`activityImmutablePrescription.smoke.js` and `activityValidationScope.smoke.js`
+cover detached immutable snapshots, unchanged canonical identity, returned-dose
+mutation, changed-input revalidation, concurrent/sequential request isolation,
+and hostile graph ineligibility. `activityCanonicalSuccessor.smoke.js` compares
+scoped/unscoped complete canonical output and rejects different authenticated
+owner/context/parent after the same set was already validated. Real HTTP coverage
+retains max20 first/second acceptance, replay, stale input and dated reload against
+the unchanged 15-second activity endpoint deadline.
+
 All old undated `/plans/today` evidence was withdrawn: an error body is not Today
 proof. Current harness requires explicit date, HTTP200, accepted manifest, and exact
 execution date. Intercepted browser tests are separately labeled. No account-specific

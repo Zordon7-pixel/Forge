@@ -7,10 +7,31 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const equal = (a, b) => canonicalHash(a) === canonicalHash(b);
 const failure = code => { throw Object.assign(new Error(code), { code, status: 409 }); };
 
+// Only call on newly owned JSON data. Freezing these request-local values
+// makes the existing derived-dose memo eligible; it does not cache validation
+// or replace any source/owner/revision check.
+function freezeOwnedJson(value) {
+  if (value && typeof value === 'object') {
+    Object.values(value).forEach(freezeOwnedJson);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function immutableProgramSet(value) {
+  // Existing constructor output may safely share deeply immutable subgraphs.
+  // The predicate rejects shallow freezing and mutable/custom internal state.
+  if (value && typeof value === 'object' && require('./immutableOwnJson').immutableOwnJson(value)) return value;
+  const owned = require('./goalBackwardRecoveryMaterial').ownMaterializedProgramSnapshot(value);
+  // The closed snapshot rejects accessors, proxies, cycles and shared mutable
+  // graphs before cloning. Preserve the public JSON object's normal prototype.
+  return owned ? freezeOwnedJson(clone(owned)) : null;
+}
+
 function canonicalSetPayload(payload) {
   if (!payload || typeof payload !== 'object') return null;
   const { plan_generation_candidate_ref, selected_candidate_id, selected_candidate_hash, ...set } = payload;
-  return set;
+  return set.program_contract?.version === 'complete-road-program-v1' ? immutableProgramSet(set) : set;
 }
 
 function rootCandidateHash(set) {
@@ -170,6 +191,11 @@ function rebuildSet(parent, sessions, context, observationArtifact) {
 }
 
 function predecessorFor(set) {
+  return require('./activityValidationScope').memoizeImmutableActivity('predecessor', set,
+    () => predecessorForUncached(set));
+}
+
+function predecessorForUncached(set) {
   const receipt = set.activity_adaptation;
   if (!receipt || Object.keys(receipt).sort().join('|') !== ['version', 'context', 'parent_header', 'receipt_hash', 'observation_artifact'].sort().join('|')) return null;
   const { receipt_hash: hash, ...body } = receipt;
@@ -182,15 +208,25 @@ function predecessorFor(set) {
   const originals = set.sessions.map(session => session.activity_reduction
     && session.activity_reduction.context.parent_canonical_set_hash === header.content_hash
     ? clone(session.activity_reduction.original) : reboundUnchanged(session, header.plan_revision));
-  return { ...clone(header), sessions: originals };
+  return freezeOwnedJson({ ...clone(header), sessions: originals });
 }
 
 function validateActivitySet(set, { authenticatedParent = null, authenticatedContext = null } = {}) {
+  // Context/parent comparisons are not memoized: a different owner, accepted
+  // parent or observation must still be rejected even inside the same request.
+  const valid = require('./activityValidationScope').memoizeImmutableActivity('activity-set', set,
+    () => validateActivitySetUncached(set));
+  if (!valid) return false;
+  try {
+    return (!authenticatedParent || equal(predecessorFor(set), authenticatedParent))
+      && (!authenticatedContext || equal(set.activity_adaptation.context, authenticatedContext));
+  } catch { return false; }
+}
+
+function validateActivitySetUncached(set) {
   try {
     const parent = predecessorFor(set);
-    if (!parent || !canonical.validateCanonicalSessionSet(parent).valid
-      || authenticatedParent && !equal(parent, authenticatedParent)
-      || authenticatedContext && !equal(set.activity_adaptation.context, authenticatedContext)) return false;
+    if (!parent || !canonical.validateCanonicalSessionSet(parent).valid) return false;
     const context = set.activity_adaptation.context;
     if (!equal(context.parent_horizon, { start_date: parent.program_contract.start_date, end_date: parent.program_contract.end_date })
       || context.parent_goals_hash !== canonicalHash(parent.program_contract.goals)) return false;
@@ -230,6 +266,8 @@ function nonIncreasingWindows(before, after) {
 }
 
 function buildActivityCanonicalSuccessor({ parent, context, changes, training_age_class, observationArtifact }) {
+  parent = immutableProgramSet(parent);
+  if (!parent) failure('ACTIVITY_PARENT_IDENTITY_INVALID');
   if (!canonical.validateCanonicalSessionSet(parent).valid || !policy.validateContext(context)
     || parent.content_hash !== context.parent_canonical_set_hash
     || !require('./activityObservation').validateObservation(observationArtifact, context)) failure('ACTIVITY_PARENT_IDENTITY_INVALID');
@@ -245,7 +283,7 @@ function buildActivityCanonicalSuccessor({ parent, context, changes, training_ag
     if (change.action === 'rest') return reductionRest(original, context);
     failure('ACTIVITY_REDUCTION_ACTION_INVALID');
   });
-  const next = rebuildSet(parent, sessions, context, observationArtifact);
+  const next = freezeOwnedJson(rebuildSet(parent, sessions, context, observationArtifact));
   if (!validateActivitySet(next, { authenticatedParent: parent, authenticatedContext: context })) failure('ACTIVITY_SUCCESSOR_IDENTITY_INVALID');
   const windows = nonIncreasingWindows(parent.sessions.filter(session => session.scheduled_local_date >= context.planning_date),
     sessions.filter(session => session.scheduled_local_date >= context.planning_date));

@@ -40,6 +40,18 @@ for (const frequency of [4, 7]) {
     changes: ids.map(id => ({ session_id: id, action: 'rest' })) }).canonical;
   assert.equal(JSON.stringify(parent), originalBytes, 'The accepted predecessor remains immutable');
   assert.equal(canonical.validateCanonicalSessionSet(first).valid, true);
+  require('../src/lib/activityValidationScope').withActivityValidationScope(() => {
+    const scoped = successor.buildActivityCanonicalSuccessor({ parent, context, observationArtifact: observationFor(parent, '2026-09-10'),
+      changes: ids.map(id => ({ session_id: id, action: 'rest' })) });
+    assert.deepEqual(scoped.canonical, first, 'Scoped reuse leaves the entire canonical prescription and lineage byte-equivalent');
+    assert.equal(canonical.validateCanonicalSessionSet(first).valid, true);
+    assert.equal(successor.validateActivitySet(first, { authenticatedParent: parent, authenticatedContext: context }), true);
+    assert.equal(successor.validateActivitySet(first, { authenticatedContext: { ...context, owner_id: 'foreign-owner' } }), false,
+      'A previously validated immutable set cannot bypass a different authenticated owner/context');
+    assert.equal(successor.validateActivitySet(first, { authenticatedParent: { ...parent, plan_revision: parent.plan_revision + 1 } }), false,
+      'A cached pure validation cannot bypass the freshly authenticated parent');
+    assert.ok(require('../src/lib/immutableOwnJson').immutableOwnJson(successor.predecessorFor(first)));
+  });
   assert.equal(first.sessions.length, parent.sessions.length, 'Rest dispositions preserve the exact full-horizon slot inventory');
   assert.deepEqual(first.program_contract, parent.program_contract, 'Goals, requested frequencies, horizon and eligibility are unchanged');
   for (const session of first.sessions.filter(session => !ids.includes(session.session_id))) {

@@ -1614,6 +1614,11 @@ function canonicalSessionSetHash(sessionSet = {}) {
 }
 
 function validateCanonicalSessionSet(sessionSet = {}) {
+  return require('./activityValidationScope').memoizeImmutableActivity('canonical-set', sessionSet,
+    () => validateCanonicalSessionSetUncached(sessionSet));
+}
+
+function validateCanonicalSessionSetUncached(sessionSet = {}) {
   const violations = [];
   if (!isPlainObject(sessionSet)) {
     return deepFreeze({ valid: false, violations: [{ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SET_NOT_OBJECT' }], reason_codes: ['CANONICAL_SESSION_SET_INVALID'] });

@@ -140,6 +140,27 @@ not still displayed or counted as a long run.
 
 ## Evidence and limits
 
+The later design receipt
+`HERMES-DESIGN-SCOPE-FORGE-ACTIVITY-RECOVERY-WHOLE-WITHHOLDING-SUBSET-20260910`
+approves the bounded useful-recovery/whole-withholding scope. Public partial-set
+withholding remains deferred; neither primitive coverage nor this release claims
+COMPLETEv1 partial capability. This is design scope, not exact-code approval.
+
+### Request-local calculation reuse
+
+The 20-week repeated-adjustment acceptance on `e2fce640` measured 14,959ms against
+the unchanged 15,000ms client deadline. A full real-route profile found repeated
+dose resolution and canonical predecessor validation of identical objects.
+The implementation correction snapshots accepted/freshly generated prescriptions
+as recursively immutable own JSON, enabling the existing derived-dose memo.
+An adaptation-request-local inventory additionally reuses pure canonical validation
+and predecessor reconstruction by exact immutable object identity. It does not
+cache database reads, ownership, observed-input freshness or acceptance. Fresh
+authenticated parent/context comparisons and transaction/revision checks still run.
+Separate requests—including concurrent ones—never share this validation inventory.
+Mutable, shallow-frozen, accessor, proxy, cyclic or custom-state graphs are not
+eligible. No timeout, training coefficient, ceiling or validator is removed.
+
 Named tests and acceptance gaps are mapped in
 [activity-reduction-test-matrix.md](activity-reduction-test-matrix.md).
 Local HTTP tests use only newly registered synthetic owners and real PostgreSQL,
