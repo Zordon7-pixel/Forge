@@ -65,7 +65,11 @@ const {
   canonicalStringify,
   eventPolicyForGoal,
 } = require('../lib/racePlanPolicy');
-const { validateCanonicalSessionSet } = require('../lib/canonicalWorkout');
+const {
+  canonicalSessionSetHash,
+  canonicalWorkoutHash,
+  validateCanonicalSessionSet,
+} = require('../lib/canonicalWorkout');
 const { canonicalPrescriptionHash } = require('../lib/goalBackwardValidators');
 const { buildDecisionArtifactDiagnosticBundle } = require('../lib/racePlanDiagnostics');
 const {
@@ -84,6 +88,7 @@ const {
   normalizePlanningConstraints,
   parseJson: parseCandidateJson,
   persistCandidateRejection,
+  persistPipelineArtifacts,
   persistGoalBackwardDecisionArtifacts,
   prefixedHash,
   validateCandidateBundle,
@@ -4299,6 +4304,203 @@ function surfaceMismatchManifest(candidate = {}, payload = null) {
   };
 }
 
+function clonePlanValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function planCanonicalSessions(plan = {}) {
+  const sessions = [];
+  for (const week of Array.isArray(plan.weeks) ? plan.weeks : []) {
+    for (const day of planSchema.getDayEntries(week)) {
+      for (const session of planSchema.daySessions(day)) {
+        const sessionId = String(session?.session_id ?? session?.id ?? '').trim();
+        if (!sessionId) throw surfaceReconcileReviewRequired();
+        sessions.push({ session, sessionId, date: day?.date || session?.scheduled_local_date || null });
+      }
+    }
+  }
+  if (!sessions.length || new Set(sessions.map((entry) => entry.sessionId)).size !== sessions.length) {
+    throw surfaceReconcileReviewRequired();
+  }
+  return sessions;
+}
+
+function buildAdaptationSurfaceSuccessor({
+  activeRow,
+  candidate,
+  canonicalArtifact,
+  surfaceArtifact,
+  proposedPlan,
+  createdAt = new Date().toISOString(),
+} = {}) {
+  const canonical = parseJsonValue(canonicalArtifact?.payload_json, null);
+  const manifest = parseJsonValue(surfaceArtifact?.payload_json, null);
+  if (!canonical || !manifest
+    || surfaceArtifact?.parent_artifact_id !== canonicalArtifact?.id
+    || canonicalArtifact?.parent_artifact_id == null
+    || canonicalArtifact?.decision_id !== candidate?.decision_id
+    || surfaceArtifact?.decision_id !== candidate?.decision_id
+    || canonicalArtifact?.plan_generation_candidate_id !== candidate?.id
+    || surfaceArtifact?.plan_generation_candidate_id !== candidate?.id
+    || surfaceManifestAppliedPlanDiagnostic(manifest, candidate, activeRow, canonical).status_code !== 'ACCEPTED') {
+    throw surfaceReconcileReviewRequired();
+  }
+
+  const currentPlan = parsePlan(activeRow) || {};
+  const currentRevision = exactPositivePlanRevision(activeRow?.plan_version);
+  const nextRevision = currentRevision === null ? null : currentRevision + 1;
+  if (!Number.isSafeInteger(nextRevision)
+    || exactPositivePlanRevision(currentPlan.plan_revision) !== currentRevision
+    || exactPositivePlanRevision(canonical.plan_revision) !== currentRevision) {
+    throw surfaceReconcileReviewRequired();
+  }
+  const existingSessions = new Map((canonical.sessions || []).map((session) => [
+    String(session?.session_id || ''), session,
+  ]));
+  if (!existingSessions.size) throw surfaceReconcileReviewRequired();
+
+  const nextPlan = clonePlanValue(proposedPlan);
+  const nextSessions = planCanonicalSessions(nextPlan).map(({ session, sessionId, date }) => {
+    const previous = existingSessions.get(sessionId);
+    if (!previous) throw surfaceReconcileReviewRequired();
+    const next = {
+      ...clonePlanValue(session),
+      session_id: sessionId,
+      session_revision: Math.max(1, Number(previous.session_revision || 1)) + 1,
+      plan_id: String(currentPlan.plan_id || canonical.plan_id || ''),
+      plan_revision: nextRevision,
+      decision_id: String(canonical.decision_id || candidate.decision_id || ''),
+      scheduled_local_date: session.scheduled_local_date || date,
+    };
+    next.content_hash = canonicalWorkoutHash(next);
+    return next;
+  });
+  if (!nextSessions.length) throw surfaceReconcileReviewRequired();
+  const nextById = new Map(nextSessions.map((session) => [session.session_id, session]));
+  nextPlan.weeks = (nextPlan.weeks || []).map((week) => ({
+    ...week,
+    [planSchema.dayEntriesKey(week)]: planSchema.getDayEntries(week).map((day) => ({
+      ...day,
+      sessions: planSchema.daySessions(day).map((session) => nextById.get(String(session?.session_id ?? session?.id))),
+    })),
+  }));
+
+  const nextCanonical = {
+    ...clonePlanValue(canonical),
+    plan_revision: nextRevision,
+    sessions: nextSessions,
+    session_content_hashes: nextSessions.map((session) => ({
+      session_id: session.session_id,
+      content_hash: session.content_hash,
+    })),
+  };
+  nextCanonical.content_hash = canonicalSessionSetHash(nextCanonical);
+  nextPlan.plan_revision = nextRevision;
+  nextPlan.canonical_session_set_hash = nextCanonical.content_hash;
+
+  const nextManifest = {
+    ...clonePlanValue(manifest),
+    identity: {
+      ...clonePlanValue(manifest.identity),
+      plan_revision: nextRevision,
+      canonical_session_set_hash: nextCanonical.content_hash,
+    },
+    sessions: nextSessions,
+  };
+  const nextCanonicalArtifact = buildPipelineArtifact({
+    userId: canonicalArtifact.user_id,
+    kind: 'canonical_session_set',
+    decisionId: canonicalArtifact.decision_id,
+    parentArtifactId: canonicalArtifact.parent_artifact_id,
+    planGenerationCandidateId: canonicalArtifact.plan_generation_candidate_id,
+    schemaVersion: canonicalArtifact.schema_version,
+    policyVersion: canonicalArtifact.policy_version,
+    revision: Number(canonicalArtifact.revision) + 1,
+    createdAt,
+    payload: nextCanonical,
+  });
+  const nextSurfaceArtifact = buildPipelineArtifact({
+    userId: surfaceArtifact.user_id,
+    kind: 'surface_manifest',
+    decisionId: surfaceArtifact.decision_id,
+    parentArtifactId: nextCanonicalArtifact.id,
+    planGenerationCandidateId: surfaceArtifact.plan_generation_candidate_id,
+    schemaVersion: surfaceArtifact.schema_version,
+    policyVersion: surfaceArtifact.policy_version,
+    revision: Number(surfaceArtifact.revision) + 1,
+    createdAt,
+    payload: nextManifest,
+  });
+  return {
+    plan: nextPlan,
+    canonicalArtifact: nextCanonicalArtifact,
+    surfaceArtifact: nextSurfaceArtifact,
+  };
+}
+
+async function updateAcceptedAdaptationPlan(active, userId, proposedPlan, tx) {
+  const currentPlan = parsePlan(active?.row) || {};
+  if (active?.source !== 'assigned' || Number(currentPlan.canonical_workout_schema_version) !== 1) {
+    await updateActivePlanData(active, userId, proposedPlan, tx);
+    return { surfaceRebound: false };
+  }
+  const candidates = await tx.all(
+    `SELECT * FROM plan_generation_candidates
+     WHERE user_id=? AND applied_user_plan_id=? AND status='applied'
+       AND feature_mode IN ('preview','on')
+     ORDER BY applied_at DESC, id DESC
+     LIMIT 2
+     FOR UPDATE`,
+    [userId, active.row.user_plan_id],
+  );
+  if (candidates.length !== 1) throw surfaceReconcileReviewRequired();
+  const candidate = candidates[0];
+  const surfaceArtifact = await tx.get(
+    `SELECT id, user_id, artifact_kind, decision_id, parent_artifact_id,
+            plan_generation_candidate_id, schema_version, policy_version,
+            revision, content_hash, payload_json, created_at
+     FROM planning_pipeline_artifacts
+     WHERE user_id=? AND plan_generation_candidate_id=? AND artifact_kind='surface_manifest'
+     ORDER BY revision DESC, created_at DESC
+     LIMIT 1
+     FOR SHARE`,
+    [userId, candidate.id],
+  );
+  const canonicalArtifact = surfaceArtifact?.parent_artifact_id
+    ? await tx.get(
+      `SELECT id, user_id, artifact_kind, decision_id, parent_artifact_id,
+              plan_generation_candidate_id, schema_version, policy_version,
+              revision, content_hash, payload_json, created_at
+       FROM planning_pipeline_artifacts
+       WHERE id=? AND user_id=? AND artifact_kind='canonical_session_set'
+       FOR SHARE`,
+      [surfaceArtifact.parent_artifact_id, userId],
+    )
+    : null;
+  const successor = buildAdaptationSurfaceSuccessor({
+    activeRow: active.row,
+    candidate,
+    canonicalArtifact,
+    surfaceArtifact,
+    proposedPlan,
+  });
+  await updateActivePlanData(active, userId, successor.plan, tx);
+  const persisted = await persistPipelineArtifacts({
+    tx,
+    artifacts: [successor.canonicalArtifact, successor.surfaceArtifact],
+  });
+  if (persisted.inserted !== 2
+    || surfaceManifestAppliedPlanDiagnostic(
+      successor.surfaceArtifact.payload_json,
+      candidate,
+      active.row,
+      successor.canonicalArtifact.payload_json,
+    ).status_code !== 'ACCEPTED') {
+    throw surfaceReconcileReviewRequired();
+  }
+  return { surfaceRebound: true };
+}
+
 function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRow = null, canonicalSessionSet = null) {
   const identity = manifest?.identity;
   const hashIdentity = (value) => String(value || '').replace(/^sha256:/, '');
@@ -6840,7 +7042,7 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
       }
 
       if (decision === 'accept') {
-        await updateActivePlanData(active, ownerId, computed.proposal.proposedPlan, tx);
+        await updateAcceptedAdaptationPlan(active, ownerId, computed.proposal.proposedPlan, tx);
       }
       const decidedStatus = decision === 'accept' ? 'accepted' : 'kept';
       const update = await tx.run(
@@ -6871,6 +7073,13 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
   } catch (err) {
     if (err?.code === 'AUTH_ACCOUNT_DELETED') {
       return res.status(401).json({ error: 'Authenticated owner is unavailable' });
+    }
+    if (err?.code === 'SURFACE_RECONCILE_REVIEW_REQUIRED') {
+      return res.status(409).json({
+        error: SURFACE_RECONCILE_REVIEW_MESSAGE,
+        code: err.code,
+        rebuild_required: true,
+      });
     }
     console.error('[plans/adaptation/preview-decision] failed:', err.message);
     return res.status(500).json({ error: 'Failed to save transparent adaptation decision' });
@@ -6922,7 +7131,7 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
 
       const proposedPlan = parseJsonValue(row.proposed_json, null);
       if (!proposedPlan || typeof proposedPlan !== 'object') throw new Error('Stored proposed plan JSON is invalid');
-      await updateActivePlanData(active, req.user.id, proposedPlan, tx);
+      await updateAcceptedAdaptationPlan(active, req.user.id, proposedPlan, tx);
       const update = await tx.run(
         "UPDATE plan_adjustment_proposals SET status='accepted', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
         [row.id, req.user.id]
@@ -6939,6 +7148,13 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
     });
     res.json({ ok: true, status: 'accepted', proposal: publicProposal(result.proposal), idempotent: Boolean(result.idempotent) });
   } catch (err) {
+    if (err?.code === 'SURFACE_RECONCILE_REVIEW_REQUIRED') {
+      return res.status(409).json({
+        error: SURFACE_RECONCILE_REVIEW_MESSAGE,
+        code: err.code,
+        rebuild_required: true,
+      });
+    }
     console.error('[plans/adaptation/accept] failed:', err.message);
     res.status(500).json({ error: 'Failed to accept transparent adaptation' });
   }
@@ -8407,6 +8623,8 @@ router._test = {
   goalBackwardTrainingAge,
   buildCanonicalSurfaceManifest,
   buildGoalBackwardArtifacts,
+  buildAdaptationSurfaceSuccessor,
+  updateAcceptedAdaptationPlan,
   canonicalWorkoutStartAccess,
   canonicalWorkoutStartDecision,
   canonicalSurfaceManifestForActive,

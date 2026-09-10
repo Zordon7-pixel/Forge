@@ -514,7 +514,7 @@ for (const response of [active, stale]) {
 
 {
   const planSource = fs.readFileSync(new URL('../src/pages/Plan.jsx', import.meta.url), 'utf8')
-  const blockerStart = planSource.indexOf("calendarModel?.surface?.status === 'blocked'")
+  const blockerStart = planSource.indexOf("myPlan && calendarModel?.surface?.status === 'blocked'")
   const blockerEnd = planSource.indexOf('{/* Active plan:', blockerStart)
   const blockerSource = planSource.slice(blockerStart, blockerEnd)
   assert.match(blockerSource, /Restoring your reviewed plan/)
@@ -522,8 +522,11 @@ for (const response of [active, stale]) {
   assert.match(blockerSource, /Review and rebuild plan/)
   assert.match(blockerSource, /!\['recovering', 'retry'\]\.includes\(surfaceRecoveryPhase\)/,
     'a blocked idle state always exposes the reviewed rebuild action')
+  assert.match(blockerSource, /onClick=\{rebuildBlockedPlan\}/,
+    'the primary blocked action executes the reviewed preview-and-apply rebuild instead of navigating')
+  assert.match(blockerSource, /Open plan catalog/)
   assert.match(blockerSource, /navigate\('\/plan-catalog'/,
-    'a nonrepairable blocker leads to the existing reviewed-plan flow')
+    'catalog navigation remains an explicit secondary option')
   assert.doesNotMatch(blockerSource, /SURFACE_REVISION_MISMATCH|reason_codes|Start (?:run|lift|workout)/,
     'the blocked state renders no raw enum or execution affordance')
 }

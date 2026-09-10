@@ -38,6 +38,10 @@ function compactDiagnostic(result) {
 }
 
 function buildScenario(options = {}) {
+  const planningDate = options.planningDate || PLANNING_DATE;
+  const startDate = options.startDate || '2026-08-24';
+  const latestRunDate = options.latestRunDate || '2026-08-27';
+  const goalTimeSeconds = Object.hasOwn(options, 'goalTimeSeconds') ? options.goalTimeSeconds : 5340;
   const baselineRunningM = options.baselineRunningM || BASELINE_RUNNING_M;
   const race = {
     id: 'army-ten-miler-2026',
@@ -49,7 +53,7 @@ function buildScenario(options = {}) {
     event_kind: 'run_race',
     distance_miles: 10,
     location: 'Washington, DC',
-    goal_time_seconds: 5340,
+    goal_time_seconds: goalTimeSeconds,
     status: 'upcoming',
   };
   const target = {
@@ -57,15 +61,15 @@ function buildScenario(options = {}) {
     raceId: race.id,
     raceName: race.race_name,
     distanceMiles: 10,
-    goalTimeSeconds: 5340,
-    goalType: 'pr',
+    goalTimeSeconds,
+    goalType: goalTimeSeconds ? 'pr' : 'completion',
     raceTargets: [{
       raceDate: RACE_DATE,
       raceId: race.id,
       raceName: race.race_name,
       distanceMiles: 10,
-      goalTimeSeconds: 5340,
-      goalType: 'pr',
+      goalTimeSeconds,
+      goalType: goalTimeSeconds ? 'pr' : 'completion',
     }],
     trainingDays: [...TRAINING_DAYS],
     runDaysPerWeek: 4,
@@ -74,13 +78,13 @@ function buildScenario(options = {}) {
     planMode: 'hybrid_maintain',
     strengthGoal: 'maintain',
     equipment: ['barbell', 'dumbbell', 'rack', 'bench', 'cable', 'machines'],
-    weeks: 7,
-    startDate: '2026-08-24',
-    todayISO: PLANNING_DATE,
-    nowISO: `${PLANNING_DATE}T12:00:00.000Z`,
+    weeks: options.weeks || 7,
+    startDate,
+    todayISO: planningDate,
+    nowISO: `${planningDate}T12:00:00.000Z`,
   };
   const currentWeek = options.currentWeek || {
-    startDate: '2026-08-24',
+    startDate,
     miles: 0,
     knownDistanceLowerBoundMiles: 0,
     distanceState: 'KNOWN',
@@ -90,7 +94,7 @@ function buildScenario(options = {}) {
     longRunCompleted: false,
   };
   const context = {
-    todayISO: PLANNING_DATE,
+    todayISO: planningDate,
     profile: {
       id: race.user_id,
       timezone: TIMEZONE,
@@ -109,7 +113,7 @@ function buildScenario(options = {}) {
       recentRunCount: 8,
       recentLiftCount: 8,
       acuteRunLoad: {
-        latestRun: { date: '2026-08-27', paceSecondsPerMile: 600 },
+        latestRun: { date: latestRunDate, paceSecondsPerMile: 600 },
         currentWeek,
       },
       runLoadInput: {
@@ -139,7 +143,7 @@ function buildScenario(options = {}) {
     safety: { activeInjury: false, comebackMode: false, injuryNotesPresent: false },
   };
   const built = plansRouter._test.buildDeterministicCandidate(context, {
-    planningDateLocal: PLANNING_DATE,
+    planningDateLocal: planningDate,
   });
   assert.equal(built.validation.valid, true, built.validation.errors?.join('; '));
   const planningConstraints = {
@@ -161,7 +165,7 @@ function buildScenario(options = {}) {
     activeCanonicalCarryForwardSource: null,
     request: {
       race_ids: [race.id],
-      planning_date_local: PLANNING_DATE,
+      planning_date_local: planningDate,
       timezone_offset_minutes: 240,
     },
   };
@@ -169,7 +173,7 @@ function buildScenario(options = {}) {
     userId: race.user_id,
     state,
     built,
-    planningDateLocal: PLANNING_DATE,
+    planningDateLocal: planningDate,
   });
   return { built, result };
 }
@@ -214,6 +218,43 @@ function run() {
     scenario.result,
   );
   assert.ok(applicable, 'the selected Army preview must remain persistable on the real replacement path');
+
+  for (const goalTimeSeconds of [5400, null]) {
+    const shortRunway = buildScenario({
+      planningDate: '2026-09-09',
+      startDate: '2026-09-07',
+      latestRunDate: '2026-09-08',
+      weeks: 5,
+      goalTimeSeconds,
+    });
+    const shortDiagnostic = compactDiagnostic(shortRunway.result);
+    assert.equal(shortRunway.built.plan.planMode, 'hybrid_maintain');
+    assert.equal(
+      shortRunway.built.plan.weeks.slice(1, -1).every((week) => {
+        const sessions = (week.days || []).flatMap((day) => day.sessions || []);
+        return sessions.filter((session) => session.kind === 'run').length === 4
+          && sessions.filter((session) => session.kind === 'lift').length === 4;
+      }),
+      true,
+      'full short-runway hybrid weeks preserve independent four-run/four-lift volume',
+    );
+    assert.ok(
+      shortRunway.result.selected_candidate,
+      `a four-day short-runway Army plan must suggest a persistable ${goalTimeSeconds ? '1:30 target' : 'completion'} candidate; diagnostic=${JSON.stringify(shortDiagnostic)}`,
+    );
+    assert.equal(shortRunway.result.selected_candidate.validation.valid, true);
+    assert.equal(
+      new Set(shortRunway.result.selected_candidate.canonical_sessions.map((session) => (
+        session.scheduled_local_date
+      ))).size,
+      shortRunway.result.selected_candidate.canonical_sessions.length,
+      'the four requested run days stay distinct without requiring a fifth eligible weekday',
+    );
+    assert.ok(
+      plansRouter._test.applicableGoalBackwardPlan(shortRunway.built.plan, shortRunway.result),
+      'the short-runway suggestion survives the persistence gate',
+    );
+  }
 
   const completedSaturday = buildScenario({
     currentWeek: {
