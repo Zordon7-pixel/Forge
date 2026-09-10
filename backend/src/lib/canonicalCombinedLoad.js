@@ -1,6 +1,6 @@
 const { canonicalHash } = require('./racePlanPolicy');
 const { aggregateWeeklyStress, resolveSessionStress } = require('./goalBackwardLoad');
-const VERSION = 'canonical-combined-load-v2';
+const VERSION = 'canonical-combined-load-v3';
 const VERSIONS = Object.freeze({ combined: VERSION, running: require('./runningDoseAccounting').VERSION,
   strength: require('./strengthDoseAccounting').VERSION, taxonomy: 1, canonical: 1, stack: 'existing-maxplus-v1' });
 const verifiedFrozenSources = new WeakMap();
@@ -9,6 +9,8 @@ const sumBase = sessions => sessions.reduce((sum, session) => {
   if (!resolved.valid) throw new Error('Invalid canonical dose');
   return sum.map((value, index) => value + resolved.vector[index]);
 }, Array(8).fill(0));
+const knownRunDistance = sessions => sessions.filter(session => session.kind === 'run' || !String(session.workout_family).startsWith('strength_'))
+  .reduce((sum, session) => sum + (session.derived_totals?.distance_m || 0), 0);
 
 function buildCanonicalLoadSource(sessionSet, { contextHash, authority = 'TEMPLATE_BOUNDED', partialWeekContract = null, frequencyDoseContract = null }) {
   if (!contextHash || !validVersionedSet(sessionSet)) throw new Error('Independent source set is invalid');
@@ -23,6 +25,7 @@ function buildCanonicalLoadSource(sessionSet, { contextHash, authority = 'TEMPLA
 function validVersionedSet(set) {
   return set?.prescribed_dose_versions?.running === VERSIONS.running
     && set?.prescribed_dose_versions?.strength === VERSIONS.strength
+    && require('./runningDoseAccounting').validateIndependentRunningSource(set.sessions || [])
     && require('./canonicalWorkout').validateCanonicalSessionSet(set).valid;
 }
 
@@ -63,6 +66,9 @@ function evaluateCanonicalCombinedLoad(sessions, source, contextHash) {
   const violations = candidateBase.flatMap((value, dimension) => value > sourceBase[dimension] + 1e-6
     ? [{ code: 'CROSS_MODAL_FATIGUE_LIMIT', reason: 'CANONICAL_SOURCE_DOSE_EXCEEDED', dimension,
       candidate_base: value, source_base: sourceBase[dimension] }] : []);
+  const candidateDistance = knownRunDistance(sessions), sourceDistance = knownRunDistance(source.canonical_session_set.sessions);
+  if (candidateDistance > sourceDistance + 1e-6) violations.push({ code: 'CROSS_MODAL_FATIGUE_LIMIT',
+    reason: 'CANONICAL_SOURCE_RUNNING_DISTANCE_EXCEEDED', candidate_distance_m: candidateDistance, source_distance_m: sourceDistance });
   return { valid: !violations.length, policy_version: VERSION,
     state: violations.length ? 'UNSUPPORTED_OVERAGE' : source.authority,
     source_hash: hash, source_base_vector: sourceBase, candidate_base_vector: candidateBase,
@@ -83,8 +89,10 @@ function validateRollingCanonicalLoad(sessions, sources, { throughDate } = {}) {
     const end = addDays(start, 6);
     const within = entries => entries.filter(session => session.scheduled_local_date >= start && session.scheduled_local_date <= end);
     const actual = sumBase(within(sessions)), source = sumBase(within(sourceSessions));
+    const actualDistance = knownRunDistance(within(sessions)), sourceDistance = knownRunDistance(within(sourceSessions));
     return { start_date: start, end_date: end, actual, source,
-      valid: actual.every((value, dimension) => value <= source[dimension] + 1e-6) };
+      actual_distance_m: actualDistance, source_distance_m: sourceDistance,
+      valid: actual.every((value, dimension) => value <= source[dimension] + 1e-6) && actualDistance <= sourceDistance + 1e-6 };
   });
   return { valid: windows.every(window => window.valid), windows };
 }

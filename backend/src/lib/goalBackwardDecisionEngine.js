@@ -300,6 +300,9 @@ function selectGoalBackwardPhase(input = {}) {
   if (eventState === 'COMPLETED' && input.transition_exit_met !== true) {
     phase = 'POST_RACE_TRANSITION';
     reasonCodes.push('POST_RACE_TRANSITION');
+  } else if (daysToEvent !== null && daysToEvent < 0 && ['SCHEDULED', 'POSTPONED', 'UNKNOWN'].includes(eventState)) {
+    phase = 'POST_RACE_TRANSITION';
+    reasonCodes.push('EVENT_RESULT_UNCONFIRMED');
   } else if (daysToEvent !== null && (daysToEvent <= taperDays
     || (windowEndDaysToEvent !== null && windowEndDaysToEvent >= 0 && windowEndDaysToEvent <= taperDays))) {
     phase = 'TAPER_RACE_WEEK';
@@ -456,7 +459,9 @@ function buildDueExposureLedger(input = {}) {
     const sharpening = phase === 'TAPER_RACE_WEEK' && policy?.required_exposure_ledger?.SHARPENING?.[0]
       ? [copiedExposure({
         ...policy.required_exposure_ledger.SHARPENING[0],
-        ...(foundationTaper ? { any_of: ['easy_run', 'recovery_run'] } : {}),
+        ...(foundationTaper || input.road_performance_qualified === false
+          && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(policy?.event_kind)
+          ? { any_of: ['easy_run', 'recovery_run', 'assessment'] } : {}),
         requirement_id: 'taper_bounded_stimulus',
         role: 'PRIMARY_KEY',
       })]
@@ -646,11 +651,20 @@ function buildGoalBackwardPlanningDecision(input = {}) {
   const transitionExitMet = input.transition_exit_met === true
     || input.transitionExitMet === true
     || firstGoal?.transition_exit_met === true;
-  const primaryGoal = primaryGoalForDecision(ownedGoals, transitionExitMet);
+  const projectedWindow = input.program_observation_date ? require('./roadPhaseReplan').projectedRoadWindow({
+    goals: ownedGoals, athleteId, observationDate: input.program_observation_date, planningDate,
+  }) : null;
+  const primaryGoal = projectedWindow?.recovery_goal_id
+    ? ownedGoals.find(goal => goal.goal_id === projectedWindow.recovery_goal_id)
+    : primaryGoalForDecision(projectedWindow ? ownedGoals.filter(goal =>
+      !projectedWindow.passed_projected_goal_ids.includes(goal.goal_id)) : ownedGoals, transitionExitMet);
   const eventPolicy = primaryGoal ? eventPolicyForGoal(primaryGoal) : null;
   const initialDueCount = eventPolicy?.required_exposure_ledger?.EVENT_SPECIFIC_DEVELOPMENT
     ?.filter((entry) => (entry.role || 'PRIMARY_KEY') === 'PRIMARY_KEY').length || 0;
-  const phaseDecision = primaryGoal ? selectGoalBackwardPhase({
+  const phaseDecision = projectedWindow?.recovery_goal_id
+    ? { phase: 'POST_RACE_TRANSITION', reason_codes: ['PLANNED_POST_EVENT_RECOVERY'],
+      days_to_event: daysBetween(planningDate, primaryGoal.event_local_date) }
+    : primaryGoal ? selectGoalBackwardPhase({
     ...input,
     goal: primaryGoal,
     athlete_state: athleteState,
@@ -706,7 +720,11 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     && input.frequency_dose_contract.planning_date === planningDate
     && input.frequency_dose_contract.end_date === input.candidate_window_end_local
     && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(primaryGoal?.event_kind);
-  const exposureLedger = partialOpening ? {
+  const exposureLedger = projectedWindow?.recovery_goal_id ? {
+    ...clone(baseExposureLedger), due_roles: [{ requirement_id: 'planned_post_event_recovery', role: 'PRIMARY_KEY',
+      any_of: ['easy_run', 'recovery_run'] }], required_primary_count: 1, complete: false,
+    reason_codes: ['PLANNED_POST_EVENT_RECOVERY'],
+  } : partialOpening ? {
     ...clone(baseExposureLedger), due_roles: [{ requirement_id: 'opening_partial_source_exposure', role: 'PRIMARY_KEY',
       any_of: ['easy_run', 'recovery_run', 'long_aerobic'] }], required_primary_count: 1, complete: false,
     deferred_full_week_roles: clone(baseExposureLedger.due_roles),
@@ -770,6 +788,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
       .map((goal) => goal.goal_id),
     phase: phaseDecision.phase,
     phase_reason_codes: phaseDecision.reason_codes,
+    ...(projectedWindow ? { projected_event_window: projectedWindow } : {}),
     promotion: {
       transition_exit_met: transitionExitMet,
       promoted_from_goal_id: firstGoal?.event_state === 'COMPLETED' && transitionExitMet

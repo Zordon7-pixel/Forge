@@ -693,7 +693,15 @@ function enforceDemandingSpacing(plan, context) {
   let conflict = demandingConflict(allRunEntries(plan));
   while (conflict && attempts < 40) {
     attempts += 1;
-    const movable = conflict.find((entry) => (
+    // Preserve an existing, goal-matched sharpening exposure before optional
+    // progression/strides when both cannot fit. This changes which work is
+    // removed, never the spacing rule or the required goal-pace validation.
+    const targetPacePriority = (entry) => entry.session.workout_id === 'benchmark_mile' ? 2 : ['race_pace', 'sharpen'].includes(entry.session.type)
+      && (context.target?.raceTargets || []).some((race) => entry.day.date < race.raceDate
+        && Number(race.goalTimeSeconds) > 0 && Number(race.distanceMiles) > 0
+        && Math.abs(Number(entry.session.goal_pace_seconds_per_mile || 0)
+          - Number(race.goalTimeSeconds) / Number(race.distanceMiles)) <= 1) ? 1 : 0;
+    const movable = [...conflict].sort((left, right) => targetPacePriority(left) - targetPacePriority(right)).find((entry) => (
       entry.session.type !== 'race'
       && !isLongSession(entry.session)
       && runWorkoutTaxonomy.isQualityWorkout(entry.session.workout_id)
@@ -721,7 +729,7 @@ function syncOrderGuidance(day) {
 }
 
 function reconcileLowerBodyStrength(plan) {
-  const allowedDays = new Set(plan.schedulePreferences?.trainingDays || []);
+  const allowedDays = new Set(plan.schedulePreferences?.liftEligibleWeekdays || plan.schedulePreferences?.trainingDays || []);
   for (const week of plan.weeks || []) {
     const earliestTargetDate = week.bridgeWeek && plan.planningClock
       ? plan.planningClock.planningDateLocal
@@ -737,6 +745,9 @@ function reconcileLowerBodyStrength(plan) {
         session.kind === 'strength' || session.kind === 'lift'
       ) && /lower/i.test(String(session.focus || '')));
       if (lowerIndex < 0 || [...hardIndexes].every((hardIndex) => Math.abs(hardIndex - sourceIndex) > 1)) continue;
+      const prescribedDose = require('./strengthDoseAccounting').sourceStrengthDose(sourceDay.sessions[lowerIndex],
+        week.days.flatMap(day => day.sessions || []));
+      if (prescribedDose.valid && prescribedDose.vector[2] < 3) continue;
       const targetIndex = (week.days || []).findIndex((day, dayIndex) => (
         dayIndex !== sourceIndex
         && allowedDays.has(day.day)

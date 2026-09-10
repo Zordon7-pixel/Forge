@@ -39,7 +39,8 @@ function reconcileProgramWeek(contract, week, { completedRuns = 0, completedLift
     const dates = new Set(selected.map((session) => session.date));
     const delivered = dates.size;
     const frequencyDoseAdjusted = kind === 'run' && week.runFrequencyAdjustment?.policy === 'EXPLICIT_SINGLE_RUNNING_DAY_DOSE';
-    const exact = delivered + completed === requested && !frequencyDoseAdjusted;
+    const phaseReplanned = kind === 'run' && week.roadPhaseAdjustment?.version === 'owned-road-phase-replan-v1';
+    const exact = delivered + completed === requested && !frequencyDoseAdjusted && !phaseReplanned;
     const weekday = date => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(`${date}T12:00:00Z`).getUTCDay()];
     const eligible = kind === 'run' ? contract.run_eligible_weekdays : contract.lift_eligible_weekdays;
     const capacity = (week.days || []).filter(day => day.date >= contract.planning_date && eligible.includes(weekday(day.date))).length;
@@ -48,17 +49,18 @@ function reconcileProgramWeek(contract, week, { completedRuns = 0, completedLift
     const phaseExpected = kind === 'run' && raceWeek && raceRunPrescription ? raceRunPrescription.expected
       : phaseLift ? Math.max(0, phaseLift.prescribed - completed)
       : raceWeek && kind === 'run' && raceRunPrescription ? raceRunPrescription.expected : null;
-    const rule = exact ? null : phaseExpected !== null && delivered === phaseExpected
+    const rule = phaseReplanned && delivered + completed === requested ? 'OWNED_RACE_PHASE_REPLAN'
+      : exact ? null : phaseExpected !== null && delivered === phaseExpected
       ? kind === 'run' && raceWeek && raceRunPrescription ? 'RACE_WEEK_USEFUL_PRESCRIPTIONS'
         : phaseLift ? phaseLift.policy : 'RACE_WEEK_USEFUL_PRESCRIPTIONS'
       : partial && delivered === partialExpected ? 'REMAINING_ELIGIBLE_DATES' : null;
     const outcome = exact ? 'EXACT' : rule && delivered + completed <= requested ? 'DISCLOSED_ADJUSTMENT' : 'UNSATISFIABLE';
     return { modality: kind, requested, delivered, completed, outcome, rule,
       explanation: exact ? `${requested} ${kind} days delivered.` : rule
-        ? `${requested} ${kind} days requested; ${delivered} remaining plus ${completed} completed. ${rule === 'REMAINING_ELIGIBLE_DATES' ? 'This starting week is already in progress; no eligible dates remain for the missing sessions.' : phaseLift ? phaseLift.explanation : 'The exact race and useful preparation remain; below-floor training fragments are not counted as runs.'}`
+        ? `${requested} ${kind} days requested; ${delivered} remaining plus ${completed} completed. ${phaseReplanned ? week.roadPhaseAdjustment.explanation : rule === 'REMAINING_ELIGIBLE_DATES' ? 'This starting week is already in progress; no eligible dates remain for the missing sessions.' : phaseLift ? phaseLift.explanation : 'The exact race and useful preparation remain; below-floor training fragments are not counted as runs.'}`
         : `Requested ${requested} ${kind} days but generated ${delivered}. This program cannot be accepted.`,
       duplicate_modality_dates: selected.length !== dates.size,
-      adjustment_evidence: rule === 'RACE_WEEK_USEFUL_PRESCRIPTIONS' ? raceRunPrescription : phaseLift || null,
+      adjustment_evidence: phaseReplanned ? week.roadPhaseAdjustment : rule === 'RACE_WEEK_USEFUL_PRESCRIPTIONS' ? raceRunPrescription : phaseLift || null,
     };
   });
   return { start_date: start, entries,

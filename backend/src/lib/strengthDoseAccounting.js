@@ -31,9 +31,11 @@ function canonicalStrengthExercise(exercise) {
   const target = { sets: exercise.sets, repetitions: Number(reps[1]) * (reps[2] ? 2 : 1),
     rest_s: Number(rest[2] || rest[1]) * (rest[3].toLowerCase() === 'min' ? 60 : 1),
     rpe_range: { minimum: Number(effort[1]), maximum: Number(effort[2] || effort[1]) } };
-  const knownLoad = String(exercise.load || '').match(/^(\d+(?:\.\d+)?) lb starting load$/);
+  const knownLoad = String(exercise.load || '').match(/^(\d+(?:\.\d+)?) (lb|kg) starting load$/);
   if (knownLoad && String(exercise.loadSource || '').startsWith('Conservative estimate from a recent ')) {
-    target.load_kg = Math.round(Number(knownLoad[1]) * 0.45359237 * 10) / 10;
+    const kilograms = Number(knownLoad[1]) * (knownLoad[2] === 'lb' ? 0.45359237 : 1);
+    if (!Number.isFinite(kilograms) || kilograms <= 0) throw new Error('Known strength load must be positive and finite');
+    target.load_kg = Math.round(kilograms * 10) / 10;
   }
   return { exercise_id: id, region: known.region, target };
 }

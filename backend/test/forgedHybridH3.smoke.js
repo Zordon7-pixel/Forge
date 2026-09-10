@@ -217,6 +217,11 @@ for (const session of allSessions(missingGoalPace)) {
 }
 const missingGoalPaceValidation = engine.validateConcurrentPlan(missingGoalPace, subNinetyContext);
 assert(!missingGoalPaceValidation.valid && missingGoalPaceValidation.errors.some((error) => /target-pace session/.test(error)), 'validator rejects timed race plans with no structured target-pace session');
+missingGoalPace.anchorState = 'needs_benchmark';
+missingGoalPace.goal.anchorState = 'needs_benchmark';
+missingGoalPace.goal.paceContext = { status: 'benchmark_needed', performanceAnchor: null };
+assert(engine.validateConcurrentPlan(missingGoalPace, subNinetyContext).errors.some(error => /target-pace session/.test(error)),
+  'Spoofed candidate anchor presentation cannot bypass a current server-qualified performance obligation');
 
 const alteredRacePace = JSON.parse(JSON.stringify(subNinety));
 const alteredRaceSession = allSessions(alteredRacePace).find((session) => session.type === 'race');

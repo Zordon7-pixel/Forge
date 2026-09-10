@@ -16,6 +16,12 @@ for (const malformed of [null, '', '4', true, false, [], {}, 1.5, -1, 8]) {
 }
 assert.equal(resolveRunSchedule({ run_days_per_week: 4, preferred_workout_days: '["Tue","Thu"]' }).valid, false,
   'Stored frequency conflicts cannot silently become two runs');
+const legacyConflict = resolveRunSchedule({ run_days_per_week: 7, preferred_workout_days: JSON.stringify(DAY_ORDER.slice(0, 6)) });
+assert.equal(legacyConflict.code, 'RUN_FREQUENCY_EXCEEDS_TRAINING_DAYS');
+assert.match(legacyConflict.error, /cannot exceed the number of selected trainingDays/);
+const corrected = resolveRunSchedule({ run_days_per_week: 7, preferred_workout_days: JSON.stringify(DAY_ORDER.slice(0, 6)) },
+  { runDaysPerWeek: 7, runEligibleWeekdays: DAY_ORDER });
+assert.equal(corrected.valid, true, 'Explicitly correcting contradictory weekdays does not require deleting account or plan');
 assert.equal(resolveLiftSchedule({}, { liftDaysPerWeek: 1, liftEligibleWeekdays: [] }).valid, false);
 const separate = { runDaysPerWeek: 4, liftDaysPerWeek: 4, trainingDays: ['Mon','Tue','Thu','Sat'], liftEligibleWeekdays: ['Mon','Wed','Fri','Sun'] };
 assert.deepEqual(resolveRunSchedule({}, separate).trainingDays, separate.trainingDays);

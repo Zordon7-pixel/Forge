@@ -75,9 +75,44 @@ for (const session of increasedSource) if (['easy_run','recovery_run'].includes(
   for (const step of session.steps) step.target.duration_s *= 10;
 }
 const poolSource = source.canonical_session_set.sessions.find(session => session.running_dose).running_dose.source;
+const downgradedSource = structuredClone(poolSource);
+delete downgradedSource.normalization; delete downgradedSource.normalization_hash;
+const downgradedSet = structuredClone(source.canonical_session_set);
+downgradedSet.sessions = require('../src/lib/runningDoseAccounting').bindRunningDosePool(downgradedSet.sessions, downgradedSource);
+downgradedSet.session_content_hashes = downgradedSet.sessions.map(s => ({ session_id: s.session_id, content_hash: s.content_hash }));
+downgradedSet.content_hash = canonical.canonicalSessionSetHash(downgradedSet);
+downgradedSet.candidate_hash = canonicalHash({ candidate_skeleton_hash: downgradedSet.candidate_skeleton_hash,
+  canonical_session_set_hash: downgradedSet.content_hash });
+assert.equal(canonical.validateCanonicalSessionSet(downgradedSet).valid, true,
+  'Negative has valid canonical hashes, not merely a malformed envelope');
+assert.throws(() => combined.buildCanonicalLoadSource(downgradedSet, { contextHash: source.context_hash }),
+  /Independent source set is invalid/, 'V3 source cannot downgrade to an isolated default conversion');
+const forgedSource = structuredClone(source);
+forgedSource.canonical_session_set = downgradedSet;
+forgedSource.base_vector = combined.sumBase(downgradedSet.sessions);
+const { content_hash: ignoredSourceHash, ...forgedSourceContent } = forgedSource;
+forgedSource.content_hash = canonicalHash(forgedSourceContent);
+assert.equal(combined.evaluateCanonicalCombinedLoad(downgradedSet.sessions, forgedSource, source.context_hash).state,
+  'INVALID_LOAD_ARTIFACT', 'Rehashed source and candidate still need independently bound normalization');
 const increased = require('../src/lib/runningDoseAccounting').bindRunningDosePool(increasedSource, poolSource);
 assert.equal(combined.evaluateCanonicalCombinedLoad(increased, source, source.context_hash).state, 'UNSUPPORTED_OVERAGE',
   'A valid larger canonical prescription cannot promote its own source budget');
+const distanceOnly = structuredClone(source.canonical_session_set.sessions);
+const protectedIndex = distanceOnly.findIndex(session => !session.running_dose
+  && !session.workout_family.startsWith('strength_') && session.steps.some(step => step.target?.distance_m > 0));
+assert.ok(protectedIndex >= 0, 'Distance guard fixture contains genuine protected running work');
+const protectedRun = distanceOnly[protectedIndex];
+protectedRun.steps.find(step => step.target?.distance_m > 0).target.distance_m += 1000;
+delete protectedRun.content_hash; delete protectedRun.canonical_workout_schema_version;
+distanceOnly[protectedIndex] = canonical.buildCanonicalSession(protectedRun);
+assert.deepEqual(combined.sumBase(distanceOnly), combined.sumBase(source.canonical_session_set.sessions),
+  'Protected-family ordinal vector is unchanged; this negative specifically requires the independent distance guard');
+assert.ok(combined.evaluateCanonicalCombinedLoad(distanceOnly, source, source.context_hash).violations
+  .some(value => value.reason === 'CANONICAL_SOURCE_RUNNING_DISTANCE_EXCEEDED'));
+const rollingDistance = combined.validateRollingCanonicalLoad(distanceOnly, [source]);
+assert.equal(rollingDistance.valid, false);
+assert.ok(rollingDistance.windows.some(window => window.actual.every((value, index) => value <= window.source[index] + 1e-6)
+  && window.actual_distance_m > window.source_distance_m), 'Rolling distance cannot hide behind an unchanged dose vector');
 
 const artifact = buildPipelineArtifact({ userId: 'synthetic-artifact-owner', kind: 'canonical_session_set',
   decisionId: selected.canonical_session_set.decision_id, planGenerationCandidateId: 'synthetic-candidate',
@@ -106,6 +141,18 @@ for (const week of longest.accepted.weeks.filter(week => !['taper','race'].inclu
   assert.equal(sessions.filter(session => session.kind === 'lift').length, 7);
 }
 const longestSet = longest.result.selected_candidate.canonical_session_set;
+const expansionCarry = require('../src/routes/plans')._test.goalBackwardGoalExpansionCarryForwardMaterial;
+const expansionState = { request: {}, races: [{ id: longest.accepted.goals[0].raceId }, { id: 'synthetic-added-race' }] };
+assert.throws(() => expansionCarry('synthetic-artifact-owner', expansionState, longest.accepted, null, ['2026-09-07']),
+  error => error.code === 'GOAL_EXPANSION_CARRY_FORWARD_SOURCE_INVALID' && /OWN_DATA_SNAPSHOT_INVALID/.test(error.message),
+  'Maximum program passes outer bounded snapshot and still requires actual authenticated stored source');
+for (const mutate of [plan => { plan.programContract.version = 'spoof'; },
+  plan => { plan.padding = 'x'.repeat(4194304); }]) {
+  const invalid = structuredClone(longest.accepted); mutate(invalid);
+  assert.throws(() => expansionCarry('synthetic-artifact-owner', expansionState, invalid, null, ['2026-09-07']),
+    error => error.code === 'GOAL_EXPANSION_CARRY_FORWARD_SOURCE_INVALID' && /PLAN_SNAPSHOT_INVALID/.test(error.message),
+    'Actual outer expansion reader rejects non-versioned or oversized material instead of widening legacy limits');
+}
 const longestArtifact = buildPipelineArtifact({ userId: 'synthetic-artifact-owner', kind: 'canonical_session_set',
   decisionId: longestSet.decision_id, planGenerationCandidateId: 'synthetic-longest', payload: longestSet });
 assert.equal(validatePipelineArtifact(longestArtifact).valid, true);

@@ -102,8 +102,10 @@ function resolveStressVector(workoutFamily, options = {}) {
   return vector;
 }
 
+const immutableDoseResults = new WeakMap();
 function resolveSessionStress(session = {}, index = 0) {
   const source = session && typeof session === 'object' && !Array.isArray(session) ? session : {};
+  if (immutableDoseResults.has(source)) return structuredClone(immutableDoseResults.get(source));
   const family = sessionFamily(source);
   const vector = resolveStressVector(family, {
     event_kind: source.event_kind ?? source.eventKind,
@@ -121,7 +123,7 @@ function resolveSessionStress(session = {}, index = 0) {
     dose_accounting_version: dose.version,
     reference_id: dose.reference_id,
   };
-  return vector && dose.valid
+  const result = vector && dose.valid
     ? { valid: true, ...resolved }
     : {
       valid: false,
@@ -132,6 +134,10 @@ function resolveSessionStress(session = {}, index = 0) {
         workout_family: resolved.workout_family,
       },
     };
+  if ((source.session_id || source.sessionId || source.id) && require('./immutableOwnJson').immutableOwnJson(source)) {
+    immutableDoseResults.set(source, structuredClone(result));
+  }
+  return result;
 }
 
 function sessionFamily(session = {}) {

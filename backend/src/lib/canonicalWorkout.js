@@ -1559,10 +1559,13 @@ function materializeCanonicalSession(input = {}) {
     : buildCanonicalSession(canonicalInput);
   const canonicalExercises = STRENGTH_FAMILIES.has(family) ? (source.main || source.exercises).map((exercise, index) => {
     const target = canonical.steps[index].target;
-    return { ...clone(exercise), sourcePrescription: clone(exercise), sets: target.sets,
+    return { ...clone(exercise), sourcePrescription: clone(exercise.sourcePrescription || exercise), sets: target.sets,
       reps: String(exercise.reps).includes('each side') ? `${target.repetitions / 2} each side` : String(target.repetitions),
       rest: `${target.rest_s} sec`,
-      load: target.load_kg !== undefined ? `${target.load_kg} kg starting load` : exercise.load,
+      // Keep the source's display unit, including its matching provenance and
+      // progression instructions. The canonical converter has already bound
+      // this known source load to metric targets; adapters are not unit authority.
+      load: exercise.load,
     };
   }) : null;
   const adapted = planSchema.normalizeSession({

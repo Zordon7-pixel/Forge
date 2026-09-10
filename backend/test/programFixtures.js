@@ -11,6 +11,7 @@ function scenario(options = {}) {
   const count = options.count ?? 8;
   const runDays = options.runDays || ['Tue', 'Thu', 'Sat', 'Sun'];
   const liftDays = options.liftDays ?? 2;
+  const runCount = options.runDaysPerWeek ?? runDays.length;
   const race = {
     id: 'synthetic-army-10-miler', user_id: owner, race_name: 'Army 10-Miler',
     race_date: raceDate, event_local_date: raceDate, event_timezone: 'America/New_York',
@@ -21,8 +22,9 @@ function scenario(options = {}) {
   const target = {
     raceDate, raceId: race.id, raceName: race.race_name, distanceMiles: 10,
     goalTimeSeconds: options.goalTimeSeconds || 5400, goalType: 'pr', trainingDays: runDays,
-    runDaysPerWeek: runDays.length, liftingEnabled: liftDays > 0,
-    liftDaysPerWeek: liftDays, planMode: liftDays > 0 ? 'hybrid_maintain' : 'run_only',
+    runDaysPerWeek: runCount, liftingEnabled: liftDays > 0,
+    ...(options.liftEligibleWeekdays ? { liftEligibleWeekdays: options.liftEligibleWeekdays } : {}),
+    liftDaysPerWeek: liftDays, planMode: options.planMode || (liftDays > 0 ? 'hybrid_maintain' : 'run_only'),
     strengthGoal: 'maintain', equipment: ['barbell', 'dumbbell', 'rack', 'bench', 'cable', 'machines'],
     weeks: window.weeks, startDate: window.startDate, todayISO: date,
     nowISO: `${date}T12:00:00.000Z`,
@@ -40,7 +42,7 @@ function scenario(options = {}) {
     todayISO: date,
     profile: {
       id: owner, timezone: 'America/New_York', weekly_miles_current: miles,
-      run_days_per_week: runDays.length, lift_days_per_week: liftDays,
+      run_days_per_week: runCount, lift_days_per_week: liftDays,
       ...(options.trainingAge ? { training_age_class: options.trainingAge } : {}),
     },
     target,
@@ -55,12 +57,13 @@ function scenario(options = {}) {
         windows: [], unresolved_conflicts: [], reason_codes: [],
       },
       previousTwoWeeksPassed: true, modalityHistory: {},
+      ...(options.recentExercises ? { recentExercises: options.recentExercises } : {}),
       performanceProfile: { targetAnchor: {
         equivalentTimeSeconds: 5700, date: options.anchorDate || '2025-12-08',
         kind: 'observed_distance_band', runId: 'synthetic-performance-anchor',
       } },
     },
-    recovery: { state: 'NORMAL', available: true, metrics: {} },
+    recovery: { state: options.recoveryState || 'NORMAL', available: true, metrics: {} },
     safety: { activeInjury: false, comebackMode: false, injuryNotesPresent: false },
   };
   if (options.rawHistory) context.history.recentRuns = options.rawHistory;

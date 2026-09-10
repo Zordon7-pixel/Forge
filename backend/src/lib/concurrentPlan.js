@@ -424,8 +424,8 @@ function normalizeWeekdays(values, fallback) {
 
 function resolvePlanMode(profile = {}, target = {}) {
   const explicit = String(target.planMode || target.plan_mode || '').toLowerCase();
+  if (target.liftingEnabled === false || target.liftDaysPerWeek === 0 || target.lift_days_per_week === 0) return planSchema.PLAN_MODES.RUN_ONLY;
   if (VALID_MODES.has(explicit)) return explicit;
-  if (target.liftingEnabled === false || Number(target.liftDaysPerWeek) === 0) return planSchema.PLAN_MODES.RUN_ONLY;
   const strengthGoal = String(target.strengthGoal || target.strength_goal || '').toLowerCase();
   if (strengthGoal === 'build' || strengthGoal === 'size') return planSchema.PLAN_MODES.HYBRID_BUILD;
   if (target.liftingEnabled === true || Number(target.liftDaysPerWeek || profile.lift_days_per_week) > 0) {
@@ -1746,12 +1746,20 @@ function buildConcurrentPlan(context = {}) {
     const effectiveLiftCount = isCurrentWeek
       ? Math.max(0, fullWeekLiftCount - completedStrengthSessions)
       : fullWeekLiftCount;
-    const liftAvailableDays = isCurrentWeek
+    let liftAvailableDays = isCurrentWeek
       ? liftSchedule.liftEligibleWeekdays.filter((day) => {
         const date = addDays(weekStart, DAY_ORDER.indexOf(day));
         return date >= context.todayISO && !completedStrengthDates.has(date);
       })
       : liftSchedule.liftEligibleWeekdays;
+    if (runSchedule.runDaysPerWeek < 7 && liftDaysPerWeek < 7) {
+      // With separate modality availability, choosing every non-run day first
+      // can accidentally fill all seven dates. Retain one shared rest date
+      // when the requested frequencies can still be delivered exactly.
+      const restDate = DAY_ORDER.find(day => !runByDay.has(day)
+        && liftAvailableDays.filter(candidate => candidate !== day).length >= effectiveLiftCount);
+      if (restDate) liftAvailableDays = liftAvailableDays.filter(day => day !== restDate);
+    }
     const liftAssignments = chooseLiftDays(liftAvailableDays, runByDay, Math.min(effectiveLiftCount, liftAvailableDays.length));
     const liftByDay = new Map(liftAssignments.map(({ day, focus }) => [day, buildLiftSession({ weekNumber, day, focus, mode, phase, context })]));
     // Frequency partitions the existing weekly focus prescription. It never
@@ -1998,6 +2006,22 @@ function hasFeasibleTargetPaceOpportunity(candidate, race, context = {}) {
   });
 }
 
+function hasCurrentQualifiedPerformanceForRace(history, race, planningDate) {
+  const distance = Number(race.distanceMiles);
+  if (!(distance > 0) || !parseISODate(planningDate)) return false;
+  // Re-select for this race's distance where raw server observations exist.
+  // A final-goal anchor does not automatically qualify a shorter second race.
+  const anchor = Array.isArray(history.recentRuns)
+    ? buildRunPerformanceProfile(history.recentRuns, { todayISO: planningDate, targetDistanceMiles: distance }).targetAnchor
+    : history.performanceProfile?.targetAnchor;
+  const age = dateDistanceDays(planningDate, anchor?.date);
+  const observed = Number(anchor?.observedDistanceMiles);
+  return anchor?.performanceEvidenceQualified === true
+    && age !== null && age >= 0 && age <= TARGET_ANCHOR_RECENCY_DAYS
+    && observed >= 1 && observed / distance >= 0.3 && observed / distance <= 1.5
+    && Number(anchor.equivalentTimeSeconds) > 0;
+}
+
 function validateConcurrentPlan(candidate, context = {}) {
   const errors = [];
   const target = context.target || {};
@@ -2005,6 +2029,8 @@ function validateConcurrentPlan(candidate, context = {}) {
   const finalRaceTarget = raceTargets[raceTargets.length - 1] || target;
   const runSchedule = resolveRunSchedule(context.profile || {}, target);
   if (!runSchedule.valid) return { valid: false, errors: [runSchedule.error] };
+  const liftSchedule = resolveLiftSchedule(context.profile || {}, target);
+  if (!liftSchedule.valid) return { valid: false, errors: [liftSchedule.error] };
   const allowedRunDays = new Set(runSchedule.trainingDays);
   const expectedMode = resolvePlanMode(context.profile || {}, target);
   const hasRace = Boolean(parseISODate(finalRaceTarget.raceDate));
@@ -2213,8 +2239,8 @@ function validateConcurrentPlan(candidate, context = {}) {
       });
       if (kinds.has('run') && kinds.has('lift') && !String(day.orderGuidance || '').trim()) errors.push(`${dayPath}.orderGuidance is required for same-day run and lift`);
     });
-    if (restDays < 1 && !(runSchedule.explicitSelection && runSchedule.runDaysPerWeek === 7)) {
-      errors.push(`${path} requires a full rest day unless seven running days were explicitly requested`);
+    if (restDays < 1 && runSchedule.runDaysPerWeek !== 7 && liftSchedule.liftDaysPerWeek !== 7) {
+      errors.push(`${path} requires a full rest day unless seven running or lifting days were requested`);
     }
     const maximumRuns = currentWeekQuota?.runDays.length ?? runSchedule.runDaysPerWeek;
     if (currentWeekQuota && runs > maximumRuns) {
@@ -2245,12 +2271,15 @@ function validateConcurrentPlan(candidate, context = {}) {
     }
     if (expectedMode === planSchema.PLAN_MODES.RUN_ONLY && lifts > 0) errors.push(`${path} run_only plans cannot contain lifts`);
     if (expectedMode !== planSchema.PLAN_MODES.RUN_ONLY && week.phase !== 'race') {
-      const configuredFloor = Number(candidate.strengthPolicy?.minimumSessionsPerWeek || 0);
+      // Taper is an explicitly disclosed reduction, not an ordinary build
+      // week. Its prescribed cap and its validator floor must use one phase.
+      const configuredFloor = Math.min(Number(candidate.strengthPolicy?.minimumSessionsPerWeek || 0),
+        week.phase === 'taper' ? Math.min(2, liftSchedule.liftDaysPerWeek) : liftSchedule.liftDaysPerWeek);
       const completedStrengthSessions = currentWeekQuota
         ? authoritativeCompletedStrengthSessions
         : 0;
       const remainingLiftCapacity = currentWeekQuota
-        ? runSchedule.trainingDays.filter((day) => (
+        ? liftSchedule.liftEligibleWeekdays.filter((day) => (
           addDays(week.startDate, DAY_ORDER.indexOf(day)) >= context.todayISO
         )).length
         : configuredFloor;
@@ -2311,6 +2340,7 @@ function validateConcurrentPlan(candidate, context = {}) {
     // Validation must never demand that generation backfill or overpack one.
     if (!planWideQualityProtection
       && racePace
+      && hasCurrentQualifiedPerformanceForRace(context.history || {}, race, context.todayISO)
       && weeksToRace >= 2
       && plannedRunFrequency >= 2
       && hasFeasibleTargetPaceOpportunity(candidate, race, context)
@@ -2449,6 +2479,7 @@ module.exports = {
   formatPaceLabel,
   buildGoalPaceContext,
   buildRunPerformanceProfile,
+  hasCurrentQualifiedPerformanceForRace,
   buildBenchmarkRunSession,
   rebuildCanonicalRunSession,
   equivalentTimeSeconds,

@@ -7,10 +7,14 @@ const KEYS = ['distribution_policy_version','dose_accounting_version','source_te
 const core = (exercises) => exercises.map(canonicalStrengthExercise);
 const totals = (exercises) => Object.fromEntries(exercises.map(exercise => [exercise.exercise_id, exercise.target.sets]));
 const prescription = (exercise) => { const result = JSON.parse(JSON.stringify(exercise)); delete result.target.sets; return result; };
+const { strengthTemplateSetPattern } = require('./strengthPrescription');
 const SOURCE_SET_PATTERNS = Object.freeze({
-  'concurrent-maintain-focus': [3,3,2], 'concurrent-build-focus': [4,4,3,3],
-  'concurrent-maintain-recovery-focus': [2,2,2], 'concurrent-taper-focus': [2,2],
-  'concurrent-useful-two-exercise-week-v1': [4,4],
+  'concurrent-maintain-focus': strengthTemplateSetPattern(),
+  'concurrent-build-focus': strengthTemplateSetPattern({ mode: 'hybrid_build' }),
+  'concurrent-maintain-recovery-focus': strengthTemplateSetPattern({ reducedRecovery: true }),
+  'concurrent-build-recovery-focus': strengthTemplateSetPattern({ mode: 'hybrid_build', reducedRecovery: true }),
+  'concurrent-taper-focus': strengthTemplateSetPattern({ phase: 'taper' }),
+  'concurrent-useful-two-exercise-week-v1': Object.freeze([4,4]),
 });
 
 function trustedTemplateExercises(id, focus, original) {

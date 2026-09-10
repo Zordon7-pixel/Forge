@@ -142,10 +142,13 @@ function sessionLocalDate(session = {}) {
   return dateFromStartInstant(session.scheduled_start_at ?? session.scheduledStartAt);
 }
 
+const frozenPlanSessions = new WeakMap();
+const { immutableOwnJson } = require('./immutableOwnJson');
 function sessionsFrom(container = {}) {
   if (Array.isArray(container)) return container;
   if (Array.isArray(container.sessions)) return container.sessions;
-  return (container.weeks || []).flatMap((week) => (
+  if (frozenPlanSessions.has(container)) return frozenPlanSessions.get(container);
+  const sessions = (container.weeks || []).flatMap((week) => (
     week === null ? [] :
     (week.days || week.sessions || []).flatMap((day) => (
       day === null ? [] :
@@ -154,6 +157,10 @@ function sessionsFrom(container = {}) {
         : [{ ...day, scheduled_local_date: sessionLocalDate(day) }]
     ))
   ));
+  if (container && typeof container === 'object' && immutableOwnJson(container)) {
+    frozenPlanSessions.set(container, Object.freeze(sessions.map(Object.freeze)));
+  }
+  return sessions;
 }
 
 function validatePartialRaceOrderClusterExposure(container = {}, options = {}) {
@@ -1208,10 +1215,16 @@ function canonicalPrescriptionValue(value) {
   }, {});
 }
 
+const frozenPrescriptionHashes = new WeakMap();
 function canonicalPrescriptionHash(plan = {}) {
+  if (plan && typeof plan === 'object' && frozenPrescriptionHashes.has(plan)) return frozenPrescriptionHashes.get(plan);
   const prescriptions = sessionsFrom(plan).map((session) => canonicalPrescriptionValue(session))
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-  return canonicalHash(prescriptions);
+  const hash = canonicalHash(prescriptions);
+  // A hash memo is not approval. Only immutable own-data graphs qualify;
+  // mutable/shallow-frozen/accessor/proxy payloads are always recomputed.
+  if (plan && typeof plan === 'object' && immutableOwnJson(plan)) frozenPrescriptionHashes.set(plan, hash);
+  return hash;
 }
 
 function distanceMeters(session) {

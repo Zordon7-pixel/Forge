@@ -2923,6 +2923,7 @@ function goalBackwardRequiredRoadMaterial(
   completeCandidateMaterial,
   decision,
   eventKind,
+  sourceWindow = null,
 ) {
   if (!['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(String(eventKind || ''))) {
     return candidateMaterial;
@@ -2937,7 +2938,8 @@ function goalBackwardRequiredRoadMaterial(
       const materialId = goalBackwardMaterialId(session);
       const family = legacyGoalBackwardFamily(session);
       return materialId && !selectedIds.has(materialId)
-        && family && GOAL_BACKWARD_RUNNING_FAMILIES.has(family);
+        && family && GOAL_BACKWARD_RUNNING_FAMILIES.has(family)
+        && (!sourceWindow || session.date >= sourceWindow.start && session.date <= sourceWindow.end);
     })
     .sort((left, right) => (
       String(left?.date || '').localeCompare(String(right?.date || ''))
@@ -3243,7 +3245,7 @@ function goalBackwardGoalExpansionCarryForwardMaterial(
   availableLocalDates,
 ) {
   if (state?.request?.operation === 'remove_race' || !activeAppliedPlan) return [];
-  const plan = ownDataJsonSnapshot(activeAppliedPlan);
+  const plan = ownDataJsonSnapshot(activeAppliedPlan) || ownMaterializedProgramSnapshot(activeAppliedPlan);
   if (!plan) invalidGoalExpansionCarrySource('PLAN_SNAPSHOT_INVALID');
   const declaresCanonicalSource = [
     plan.canonical_workout_schema_version,
@@ -3835,7 +3837,22 @@ function goalBackwardActiveAppliedPlan(state, persistedPlan) {
   return assignedPlan;
 }
 
+const authenticatedProgramInventories = new WeakSet();
+function programInventoryBinding(userId, state) {
+  return canonicalHash({ user_id: userId, input_hash: state.inputHash,
+    planning_input_revision: state.planningInputRevision, active_assignment: state.activePlan,
+    active_row: state.active, canonical_source: state.activeCanonicalCarryForwardSource,
+    removal_snapshot: state.removalPlanSnapshot, request: state.request,
+    owned_races: state.races, constraints: state.planningConstraints,
+    target: state.target, context: state.context });
+}
 function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLocal }, dependencies = {}) {
+  const inventory = authenticatedProgramInventories.has(dependencies.programInventory)
+    && dependencies.programInventory.state === state && dependencies.programInventory.userId === userId
+    ? dependencies.programInventory : null;
+  if (inventory && inventory.bindingHash !== programInventoryBinding(userId, state)) {
+    invalidGoalExpansionCarrySource('PROGRAM_SNAPSHOT_CHANGED');
+  }
   const clusterPolicy = built.plan?.hyroxPolicy?.partialRaceOrderCluster || null;
   const selectedClusterWeek = Number.isInteger(clusterPolicy?.selectedWeekIndex)
     ? built.plan?.weeks?.[clusterPolicy.selectedWeekIndex] : null;
@@ -3855,6 +3872,7 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
   );
   const scopedRecovery = deriveScopedRecoveryState({
     planning_date_local: planningDateLocal,
+    observation_date_local: state.context?.todayISO || planningDateLocal,
     candidate_window_end_local: addPolicyDays(planningDateLocal, 6),
     timezone: state.context?.profile?.timezone || 'UTC',
     evidence_snapshot_id: evidenceSnapshotId,
@@ -3889,7 +3907,12 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
     ? 'RETURNING'
     : runLoadComplete ? (recentRunCount >= 4 ? 'CONSISTENT' : 'SPARSE_DATA') : 'UNKNOWN';
   const goals = goalBackwardGoalsForState(userId, state);
-  const primaryEventDate = goals[0]?.event_local_date || null;
+  const projectedRoadWindow = dependencies.programWindowDates ? require('../lib/roadPhaseReplan').projectedRoadWindow({
+    goals, athleteId: userId, observationDate: state.context?.todayISO, planningDate: planningDateLocal,
+  }) : null;
+  const projectedPrimaryGoal = goals.find(goal => goal.goal_id === (projectedRoadWindow?.recovery_goal_id
+    || projectedRoadWindow?.next_goal_id)) || goals[0];
+  const primaryEventDate = projectedPrimaryGoal?.event_local_date || null;
   const buildDecision = dependencies.buildDecision || buildGoalBackwardPlanningDecision;
   const enumerateCandidates = dependencies.enumerateCandidates || enumerateGoalBackwardCandidates;
   const decisionInput = {
@@ -3943,6 +3966,9 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
       constraint_fingerprint: state.planningConstraints?.constraint_fingerprint || null,
     },
     goals,
+    ...(dependencies.programWindowDates ? { program_observation_date: state.context?.todayISO } : {}),
+    ...(dependencies.programWindowDates ? { road_performance_qualified: concurrentPlan.hasCurrentQualifiedPerformanceForRace(
+      state.context?.history || {}, { distanceMiles: projectedPrimaryGoal?.distance_miles }, state.context?.todayISO || planningDateLocal) } : {}),
     races: state.races.map((race) => ({ race_id: String(race.id), athlete_id: userId })),
     evidence_used: [{ evidence_id: evidenceSnapshotId, purpose: 'CURRENT_PLANNING_SNAPSHOT' }],
     // C1 phase routing still owns this historic gate. C2 supplies the separate
@@ -3971,10 +3997,10 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
     ] : [],
   };
   let decision = buildDecision(decisionInput);
-  const stableActivePlan = state.request?.operation === 'remove_race'
+  const stableActivePlan = inventory ? inventory.stableActivePlan : state.request?.operation === 'remove_race'
     ? state.removalPlanSnapshot
     : (state.active ? parsePlan(state.active.row) : null);
-  const activeAppliedPlan = goalBackwardActiveAppliedPlan(state, stableActivePlan);
+  const activeAppliedPlan = inventory ? inventory.activeAppliedPlan : goalBackwardActiveAppliedPlan(state, stableActivePlan);
   const activeRetainedWorkPlan = goalBackwardRetainedWorkComparator(state, activeAppliedPlan, userId);
   if (!assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan)) {
     const error = new Error('The active canonical plan cannot authorize removal carry-forward.');
@@ -4008,17 +4034,28 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
   const carriedRemovalMaterial = clusterPolicy?.required === true
     ? [] : goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, availableLocalDates);
   const carriedGoalExpansionMaterial = clusterPolicy?.required === true
-    ? [] : goalBackwardGoalExpansionCarryForwardMaterial(
+    ? [] : inventory ? inventory.expansionMaterial.filter(session => availableLocalDates.includes(session.scheduled_local_date))
+      : goalBackwardGoalExpansionCarryForwardMaterial(
       userId,
       state,
       activeAppliedPlan,
       state.activeCanonicalCarryForwardSource,
       availableLocalDates,
     );
-  const carriedLifecycleMaterial = [...carriedRemovalMaterial, ...carriedGoalExpansionMaterial];
+  const phaseReplan = dependencies.programWindowDates && carriedGoalExpansionMaterial.length
+    && ['TAPER_RACE_WEEK', 'POST_RACE_TRANSITION'].includes(decision.phase) ? require('../lib/roadPhaseReplan').ownedRoadPhaseReplan({
+      userId, state, activePlan: activeAppliedPlan, newPlan: built.plan, planningDate: planningDateLocal,
+      projection: decision.projected_event_window,
+    }) : null;
+  const carriedLifecycleMaterial = [...carriedRemovalMaterial, ...(phaseReplan ? [] : carriedGoalExpansionMaterial)];
   const carriedLifecycleMaterialIds = new Set(carriedLifecycleMaterial.map(goalBackwardMaterialId));
-  const carriedRoadDates = dependencies.programWindowDates && state.request?.operation === 'remove_race'
-    ? new Set(carriedRemovalMaterial.map(session => session.scheduled_local_date || session.date)) : new Set();
+  // A canonical retained run and the regenerated adapter for its same calendar
+  // slot have different IDs. That does not make them two requested run days.
+  // The authenticated carry owns its slot; explicit phase replans above remove
+  // that carry before the newly constructed prescription is considered.
+  const carriedRoadDates = dependencies.programWindowDates
+    ? new Set(carriedLifecycleMaterial.filter(session => session.kind === 'run')
+      .map(session => session.scheduled_local_date || session.date)) : new Set();
   let candidateMaterial = [
     ...carriedLifecycleMaterial,
     ...baseCandidateMaterial.filter((session) => (
@@ -4027,7 +4064,8 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
     )),
   ];
   candidateMaterial = candidateMaterial.map((material) => {
-    if (dependencies.programWindowDates && (decision.phase === 'FOUNDATION' || decision.partial_week_contract)
+    if (dependencies.programWindowDates && (decision.phase === 'FOUNDATION' || decision.partial_week_contract
+      || decision.phase === 'TAPER_RACE_WEEK' && decisionInput.road_performance_qualified === false)
       && material.kind === 'run' && ['threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run']
         .includes(legacyGoalBackwardFamily(material))) {
       // A foundation source distributes easy work, not a stale quality
@@ -4037,7 +4075,7 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
         weekNumber: sourceWeek?.week || 1, weekCount: built.plan.weeks.length,
         day: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(`${material.date}T12:00:00Z`).getUTCDay()],
         type: 'easy', phase: 'base', distance: material.distance_miles, context: state.context,
-        reasonCodes: ['FOUNDATION_ENTRY'] });
+        reasonCodes: decision.phase === 'TAPER_RACE_WEEK' ? ['TAPER_VOLUME_REDUCTION', 'ASSESSMENT_REQUIRED'] : ['FOUNDATION_ENTRY'] });
       return { ...rebuilt, date: material.date, session_id: goalBackwardMaterialId(material) };
     }
     if (legacyGoalBackwardFamily(material) !== 'race') return material;
@@ -4050,8 +4088,8 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
       event_revision: goal.event_revision, source_revision: goal.source_revision,
     } };
   });
-  if (dependencies.programWindowDates && !built.plan.weeks.some(week => week.phase === 'race'
-    && week.startDate <= planningDateLocal && addPolicyDays(week.startDate, 6) >= planningDateLocal)) {
+  if (dependencies.programWindowDates && (phaseReplan || !built.plan.weeks.some(week => week.phase === 'race'
+    && week.startDate <= planningDateLocal && addPolicyDays(week.startDate, 6) >= planningDateLocal))) {
     candidateMaterial = candidateMaterial.map(material => {
       const family = legacyGoalBackwardFamily(material);
       const minimum = family === 'easy_run' ? (['BEGINNER', 'RETURNING'].includes(trainingAgeClass) ? 20 : 25)
@@ -4070,6 +4108,7 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
     completeCandidateMaterial,
     decision,
     goals[0]?.event_kind,
+    phaseReplan ? { start: phaseReplan.window_start, end: phaseReplan.window_end } : null,
   );
   let requiredRunningDoseReceipt = null;
   if (clusterPolicy?.required !== true) {
@@ -4085,7 +4124,7 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
       start: planningDateLocal,
       end: addPolicyDays(planningDateLocal, 6),
     }) : null;
-    const materialPreservationMinimumRunningM = hasCanonicalLoadContract
+    const materialPreservationMinimumRunningM = hasCanonicalLoadContract && !phaseReplan
       ? minimumRunningDoseWithoutMaterialReduction([
         validRecentNormalComparator,
         activeRunningObservation?.state === 'KNOWN' ? activeRunningObservation.distance_m : null,
@@ -4291,10 +4330,13 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
     authorized_ceiling_vector: crossModalReductionEvidence.dimension_ledger.dimensions
       .map((entry) => entry.authorized_ceiling),
   } : null;
-  const runningDoseSource = dependencies.programWindowDates ? {
+  let runningDoseSource = dependencies.programWindowDates ? {
     policy_version: require('../lib/runningDoseAccounting').VERSION,
     authority: 'CONSERVATIVE_TEMPLATE',
-    allow_effort_only: !Number.isFinite(state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile),
+    // A known observed pace does not turn a duration-only recovery prescription
+    // into a distance prescription. Keep absent distance explicit and bound to
+    // the independently selected source; never manufacture meters from pace.
+    allow_effort_only: true,
     evidence_snapshot_hash: evidenceSnapshotId,
     selected_weekly_distance_m: decisionInput.athlete_state.recent_normal_running?.median_distance_m
       ?? require('../lib/runningDoseAccounting').REFERENCE.distance_m,
@@ -4357,11 +4399,14 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
       session.scheduled_local_date = date; reserved[kind].add(date);
     }
     sourceSkeleton.candidate_skeleton_hash = canonicalHash(sourceSkeleton);
-    const sourceSet = require('../lib/canonicalWorkout').materializeCanonicalSessionSet({
-      candidate: sourceSkeleton, decision, running_dose_source: runningDoseSource,
+    const sourceInput = {
+      candidate: sourceSkeleton, decision,
       timezone: state.context?.profile?.timezone || decision.timezone || 'UTC',
       planning_instant: `${planningDateLocal}T00:00:00.000Z`, training_age_class: trainingAgeClass,
-    });
+    };
+    const unboundSourceSet = require('../lib/canonicalWorkout').materializeCanonicalSessionSet(sourceInput);
+    runningDoseSource = require('../lib/runningDoseAccounting').selectRunningDoseSource(unboundSourceSet.sessions, runningDoseSource);
+    const sourceSet = require('../lib/canonicalWorkout').materializeCanonicalSessionSet({ ...sourceInput, running_dose_source: runningDoseSource });
     canonicalLoadSource = require('../lib/canonicalCombinedLoad').buildCanonicalLoadSource(sourceSet,
       { contextHash: canonicalLoadContextHash, authority: 'TEMPLATE_BOUNDED', partialWeekContract: decision.partial_week_contract,
         frequencyDoseContract: decision.frequency_dose_contract });
@@ -4434,14 +4479,14 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
         ? crossModalReductionEvidence.decisive_evidence_ids : [],
     },
   });
-  const inspectedResult = requiredRunningDoseReceipt
-    ? { ...result, required_running_dose_receipt: requiredRunningDoseReceipt }
-    : result;
+  const inspectedResult = { ...result, ...(requiredRunningDoseReceipt ? { required_running_dose_receipt: requiredRunningDoseReceipt } : {}),
+    ...(phaseReplan ? { road_phase_replan: phaseReplan } : {}) };
   if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(inspectedResult);
   return inspectedResult;
 }
 
 function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
+  dependencies.inspectInput?.(input);
   const { state, built, planningDateLocal } = input;
   // Lifecycle carry-forward and HYROX retain their independently gated paths.
   // Road creation composes bounded weekly searches, never one unbounded search
@@ -4457,7 +4502,26 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
     planningDateLocal, constraints: state.planningConstraints, evidenceRevision: state.planningInputRevision,
     ownedGoals: goalBackwardGoalsForState(input.userId, state), evidenceFingerprint: state.inputHash,
     activeIdentity: state.activePlan || null });
+  const stableActivePlan = state.request?.operation === 'remove_race' ? state.removalPlanSnapshot
+    : state.active ? parsePlan(state.active.row) : null;
+  const activeAppliedPlan = goalBackwardActiveAppliedPlan(state, stableActivePlan);
+  const allProgramDates = [];
+  for (let date = planningDateLocal; date <= contract.end_date; date = addPolicyDays(date, 1)) allProgramDates.push(date);
+  const expansionMaterial = goalBackwardGoalExpansionCarryForwardMaterial(input.userId, state, activeAppliedPlan,
+    state.activeCanonicalCarryForwardSource, allProgramDates);
+  const freeze = value => { if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.values(value).forEach(freeze); Object.freeze(value);
+  } return value; };
+  // Private capability, allocated anew for each synchronous preview/apply.
+  // Only the authenticated inventory is reused; caller flags cannot mint one.
+  const programInventory = Object.freeze({ state, userId: input.userId,
+    bindingHash: programInventoryBinding(input.userId, state), stableActivePlan: freeze(stableActivePlan),
+    activeAppliedPlan: freeze(activeAppliedPlan), expansionMaterial: freeze(expansionMaterial) });
+  authenticatedProgramInventories.add(programInventory);
   const windows = [];
+  const ownedEventDates = new Set(contract.goals.filter(goal => goal.athlete_id === input.userId && goal.race_id
+    && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(goal.event_kind))
+    .map(goal => goal.event_local_date));
   for (const week of built.plan.weeks) {
     const weekStart = week.startDate;
     const windowStart = weekStart < planningDateLocal ? planningDateLocal : weekStart;
@@ -4467,9 +4531,9 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
     for (let date = windowStart; date <= windowEnd; date = addPolicyDays(date, 1)) allDates.push(date);
     const weekday = (date) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${date}T12:00:00Z`).getUTCDay()];
     const dates = allDates.filter((date) => contract.run_eligible_weekdays.includes(weekday(date))
-      || contract.lift_eligible_weekdays.includes(weekday(date)) || date === contract.end_date);
+      || contract.lift_eligible_weekdays.includes(weekday(date)) || ownedEventDates.has(date));
     const result = computeGoalBackwardSingleWindow({ ...input,
-      planningDateLocal: windowStart }, { ...dependencies, inspectDecision: undefined, programWindowDates: dates,
+      planningDateLocal: windowStart }, { ...dependencies, inspectDecision: undefined, programInventory, programWindowDates: dates,
       programOpeningPartial: weekStart < planningDateLocal && week.phase !== 'race'
         && allDates.filter(date => contract.run_eligible_weekdays.includes(weekday(date))).length < contract.run_days_per_week
         ? { version: 'opening-partial-week-v1', planning_date: planningDateLocal, week_start: weekStart,
@@ -4484,7 +4548,11 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
       dependencies.inspectDecision?.(failed);
       return failed;
     }
+    dependencies.inspectProgramWindow?.(result);
     windows.push({ week, result, selected: null });
+  }
+  if (programInventory.bindingHash !== programInventoryBinding(input.userId, state)) {
+    invalidGoalExpansionCarrySource('PROGRAM_SNAPSHOT_CHANGED');
   }
   if (!windows.length) return computeGoalBackwardSingleWindow(input, dependencies);
   let expanded = 0, failedWindow = null;
@@ -4596,6 +4664,7 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
       }
     }
     return { ...week, week: index + 1, days,
+      ...(windows[index].result.road_phase_replan ? { roadPhaseAdjustment: windows[index].result.road_phase_replan } : {}),
       ...(contract.run_days_per_week === 1 && !['race', 'taper'].includes(week.phase) ? {
         runFrequencyAdjustment: { policy: 'EXPLICIT_SINGLE_RUNNING_DAY_DOSE', requested: 1, prescribed: 1,
           explanation: 'One requested running day is retained as useful training. This reduced frequency does not promise to maintain the previous multi-day weekly mileage; the race-time aspiration remains unvalidated.' },
@@ -9147,6 +9216,7 @@ router._test = {
   goalBackwardSafetyState,
   goalBackwardActiveAppliedPlan,
   goalBackwardRemovalCarryForwardMaterial,
+  goalBackwardGoalExpansionCarryForwardMaterial,
   goalBackwardRetainedWorkComparator,
   strictRemovalPlanSnapshot,
   goalBackwardRequiredRoadMaterial,

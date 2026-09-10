@@ -1,5 +1,5 @@
 const { canonicalHash } = require('./racePlanPolicy');
-const VERSION = 'running-prescribed-dose-v1';
+const VERSION = 'running-prescribed-dose-v2';
 // Existing constructor fallback: six miles, 12:00/mi base effort, 1.08 easy
 // duration factor. This is a WEEKLY engineering reference, not a safe dose or
 // a new session minimum. Requested frequency cannot change the denominator.
@@ -45,6 +45,42 @@ function canonicalRunDose(session, { allowEffortOnly = false } = {}) {
     distance_basis: distanceUnspecified ? 'DURATION_ONLY_NO_DISTANCE_PRESCRIPTION' : 'CANONICAL_DISTANCE_PRESCRIPTION' };
 }
 
+// Called only for independently materialized server source prescriptions,
+// before enumeration. Never infer this conversion from a candidate pool.
+function selectRunningDoseSource(sessions, source) {
+  const prescriptions = sessions.filter(session => FAMILIES.has(session.workout_family)).map(session => ({
+    prescription_id: session.session_id,
+    dose: canonicalRunDose(session, { allowEffortOnly: source.allow_effort_only === true }),
+  }));
+  if (prescriptions.some(entry => !entry.dose)) throw new Error('Independent running source is incomplete');
+  const duration = prescriptions.reduce((sum, entry) => sum + entry.dose.duration_s, 0);
+  const distance = prescriptions.reduce((sum, entry) => sum + entry.dose.distance_m, 0);
+  const normalization = { policy_version: VERSION, primary_basis: 'SOURCE_BOUND_ACTIVE_DURATION',
+    duration_s: duration, distance_m: distance, prescriptions,
+    exposure_per_second: duration > 0 ? Math.max(duration / REFERENCE.duration_s, distance / REFERENCE.distance_m) / duration
+      : 1 / REFERENCE.duration_s };
+  return { ...source, normalization, normalization_hash: canonicalHash(normalization) };
+}
+
+function sourceConversion(source) {
+  // Direct, isolated policy callers can use the immutable conservative
+  // reference. No candidate-local totals are ever used to initialize it.
+  if (!source.normalization) return source.normalization_hash ? null : 1 / REFERENCE.duration_s;
+  const n = source.normalization;
+  if (source.normalization_hash !== canonicalHash(n) || n.policy_version !== VERSION
+    || n.primary_basis !== 'SOURCE_BOUND_ACTIVE_DURATION' || !Array.isArray(n.prescriptions)
+    || new Set(n.prescriptions.map(entry => entry.prescription_id)).size !== n.prescriptions.length
+    || n.prescriptions.some(entry => typeof entry.prescription_id !== 'string' || !entry.prescription_id
+      || !Number.isFinite(entry.dose?.duration_s) || entry.dose.duration_s <= 0
+      || !Number.isFinite(entry.dose.distance_m) || entry.dose.distance_m < 0
+      || !['CANONICAL_DISTANCE_PRESCRIPTION','DURATION_ONLY_NO_DISTANCE_PRESCRIPTION'].includes(entry.dose.distance_basis))) return null;
+  const duration = n.prescriptions.reduce((sum, entry) => sum + entry.dose.duration_s, 0);
+  const distance = n.prescriptions.reduce((sum, entry) => sum + entry.dose.distance_m, 0);
+  const coefficient = duration > 0 ? Math.max(duration / REFERENCE.duration_s, distance / REFERENCE.distance_m) / duration
+    : 1 / REFERENCE.duration_s;
+  return n.duration_s === duration && n.distance_m === distance && n.exposure_per_second === coefficient ? coefficient : null;
+}
+
 function runningPrescribedDose(session, familyVector) {
   const legacy = { valid: Boolean(familyVector), vector: familyVector && [...familyVector],
     state: 'PROTECTED_FAMILY_REFERENCE', version: VERSION, reference_id: REFERENCE.id };
@@ -79,22 +115,23 @@ function runningPrescribedDose(session, familyVector) {
   const duration = pool.allocations.reduce((sum, entry) => sum + entry.dose.duration_s, 0);
   const distance = pool.allocations.reduce((sum, entry) => sum + entry.dose.distance_m, 0);
   if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(distance) || distance < 0) return invalid;
-  const weeklyExposure = Math.max(duration / REFERENCE.duration_s, distance / REFERENCE.distance_m);
-  // Resolve the pool ONCE. Allocate exact micro-units by cumulative duration;
-  // per-child maxima cannot manufacture load when a week is partitioned.
-  const start = pool.allocations.slice(0, receipt.partition_index).reduce((sum, entry) => sum + entry.dose.duration_s, 0);
+  const coefficient = sourceConversion(receipt.source);
+  if (coefficient === null) return invalid;
+  const sourcePrescription = receipt.source.normalization?.prescriptions.find(entry => entry.prescription_id === receipt.prescription_id);
+  if (receipt.source.normalization && (!sourcePrescription
+    || dose.distance_basis !== sourcePrescription.dose.distance_basis
+    || dose.distance_m > sourcePrescription.dose.distance_m
+    || dose.distance_m * sourcePrescription.dose.duration_s > sourcePrescription.dose.distance_m * dose.duration_s)) return invalid;
+  // The same independently selected conversion applies to every allocation.
+  // No prefix rounding or changing sibling can change this child's vector.
+  // Keep IEEE-754 precision here; aggregate comparisons use their documented
+  // 1e-6 tolerance and presentation alone may round.
   const easyShape = [2,2,1,0,0,1,1,0];
-  const vector = easyShape.map(value => {
-    const wholePoolUnits = Math.ceil(value * weeklyExposure * 1e6);
-    return (Math.round(wholePoolUnits * (start + durationForAllocation(allocation)) / duration)
-      - Math.round(wholePoolUnits * start / duration)) / 1e6;
-  });
+  const vector = easyShape.map(value => value * coefficient * dose.duration_s);
   return { ...legacy, state: 'KNOWN_CANONICAL_EFFORT_DOSE',
     vector,
     actual_dose: dose };
 }
-
-function durationForAllocation(allocation) { return allocation.dose.duration_s; }
 
 function bindRunningDosePool(sessions, source) {
   if (!source) return sessions;
@@ -135,10 +172,29 @@ function validateRunningDosePools(sessions) {
   });
 }
 
+function validateIndependentRunningSource(sessions) {
+  const eligible = sessions.filter(session => FAMILIES.has(session.workout_family));
+  if (!validateRunningDosePools(sessions)) return false;
+  const groups = new Map();
+  for (const session of eligible) {
+    const receipt = session.running_dose;
+    if (!receipt.source.normalization || sourceConversion(receipt.source) === null) return false;
+    const group = groups.get(receipt.source_hash) || [];
+    group.push(session); groups.set(receipt.source_hash, group);
+  }
+  return [...groups.values()].every(group => {
+    const n = group[0].running_dose.source.normalization;
+    return n.prescriptions.length === group.length && n.prescriptions.every(entry => {
+      const matches = group.filter(session => session.running_dose.prescription_id === entry.prescription_id);
+      return matches.length === 1 && canonicalHash(matches[0].running_dose.actual_dose) === canonicalHash(entry.dose);
+    });
+  });
+}
+
 function attachRunningDose(session, source) {
   if (!source || !FAMILIES.has(session.workout_family)) return session;
   return bindRunningDosePool([session], source)[0];
 }
 
 module.exports = { VERSION, REFERENCE, REFERENCE_HASH, FAMILIES, canonicalRunDose, runningPrescribedDose,
-  attachRunningDose, bindRunningDosePool, validateRunningDosePools };
+  attachRunningDose, bindRunningDosePool, validateRunningDosePools, selectRunningDoseSource, validateIndependentRunningSource };

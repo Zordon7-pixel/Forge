@@ -219,13 +219,11 @@ function prescriptionBasis(options = {}, exercises = []) {
 function buildStrengthExercises(options = {}) {
   const equipment = normalizeEquipment(options.equipment);
   const templates = exerciseCatalog(options.focus, equipment);
-  const build = options.mode === 'hybrid_build';
-  const taper = options.phase === 'taper' || options.phase === 'race';
   const effort = effortTarget(options.recovery?.state, options.weekNumber);
-  const selected = templates.slice(0, taper ? 2 : build ? 4 : 3);
-  return selected.map((template) => {
-    const baseSets = taper ? 2 : template.role === 'primary' ? (build ? 4 : 3) : (build ? 3 : 2);
-    const sets = effort.reduceSets ? Math.max(2, baseSets - 1) : baseSets;
+  const pattern = strengthTemplateSetPattern({ mode: options.mode, phase: options.phase, reducedRecovery: effort.reduceSets });
+  const selected = templates.slice(0, pattern.length);
+  return selected.map((template, index) => {
+    const sets = pattern[index];
     const rest = template.role === 'primary' ? '2-3 min' : '60-90 sec';
     const personalized = personalizeExercise({ ...template, sets, rest, recoveryAdjusted: effort.reduceSets }, {
       recentExercises: options.history?.recentExercises,
@@ -236,6 +234,15 @@ function buildStrengthExercises(options = {}) {
     const { aliases, role, ...prescription } = personalized;
     return prescription;
   });
+}
+
+// The constructor and distribution authenticator share the same closed source
+// policy. Recovery removes one working set per exercise (minimum two); it does
+// not invent a different template merely to satisfy a partition receipt.
+function strengthTemplateSetPattern({ mode, phase, reducedRecovery = false } = {}) {
+  const pattern = ['taper', 'race'].includes(phase) ? [2, 2]
+    : mode === 'hybrid_build' ? [4, 4, 3, 3] : [3, 3, 2];
+  return Object.freeze(reducedRecovery ? pattern.map(sets => Math.max(2, sets - 1)) : pattern);
 }
 
 function applyStrengthPrescriptionData(plan, context = {}) {
@@ -276,6 +283,7 @@ function applyStrengthPrescriptionData(plan, context = {}) {
 module.exports = {
   applyStrengthPrescriptionData,
   buildStrengthExercises,
+  strengthTemplateSetPattern,
   normalizeExerciseName,
   prescriptionBasis,
   summarizeRecentExercises,

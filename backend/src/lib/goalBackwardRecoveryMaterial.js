@@ -895,6 +895,7 @@ function deriveScopedRecoveryState(input = {}) {
   if (!planningDate) throw new Error('planning_date_local is required for recovery scope');
   const candidateWindowEnd = dateOnly(input.candidate_window_end_local) || addDays(planningDate, 6);
   const context = input.context || {};
+  const observationDate = dateOnly(input.observation_date_local) || planningDate;
   const timezone = validTimezone(input.timezone || context.profile?.timezone || 'UTC') || 'UTC';
   const safety = context.safety || {};
   const recovery = context.recovery || {};
@@ -948,7 +949,7 @@ function deriveScopedRecoveryState(input = {}) {
       reasonCode: 'ILLNESS_RECOVERY', modalities: ['running_quality', 'metabolic'],
       action: 'NO_HIGH_INTENSITY', authorizesMaterialReduction: true,
     }) : acuteScope({
-      planningDate, timezone, evidenceIds: illnessEvidenceIds,
+      planningDate: observationDate, timezone, evidenceIds: illnessEvidenceIds,
       reasonCode: 'ILLNESS_RECOVERY', modalities: ['running_quality', 'metabolic'],
       action: 'NO_HIGH_INTENSITY',
     });
@@ -957,7 +958,7 @@ function deriveScopedRecoveryState(input = {}) {
     recoveryState = 'CAUTION';
     safetyAction = 'MONITOR';
     const scope = acuteScope({
-      planningDate,
+      planningDate: observationDate,
       timezone,
       evidenceIds: [snapshotId],
       reasonCode: 'RECOVERY_VOLUME_REDUCTION',
@@ -965,6 +966,12 @@ function deriveScopedRecoveryState(input = {}) {
       action: 'NO_HIGH_INTENSITY',
     });
     if (scope) scopes.push(scope);
+  }
+  if (scopes.length && scopes.every(scope => scope.scope_kind === 'ACUTE' && scope.expires_on_local < planningDate)) {
+    // Expiration is not recovery evidence. Keep the dated scope for audit,
+    // but do not reissue an old snapshot as a new future-week restriction.
+    recoveryState = 'UNKNOWN';
+    safetyAction = 'NORMAL';
   }
   const receipt = {
     recovery_state: recoveryState,
@@ -1005,6 +1012,18 @@ function deriveMaterialReductionScope(input = {}) {
     ...(input.decision_evidence_ids || []),
     input.evidence_snapshot_id,
   ].filter(Boolean);
+  if (decision.phase === 'POST_RACE_TRANSITION' && decision.projected_event_window) {
+    const projection = decision.projected_event_window;
+    const expected = require('./roadPhaseReplan').projectedRoadWindow({ goals: decision.active_goals,
+      athleteId: decision.athlete_id, observationDate: projection.observation_date, planningDate });
+    if (expected?.state === 'PLANNED_POST_EVENT_RECOVERY' && expected.content_hash === projection.content_hash
+      && expected.recovery_window_start <= planningDate && expected.recovery_window_end >= candidateWindowEnd) {
+      return blockScope({ planningDate, candidateWindowEnd,
+        evidenceIds: [...decisionEvidenceIds, `planned-event-${expected.content_hash}`], timezone,
+        reasonCode: 'RECOVERY_VOLUME_REDUCTION', modalities: ['running', 'running_impact'],
+        action: null, authorizesMaterialReduction: true });
+    }
+  }
   if (String(decision.phase || '').toUpperCase() === 'TAPER_RACE_WEEK') {
     return blockScope({
       planningDate, candidateWindowEnd, evidenceIds: decisionEvidenceIds,

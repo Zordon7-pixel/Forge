@@ -132,6 +132,50 @@ assert.ok(9000 / running.REFERENCE.duration_s + 13000 / running.REFERENCE.distan
   > Math.max(10500 / running.REFERENCE.duration_s, 14000 / running.REFERENCE.distance_m),
   'Fixture distinguishes the old independently maximized fragment accounting');
 const recoveries = pool(7, 'recovery_run');
+// Review B4: all earlier multi-child cases were duration-dominant. Preserve
+// one independent source while a changed sibling crosses the old dominance
+// boundary, in both allocation orders. Do not hide prefix-rounding drift.
+const sourceRuns = [easy('fixed-a', 1500, 4000), easy('fixed-b', 1500, 4000)];
+const fixedSource = running.selectRunningDoseSource(sourceRuns, { policy_version: running.VERSION,
+  authority: 'CONSERVATIVE_TEMPLATE' });
+for (const reverse of [false, true]) {
+  const ordered = reverse ? [...sourceRuns].reverse() : sourceRuns;
+  const original = running.bindRunningDosePool(ordered, fixedSource);
+  const originalA = resolveSessionStress(original.find(s => s.session_id === 'fixed-a')).vector;
+  for (const seconds of [1800, 2000, 3000, 6000]) {
+    const changed = structuredClone(ordered);
+    changed.find(s => s.session_id === 'fixed-b').steps[0].target.duration_s = seconds;
+    const rebound = running.bindRunningDosePool(changed, fixedSource);
+    assert.deepEqual(resolveSessionStress(rebound.find(s => s.session_id === 'fixed-a')).vector, originalA,
+      'An unchanged child is exactly invariant under sibling changes and allocation order');
+    const b = resolveSessionStress(rebound.find(s => s.session_id === 'fixed-b'));
+    assert.ok(b.valid && b.vector.every((v,i) => v >= originalA[i]));
+    const total = rebound.reduce((sum,s) => sum + resolveSessionStress(s).vector[0], 0);
+    assert.ok(Math.abs(total - 2 * fixedSource.normalization.exposure_per_second * (1500 + seconds)) < 1e-12);
+  }
+}
+for (const change of [sessions => { sessions[0].steps[0].target.distance_m += 100; sessions[1].steps[0].target.distance_m -= 100; },
+  sessions => { sessions[0].steps[0].target.duration_s -= 100; sessions[1].steps[0].target.duration_s += 100; },
+  sessions => { delete sessions[0].steps[0].target.distance_m; }]) {
+  const changed = structuredClone(sourceRuns); change(changed);
+  try {
+    const bound = running.bindRunningDosePool(changed, fixedSource);
+    assert.equal(running.validateRunningDosePools(bound), false, 'Faster/longer work cannot hide behind compensating sibling reductions');
+  } catch (error) { assert.match(error.message, /Complete canonical running dose|Canonical workout failed validation/); }
+}
+const tamperedSource = structuredClone(fixedSource);
+tamperedSource.normalization.exposure_per_second /= 2;
+tamperedSource.normalization_hash = canonicalHash(tamperedSource.normalization);
+assert.throws(() => running.bindRunningDosePool(sourceRuns, tamperedSource), /Canonical workout failed validation/);
+const timedRecovery = structuredClone(sourceRuns[0]);
+delete timedRecovery.steps[0].target.distance_m;
+timedRecovery.workout_family = 'recovery_run'; timedRecovery.steps[0].workout_family = 'recovery_run';
+const timedSource = running.selectRunningDoseSource([timedRecovery], { policy_version: running.VERSION,
+  authority: 'COMPATIBLE_SERVER_HISTORY', evidence_snapshot_hash: 'known-observed-pace-source', allow_effort_only: true });
+const timed = running.bindRunningDosePool([timedRecovery], timedSource)[0];
+assert.ok(resolveSessionStress(timed).valid, 'Known historical pace does not require invented distance on a timed recovery prescription');
+assert.equal(timed.steps[0].target.distance_m, undefined);
+assert.equal(timed.running_dose.actual_dose.distance_basis, 'DURATION_ONLY_NO_DISTANCE_PRESCRIPTION');
 assert.deepEqual(recoveries.map(session => resolveSessionStress(session).vector), pool(7).map(session => resolveSessionStress(session).vector), 'Recovery title/family cannot discount identical easy work');
 assert.ok(running.validateRunningDosePools(recoveries));
 assert.equal(running.validateRunningDosePools(recoveries.slice(1)), false, 'Missing partition member fails closed');
