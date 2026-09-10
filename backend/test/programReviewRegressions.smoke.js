@@ -43,6 +43,19 @@ const { selectGoalBackwardPhase } = require('../src/lib/goalBackwardDecisionEngi
 assert.notEqual(selectGoalBackwardPhase({ goal: projectionGoals[1], planning_date_local: '2026-10-12',
   event_policy: require('../src/lib/racePlanPolicy').EVENT_POLICY_REGISTRY_V1.policies.road_10mile_v1 }).phase,
   'TAPER_RACE_WEEK', 'A negative days-to-event value never creates perpetual taper');
+for (const date of ['2026-09-22', '2026-09-28', '2026-10-19']) {
+  const { buildGoalBackwardPlanningDecision } = require('../src/lib/goalBackwardDecisionEngine');
+  const decision = buildGoalBackwardPlanningDecision({ athlete_id: 'phase-owner', planning_date_local: date,
+    program_observation_date: '2026-09-22', timezone: 'America/New_York',
+    goals: [...projectionGoals].reverse(), races: projectionGoals.map(goal => ({ race_id: goal.race_id, athlete_id: 'phase-owner' })),
+    athlete_state: { available_days: [date], training_age_class: 'BEGINNER', consistency_state: 'RETURNING',
+      recovery_state: 'UNKNOWN', safety_action: 'NORMAL' } });
+  assert.equal(decision.primary_goal_id, date === '2026-09-22' ? 'goal-added' : 'goal-later');
+  assert.equal(decision.projected_event_window, undefined, 'Already-elapsed observations are not future-event projections');
+  assert.ok(decision.active_goals.every(goal => goal.event_state === 'SCHEDULED'));
+  if (date !== '2026-09-22') assert.notEqual(decision.phase, 'POST_RACE_TRANSITION',
+    'Unconfirmed elapsed event cannot hold the next future goal in perpetual transition');
+}
 const { immutableOwnJson } = require('../src/lib/immutableOwnJson');
 const immutable = Object.freeze({ nested: Object.freeze({ dose: 1 }) });
 assert.equal(immutableOwnJson(immutable), true);

@@ -75,6 +75,8 @@ The projected transition keeps the existing `RECOVERY_VOLUME_REDUCTION` scope, b
 
 ### Derived-only immutable memoization
 
+For a result already unconfirmed at the real observation date, the base selector keeps uncertainty bounded to that same existing post-event calendar week, then selects the next future owned goal without changing the old SCHEDULED ledger. Actual COMPLETED/transition-exit rules remain separate and unchanged. This does not remove the existing route-level limits for a requested race outside the current plan window or PR races less than 21 days apart; those remain explicit product limits rather than a universal no-blocker claim.
+
 Each preview/apply invocation authenticates its canonical carry once, then stores a private, recursively frozen material inventory. A binding digest covers owner, input/revisions, assignment/source rows, removal snapshot, request, goals, constraints, target and context; any intra-invocation change rejects before another window consumes the inventory. There is no global approval cache. Hash/stress memoization is restricted to recursively immutable plain own-data graphs, rejects cycles/proxies/accessors/custom prototypes/Date/Map/Set/functions/toJSON/symbols, preserves non-object fallback semantics, and clones returned dose values so caller mutation cannot poison later calculations. Mutable/shallow objects recompute normally. `programReviewRegressions.smoke.js` executes the failed-cycle contamination, primitive and actual mid-invocation revision mutation negatives.
 
 Numbers refer to the 24 cases in the accepted combined-dose design review. This is a coverage map, not a substitute for exact-commit test receipts.

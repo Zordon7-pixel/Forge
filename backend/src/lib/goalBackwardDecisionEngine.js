@@ -6,6 +6,7 @@ const {
   eventPolicyFor,
   eventPolicyForGoal,
   minimumWeeklyDemandFor,
+  mondayFor,
 } = require('./racePlanPolicy');
 const { evaluateGoalBackwardFeasibility } = require('./planFeasibility');
 const { validatePartialRaceOrderCluster } = require('./canonicalWorkout');
@@ -591,10 +592,22 @@ function buildRoleMultiset(input = {}) {
   return deepFreeze(roles);
 }
 
-function primaryGoalForDecision(goals, transitionExitMet) {
+function primaryGoalForDecision(goals, transitionExitMet, planningDate = null) {
   const first = goals[0] || null;
   if (first?.event_state === 'COMPLETED' && transitionExitMet !== true) return first;
-  return goals.find((goal) => goal.planning_eligible && goal.specificity_active) || null;
+  const eligible = goals.filter(goal => goal.planning_eligible && goal.specificity_active);
+  const pendingPast = goal => planningDate && goal.event_local_date && goal.event_local_date < planningDate
+    && ['SCHEDULED', 'POSTPONED', 'UNKNOWN'].includes(goal.event_state);
+  // Unknown results stay unknown. They may reserve the existing following-week
+  // recovery window, but cannot hold every later week away from a future goal.
+  const bounded = eligible.filter(goal => !pendingPast(goal)
+    || planningDate <= addDays(mondayFor(goal.event_local_date), 13));
+  if (pendingPast(bounded[0] || {})) {
+    const currentEvent = bounded.find(goal => goal.event_local_date >= planningDate
+      && goal.event_local_date <= addDays(mondayFor(planningDate), 6));
+    if (currentEvent) return currentEvent;
+  }
+  return bounded[0] || null;
 }
 
 function decisionCreatedAt(input, planningDate) {
@@ -657,7 +670,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
   const primaryGoal = projectedWindow?.recovery_goal_id
     ? ownedGoals.find(goal => goal.goal_id === projectedWindow.recovery_goal_id)
     : primaryGoalForDecision(projectedWindow ? ownedGoals.filter(goal =>
-      !projectedWindow.passed_projected_goal_ids.includes(goal.goal_id)) : ownedGoals, transitionExitMet);
+      !projectedWindow.passed_projected_goal_ids.includes(goal.goal_id)) : ownedGoals, transitionExitMet, planningDate);
   const eventPolicy = primaryGoal ? eventPolicyForGoal(primaryGoal) : null;
   const initialDueCount = eventPolicy?.required_exposure_ledger?.EVENT_SPECIFIC_DEVELOPMENT
     ?.filter((entry) => (entry.role || 'PRIMARY_KEY') === 'PRIMARY_KEY').length || 0;
