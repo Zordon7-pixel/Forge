@@ -504,6 +504,10 @@ function placeRequiredBenchmark(plan, context, planningModel) {
     .sort()[0];
   const week = (plan.weeks || []).find((candidate) => candidate.startDate === firstEligibleStart);
   if (!week) return;
+  // A benchmark must not replace the only requested weekly training exposure.
+  // With one running day the forecast remains unvalidated until the athlete
+  // provides qualifying performance evidence; aspiration does not add a day.
+  if (runEntriesForWeek(week).length < 2) return;
   if (qualitySafetyForWeek(context, { weekNumber: week.week, weekStart: week.startDate }).active) return;
   const entry = runEntriesForWeek(week).find(({ session }) => (
     session.type !== 'race' && !isLongSession(session) && runWorkoutTaxonomy.isQualityWorkout(session.workout_id)
@@ -923,6 +927,8 @@ function buildRacePlanCandidate(context = {}, options = {}) {
   placeRequiredBenchmark(plan, normalizedContext, planningModel);
   normalizeExcludedWeeks(plan, normalizedContext);
   correctLongRunSemantics(plan, normalizedContext);
+  const roadSourceMaterial = allRunEntries(plan).filter(entry => isLongSession(entry.session))
+    .map(entry => ({ ...clone(entry.session), date: entry.day.date }));
   enforceDemandingSpacing(plan, normalizedContext);
   reconcileLowerBodyStrength(plan);
   const feasibility = evaluatePlanFeasibility(plan, normalizedContext, planningModel);
@@ -937,6 +943,7 @@ function buildRacePlanCandidate(context = {}, options = {}) {
   ];
   return {
     plan,
+    roadSourceMaterial,
     validation: { valid: errors.length === 0, errors },
   };
 }
@@ -973,6 +980,11 @@ function legacyCandidateMaterialEntries(source) {
 
 function legacyGoalBackwardFamily(session = {}) {
   if (session.workout_family && resolveStressVector(session.workout_family)) return session.workout_family;
+  if (session.kind === 'lift' && Array.isArray(session.main) && session.main.length) {
+    const family = { 'Upper body': 'strength_upper', 'Lower body': 'strength_lower',
+      'Full body': 'strength_full_body' }[session.focus];
+    if (family) return family;
+  }
   const taxonomy = runWorkoutTaxonomy.workoutForId(session.workout_id);
   const aliases = {
     easy_run: 'easy_run',
@@ -1045,10 +1057,13 @@ function roadCandidateMaterial(source) {
         && session?.includesRun === true);
     const declaresHybridRunningDistance = hybridRunningSource
       && session.running_distance_m !== null && session.running_distance_m !== undefined;
-    const distanceM = declaresHybridRunningDistance
+    let distanceM = declaresHybridRunningDistance
       ? finiteCandidateMaterialNumber(session.running_distance_m)
       : finiteCandidateMaterialNumber(session.distance_m, session.distanceMeters);
     const distanceMiles = finiteCandidateMaterialNumber(session.distance_miles, session.distanceMiles);
+    if (distanceM === null && distanceMiles !== null && distanceMiles >= 0) {
+      distanceM = Math.round(distanceMiles * 1609.344);
+    }
     const sourceQualityWorkDurationMin = finiteCandidateMaterialNumber(
       session.quality_work_duration_min, session.qualityWorkDurationMin,
     );
@@ -1111,12 +1126,23 @@ function projectableHybridRunningMaterial(material) {
 }
 
 function canonicalRoadCandidateMaterial(source, hybridProjectionPaceSecondsPerMile = null) {
-  const materials = roadCandidateMaterial(source);
+  const materials = roadCandidateMaterial(source).map(material => {
+    const session = material.source_session;
+    return String(session?.prescription_basis || '').toLowerCase() === 'time' && session.distance_is_estimate === true
+      ? { ...material, distance_m: null } : material;
+  });
   const hybridProjectionPace = finiteCandidateMaterialNumber(hybridProjectionPaceSecondsPerMile);
   const hybridProjectionPaceAvailable = hybridProjectionPace >= 180 && hybridProjectionPace <= 2400;
   if (!hybridProjectionPaceAvailable) return materials;
   for (const material of materials) {
     const candidateSource = material.source_session || {};
+    if (material.workout_family === 'assessment' && candidateSource.workout_id === 'benchmark_mile'
+      && candidateSource.benchmark_distance_miles === 1) {
+      // The one-mile benchmark has timed bookends with unknown distance, not
+      // the inherited whole-run estimate as additional test distance.
+      material.distance_m = Math.round(1609.344);
+      continue;
+    }
     const durationMin = finiteCandidateMaterialNumber(material.duration_min);
     const displayedMiles = finiteCandidateMaterialNumber(material.distance_miles);
     if (String(candidateSource.prescription_basis || '').toLowerCase() !== 'time'
@@ -1341,6 +1367,8 @@ function goalBackwardSkeletonIdentity(input = {}) {
       requirement_id: role.requirement_id,
       role: role.role,
       workout_family: workoutFamily,
+      ...(workoutFamily === 'race' && material?.source_session?.event_identity
+        ? { event_identity: clone(material.source_session.event_identity) } : {}),
       ...(workoutFamily === 'assessment'
         ? { contributing_work_families: [canonicalRoadContributorFamily(workoutFamily)] } : {}),
       candidate_families: [...(role.any_of || [])],
@@ -1359,6 +1387,9 @@ function goalBackwardSkeletonIdentity(input = {}) {
       quality_work_duration_min: material?.quality_work_duration_min ?? null,
       main_work_duration_min: material?.main_work_duration_min ?? null,
       run_station_pair_count: material?.run_station_pair_count ?? null,
+      ...(String(workoutFamily).startsWith('strength_') ? {
+        exercises: clone(material?.source_session?.main || material?.source_session?.exercises || []),
+      } : {}),
     };
   });
   const materialChange = compareMaterialChange({
@@ -1433,9 +1464,9 @@ function fixedPlacementForRole(role, input = {}) {
     return !family || (role.any_of || []).includes(family);
   });
   return {
-    dates: [...new Set(matched.map((constraint) => validLocalDate(
+    dates: [...new Set([validLocalDate(role.scheduled_local_date), ...matched.map((constraint) => validLocalDate(
       constraint.scheduled_local_date ?? constraint.local_date ?? constraint.date
-    )).filter(Boolean))].sort(),
+    ))].filter(Boolean))].sort(),
     families: [...new Set(matched.map((constraint) => constraint.workout_family ?? constraint.workoutFamily).filter(Boolean))].sort(),
   };
 }
@@ -1453,7 +1484,12 @@ function rolePlacementChoices(
   const families = fixed.families.length
     ? allowedFamilies.filter((family) => fixed.families.includes(family))
     : allowedFamilies;
-  const allChoices = dates.flatMap((date) => families.map((family) => ({
+  const allChoices = dates.flatMap((date) => families.filter((family) => {
+    if (family === 'race') return true; // The owned event is pinned to its exact date.
+    const eligible = String(family).startsWith('strength_')
+      ? input.lift_eligible_local_dates : input.run_eligible_local_dates;
+    return !Array.isArray(eligible) || eligible.includes(date);
+  }).map((family) => ({
     scheduled_local_date: date,
     workout_family: family,
     material_family_match: !preferredMaterialFamily || family === preferredMaterialFamily,
@@ -1609,7 +1645,10 @@ function candidateWorkloadEvidence(sessions, input = {}) {
     ).toUpperCase()),
     previous_two_weeks_passed: input.previous_two_weeks_passed === true,
   });
-  const budget = evaluateStressBudget(aggregate, ceilings);
+  const combinedSource = input.canonical_load_source;
+  const budget = input.running_dose_source
+    ? require('./canonicalCombinedLoad').evaluateCanonicalCombinedLoad(sessions, combinedSource, input.canonical_load_context_hash)
+    : evaluateStressBudget(aggregate, ceilings);
   const rolling = validateRollingHardDays(sessions, {
     ...input.validation_options,
     spacing_valid: validateInterference(sessions, input.validation_options).valid,
@@ -1623,6 +1662,9 @@ function candidateWorkloadEvidence(sessions, input = {}) {
   });
   return {
     valid: aggregate.valid && budget.valid && rolling.valid,
+    fatigue_ceilings: ceilings,
+    ...(input.running_dose_source ? { canonical_combined_load: budget,
+      canonical_load_source: combinedSource, canonical_load_context_hash: input.canonical_load_context_hash } : {}),
     violations: [
       ...(aggregate.violations || []),
       ...(budget.violations || []),
@@ -1660,6 +1702,7 @@ function materializeGoalBackwardCandidate(candidate, input = {}) {
     timezone: input.timezone,
     planning_instant: input.planning_instant,
     target_context: input.target_context,
+    running_dose_source: input.running_dose_source,
     training_age_class: input.validation_options?.training_age_class ?? input.decision?.training_age_class,
     recent_normal_running_minutes_per_week: input.validation_options?.recent_normal_running_minutes_per_week,
     median_ordinary_easy_duration_min: input.validation_options?.median_ordinary_easy_duration_min,
@@ -1692,7 +1735,7 @@ function materializeGoalBackwardCandidate(candidate, input = {}) {
     sessions: sessionSet.sessions,
     canonical_sessions: sessionSet.sessions,
     canonical_session_set: sessionSet,
-    canonical_plan: buildCanonicalPlanFromSessionSet(sessionSet),
+    canonical_plan: buildCanonicalPlanFromSessionSet(sessionSet, { currentPlan: input.current_plan }),
     canonical_sessions_materialized: true,
     candidate_hash: sessionSet.candidate_hash,
     material_change: materialChange,
@@ -1798,6 +1841,22 @@ function enumerateGoalBackwardCandidates(input = {}) {
   } else {
     frontier = [];
   }
+  // Preserve the independently selected source schedule as one bounded search
+  // seed. It receives every normal validator; it is not a pre-approved result.
+  const sourceSeed = input.canonical_load_source?.canonical_session_set?.sessions;
+  let preservedSourceSeed = null;
+  if (!inputBounded && !roleCapacityExceeded && Array.isArray(sourceSeed)) {
+    const choices = roles.map((role, index) => {
+      const source = sourceSeed.find(session => session.requirement_id === role.requirement_id);
+      const choice = source && placementSets[index].find(entry => entry.scheduled_local_date === source.scheduled_local_date
+        && entry.workout_family === source.workout_family);
+      return choice && { requirement_id: role.requirement_id, ...choice };
+    });
+    if (choices.every(Boolean) && choices.every(choice => choices.filter(entry => entry.scheduled_local_date === choice.scheduled_local_date).length <= maximumSessionsPerDay)) {
+      preservedSourceSeed = canonicalStringify(choices);
+      frontier = [choices, ...frontier];
+    }
+  }
   if (frontier.length && frontier[0].length === roles.length) {
     for (const placements of frontier) {
       const placementMap = Object.fromEntries(placements.map((placement) => [placement.requirement_id, placement]));
@@ -1811,12 +1870,13 @@ function enumerateGoalBackwardCandidates(input = {}) {
       });
       const sessions = identity.sessions;
       const canonicalPlacement = canonicalStringify(identity);
-      if (seen.has(canonicalPlacement)) return;
+      if (seen.has(canonicalPlacement)) continue;
       seen.add(canonicalPlacement);
       const interference = validateInterference(sessions, input.validation_options);
       const presentationFloor = validatePresentationFloor(sessions, presentationFloorOptions);
       preliminary.push({
         ...identity,
+        independent_source_seed: canonicalStringify(placements) === preservedSourceSeed,
         canonical_placement: canonicalPlacement,
         preliminary_presentation_floor_violation_count:
           presentationFloor?.violations?.length || 0,
@@ -1830,7 +1890,9 @@ function enumerateGoalBackwardCandidates(input = {}) {
       });
     }
   }
-  const retained = preliminary.sort(preliminaryCandidateComparator).slice(0, MAX_GOAL_BACKWARD_CANDIDATES).map((candidate) => {
+  const ranked = preliminary.sort((a, b) => Number(b.independent_source_seed) - Number(a.independent_source_seed)
+    || preliminaryCandidateComparator(a, b)).slice(0, MAX_GOAL_BACKWARD_CANDIDATES);
+  const validateCandidate = (candidate) => {
     const candidateHash = canonicalHash(Object.fromEntries(Object.entries(candidate).filter(([key]) => ![
       'canonical_placement', 'preliminary_material_mismatch_count',
       'preliminary_presentation_floor_violation_count',
@@ -1855,6 +1917,10 @@ function enumerateGoalBackwardCandidates(input = {}) {
     }
     const workloadEvidence = candidateWorkloadEvidence(withCanonical.sessions, input);
     const materialDose = input.material_dose_enforced === true ? {
+      canonical_load_source: input.canonical_load_source,
+      canonical_load_context_hash: input.canonical_load_context_hash,
+      partial_week_contract: decision.partial_week_contract,
+      frequency_dose_contract: decision.frequency_dose_contract,
       recent_normal_running: input.validation_options?.recent_normal_running ?? {
         status: decision.recent_normal_running_range_m?.median == null ? 'INSUFFICIENT' : 'PROVISIONAL',
         median_distance_m: decision.recent_normal_running_range_m?.median ?? null,
@@ -1863,7 +1929,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
       observed_lower_bound_running_m: input.validation_options?.observed_lower_bound_running_m ?? null,
       observed_lower_bound_evidence_ids: input.validation_options?.observed_lower_bound_evidence_ids ?? [],
       completed_running_credit: input.validation_options?.completed_running_credit ?? null,
-      active_applied_plan: input.active_applied_plan ?? null,
+      active_applied_plan: input.material_dose_active_plan ?? input.active_applied_plan ?? null,
       phase: decision.phase,
       training_age_class: input.validation_options?.training_age_class ?? decision.training_age_class,
       consistency_state: input.validation_options?.consistency_state ?? decision.consistency_state,
@@ -1918,6 +1984,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
     }) : validation;
     const withValidation = {
       ...withCanonical,
+      workload_evidence: workloadEvidence,
       validation: finalValidation,
     };
     delete withValidation.canonical_placement;
@@ -1926,11 +1993,20 @@ function enumerateGoalBackwardCandidates(input = {}) {
     delete withValidation.preliminary_spacing_violation_count;
     delete withValidation.preliminary_ordering_tuple;
     return immutable({ ...withValidation, ranking_tuple: candidateRankingTuple(withValidation, input) });
-  });
+  };
+  const retained = [];
+  for (const candidate of ranked) {
+    retained.push(validateCandidate(candidate));
+    // Full programs retain a deterministic first tranche of alternatives.
+    // If it contains no valid result, exhaust the ordinary bounded search.
+    // The same substantive validators apply to every retained candidate.
+    if (input.program_window === true && input.exhaustive_program_search !== true && retained.length >= 8
+      && retained.some(entry => entry.validation.valid)) break;
+  }
   const accepted = retained.filter((candidate) => candidate.validation.valid).sort(compareGoalBackwardCandidateRankings);
   const selectedCandidate = accepted[0] || null;
   const searchWasTruncated = inputBounded || roleCapacityExceeded || placementChoicesTruncated
-    || frontierTrimmed || nodeLimitReached;
+    || frontierTrimmed || nodeLimitReached || retained.length < ranked.length;
   const truncationReason = nodeLimitReached
     ? 'CANDIDATE_SEARCH_NODE_BUDGET_EXHAUSTED'
     : inputBounded ? 'CANDIDATE_SEARCH_INPUT_LIMIT_EXCEEDED'

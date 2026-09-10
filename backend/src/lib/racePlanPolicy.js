@@ -594,7 +594,22 @@ function acceptPlanningClock(input = {}, serverDateISO) {
   }
   const driftDays = daysBetween(serverDate, planningDateLocal);
   if (driftDays === null || Math.abs(driftDays) > 1) return { valid: false, reason: 'STALE_PLANNING_DATE' };
-  return { valid: true, planningDateLocal, timezoneOffsetMinutes };
+  const planningTimezone = input.planning_timezone;
+  if (planningTimezone !== undefined) {
+    if (typeof planningTimezone !== 'string' || planningTimezone.length > 128 || !planningTimezone.trim()) return { valid: false, reason: 'INVALID_PLANNING_TIMEZONE' };
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', { timeZone: planningTimezone, timeZoneName: 'longOffset' });
+      const offsets = Array.from({ length: 24 }, (_, hour) => {
+        const name = formatter.formatToParts(new Date(`${planningDateLocal}T${String(hour).padStart(2, '0')}:00:00Z`)).find(part => part.type === 'timeZoneName')?.value;
+        if (name === 'GMT') return 0;
+        const match = /^GMT([+-])(\d{2}):(\d{2})$/.exec(name || '');
+        return match ? (match[1] === '+' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3])) : null;
+      });
+      if (!offsets.includes(timezoneOffsetMinutes)) return { valid: false, reason: 'PLANNING_TIMEZONE_OFFSET_MISMATCH' };
+    } catch { return { valid: false, reason: 'INVALID_PLANNING_TIMEZONE' }; }
+  }
+  return { valid: true, planningDateLocal, timezoneOffsetMinutes,
+    ...(planningTimezone !== undefined ? { planningTimezone } : {}) };
 }
 
 function firstFullMonday(planningDateLocal, trustedActivityDates = []) {

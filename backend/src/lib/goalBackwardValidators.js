@@ -318,7 +318,7 @@ function longestRequiredSeparation(left, right, options = {}) {
   const age = String(options.training_age_class || '').toUpperCase();
   const requirements = [];
   const either = (first, second) => (a[first] && b[second]) || (a[second] && b[first]);
-  if (either('threshold_interval_run', 'heavy_lower_body_strength')) {
+  if (either('running_quality', 'heavy_lower_body_strength')) {
     requirements.push({
       hours: ['BEGINNER', 'RETURNING'].includes(age)
         ? policy.threshold_heavy_lower_beginner_returning_hours
@@ -359,10 +359,7 @@ function toleratedStack(left, right, options) {
 }
 
 function isHardSession(session) {
-  const vector = resolveStressVector(sessionFamily(session), {
-    event_kind: session.event_kind,
-    contributing_work_families: session.contributing_work_families,
-  });
+  const vector = resolveSessionStress(session).vector;
   return Boolean(vector && [1, 2, 5, 6, 7].some((index) => vector[index] >= 3));
 }
 
@@ -900,7 +897,7 @@ function validateRequiredExposures(sessions, options) {
   }
   if (clusterExposure && !clusterExposure.valid) violations.push(...clusterExposure.violations);
   const minimumRunning = Number(options.minimum_weekly_demand?.running_m);
-  if (Number.isSafeInteger(minimumRunning) && minimumRunning >= 0) {
+  if (Number.isSafeInteger(minimumRunning) && minimumRunning > 0) {
     const completedRunningReceipt = normalizeCompletedRunningCredit(
       options.completed_running_credit,
       options.planning_date_local,
@@ -1035,8 +1032,11 @@ function validatePresentationFloor(sessions, options = {}) {
       below = pairCount < 2 || mainWorkDuration < 20;
     } else if (['strength_lower', 'strength_upper', 'strength_full_body'].includes(family)
       && session.technique_or_rehab_scope !== true) {
-      const exercises = Array.isArray(session.exercises) ? session.exercises : [];
+      const exercises = session.canonical_workout_schema_version
+        ? (session.steps || []).filter(step => step.type === 'strength_exercise').map(step => step.target)
+        : Array.isArray(session.exercises) ? session.exercises : [];
       below = exercises.length < 2 || exercises.some((exercise) => Number(exercise.working_sets ?? exercise.sets ?? 0) < 2);
+      if (below && session.strength_distribution) below = !require('./distributedStrength').validateDistributedSession(session, sessions);
     }
     const allowedException = (session.reason_codes || []).includes('BELOW_PRESENTATION_FLOOR_EXCEPTION')
       && Boolean(session.beginner_or_rehab_protocol_id);
@@ -1051,10 +1051,7 @@ function validatePresentationFloor(sessions, options = {}) {
 
 function safetyBlocksSession(action, session) {
   const family = sessionFamily(session);
-  const vector = resolveStressVector(family, {
-    event_kind: session.event_kind,
-    contributing_work_families: session.contributing_work_families,
-  });
+  const vector = resolveSessionStress(session).vector;
   if (action === 'FULL_REST') return true;
   if (!vector && !['NORMAL', 'MONITOR'].includes(action)) return true;
   if (action === 'NO_RUNNING') return RUNNING_FAMILIES.has(family) || vector?.[1] > 0;
@@ -1381,6 +1378,7 @@ function canonicalStrengthHardSets(session) {
 }
 
 function stressVectorForMaterial(session) {
+  if (session.strength_dose_accounting_version) return resolveSessionStress(session).vector;
   if (Array.isArray(session.stress_vector) && session.stress_vector.length === DIMENSIONS.length
     && session.stress_vector.every((value) => value !== null && value !== undefined && value !== ''
       && Number.isFinite(Number(value)))) return session.stress_vector.map(Number);

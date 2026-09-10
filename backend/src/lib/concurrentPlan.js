@@ -7,7 +7,7 @@ const strengthPrescription = require('./strengthPrescription');
 const trainingEvidence = require('./trainingEvidence');
 const runWorkoutTaxonomy = require('./runWorkoutTaxonomy');
 const { isRunActivity } = require('./runActivity');
-const { resolveRunSchedule } = require('./runSchedule');
+const { resolveRunSchedule, resolveLiftSchedule } = require('./runSchedule');
 const { motivationalRunName } = require('../../../shared/runDisplayName.mjs');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
@@ -130,6 +130,7 @@ function normalizePerformanceRun(row = {}, todayISO) {
     paceSecondsPerMile,
     paceLabel: formatPaceLabel(paceSecondsPerMile),
     source: performanceSource(row),
+    performanceEvidenceQualified: ['race', 'time_trial', 'benchmark'].includes(String(row.performance_evidence_type || row.type || '').toLowerCase()),
   };
 }
 
@@ -147,6 +148,7 @@ function performanceAnchor(run, targetMiles, kind) {
   if (!equivalentSeconds) return null;
   return {
     kind,
+    performanceEvidenceQualified: run.performanceEvidenceQualified === true,
     runId: run.id,
     date: run.date,
     source: run.source,
@@ -243,12 +245,12 @@ function buildRunPerformanceProfile(rows = [], options = {}) {
   const records = STANDARD_PERFORMANCE_DISTANCES
     .map((distance) => bestDistanceRecord(normalized, distance))
     .filter(Boolean);
-  const targetAnchor = chooseTargetAnchor(currentAnchorRuns, targetDistanceMiles, {
+  const targetAnchor = chooseTargetAnchor(currentAnchorRuns.filter(run => run.performanceEvidenceQualified), targetDistanceMiles, {
     todayISO,
     freshnessWeighted: true,
   });
   const historicalTargetAnchor = chooseTargetAnchor(
-    targetAnchor ? historicalAnchorRuns : normalized,
+    (targetAnchor ? historicalAnchorRuns : normalized).filter(run => run.performanceEvidenceQualified),
     targetDistanceMiles,
     { todayISO, freshnessWeighted: false },
   );
@@ -269,10 +271,12 @@ function buildGoalPaceContext(target = {}, history = {}, existingGoal = {}) {
   if (!targetPace) return null;
   const performanceProfile = history.performanceProfile || null;
   const anchor = performanceProfile?.targetAnchor || null;
-  const recentRun = history.acuteRunLoad?.protectiveRun || history.acuteRunLoad?.latestRun || null;
   const anchorPace = Number(anchor?.equivalentPaceSecondsPerMile || 0);
+  // Ordinary recent pace remains descriptive training context, never the
+  // performance benchmark used to assess the athlete's aspirational target.
+  const recentRun = history.acuteRunLoad?.latestRun || null;
   const recentPace = Number(recentRun?.paceSecondsPerMile || 0);
-  const benchmarkPace = Number.isFinite(anchorPace) && anchorPace > 0 ? anchorPace : recentPace;
+  const benchmarkPace = anchor?.performanceEvidenceQualified !== false && Number.isFinite(anchorPace) && anchorPace > 0 ? anchorPace : null;
   let status = 'benchmark_needed';
   if (Number.isFinite(benchmarkPace) && benchmarkPace > 0) {
     if (targetPace <= benchmarkPace * 0.88) status = 'stretch';
@@ -281,7 +285,7 @@ function buildGoalPaceContext(target = {}, history = {}, existingGoal = {}) {
   }
   const benchmarkDescription = anchor
     ? (anchor.kind === 'observed_distance_band' ? 'best observed effort near this race distance' : 'cross-distance performance estimate')
-    : 'latest logged run pace';
+    : 'a qualifying benchmark';
   const notes = {
     benchmark_needed: performanceProfile?.historicalTargetAnchor
       ? 'Only an older performance anchor is available. Use a controlled current benchmark before treating this target as proven.'
@@ -294,7 +298,7 @@ function buildGoalPaceContext(target = {}, history = {}, existingGoal = {}) {
     status,
     targetPaceSecondsPerMile: targetPace,
     targetPaceLabel: formatPaceLabel(targetPace),
-    benchmarkKind: anchor?.kind || (recentRun ? 'latest_run_fallback' : null),
+    benchmarkKind: anchor?.kind || null,
     benchmarkPaceSecondsPerMile: Number.isFinite(benchmarkPace) && benchmarkPace > 0 ? Math.round(benchmarkPace) : null,
     benchmarkPaceLabel: formatPaceLabel(benchmarkPace),
     performanceAnchor: anchor,
@@ -553,7 +557,7 @@ function buildMileageTargets(weekCount, baseline, hasRace, recovery, history, ta
 
 function selectRunDays(availableDays, count) {
   const parsedCount = Number(count);
-  const wanted = clamp(Number.isFinite(parsedCount) ? Math.round(parsedCount) : 3, 0, 6);
+  const wanted = clamp(Number.isFinite(parsedCount) ? Math.round(parsedCount) : 3, 0, 7);
   const preferred = ['Tue', 'Thu', 'Sat', 'Sun', 'Wed', 'Mon', 'Fri'];
   const ordered = [
     ...preferred.filter((day) => availableDays.includes(day)),
@@ -614,8 +618,9 @@ function currentWeekRunSchedule({
       .map((date) => String(date || '').slice(0, 10))
       .filter((date) => parseISODate(date) && date >= weekStart && date <= todayISO)
   );
-  const reportedCompletedRuns = Math.max(0, Math.floor(Number(creditedCurrentWeekLoad.runCount) || 0));
-  const completedMeaningfulRuns = Math.max(reportedCompletedRuns, completedRunDates.size);
+  // Frequency is a quota of distinct local dates, not activity records. Keep
+  // all activities in the load ledger but never credit two runs as two days.
+  const completedMeaningfulRuns = completedRunDates.size;
   const completedRunsAppliedToQuota = Math.min(completedMeaningfulRuns, runSchedule.runDaysPerWeek);
   const remainingRunQuota = Math.max(0, runSchedule.runDaysPerWeek - completedRunsAppliedToQuota);
   const eligibleSelectedDays = runSchedule.trainingDays.filter((day) => {
@@ -1362,7 +1367,13 @@ function chooseLiftDays(availableDays, runByDay, count) {
   const lowerDay = lowerCandidates.find((day) => occupied.includes(day)) || lowerCandidates[0] || null;
   const ordered = [lowerDay, ...occupied, ...open].filter((day, index, values) => day && values.indexOf(day) === index);
   const selected = ordered.slice(0, Math.min(count, availableDays.length));
-  return selected.map((day, index) => ({ day, focus: day === lowerDay || (!lowerDay && index === 0 && hardIndexes.size === 0) ? 'Lower body' : 'Upper body' }));
+  const lowerOrder = count >= 4 ? [...selected].sort((a, b) => {
+    const distance = day => hardIndexes.size ? Math.min(...[...hardIndexes].map(index => Math.abs(index - DAY_ORDER.indexOf(day)))) : 7;
+    return distance(b) - distance(a) || selected.indexOf(a) - selected.indexOf(b);
+  }) : selected.filter(day => lowerCandidates.includes(day));
+  const lowerDays = new Set(lowerOrder.slice(0, count >= 4 ? 2 : 1));
+  if (!lowerDays.size && selected.length && hardIndexes.size === 0) lowerDays.add(selected[0]);
+  return selected.map(day => ({ day, focus: lowerDays.has(day) ? 'Lower body' : 'Upper body' }));
 }
 
 function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = null, expectedStartDate = null) {
@@ -1590,11 +1601,9 @@ function buildConcurrentPlan(context = {}) {
   if (!runSchedule.valid) throw new Error(runSchedule.error);
   const availableDays = runSchedule.trainingDays;
   const runDays = selectRunDays(availableDays, runSchedule.runDaysPerWeek);
-  const requestedLiftDays = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : clamp(Math.max(
-    mode === planSchema.PLAN_MODES.HYBRID_BUILD ? 3 : 1,
-    Math.round(Number(target.liftDaysPerWeek || profile.lift_days_per_week) || (mode === planSchema.PLAN_MODES.HYBRID_BUILD ? 3 : 2)),
-  ), 1, 4);
-  const liftDaysPerWeek = Math.min(requestedLiftDays, availableDays.length);
+  const liftSchedule = resolveLiftSchedule(profile, target);
+  if (!liftSchedule.valid) throw new Error(liftSchedule.error);
+  const liftDaysPerWeek = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : liftSchedule.liftDaysPerWeek;
   const strengthPolicy = mode === planSchema.PLAN_MODES.RUN_ONLY
     ? { enabled: false }
     : planSchema.normalizeStrengthPolicy({
@@ -1602,7 +1611,7 @@ function buildConcurrentPlan(context = {}) {
       sessionsPerWeek: liftDaysPerWeek,
       minimumSessionsPerWeek: Math.min(liftDaysPerWeek, mode === planSchema.PLAN_MODES.HYBRID_BUILD ? 3 : 2),
       equipment: Array.isArray(target.equipment) ? target.equipment : ['barbell', 'dumbbell', 'rack', 'bench'],
-      preferredDays: availableDays,
+      preferredDays: liftSchedule.liftEligibleWeekdays,
     }, mode);
   const rawBaseline = finiteNonNegativeOrNull(
     history.weeklyMileageBaseline
@@ -1708,7 +1717,9 @@ function buildConcurrentPlan(context = {}) {
         goalPaceContext,
         durationIsEstimated: durationIsEstimatedFromAnchorState(anchorMetadata.anchorState),
       });
+      if (type === 'race') runSession.race_id = activeRaceTarget.raceId || null;
       if (anchorMetadata.anchorState === 'needs_benchmark'
+        && runSchedule.runDaysPerWeek > 1
         && !benchmarkPrescribed
         && type !== 'race'
         && !protectQualityThisWeek) {
@@ -1722,25 +1733,63 @@ function buildConcurrentPlan(context = {}) {
       && currentWeekActivityReconciliation.strengthMatch
       ? history.currentWeekStrength
       : null;
-    const completedStrengthSessions = Math.max(0, Math.floor(Number(currentWeekStrength?.count) || 0));
-    const fullWeekLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY
-      ? 0
-      : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
-    const effectiveLiftCount = isCurrentWeek
-      ? Math.max(0, fullWeekLiftCount - completedStrengthSessions)
-      : fullWeekLiftCount;
     const completedStrengthDates = new Set(
       (Array.isArray(currentWeekStrength?.dates) ? currentWeekStrength.dates : [])
         .map((date) => String(date || '').slice(0, 10))
+        .filter((date) => parseISODate(date) && date >= weekStart && date <= context.todayISO)
     );
+    const completedStrengthSessions = completedStrengthDates.size;
+    const fullWeekLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY
+      ? 0
+      : phase === 'race' ? Math.min(1, liftDaysPerWeek)
+        : phase === 'taper' ? Math.min(2, liftDaysPerWeek) : liftDaysPerWeek;
+    const effectiveLiftCount = isCurrentWeek
+      ? Math.max(0, fullWeekLiftCount - completedStrengthSessions)
+      : fullWeekLiftCount;
     const liftAvailableDays = isCurrentWeek
-      ? availableDays.filter((day) => {
+      ? liftSchedule.liftEligibleWeekdays.filter((day) => {
         const date = addDays(weekStart, DAY_ORDER.indexOf(day));
         return date >= context.todayISO && !completedStrengthDates.has(date);
       })
-      : availableDays;
+      : liftSchedule.liftEligibleWeekdays;
     const liftAssignments = chooseLiftDays(liftAvailableDays, runByDay, Math.min(effectiveLiftCount, liftAvailableDays.length));
     const liftByDay = new Map(liftAssignments.map(({ day, focus }) => [day, buildLiftSession({ weekNumber, day, focus, mode, phase, context })]));
+    // Frequency partitions the existing weekly focus prescription. It never
+    // multiplies a full upper-body template by the requested calendar count.
+    for (const focus of ['Upper body', 'Lower body']) {
+      const group = [...liftByDay.values()].filter((session) => session.focus === focus);
+      if (group.length < 2) continue;
+      // Select a useful weekly source before partitioning: two exercises,
+      // four working sets each. Two exposures each retain two sets/exercise.
+      // This is a versioned program template, not an injury-risk threshold.
+      const original = JSON.parse(JSON.stringify(group[0].main.length >= 2 && fullWeekLiftCount >= 4
+        && !['taper', 'race'].includes(phase)
+        ? group[0].main.slice(0, 2).map(exercise => ({ ...exercise, sets: 4 }))
+        : group[0].main));
+      const distributed = group.map(() => new Map());
+      let cursor = 0;
+      for (const exercise of original) {
+        for (let set = 0; set < exercise.sets; set += 1) {
+          const bucket = distributed[cursor % group.length];
+          const prior = bucket.get(exercise.name);
+          bucket.set(exercise.name, { ...exercise, sets: (prior?.sets || 0) + 1 });
+          cursor += 1;
+        }
+      }
+      group.forEach((session, index) => {
+        session.main = [...distributed[index].values()];
+        session.description = `Part ${index + 1} of ${group.length}: distribute this week's ${focus.toLowerCase()} prescription without adding weekly sets.`;
+        session.recovery = [
+          'This exposure is part of the recorded weekly strength dose; do not add sets to turn it into a full session.',
+          'Keep the prescribed effort and follow pain and readiness adjustments before the next exposure.',
+          'Prioritize protein, carbohydrate, and sleep.',
+        ];
+        session.prescriptionBasis.distribution = 'weekly-focus-volume-partition-v1';
+        session.prescriptionBasis.weeklyWorkingSets = cursor;
+      });
+      const receipts = require('./distributedStrength').buildDistributionReceipts(original, group, { weekStart, focus });
+      group.forEach((session, index) => { session.strength_distribution = receipts[index]; });
+    }
     const days = DAY_ORDER.map((day, index) => {
       const sessions = [runByDay.get(day), liftByDay.get(day)].filter(Boolean);
       const result = { date: addDays(weekStart, index), day, sessions, status: 'planned', anchorState: anchorMetadata.anchorState };
@@ -1771,6 +1820,15 @@ function buildConcurrentPlan(context = {}) {
         ? currentWeekQuota.completedKnownDistanceLowerBoundMiles
         : 0,
       completedStrengthSessionsAtGeneration: completedStrengthSessions,
+      ...(phase === 'taper' && !raceDay && weekRunDays.length < runDays.length ? { runFrequencyAdjustment: {
+        policy: 'TAPER_RUNNING_VOLUME_DISTRIBUTION', requested: runDays.length, prescribed: weekRunDays.length,
+        explanation: 'Distribute the reduced taper workload across useful runs instead of short filler sessions.',
+      } } : {}),
+      ...(fullWeekLiftCount !== liftDaysPerWeek ? { liftFrequencyAdjustment: {
+        policy: phase === 'race' ? 'RACE_WEEK_STRENGTH_MAINTENANCE' : 'TAPER_STRENGTH_VOLUME_DISTRIBUTION',
+        requested: liftDaysPerWeek, prescribed: fullWeekLiftCount,
+        explanation: 'Preserve the reduced phase-specific weekly strength dose without creating filler exposures.',
+      } } : {}),
       completedStrengthLoadAtGeneration: isCurrentWeek ? round(Number(currentWeekStrength?.loadPoints || 0)) : 0,
       ...(currentWeekConstraint ? { currentWeekConstraint } : {}),
       days,
@@ -1796,12 +1854,34 @@ function buildConcurrentPlan(context = {}) {
     schedulePreferences: {
       runDaysPerWeek: runSchedule.runDaysPerWeek,
       trainingDays: runSchedule.trainingDays,
+      runEligibleWeekdays: runSchedule.trainingDays,
+      liftEligibleWeekdays: liftSchedule.liftEligibleWeekdays,
+      liftDaysPerWeek,
+      liftDaysSource: target.liftDaysSource || liftSchedule.liftDaysSource,
+      liftWeekdaysSource: target.liftWeekdaysSource || liftSchedule.liftWeekdaysSource,
       runDaysSource: target.runDaysSource || runSchedule.runDaysSource,
       trainingDaysSource: target.trainingDaysSource || runSchedule.trainingDaysSource,
     },
     weeks,
   };
-  return withMotivationalRunNames(applyAcuteRunProtection(plan, context));
+  const protectedPlan = withMotivationalRunNames(applyAcuteRunProtection(plan, context));
+  if (raceDate && !target.hyroxEvent) {
+    for (const week of protectedPlan.weeks) {
+      const removed = week.days.filter(day => day.date > raceDate).flatMap(day => day.sessions || []);
+      for (const day of week.days) if (day.date > raceDate) day.sessions = [];
+      if (removed.length) {
+        week.totalMiles = round(week.days.flatMap(day => day.sessions).filter(session => session.kind === 'run')
+          .reduce((sum, session) => sum + Number(session.distance_miles || 0), 0));
+        for (const [kind, key, requested] of [['run', 'runFrequencyAdjustment', runSchedule.runDaysPerWeek], ['lift', 'liftFrequencyAdjustment', liftDaysPerWeek]]) {
+          if (!removed.some(session => session.kind === kind)) continue;
+          week[key] = { policy: 'OWNED_RACE_HORIZON', requested,
+            prescribed: week.days.filter(day => day.sessions.some(session => session.kind === kind)).length,
+            explanation: 'This program ends on the owned race date. Post-race recovery belongs to a separately reviewed next block.' };
+        }
+      }
+    }
+  }
+  return protectedPlan;
 }
 
 function validateLift(session, path, errors) {
@@ -1810,7 +1890,7 @@ function validateLift(session, path, errors) {
     if (!session[field] || (Array.isArray(session[field]) && session[field].length === 0)) errors.push(`${path}.${field} is required`);
   }
   const exercises = Array.isArray(session.main) ? session.main : Array.isArray(session.exercises) ? session.exercises : [];
-  if (exercises.length < 2) errors.push(`${path}.main requires at least two exercises`);
+  if (exercises.length < 2 && !require('./distributedStrength').validateDistributedSession(session, null, { source: true })) errors.push(`${path}.main requires at least two exercises`);
   exercises.forEach((exercise, index) => {
     for (const field of ['name', 'sets', 'reps', 'rest', 'load', 'cue', 'progression']) {
       if (exercise?.[field] === undefined || exercise?.[field] === null || exercise?.[field] === '') errors.push(`${path}.main[${index}].${field} is required`);
@@ -1937,16 +2017,14 @@ function validateConcurrentPlan(candidate, context = {}) {
   const authoritativeCurrentWeekStrength = context.history?.currentWeekStrength?.startDate === expectedStartDate
     ? context.history.currentWeekStrength
     : null;
-  const authoritativeCompletedStrengthSessions = Math.max(
-    0,
-    Math.floor(Number(authoritativeCurrentWeekStrength?.count) || 0),
-  );
   const completedStrengthDates = new Set(
     (Array.isArray(authoritativeCurrentWeekStrength?.dates)
       ? authoritativeCurrentWeekStrength.dates
       : [])
       .map((date) => String(date || '').slice(0, 10))
+      .filter(date => parseISODate(date) && date >= expectedStartDate && date <= context.todayISO)
   );
+  const authoritativeCompletedStrengthSessions = completedStrengthDates.size;
   const acuteLoad = context.history?.acuteRunLoad;
   const acuteProtection = acuteLoad?.protection?.active ? acuteLoad.protection : null;
   const planWideQualityProtection = hasPlanWideQualityProtection(context);
@@ -2120,7 +2198,12 @@ function validateConcurrentPlan(candidate, context = {}) {
           if (currentWeekQuota && completedStrengthDates.has(day.date)) {
             errors.push(`${sessionPath} duplicates strength work already completed on ${day.date}`);
           }
-          if (/lower/i.test(String(session.focus || ''))) lowerLiftIndexes.add(dayIndex);
+          if (/lower/i.test(String(session.focus || ''))) {
+            const dose = require('./strengthDoseAccounting').sourceStrengthDose(session, week.days.flatMap(day => day.sessions || []));
+            // Same unchanged heavy-lower threshold as canonical interference.
+            // Unrecognized source/provenance remains conservatively heavy.
+            if (!dose.valid || dose.vector[2] >= 3) lowerLiftIndexes.add(dayIndex);
+          }
           if (acuteProtection && /lower/i.test(String(session.focus || '')) && dateInRange(day.date, latestRunDate, acuteProtection.lowerBodyThrough)) {
             errors.push(`${sessionPath} conflicts with recent-run lower-body protection through ${acuteProtection.lowerBodyThrough}`);
           }
@@ -2130,7 +2213,9 @@ function validateConcurrentPlan(candidate, context = {}) {
       });
       if (kinds.has('run') && kinds.has('lift') && !String(day.orderGuidance || '').trim()) errors.push(`${dayPath}.orderGuidance is required for same-day run and lift`);
     });
-    if (restDays < 1) errors.push(`${path} must contain at least one full rest day`);
+    if (restDays < 1 && !(runSchedule.explicitSelection && runSchedule.runDaysPerWeek === 7)) {
+      errors.push(`${path} requires a full rest day unless seven running days were explicitly requested`);
+    }
     const maximumRuns = currentWeekQuota?.runDays.length ?? runSchedule.runDaysPerWeek;
     if (currentWeekQuota && runs > maximumRuns) {
       errors.push(`${path} exceeds the current-week remaining quota of ${maximumRuns} scheduled runs`);

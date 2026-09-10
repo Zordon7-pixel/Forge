@@ -1161,6 +1161,8 @@ function canonicalizeRunLoadInput({
         id: activity.canonical_activity_id,
         date: activityDate(activity, timezone),
         type: 'run',
+        performance_evidence_type: ['race', 'time_trial', 'benchmark'].includes(String(source.type || '').toLowerCase())
+          ? String(source.type).toLowerCase() : null,
         distance_miles: activity.distance_m === null ? null : activity.distance_m / MILE_M,
         duration_seconds: activity.duration_s,
         perceived_effort: source.perceived_effort ?? null,

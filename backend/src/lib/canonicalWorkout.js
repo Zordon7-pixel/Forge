@@ -433,7 +433,11 @@ function deriveStressVector(session = {}) {
   if (family === 'assessment') {
     return resolveStressVector('assessment', { contributing_work_families: contributingFamilies(session.steps) });
   }
-  return resolveStressVector(family, { event_kind: session.event_kind });
+  const baseline = resolveStressVector(family, { event_kind: session.event_kind });
+  const dose = STRENGTH_FAMILIES.has(family)
+    ? require('./strengthDoseAccounting').strengthPrescribedDose(session, baseline)
+    : require('./runningDoseAccounting').runningPrescribedDose(session, baseline);
+  return dose.valid ? dose.vector : null;
 }
 
 function deriveCapability(steps = []) {
@@ -1264,6 +1268,7 @@ function materializeQualityRunSteps(family, source, input) {
 }
 
 function materializeRoadGeneralSteps(family, source, input) {
+  if (STRENGTH_FAMILIES.has(family)) return materializeStrengthSteps(family, source, input);
   if (!ROAD_GENERAL_FAMILIES.has(family)) {
     const error = new Error(`Workout family ${family} is not materialized in Phase 2B-2`);
     error.code = 'WORKOUT_FAMILY_UNRESOLVED';
@@ -1281,6 +1286,28 @@ function materializeRoadGeneralSteps(family, source, input) {
       family: 'recovery_run', durationS: duration ?? 20 * 60, input, source,
     }))];
   }
+  if (family === 'assessment' && source.workout_id === 'benchmark_mile') {
+    const canonicalBenchmark = source.benchmark_distance_miles === undefined
+      && source.canonical_workout_schema_version === CANONICAL_WORKOUT_SCHEMA_VERSION
+      && validateCanonicalSession(source).valid
+      && flattenSteps(source.steps).filter(entry => entry.step_role === 'WORK').length === 1
+      && flattenSteps(source.steps).find(entry => entry.step_role === 'WORK')?.target?.distance_m === Math.round(1609.344);
+    const benchmarkMiles = canonicalBenchmark ? 1 : Number(source.benchmark_distance_miles);
+    if (benchmarkMiles !== 1) throw new Error('Benchmark source must identify its exact one-mile test');
+    // The inherited whole-run estimate is not one long interval. Preserve
+    // the source's executable ten-minute easy bookends and exact test distance.
+    return [
+      step(`${input.session_id}-benchmark-warmup`, 'warmup', 1,
+        targetForStep({ family: 'easy_run', durationS: 600, distanceM: null, input, source }),
+        { workout_family: 'easy_run', step_role: 'WARMUP' }),
+      step(`${input.session_id}-benchmark-mile`, 'run', 2,
+        targetForStep({ family: 'interval_run', durationS: null, distanceM: Math.round(1609.344), input, source }),
+        { workout_family: 'interval_run', step_role: 'WORK' }),
+      step(`${input.session_id}-benchmark-cooldown`, 'cooldown', 3,
+        targetForStep({ family: 'easy_run', durationS: 600, distanceM: null, input, source }),
+        { workout_family: 'easy_run', step_role: 'COOLDOWN' }),
+    ];
+  }
   if (QUALITY_RUN_FAMILIES.has(family)) return materializeQualityRunSteps(family, source, input);
   const contributorFamily = canonicalRoadContributorFamily(family);
   const distance = prescribedDistanceMeters(source);
@@ -1296,6 +1323,28 @@ function materializeRoadGeneralSteps(family, source, input) {
     workout_family: contributorFamily,
     step_role: 'WORK',
   })];
+}
+
+function materializeStrengthSteps(family, source, input) {
+  const exercises = Array.isArray(source.main) ? source.main : source.exercises;
+  if (!Array.isArray(exercises) || !exercises.length || (exercises.length < 2
+    && !require('./distributedStrength').validateDistributedSession(source, null, { source: true }))) throw new Error('Canonical strength requires executable exercises');
+  return exercises.map((exercise, index) => {
+    // A ranged legacy prescription becomes an executable conservative endpoint:
+    // minimum repetitions, longest stated rest, unchanged stated effort range.
+    // Loads remain effort-calibrated; no exact kg are guessed from display prose.
+    const { exercise_id: exerciseId, target } = require('./strengthDoseAccounting').canonicalStrengthExercise(exercise);
+    return step(`${input.session_id}-exercise-${index + 1}`, 'strength_exercise', index + 1, {
+      target,
+      provenance: [{
+        source_evidence_ids: evidenceIdsForMaterial(source, input.decision),
+        derived_athlete_state_field: 'candidate_material.strength_prescription_conservative_endpoints',
+        policy_id: 'canonical-strength-source-adapter-v1', policy_version: 1,
+        confidence: 'HIGH', derived_at: input.planning_instant,
+        decision_id: input.decision.decision_id, canonical_units: ['count', 's', 'rpe', ...(target.load_kg !== undefined ? ['kg'] : [])],
+      }],
+    }, { workout_family: family, step_role: 'WORK', exercise_id: exerciseId });
+  });
 }
 
 function materializeHyroxStationSteps(family, source, input) {
@@ -1465,7 +1514,8 @@ function materializeCanonicalSession(input = {}) {
   const title = sourceFamily && sourceFamily !== family
     ? FAMILY_TITLES[family]
     : source.title || FAMILY_TITLES[family] || family;
-  const canonicalInput = {
+  let canonicalInput = {
+    ...(source.workout_id === 'benchmark_mile' ? { benchmark_distance_miles: 1 } : {}),
     session_id: sessionId,
     session_revision: nextSessionRevision(input, skeleton),
     plan_id: planId,
@@ -1491,6 +1541,10 @@ function materializeCanonicalSession(input = {}) {
     executability: ['NORMAL', 'MONITOR'].includes(String(decision.safety_state?.action || 'NORMAL').toUpperCase())
       ? 'EXECUTABLE' : 'RESTRICTED',
     event_kind: decision.active_goals?.[0]?.event_kind,
+    ...(STRENGTH_FAMILIES.has(family) ? { strength_dose_accounting_version: require('./strengthDoseAccounting').VERSION } : {}),
+    ...(source.strength_distribution ? { strength_distribution: clone(source.strength_distribution),
+      source_session_id: source.id || source.session_id } : {}),
+    ...(family === 'race' && source.event_identity ? { event_identity: clone(source.event_identity) } : {}),
   };
   const canonical = family === 'hyrox_partial_simulation'
     ? buildPartialRaceOrderCluster({
@@ -1503,9 +1557,18 @@ function materializeCanonicalSession(input = {}) {
       planning_instant: input.planning_instant,
     })
     : buildCanonicalSession(canonicalInput);
+  const canonicalExercises = STRENGTH_FAMILIES.has(family) ? (source.main || source.exercises).map((exercise, index) => {
+    const target = canonical.steps[index].target;
+    return { ...clone(exercise), sourcePrescription: clone(exercise), sets: target.sets,
+      reps: String(exercise.reps).includes('each side') ? `${target.repetitions / 2} each side` : String(target.repetitions),
+      rest: `${target.rest_s} sec`,
+      load: target.load_kg !== undefined ? `${target.load_kg} kg starting load` : exercise.load,
+    };
+  }) : null;
   const adapted = planSchema.normalizeSession({
     ...canonical,
     workout_id: source.workout_id,
+    ...(source.workout_id === 'benchmark_mile' ? { benchmark_distance_miles: 1 } : {}),
     prescription_basis: source.prescription_basis,
     distance_miles: source.distance_miles === null || source.distance_miles === undefined
       || (typeof source.distance_miles === 'string' && source.distance_miles.trim() === '')
@@ -1519,6 +1582,13 @@ function materializeCanonicalSession(input = {}) {
     pace_target: source.pace_target,
     intensity: source.intensity,
     description: source.description,
+    ...(STRENGTH_FAMILIES.has(family) ? {
+      focus: source.focus,
+      main: canonicalExercises,
+      exercises: canonicalExercises,
+      warmup: clone(source.warmup), recovery: clone(source.recovery),
+      progression: source.progression, evidence_refs: clone(source.evidence_refs),
+    } : {}),
   }, sessionId);
   assertCanonicalSession(adapted);
   return deepFreeze(adapted);
@@ -1564,6 +1634,24 @@ function validateCanonicalSessionSet(sessionSet = {}) {
     violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'MATERIAL_BASELINE_BINDING_HASH_INVALID' });
   }
   const sessions = Array.isArray(sessionSet.sessions) ? sessionSet.sessions : [];
+  if (sessionSet.program_storage_version && !sessionSet.prescribed_dose_versions) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'PRESCRIBED_DOSE_POLICY_REQUIRED' });
+  }
+  if (sessionSet.prescribed_dose_versions) {
+    const expected = { strength: require('./strengthDoseAccounting').VERSION, running: require('./runningDoseAccounting').VERSION };
+    if (canonicalStringify(sessionSet.prescribed_dose_versions) !== canonicalStringify(expected)) {
+      violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'PRESCRIBED_DOSE_POLICY_MISMATCH' });
+    }
+    for (const session of sessions) {
+      if (STRENGTH_FAMILIES.has(session.workout_family) && session.strength_dose_accounting_version !== expected.strength
+        || require('./runningDoseAccounting').FAMILIES.has(session.workout_family) && session.running_dose_accounting_version !== expected.running) {
+        violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'PRESCRIBED_DOSE_POLICY_DOWNGRADE', session_id: session.session_id });
+      }
+    }
+    if (!require('./runningDoseAccounting').validateRunningDosePools(sessions)) {
+      violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'RUNNING_DOSE_POOL_CONSERVATION_INVALID' });
+    }
+  }
   if (!Array.isArray(sessionSet.sessions) || !sessions.length) {
     violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SESSIONS_REQUIRED' });
   }
@@ -1612,7 +1700,7 @@ function materializeCanonicalSessionSet(input = {}) {
     ? input.plan_revision
     : Math.max(1, Number(decision.plan_revision || 0) + 1);
   const planId = String(input.plan_id || `candidate-plan-${String(decision.decision_hash || canonicalHash(decision)).slice(0, 24)}`);
-  const sessions = (candidate.sessions || []).map((skeleton) => materializeCanonicalSession({
+  let sessions = (candidate.sessions || []).map((skeleton) => materializeCanonicalSession({
     ...input,
     decision,
     candidate,
@@ -1621,8 +1709,12 @@ function materializeCanonicalSessionSet(input = {}) {
     plan_id: planId,
     plan_revision: planRevision,
   }));
+  sessions = require('./runningDoseAccounting').bindRunningDosePool(sessions, input.running_dose_source);
   const set = {
     canonical_workout_schema_version: CANONICAL_WORKOUT_SCHEMA_VERSION,
+    ...(input.running_dose_source ? { prescribed_dose_versions: {
+      strength: require('./strengthDoseAccounting').VERSION, running: require('./runningDoseAccounting').VERSION,
+    } } : {}),
     canonical_sessions_materialized: true,
     plan_id: planId,
     plan_revision: planRevision,

@@ -1,6 +1,7 @@
 const {
   GOAL_BACKWARD_PLANNING_POLICY_V1,
   addDays,
+  mondayFor,
   canonicalHash,
 } = require('./racePlanPolicy');
 const { types: { isProxy } } = require('node:util');
@@ -305,12 +306,13 @@ function ownField(descriptors, keys) {
 }
 
 const INVALID_OWN_DATA_JSON = Symbol('INVALID_OWN_DATA_JSON');
+const MATERIALIZED_PROGRAM_SNAPSHOT = Symbol('MATERIALIZED_PROGRAM_SNAPSHOT');
 
 function ownDataJsonSnapshot(value, options = {}) {
   const maximumDepth = Number.isSafeInteger(options.maximumDepth)
     ? Math.min(64, Math.max(1, options.maximumDepth)) : 48;
   const maximumNodes = Number.isSafeInteger(options.maximumNodes)
-    ? Math.min(50000, Math.max(1, options.maximumNodes)) : 20000;
+    ? Math.min(options[MATERIALIZED_PROGRAM_SNAPSHOT] ? 500000 : 50000, Math.max(1, options.maximumNodes)) : 20000;
   const seen = new WeakSet();
   let nodeCount = 0;
 
@@ -350,6 +352,21 @@ function ownDataJsonSnapshot(value, options = {}) {
 
   const normalized = snapshot(value, 0);
   return normalized === INVALID_OWN_DATA_JSON ? null : normalized;
+}
+
+function ownMaterializedProgramSnapshot(value) {
+  const snapshot = ownDataJsonSnapshot(value, { maximumDepth: 64, maximumNodes: 500000,
+    [MATERIALIZED_PROGRAM_SNAPSHOT]: true });
+  if (!snapshot || Array.isArray(snapshot)) return null;
+  const payload = snapshot.artifact_payload_json && typeof snapshot.artifact_payload_json === 'object'
+    ? snapshot.artifact_payload_json : snapshot;
+  const contract = payload.program_contract || payload.programContract;
+  const sessions = payload.sessions || payload.weeks?.flatMap(week => week.days?.flatMap(day => day.sessions || []) || []);
+  if (contract?.version !== 'complete-road-program-v1'
+    || !/^[a-f0-9]{64}$/.test(String(contract.fingerprint || ''))
+    || !Array.isArray(sessions) || sessions.length < 1 || sessions.length > 280
+    || Buffer.byteLength(JSON.stringify(snapshot)) > 4 * 1024 * 1024 + 16384) return null;
+  return snapshot;
 }
 
 function ownStringAlias(descriptors, keys) {
@@ -1373,14 +1390,62 @@ function evaluateMaterialDose(input = {}) {
     material_threshold: clone(GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running),
     reduction_authorization: null,
   };
+  const partial = input.partial_week_contract;
+  const frequency = input.frequency_dose_contract;
+  if (frequency?.version === 'explicit-single-running-day-v1' && frequency.requested_run_days === 1
+    && frequency.planning_date === input.planning_date_local && frequency.end_date === input.candidate_window_end_local
+    && input.canonical_load_source && canonicalHash(frequency) === canonicalHash(input.canonical_load_source.frequency_dose_contract || null)) {
+    const source = input.canonical_load_source;
+    const bounded = require('./canonicalCombinedLoad').evaluateCanonicalCombinedLoad(input.candidate?.sessions || [], source, input.canonical_load_context_hash);
+    const sourceRunning = runningDistanceObservation({ sessions: source.canonical_session_set.sessions }, window);
+    const sourceRuns = source.canonical_session_set.sessions.filter(session => RUNNING_FAMILIES.has(session.workout_family));
+    const candidateRuns = (input.candidate?.sessions || []).filter(session => RUNNING_FAMILIES.has(session.workout_family));
+    if (bounded.valid && sourceRuns.length === 1 && candidateRuns.length === 1 && sourceRunning.distance_m !== null
+      && plannedCandidateRunning >= sourceRunning.distance_m) {
+      const receipt = { ...base, valid: true, dose_state: 'EXPLICIT_SINGLE_RUNNING_DAY_SOURCE_PRESERVED',
+        reduction_authorization: { ...clone(frequency), canonical_source_hash: bounded.source_hash,
+          planned_source_running_m: sourceRunning.distance_m, weekly_volume_change_disclosed: true },
+        violations: [], reason_codes: ['EXPLICIT_SINGLE_RUNNING_DAY_DOSE'] };
+      return deepFreeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
+    }
+  }
+  if (partial?.version === 'opening-partial-week-v1'
+    && partial.planning_date === input.planning_date_local
+    && partial.week_start === mondayFor(input.planning_date_local)
+    && partial.week_start < partial.planning_date
+    && partial.end_date === input.candidate_window_end_local
+    && Array.isArray(partial.eligible_dates) && partial.eligible_dates.length >= 1
+    && partial.eligible_dates.length < partial.requested_run_days
+    && partial.eligible_dates.every(date => date >= partial.planning_date && date <= partial.end_date)
+    && input.canonical_load_source
+    && canonicalHash(partial) === canonicalHash(input.canonical_load_source.partial_week_contract || null)) {
+    const bounded = require('./canonicalCombinedLoad').evaluateCanonicalCombinedLoad(
+      input.candidate?.sessions || [], input.canonical_load_source, input.canonical_load_context_hash);
+    const sourceRunning = runningDistanceObservation({ sessions: input.canonical_load_source.canonical_session_set.sessions }, window);
+    if (bounded.valid && sourceRunning.distance_m !== null && plannedCandidateRunning >= sourceRunning.distance_m) {
+      const receipt = { ...base, valid: true, dose_state: 'OPENING_PARTIAL_WEEK_SOURCE_PRESERVED',
+        reduction_authorization: { ...clone(partial), canonical_source_hash: bounded.source_hash,
+          planned_source_running_m: sourceRunning.distance_m, deferred_full_week_demand: true },
+        violations: [], reason_codes: ['OPENING_PARTIAL_WEEK_NO_WORKOUT_DEBT'] };
+      return deepFreeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
+    }
+  }
   if (!comparators.length) {
     const beginnerFoundation = String(input.training_age_class || '').toUpperCase() === 'BEGINNER'
       && String(input.phase || '').toUpperCase() === 'FOUNDATION';
+    const boundedSource = input.canonical_load_source
+      ? require('./canonicalCombinedLoad').evaluateCanonicalCombinedLoad(
+        input.candidate?.sessions || [], input.canonical_load_source, input.canonical_load_context_hash)
+      : null;
+    const boundedUnknown = boundedSource?.valid === true && boundedSource.state === 'TEMPLATE_BOUNDED';
+    const accepted = beginnerFoundation || boundedUnknown;
     const receipt = {
       ...base,
-      valid: beginnerFoundation,
-      dose_state: beginnerFoundation ? 'BOUNDED_BEGINNER_NO_COMPARATOR' : 'COMPARATOR_UNKNOWN',
-      violations: beginnerFoundation ? [] : [{ code: 'RECENT_NORMAL_INSUFFICIENT', reason: 'MATERIAL_DOSE_COMPARATOR_UNKNOWN' }],
+      valid: accepted,
+      dose_state: boundedUnknown ? 'TEMPLATE_BOUNDED_NO_COMPARATOR'
+        : beginnerFoundation ? 'BOUNDED_BEGINNER_NO_COMPARATOR' : 'COMPARATOR_UNKNOWN',
+      ...(boundedUnknown ? { canonical_source_hash: boundedSource.source_hash } : {}),
+      violations: accepted ? [] : [{ code: 'RECENT_NORMAL_INSUFFICIENT', reason: 'MATERIAL_DOSE_COMPARATOR_UNKNOWN' }],
       reason_codes: ['RECENT_NORMAL_INSUFFICIENT'],
     };
     return deepFreeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
@@ -1543,6 +1608,7 @@ module.exports = {
   normalizeCrossModalReductionEvidence,
   normalizeScope,
   ownDataJsonSnapshot,
+  ownMaterializedProgramSnapshot,
   ownDataRaceRemovalImpact,
   runningDistanceObservation,
   validateDevelopmentRoleDose,

@@ -7,6 +7,7 @@ const {
 } = require('./racePlanPolicy');
 
 const DIMENSIONS = STRESS_TAXONOMY_V1.dimensions;
+const { strengthPrescribedDose, VERSION: DOSE_VERSION } = require('./strengthDoseAccounting');
 const DIMENSION_COUNT = DIMENSIONS.length;
 const HARD_DAY_DIMENSION_INDEXES = Object.freeze([1, 2, 5, 6, 7]);
 const NON_CONTRIBUTING_ASSESSMENT_FAMILIES = new Set(['rest', 'mobility', 'manual_recovery']);
@@ -108,12 +109,19 @@ function resolveSessionStress(session = {}, index = 0) {
     event_kind: source.event_kind ?? source.eventKind,
     contributing_work_families: source.contributing_work_families ?? source.contributingWorkFamilies,
   });
+  const dose = String(family).startsWith('strength_') ? strengthPrescribedDose(source, vector)
+    : require('./runningDoseAccounting').runningPrescribedDose(source, vector);
   const resolved = {
     session_id: String(source.session_id ?? source.sessionId ?? source.id ?? `session-${index + 1}`),
     workout_family: family ?? null,
-    vector,
+    baseline_family_vector: vector,
+    vector: dose.valid ? dose.vector : null,
+    effective_dose_vector: dose.valid ? dose.vector : null,
+    dose_resolution_state: dose.state,
+    dose_accounting_version: dose.version,
+    reference_id: dose.reference_id,
   };
-  return vector
+  return vector && dose.valid
     ? { valid: true, ...resolved }
     : {
       valid: false,
@@ -157,13 +165,21 @@ function resolveSession(session = {}, index = 0) {
       violation: { code: 'WORKOUT_FAMILY_UNRESOLVED', session_id: sessionId, workout_family: family ?? null },
     };
   }
+  const dose = String(family).startsWith('strength_') ? strengthPrescribedDose(source, vector)
+    : require('./runningDoseAccounting').runningPrescribedDose(source, vector);
+  if (!dose.valid) return { valid: false, violation: {
+    code: 'CROSS_MODAL_FATIGUE_LIMIT', session_id: sessionId, reason: 'INVALID_CANONICAL_STRENGTH_DOSE',
+  } };
   return {
     valid: true,
     session: {
       session_id: sessionId,
       scheduled_local_date: date,
       workout_family: family,
-      vector,
+      baseline_family_vector: vector,
+      vector: dose.vector,
+      event_identity: source.event_identity || null,
+      prescribed_dose: dose,
     },
   };
 }
@@ -215,6 +231,7 @@ function aggregateWeeklyStress(sessions = []) {
   return {
     valid: violations.length === 0,
     stress_taxonomy_version: STRESS_TAXONOMY_V1.stress_taxonomy_version,
+    prescribed_dose_accounting_version: DOSE_VERSION,
     dimensions: [...DIMENSIONS],
     days,
     weekly_dimension_sum: weeklyDimensionSum,
@@ -369,7 +386,7 @@ function calculateFatigueCeilings(history = {}, options = {}) {
 function normalizedWeeklyVector(input) {
   const vector = Array.isArray(input) ? input : input?.weekly_dimension_sum;
   if (!Array.isArray(vector) || vector.length !== DIMENSION_COUNT) return null;
-  const normalized = vector.map(canonicalNonnegativeInteger);
+  const normalized = vector.map((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null);
   return normalized.every((value) => value !== null) ? normalized : null;
 }
 
@@ -493,7 +510,21 @@ function validateRollingHardDays(sessions = [], options = {}) {
   if (eventDate) {
     for (const day of aggregate.days) {
       const daysToEvent = daysBetween(day.scheduled_local_date, eventDate);
-      const veryHighSessions = day.sessions.filter((session) => session.vector[7] === 4);
+      const veryHighSessions = day.sessions.filter((session) => {
+        if (session.vector[7] !== 4) return false;
+        const identity = session.event_identity;
+        const ownedEvent = session.workout_family === 'race' && daysToEvent === 0
+          && identity && identity.athlete_id === options.athlete_id
+          && (options.active_goals || []).some((goal) => (
+            goal.athlete_id === options.athlete_id && goal.race_id && goal.goal_id
+            && ['athlete_id', 'race_id', 'goal_id', 'event_local_date', 'event_kind', 'event_revision', 'source_revision']
+              .every((key) => identity[key] !== undefined && identity[key] === goal[key])
+            && goal.event_local_date === day.scheduled_local_date
+          ));
+        // Only the exact owned event is not a pre-race training simulation.
+        // It still contributes to the budget, hard-day and recovery checks.
+        return !ownedEvent;
+      });
       if (veryHighSessions.length && daysToEvent !== null && daysToEvent >= 0 && daysToEvent <= 6) {
         violations.push({
           code: 'VERY_HIGH_RACE_MINUS_SIX',

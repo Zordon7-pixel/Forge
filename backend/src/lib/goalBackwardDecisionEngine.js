@@ -290,6 +290,8 @@ function selectGoalBackwardPhase(input = {}) {
   const eventDate = dateOnly(goal.event_local_date ?? goal.eventLocalDate ?? goal.date);
   const eventState = normalizedLifecycle(goal.event_state ?? goal.eventState);
   const daysToEvent = planningDate && eventDate ? daysBetween(planningDate, eventDate) : null;
+  const windowEnd = dateOnly(input.candidate_window_end_local);
+  const windowEndDaysToEvent = windowEnd && eventDate ? daysBetween(windowEnd, eventDate) : null;
   const taperDays = Number(policy?.taper_days ?? 0);
   const recoveryBufferDays = Number(policy?.recovery_buffer_days ?? 2);
   const dueExposureCount = Math.max(0, Number(input.due_exposure_count ?? input.dueExposureCount ?? 0));
@@ -298,7 +300,8 @@ function selectGoalBackwardPhase(input = {}) {
   if (eventState === 'COMPLETED' && input.transition_exit_met !== true) {
     phase = 'POST_RACE_TRANSITION';
     reasonCodes.push('POST_RACE_TRANSITION');
-  } else if (daysToEvent !== null && daysToEvent <= taperDays) {
+  } else if (daysToEvent !== null && (daysToEvent <= taperDays
+    || (windowEndDaysToEvent !== null && windowEndDaysToEvent >= 0 && windowEndDaysToEvent <= taperDays))) {
     phase = 'TAPER_RACE_WEEK';
     reasonCodes.push('TAPER_ENTRY');
     if (dueExposureCount > 0) reasonCodes.push('LATE_BUILD_PREVENTED', 'REQUIRED_EXPOSURE_UNPLACEABLE');
@@ -424,7 +427,8 @@ function copiedExposure(exposure, overrides = {}) {
     requirement_id: String(exposure.requirement_id),
     any_of: [...(exposure.any_of || [])],
     role: exposure.role || 'PRIMARY_KEY',
-    scheduled_local_date: null,
+    scheduled_local_date: dateOnly(exposure.scheduled_local_date),
+    ...(exposure.supports_goal_id ? { supports_goal_id: String(exposure.supports_goal_id) } : {}),
     ...(typeof exposure.candidate_material_id === 'string' && exposure.candidate_material_id.trim()
       ? { candidate_material_id: exposure.candidate_material_id.trim() } : {}),
     ...(exposure.supports_requirement_id
@@ -440,13 +444,19 @@ function buildDueExposureLedger(input = {}) {
     const foundation = phase === 'FOUNDATION'
       ? [copiedExposure({
         requirement_id: 'foundation_aerobic_consistency',
-        any_of: ['easy_run', 'recovery_run'],
+        any_of: input.requested_run_days_per_week === 1 && Array.isArray(input.available_run_dates)
+          ? ['easy_run', 'recovery_run', 'assessment', 'long_aerobic'] : ['easy_run', 'recovery_run'],
         role: 'PRIMARY_KEY',
       })]
       : [];
+    const foundationTaper = phase === 'TAPER_RACE_WEEK'
+      && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(policy?.event_kind)
+      && input.athlete_state && !hasFoundationGate(input.athlete_state)
+      && String(input.athlete_state.recent_normal_running?.status || '').toUpperCase() === 'INSUFFICIENT';
     const sharpening = phase === 'TAPER_RACE_WEEK' && policy?.required_exposure_ledger?.SHARPENING?.[0]
       ? [copiedExposure({
         ...policy.required_exposure_ledger.SHARPENING[0],
+        ...(foundationTaper ? { any_of: ['easy_run', 'recovery_run'] } : {}),
         requirement_id: 'taper_bounded_stimulus',
         role: 'PRIMARY_KEY',
       })]
@@ -674,7 +684,38 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     supports_goal_id: ownedGoals.find((goal) => goal.goal_id !== primaryGoal?.goal_id
       && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(String(goal.event_kind || '').toUpperCase()))?.goal_id || null,
   };
-  const exposureLedger = healthyEventSpecificMultiGoal ? {
+  const ownedEventOnly = phaseDecision.phase === 'TAPER_RACE_WEEK'
+    && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(primaryGoal?.event_kind)
+    && primaryGoal?.registered_race === true && primaryGoal.planning_eligible !== false
+    && primaryGoal.event_local_date >= input.planning_date_local
+    && primaryGoal.event_local_date <= input.candidate_window_end_local
+    && Array.isArray(input.available_run_dates)
+    && (input.requested_run_days_per_week === 1
+      || input.available_run_dates.every(date => date >= primaryGoal.event_local_date));
+  const partial = input.partial_week_contract;
+  const partialOpening = partial?.version === 'opening-partial-week-v1'
+    && partial.planning_date === planningDate && partial.week_start < planningDate
+    && partial.end_date === input.candidate_window_end_local
+    && Array.isArray(partial.eligible_dates) && partial.eligible_dates.length >= 1
+    && partial.eligible_dates.length < partial.requested_run_days
+    && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(primaryGoal?.event_kind)
+    && primaryGoal.event_local_date > partial.end_date;
+  const frequencyDose = input.requested_run_days_per_week === 1
+    && input.frequency_dose_contract?.version === 'explicit-single-running-day-v1'
+    && input.frequency_dose_contract.requested_run_days === 1
+    && input.frequency_dose_contract.planning_date === planningDate
+    && input.frequency_dose_contract.end_date === input.candidate_window_end_local
+    && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(primaryGoal?.event_kind);
+  const exposureLedger = partialOpening ? {
+    ...clone(baseExposureLedger), due_roles: [{ requirement_id: 'opening_partial_source_exposure', role: 'PRIMARY_KEY',
+      any_of: ['easy_run', 'recovery_run', 'long_aerobic'] }], required_primary_count: 1, complete: false,
+    deferred_full_week_roles: clone(baseExposureLedger.due_roles),
+    reason_codes: [...(baseExposureLedger.reason_codes || []), 'OPENING_PARTIAL_WEEK_NO_WORKOUT_DEBT'],
+  } : ownedEventOnly ? {
+    ...clone(baseExposureLedger), due_roles: [{ requirement_id: 'owned_event_only_window', role: 'PRIMARY_KEY',
+      any_of: ['race'], scheduled_local_date: primaryGoal.event_local_date, supports_goal_id: primaryGoal.goal_id }],
+    required_primary_count: 1, complete: false,
+  } : healthyEventSpecificMultiGoal ? {
     ...clone(baseExposureLedger),
     due_roles: [...clone(baseExposureLedger.due_roles || []), secondaryRoadQuality],
     required_primary_count: Number(baseExposureLedger.required_primary_count || 0) + 1,
@@ -744,10 +785,14 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     event_policy_overload_dimensions: clone(eventPolicy?.overload_dimensions || []),
     event_policy_overload_allowance_points: clone(eventPolicy?.overload_allowance_points || {}),
     mandatory_hyrox_cluster: exposureLedger.mandatory_hyrox_cluster === true,
-    minimum_weekly_demand: demand,
+    minimum_weekly_demand: partialOpening || frequencyDose ? { ...demand, running_m: 0,
+      required_exposure_count: 1, deferred_full_week_running_m: demand.running_m,
+      reason_code: 'OPENING_PARTIAL_WEEK_NO_WORKOUT_DEBT' } : demand,
     training_age_class: athleteState.training_age_class || 'UNKNOWN',
     consistency_state: athleteState.consistency_state || 'UNKNOWN',
     due_exposure_ledger: exposureLedger,
+    ...(partialOpening ? { partial_week_contract: clone(partial) } : {}),
+    ...(frequencyDose ? { frequency_dose_contract: clone(input.frequency_dose_contract) } : {}),
     role_multiset: roleMultiset,
     development_role_requirements: healthyEventSpecificMultiGoal ? [
       {
