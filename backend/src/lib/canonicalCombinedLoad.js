@@ -1,5 +1,6 @@
 const { canonicalHash } = require('./racePlanPolicy');
 const { aggregateWeeklyStress, resolveSessionStress } = require('./goalBackwardLoad');
+const { immutableOwnJson } = require('./immutableOwnJson');
 const VERSION = 'canonical-combined-load-v3';
 const VERSIONS = Object.freeze({ combined: VERSION, running: require('./runningDoseAccounting').VERSION,
   strength: require('./strengthDoseAccounting').VERSION, taxonomy: 1, canonical: 1, stack: 'existing-maxplus-v1' });
@@ -35,7 +36,8 @@ function evaluateCanonicalCombinedLoad(sessions, source, contextHash) {
   if (!source || !contextHash || source.context_hash !== contextHash || canonicalHash(source.versions) !== canonicalHash(VERSIONS)
     || !['HISTORY_COMPATIBLE','TEMPLATE_BOUNDED'].includes(source.authority)) return invalid('CANONICAL_SOURCE_VERSION_OR_AUTHORITY_MISMATCH');
   const { content_hash: hash, ...content } = source;
-  const cached = verifiedFrozenSources.get(source);
+  const cacheEligible = immutableOwnJson(source);
+  const cached = cacheEligible ? verifiedFrozenSources.get(source) : null;
   if (!cached && (hash !== canonicalHash(content) || !validVersionedSet(source.canonical_session_set))) return invalid('CANONICAL_SOURCE_HASH_INVALID');
   const running = require('./runningDoseAccounting');
   const allowedRunningSources = new Set(source.canonical_session_set.sessions
@@ -58,9 +60,7 @@ function evaluateCanonicalCombinedLoad(sessions, source, contextHash) {
   if (canonicalHash(sourceBase) !== canonicalHash(source.base_vector)) return invalid('SOURCE_TOTAL_MISMATCH');
   // Only recursively frozen, fully verified source graphs can be memoized.
   // Mutable caller payloads are always revalidated after any tampering.
-  const frozenGraph = value => !value || typeof value !== 'object'
-    || Object.isFrozen(value) && Object.values(value).every(frozenGraph);
-  if (!cached && frozenGraph(source)) verifiedFrozenSources.set(source, sourceBase);
+  if (!cached && cacheEligible) verifiedFrozenSources.set(source, sourceBase);
   const aggregate = aggregateWeeklyStress(sessions);
   if (!aggregate.valid) return invalid('PLACEMENT_DOSE_INVALID');
   const violations = candidateBase.flatMap((value, dimension) => value > sourceBase[dimension] + 1e-6
