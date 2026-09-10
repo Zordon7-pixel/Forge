@@ -670,6 +670,7 @@ export default function Dashboard() {
         ...(isPreview ? {
           preview_fingerprint: trainingGapProposal.previewFingerprint,
           planning_date: trainingGapProposal.planningDate,
+          ...(trainingGapProposal.observationTicket ? { observation_ticket: trainingGapProposal.observationTicket } : {}),
         } : {}),
       })
       ensureCommittedAdaptationDecision(response, decision)
@@ -706,7 +707,12 @@ export default function Dashboard() {
         response: decision,
         current_date: localDateISO(),
         timezone: localTimezone(),
+        ...(hybridReconciliation.outcomeBinding ? { outcome_binding: hybridReconciliation.outcomeBinding } : {}),
       })
+      if (response.status === 202 || response.data?.queued || response.data?.offline || response.data?.ok !== true
+        || hybridReconciliation.outcomeBinding && response.data?.outcome !== 'recorded') {
+        throw new Error('Forge has not saved this outcome. Reconnect, refresh the session, and choose again.')
+      }
       setHybridReconciliation(null)
       const planFitNote = response.data?.pattern?.reviewRecommended
         ? ' Forged Hybrid has noticed a recurring pattern; review whether fewer double days would fit your life better.'
@@ -714,7 +720,8 @@ export default function Dashboard() {
       setHybridReconciliationNotice(`${response.data?.message || 'Hybrid session updated.'}${planFitNote}`)
       await fetchDashboardData()
     } catch (error) {
-      setHybridReconciliationError(error?.response?.data?.error || 'Could not save that choice. Please try again.')
+      if (error?.response?.data?.refresh_required) await fetchDashboardData()
+      setHybridReconciliationError(error?.response?.data?.error || error?.message || 'Could not save that choice. Please try again.')
     } finally {
       setHybridReconciliationDecision(null)
     }

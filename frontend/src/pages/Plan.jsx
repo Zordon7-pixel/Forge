@@ -803,6 +803,7 @@ export default function Plan() {
         ...(isPreview ? {
           preview_fingerprint: adaptationProposal.previewFingerprint,
           planning_date: adaptationProposal.planningDate,
+          ...(adaptationProposal.observationTicket ? { observation_ticket: adaptationProposal.observationTicket } : {}),
         } : {}),
       })
       ensureCommittedAdaptationDecision(response, decision)

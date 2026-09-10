@@ -461,6 +461,12 @@ export function canonicalWorkoutLabel(session) {
     const label = focus.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
     return label ? `${label} strength` : 'Strength session'
   }
+  const canonicalFamily = session.canonical ? session.workoutFamily : Number(session.raw?.canonical_workout_schema_version) === 1
+    ? session.raw.workout_family : null
+  const familyLabel = { recovery_run: 'Recovery run', easy_run: 'Easy aerobic run', long_aerobic: 'Long run',
+    threshold_run: 'Tempo / threshold run', interval_run: 'Interval workout', race_rhythm_run: 'Race-pace workout',
+    steady_run: 'Steady run', assessment: 'Benchmark run', race: 'Race day', rest: 'Rest day' }[canonicalFamily]
+  if (familyLabel) return familyLabel
   if (session.type === 'race' || session.raw?.workout_id === 'race') return 'Race day'
   const identity = [session.raw?.workout_id, session.type, session.title].filter(Boolean).join(' ').toLowerCase()
   if (/benchmark/.test(identity)) return 'Benchmark run'

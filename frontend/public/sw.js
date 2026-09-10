@@ -189,11 +189,16 @@ function isReplayUnsafeMutation(request, url) {
     || /^\/api\/plans\/candidates\/[^/]+\/apply$/.test(url.pathname)
     || url.pathname === '/api/runs/missed'
     || url.pathname === '/api/plans/reschedule-missed'
+    || url.pathname === '/api/plans/reconciliation/respond'
     || /^\/api\/plans\/adaptation\/[^/]+\/(?:accept|keep)$/.test(url.pathname);
 }
 
 function isCacheableApiGet(request, url) {
   if (request.method.toUpperCase() !== 'GET') return false;
+  // Observation tickets and missed-session eligibility are fresh decisions,
+  // never an offline cache authority or reusable signed response.
+  if (url.pathname.startsWith('/api/plans/adaptation/') || url.pathname.startsWith('/api/plans/reconciliation/')
+    || url.pathname === '/api/plans/missed-sessions') return false;
   return API_GET_CACHE_PATHS.some((path) => url.pathname.startsWith(path));
 }
 

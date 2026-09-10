@@ -78,6 +78,14 @@ export function sessionIntensity(session) {
   if (!session) return { key: 'rest', label: 'Rest' }
   if (session.kind === 'lift') return { key: 'strength', label: 'Strength' }
   if (session.kind === 'hyrox') return { key: 'hyrox', label: 'HYROX' }
+  const family = session.canonical ? session.workoutFamily : Number(session.raw?.canonical_workout_schema_version) === 1
+    ? session.raw.workout_family : null
+  if (family === 'recovery_run') return { key: 'recovery', label: 'Recovery' }
+  if (family === 'easy_run') return { key: 'easy', label: 'Easy' }
+  if (family === 'long_aerobic') return { key: 'long', label: 'Long' }
+  if (family === 'race') return { key: 'race', label: 'Race' }
+  if (family === 'rest') return { key: 'rest', label: 'Rest' }
+  if (['threshold_run', 'interval_run', 'race_rhythm_run', 'assessment'].includes(family)) return { key: 'quality', label: 'Quality' }
   const identity = sessionText(session)
   if (/(race)/.test(identity)) return { key: 'race', label: 'Race' }
   if (/(interval|repeat|speed|hill|tempo|threshold|race.?pace|benchmark|fartlek)/.test(identity)) {

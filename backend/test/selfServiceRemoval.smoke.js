@@ -260,6 +260,10 @@ async function assertScheduledWorkoutRoute() {
   let planWriteCount = 0;
   let identityBackfillCount = 0;
   let proposalRow = null;
+  const activityGet = async sql => /FROM users/.test(sql) ? { planning_input_revision:0 }
+    : /SELECT MAX\(date\).*FROM runs/.test(sql) ? {last_date:localDate(-1)} : null;
+  const activityAll = async sql => /FROM runs/.test(sql) ? [{ id:'fresh-protection',date:localDate(-1),
+    distance_miles:5,duration_seconds:3600,perceived_effort:9,type:'run',plan_session_id:null }] : [];
   const reset = (progress = {}) => {
     assignment = {
       user_plan_id: 'assignment-owner',
@@ -296,8 +300,10 @@ async function assertScheduledWorkoutRoute() {
           plan_json: null,
         };
       }
+      if (/FROM (?:health_sync|users)/.test(sql) || /SELECT MAX\(/.test(sql)) return activityGet(sql);
       throw new Error(`unexpected get: ${sql}`);
     },
+    all: activityAll,
     async run(sql, params) {
       if (/UPDATE training_plans SET plan_data/.test(sql)) {
         activePlan = JSON.parse(params[0]);
@@ -356,9 +362,9 @@ async function assertScheduledWorkoutRoute() {
           };
         }
         if (/FROM training_plans WHERE user_id/.test(sql)) return null;
-        return null;
+        return activityGet(sql);
       },
-      dbAll: async () => [],
+      dbAll: activityAll,
       dbRun: async (sql, params) => {
         if (/UPDATE plan_adjustment_proposals[\s\S]*status='pending'/.test(sql) && proposalRow) {
           proposalRow = {
@@ -418,6 +424,7 @@ async function assertScheduledWorkoutRoute() {
       let statusCode = 200;
       let payload = null;
       const routeResponse = {
+        set() { return this; },
         status(code) { statusCode = code; return this; },
         json(value) { payload = value; return this; },
       };
@@ -582,10 +589,10 @@ async function assertScheduledWorkoutRoute() {
       params: { proposalId: proposalRow.id },
       body: decisionBody(proposalRow),
     });
-    assert.equal(response.statusCode, 200, 'adaptation acceptance succeeds after historical identity backfill');
-    assert.equal(response.payload.status, 'accepted');
-    assert.doesNotThrow(() => assertPersistablePlan(activePlan));
-    assert.equal(activePlan.weeks[0].days[0].sessions[1].title, 'Accepted historical adaptation');
+    assert.equal(response.statusCode, 409, 'An unbound historical proposal requires fresh assessment after identity backfill');
+    assert.equal(response.payload.code, 'ADAPTATION_STALE');
+    assert.deepEqual(activePlan,historicalPlan,'A stale proposal cannot backfill or mutate the accepted historical prescription');
+    assert.equal(planWriteCount,0);
 
     const currentVersion = plansRouter._test.planVersionFor({
       source: 'assigned',
@@ -600,8 +607,9 @@ async function assertScheduledWorkoutRoute() {
     const adaptationCurrentHandler = adaptationCurrentLayer.route.stack.at(-1).handle;
     const keepLayer = plansRouter.stack.find((item) => item.route?.path === '/adaptation/:proposalId/keep' && item.route?.methods?.post);
 
-    const setupVisibleAdaptation = (id, title) => {
+    const setupVisibleAdaptation = async (id) => {
       activePlan = JSON.parse(JSON.stringify(plan));
+      Object.assign(activePlan.weeks[0].days[1].sessions[0],{duration_min:40,distance_miles:4,type:'quality'});
       reset({ removedSessionIds: [todayLiftRemovalId] });
       const active = {
         source: 'assigned',
@@ -613,9 +621,12 @@ async function assertScheduledWorkoutRoute() {
         false,
         'adaptation projection excludes assignment-removed workouts',
       );
-      const version = plansRouter._test.planVersionFor(active, visible);
-      const proposed = JSON.parse(JSON.stringify(visible));
-      proposed.weeks[0].days[1].sessions[0].title = title;
+      const inputs = await plansRouter._test.buildAdaptationInputs('owner',visible,active,localDate(0),{database:tx,strictReads:true});
+      const version = plansRouter._test.planVersionFor(active, visible,inputs.activitySnapshot);
+      const computed = await plansRouter._test.buildCurrentAdaptationProposal('owner',visible,active,localDate(0),version,tx,
+        {inputs,strictReads:true,ignoreEpisode:true});
+      assert.ok(computed.proposal?.changes.length,JSON.stringify({reason:computed.reason,load:inputs.recentRunLoad}));
+      const fresh = computed.proposal, proposed = fresh.proposedPlan;
       proposalRow = {
         id,
         user_id: 'owner',
@@ -624,9 +635,10 @@ async function assertScheduledWorkoutRoute() {
         plan_version: version,
         original_json: JSON.stringify(visible),
         proposed_json: JSON.stringify(proposed),
-        changes_json: JSON.stringify([{ kind: 'calendar_update' }]),
-        evidence_json: '[]',
-        reason: JSON.stringify({ headline: 'Visible plan adjustment', reason: 'Regression' }),
+        window_start:fresh.windowStart,window_end:fresh.windowEnd,safety_exception:fresh.safetyException?1:0,
+        changes_json: JSON.stringify(fresh.changes),
+        evidence_json: JSON.stringify(fresh.evidence),
+        reason: JSON.stringify({ headline:fresh.headline,reason:fresh.reason,activitySnapshot:inputs.activitySnapshot }),
         plan_id: 'plan-owner',
         user_plan_id: 'assignment-owner',
         trigger_run_id: null,
@@ -634,7 +646,7 @@ async function assertScheduledWorkoutRoute() {
       return { version, proposed };
     };
 
-    let shared = setupVisibleAdaptation('shared-db-accept', 'Accepted through shared projection');
+    let shared = await setupVisibleAdaptation('shared-db-accept');
     response = await invokeHandler(adaptationCurrentHandler, { query: { date: localDate(0) } });
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.proposal.id, 'shared-db-accept');
@@ -648,9 +660,10 @@ async function assertScheduledWorkoutRoute() {
       },
     });
     assert.equal(response.statusCode, 200, 'GET proposal accepts against the identical visible-plan projection');
-    assert.equal(activePlan.weeks[0].days[1].sessions[0].title, 'Accepted through shared projection');
+    assert.deepEqual(activePlan.weeks[0].days[1].sessions[0], shared.proposed.weeks[0].days[1].sessions[0]);
+    assert.doesNotThrow(() => assertPersistablePlan(activePlan));
 
-    shared = setupVisibleAdaptation('shared-db-keep', 'Never apply this proposal');
+    shared = await setupVisibleAdaptation('shared-db-keep');
     response = await invokeHandler(adaptationCurrentHandler, { query: { date: localDate(0) } });
     const keptGetProposal = response.payload.proposal;
     response = await invokeHandler(keepLayer.route.stack.at(-1).handle, {
@@ -664,7 +677,7 @@ async function assertScheduledWorkoutRoute() {
     assert.equal(proposalRow.status, 'kept');
     assert.equal(planWriteCount, 0, 'keeping never writes the proposed plan');
 
-    shared = setupVisibleAdaptation('shared-db-stale', 'Stale proposal must not apply');
+    shared = await setupVisibleAdaptation('shared-db-stale');
     response = await invokeHandler(adaptationCurrentHandler, { query: { date: localDate(0) } });
     const staleGetProposal = response.payload.proposal;
     activePlan.weeks[0].days[1].sessions[0].title = 'A genuine later plan mutation';
@@ -679,7 +692,7 @@ async function assertScheduledWorkoutRoute() {
     assert.equal(response.payload.code, 'ADAPTATION_STALE');
     assert.equal(proposalRow.status, 'superseded');
 
-    shared = setupVisibleAdaptation('shared-db-rewritten', 'Displayed content');
+    shared = await setupVisibleAdaptation('shared-db-rewritten');
     response = await invokeHandler(adaptationCurrentHandler, { query: { date: localDate(0) } });
     const displayedBeforeRewrite = response.payload.proposal;
     proposalRow.proposed_json = JSON.stringify({ ...shared.proposed, headline: 'Unseen replacement content' });

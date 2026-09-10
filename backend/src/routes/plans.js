@@ -789,7 +789,7 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   const assessment = options.assessment || activityAssessment({ athleteId: userId, runs,
     planningDateLocal: planningDateISO, timezone: plan?.programContract?.timezone || 'UTC' });
   const runCompletions = runCompletionEvidence(planned.filter(item => item.kind === 'run'), assessment, Array.from(completedIds),
-    { planId: active?.row?.plan_id || active?.row?.id });
+    { planId: active?.row?.plan_id || active?.row?.id, acceptedPlan: plan });
   const completedRuns = new Set(runCompletions.filter(item => item.completed).map(item => item.sessionId));
   const attemptedRuns = new Set(runCompletions.filter(item => item.attempted && !item.completed).map(item => item.sessionId));
   const completionAllocation = hybridReconciliation.allocateSessionEvidence({
@@ -857,6 +857,7 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
     unconfirmedRuns: attemptedRuns.size,
     unconfirmedWorkouts: unconfirmed,
     activityEvidenceHash: canonicalHash({ runs: assessment.fingerprint, lifts, workouts, workoutSets }),
+    physicalLiftEvidence: { lifts, workouts, workoutSets },
     excused,
     missedRuns,
     missedLifts,
@@ -953,9 +954,24 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
   const scheduleType = String(profile?.schedule_type || 'adaptive').toLowerCase();
   const missedWorkoutPref = String(profile?.missed_workout_pref || 'adjust_week').toLowerCase();
   const progress = parseJsonValue(active?.row?.progress_json, {});
+  const qualifiedThroughToday = runCompletionEvidence(
+    plannedSessionsBetween(plan, adaptationEngine.addDays(planningDateISO, -7), planningDateISO).filter(item => item.kind === 'run'),
+    assessment, completedSessionIdsFromProgress(progress), { planId: active?.row?.plan_id || active?.row?.id, acceptedPlan: plan });
+  const activityCompletedIds = [...new Set([...completedSessionIdsFromProgress(progress),
+    ...qualifiedThroughToday.filter(entry => entry.completed).map(entry => entry.sessionId)])];
   const semanticHealth = { ...healthSignals, metrics: Object.fromEntries(Object.entries(healthSignals.metrics || {})
     .map(([key, metric]) => { const { asOf, ...meaning } = metric; return [key, meaning]; })) };
+  const observationArtifact = require('../lib/activityObservation').buildObservation({ ownerId: userId,
+    planningDate: planningDateISO, timezone: plan?.programContract?.timezone || 'UTC',
+    planningInputRevision: Number(profile?.planning_input_revision || 0), assessment,
+    completedIds: activityCompletedIds,
+    ...completion.physicalLiftEvidence });
+  delete completion.physicalLiftEvidence;
   return {
+    activityPolicyInput: { observationInstant: new Date(observationInstant).toISOString(),
+      observationArtifact,
+      canonicalRuns: assessment.canonicalRuns, missedOutcomeFingerprint: canonicalHash(progress.missedSessionOutcomes || {}),
+      completedIds: activityCompletedIds },
     activitySnapshot: { version: 'activity-assessment-v1', fingerprint: canonicalHash({
       activities: completion.activityEvidenceHash, healthSignals: semanticHealth, openInjuries, checkins,
       scheduleType, missedWorkoutPref, completedSessionIds: completedSessionIdsFromProgress(progress).sort(),
@@ -1023,10 +1039,149 @@ async function buildCurrentAdaptationProposal(userId, plan, active, planningDate
     injuryState: inputs.injuryState,
   });
   proposal.activitySnapshot = inputs.activitySnapshot;
+  if (plan.programCanonicalIdentity && proposal.status === 'proposal' && proposal.changes?.length) {
+    await materializeActivityAdaptationProposal({ userId, plan, active, proposal, inputs, database,
+      observationTicket: options.observationTicket, authenticatedObservation: options.authenticatedObservation });
+  }
   if (proposal.status !== 'proposal' || !Array.isArray(proposal.changes) || proposal.changes.length === 0) {
     return { proposal: null, persisted: false, reason: proposal.reason };
   }
   return { proposal, persisted: false, reason: proposal.reason };
+}
+
+async function loadActivityCanonicalParent(userId, active, database = null) {
+  const get = database?.get || dbGet, all = database?.all || dbAll;
+  const candidates = await all(`SELECT * FROM plan_generation_candidates
+    WHERE user_id=? AND applied_user_plan_id=? AND status='applied' AND feature_mode IN ('preview','on')
+    ORDER BY applied_at DESC,id DESC LIMIT 2`, [userId, active.row.user_plan_id]);
+  if (candidates.length !== 1) throw surfaceReconcileReviewRequired();
+  const candidate = candidates[0];
+  const surface = await get(`SELECT * FROM planning_pipeline_artifacts
+    WHERE user_id=? AND plan_generation_candidate_id=? AND artifact_kind='surface_manifest'
+    ORDER BY revision DESC,created_at DESC LIMIT 1`, [userId, candidate.id]);
+  const artifact = surface?.parent_artifact_id ? await get(`SELECT * FROM planning_pipeline_artifacts
+    WHERE id=? AND user_id=? AND artifact_kind='canonical_session_set'`, [surface.parent_artifact_id, userId]) : null;
+  const payload = parseJsonValue(artifact?.payload_json, null), manifest = parseJsonValue(surface?.payload_json, null);
+  const parent = require('../lib/activityCanonicalSuccessor').canonicalSetPayload(payload);
+  const diagnostic = surfaceManifestAppliedPlanDiagnostic(manifest, candidate, active.row, payload);
+  if (!parent || !manifest || diagnostic.status_code !== 'ACCEPTED') throw candidateError(409,
+    'ACTIVITY_PARENT_SURFACE_INVALID', `The accepted calendar identity needs review (${diagnostic.first_failed_predicate || 'MISSING_ARTIFACT'}). Your plan has not changed.`);
+  const validity = require('../lib/canonicalWorkout').validateCanonicalSessionSet(parent);
+  if (!validity.valid) throw candidateError(409, 'ACTIVITY_PARENT_CANONICAL_INVALID',
+    `The accepted prescription needs review (${validity.violations[0]?.reason || validity.reason_codes[0]}). Your plan has not changed.`);
+  return { parent, candidate, canonicalArtifact: artifact, surfaceArtifact: surface };
+}
+
+async function materializeActivityAdaptationProposal({ userId, plan, active, proposal, inputs, database,
+  observationTicket, authenticatedObservation }) {
+  const policy = require('../lib/activityAdaptationAuthority');
+  const successor = require('../lib/activityCanonicalSuccessor');
+  const reconciliation = require('../lib/activityProgramReconciliation');
+  const tickets = require('../lib/activityObservationTicket');
+  const { parent } = await loadActivityCanonicalParent(userId, active, database);
+  const completed = new Set(inputs.activityPolicyInput.completedIds);
+  const originals = new Map(parent.sessions.map(session => [session.session_id, session]));
+  const changes = [];
+  for (const intent of proposal.changes) {
+    const original = originals.get(intent.sessionId);
+    if (!original || original.scheduled_local_date !== intent.date) {
+      throw candidateError(409, 'ACTIVITY_SESSION_REVIEW_REQUIRED', 'A session changed or is already completed. Refresh current coaching; your plan has not changed.');
+    }
+    // The legacy proposal is intent, not completion authority. Preserve any
+    // freshly qualified completed prescription, including today's exact link.
+    if (completed.has(original.session_id)) continue;
+    if (original.workout_family === 'rest') continue;
+    const after = intent.after || {};
+    if (after.kind === 'rest' || ['rest', 'manual_recovery'].includes(after.workout_family)
+      || after.type === 'rest' || after.removeSession === true) changes.push({ session_id: original.session_id, action: 'rest' });
+    else if (String(original.workout_family).startsWith('strength_')) {
+      const originalExercises = original.main || original.exercises || [];
+      const proposedExercises = after.main || after.exercises || [];
+      const sameExercises = proposedExercises.length === originalExercises.length
+        && proposedExercises.every((exercise, index) => exercise.name === originalExercises[index]?.name);
+      // Set-only withholding cannot silently ignore a separate injury effort
+      // reduction. Until its existing intensity authority is explicitly bound,
+      // retain no executable work requiring that different prescription.
+      const needsOtherTargetReduction = after.injury_adjustment && proposedExercises.some((exercise, index) => {
+        const effort = String(exercise.rpe || '').match(/^(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?/);
+        const maximum = effort ? Number(effort[2] || effort[1]) : null;
+        return maximum === null || original.steps[index]?.target.rpe_range?.maximum > maximum
+          || original.steps[index]?.target.load_kg != null && exercise.load !== originalExercises[index]?.load;
+      });
+      if (!sameExercises || after.focus !== original.focus || needsOtherTargetReduction) changes.push({ session_id: original.session_id, action: 'rest' });
+      else {
+        const retained = proposedExercises.map((exercise, index) => Math.min(original.steps[index]?.target.sets, Number(exercise.sets)));
+        if (retained.some((sets, index) => sets !== original.steps[index]?.target.sets)) {
+          changes.push({ session_id: original.session_id, action: 'withhold_sets', retained_sets: retained });
+        }
+      }
+    } else {
+      const minutes = Number(after.duration_min ?? after.duration_minutes);
+      changes.push({ session_id: original.session_id, action: 'recovery', duration_s: Number.isFinite(minutes) ? Math.floor(minutes * 60) : null });
+    }
+  }
+  if (!changes.length) {
+    proposal.status = 'keep'; proposal.changes = []; proposal.proposedPlan = plan;
+    proposal.reason = 'Your activity was assessed. There is no validated material calendar change to accept.';
+    return;
+  }
+  const observedAt = inputs.activityPolicyInput.observationInstant;
+  const freshContext = { version: policy.VERSION, owner_id: String(userId), assignment_id: String(active.row.user_plan_id),
+    parent_plan_id: parent.plan_id, parent_plan_revision: parent.plan_revision, parent_canonical_set_hash: parent.content_hash,
+    planning_input_revision: inputs.activitySnapshot.planningInputRevision, activity_fingerprint: inputs.activitySnapshot.fingerprint,
+    evidence_ids: [...new Set([...inputs.activityPolicyInput.canonicalRuns.flatMap(row => row.evidence_ids || []),
+      ...(inputs.injuryState.openInjuries || []).map(row => String(row.id)),
+      `safety:${inputs.activitySnapshot.healthObservationFingerprint}`])].sort(),
+    safety_state_hash: canonicalHash({ health: inputs.healthSignals, injury: inputs.injuryState }),
+    observed_at: observedAt, planning_date: proposal.planningDate, timezone: parent.program_contract.timezone,
+    window_start: proposal.windowStart, window_end: proposal.windowEnd,
+    expires_at: new Date(Date.parse(observedAt) + RACE_PLAN_POLICY_V1.candidate.ttlHours * 3600000).toISOString(),
+    reason_code: inputs.injuryState.active ? 'INJURY_PROTECTION' : inputs.recentRunLoad.protection?.active ? 'RECENT_RUN_PROTECTION' : 'RECOVERY_PROTECTION',
+    affected_session_ids: changes.map(change => change.session_id).sort(),
+    parent_goals_hash: canonicalHash(parent.program_contract.goals),
+    parent_horizon: { start_date: parent.program_contract.start_date, end_date: parent.program_contract.end_date },
+    missed_outcome_fingerprint: inputs.activityPolicyInput.missedOutcomeFingerprint,
+    observation_hash: inputs.activityPolicyInput.observationArtifact.content_hash,
+    recent_run_load_hash: canonicalHash(inputs.recentRunLoad) };
+  if (!policy.validateContext(freshContext)) throw candidateError(409, 'ACTIVITY_CLOCK_REVIEW_REQUIRED', 'Refresh coaching for the current phone-local day. Your plan has not changed.');
+  let context = freshContext;
+  if (observationTicket || authenticatedObservation) {
+    const supplied = authenticatedObservation || tickets.verifyObservation(observationTicket,
+      { ownerId: userId, assignmentId: active.row.user_plan_id });
+    if (!supplied || Date.parse(supplied.expires_at) <= Date.now() || !tickets.sameFreshObservation(supplied, freshContext)) {
+      throw candidateError(409, 'ACTIVITY_OBSERVATION_STALE', 'Activity, safety, or the planning day changed. Refresh coaching; your plan has not changed.');
+    }
+    context = supplied;
+  }
+  const observationArtifact = inputs.activityPolicyInput.observationArtifact;
+  const age = parent.sessions.find(session => session.training_age_class)?.training_age_class
+    || plan.inputSummary?.trainingAgeClass || plan.trainingEvidence?.training_age_class;
+  const result = successor.buildActivityCanonicalSuccessor({ parent, context, changes, observationArtifact, training_age_class: age });
+  const constraints = await loadGoalBackwardPlanningConstraints(database || { all: dbAll }, userId, active.row.training_plan_id || active.row.plan_id);
+  const protection = reconciliation.validateFutureProtection({ parent, successor: result.canonical, observationArtifact,
+    completedIds: inputs.activityPolicyInput.completedIds, planningDate: proposal.planningDate,
+    recentRunLoad: inputs.recentRunLoad, constraints, training_age_class: age });
+  if (!protection.valid) throw candidateError(409, 'ACTIVITY_PROTECTION_REVIEW_REQUIRED',
+    `The proposed adjustment needs review (${protection.reason_codes.join(', ')}). Your accepted plan has not changed.`);
+  proposal.proposedPlan = reconciliation.activityProgramReconciliation(plan, result.canonical, { completedIds: [...completed] });
+  const byId = new Map(result.canonical.sessions.map(session => [session.session_id, session]));
+  proposal.changes = changes.map(change => {
+    const before = originals.get(change.session_id), after = byId.get(change.session_id);
+    return { sessionId: change.session_id, date: before.scheduled_local_date, kind: before.kind,
+      before, after, summary: after.workout_family === 'rest'
+        ? `${before.title} is withheld as recovery, not moved or marked completed.`
+        : `${before.title} becomes ${after.title} with only the retained canonical prescription.` };
+  });
+  proposal.activityContext = context;
+  proposal.observationTicket = tickets.signObservation(context);
+  proposal.programReconciliation = proposal.proposedPlan.programReconciliation;
+  proposal.activityValidation = { version: policy.VERSION, valid: true, observed_activity_count: observationArtifact.canonical_activity_count,
+    strength_withholding_capability: { whole: 'AVAILABLE', public_partial: 'UNAVAILABLE_NO_COMPATIBLE_SET_ONLY_INTENT',
+      partial_primitive_only: true, complete_partial_and_whole_acceptance_claimed: false },
+    observation_hash: observationArtifact.content_hash, comparison_kind: 'FUTURE_PRESCRIPTION_NONINCREASE',
+    observed_activity_bound_separately: true, observed_v3_vector_state: 'NOT_AVAILABLE', absolute_observed_plus_future_v3_budget_claimed: false,
+    physical_material: protection.physical_material,
+    historical_overages: protection.historical_overages, load_non_increase_valid: result.load_reconciliation.valid };
 }
 
 function encodeProposalReason(proposal) {
@@ -1034,6 +1189,9 @@ function encodeProposalReason(proposal) {
     headline: proposal.headline,
     reason: proposal.reason,
     activitySnapshot: proposal.activitySnapshot || null,
+    activityContext: proposal.activityContext || null,
+    activityValidation: proposal.activityValidation || null,
+    programReconciliation: proposal.programReconciliation || null,
     settledPlanVersion: proposal.settledPlanVersion || null,
   });
 }
@@ -1044,7 +1202,9 @@ function decodeProposalReason(raw) {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && (parsed.headline || parsed.reason)) {
       return { headline: parsed.headline || null, reason: parsed.reason || '',
-        activitySnapshot: parsed.activitySnapshot || null, settledPlanVersion: parsed.settledPlanVersion || null };
+        activitySnapshot: parsed.activitySnapshot || null, settledPlanVersion: parsed.settledPlanVersion || null,
+        activityContext: parsed.activityContext || null, activityValidation: parsed.activityValidation || null,
+        programReconciliation: parsed.programReconciliation || null };
     }
   } catch (err) {
     console.error('[plans/adaptation] legacy reason parse skipped:', err.message);
@@ -1076,6 +1236,9 @@ function proposalFromRow(row) {
     triggerRunId: row.trigger_run_id || null,
     episodeKey: row.episode_key || null,
     activitySnapshot: meta.activitySnapshot || null,
+    activityContext: meta.activityContext || null,
+    activityValidation: meta.activityValidation || null,
+    programReconciliation: meta.programReconciliation || null,
     revision: proposalDecisionRevision(row),
   };
 }
@@ -1145,6 +1308,7 @@ function parseAdaptationPreviewDecision(body) {
     'proposal_revision',
     'proposal_plan_version',
     'preview_fingerprint',
+    'observation_ticket',
   ]);
   if (Object.keys(body).some((key) => !allowed.has(key))) return null;
   const planningDate = normalizePlanningDate(body.planning_date);
@@ -1155,7 +1319,9 @@ function parseAdaptationPreviewDecision(body) {
     || !/^[a-f0-9]{32}$/.test(proposalRevision)
     || !/^[a-f0-9]{32}$/.test(proposalPlanVersion)
     || !/^[a-f0-9]{64}$/.test(previewFingerprint)) return null;
-  return { planningDate, proposalRevision, proposalPlanVersion, previewFingerprint };
+  const observationTicket = body.observation_ticket;
+  if (observationTicket !== undefined && (typeof observationTicket !== 'string' || observationTicket.length > 8192)) return null;
+  return { planningDate, proposalRevision, proposalPlanVersion, previewFingerprint, observationTicket };
 }
 
 async function persistPreviewAdaptationProposal(userId, active, planVersion, originalPlan, proposal, tx) {
@@ -1245,7 +1411,8 @@ async function refreshStoredAdaptation(userId, active, parsed, row, tx) {
   const version = planVersionFor(active, parsed, inputs.activitySnapshot);
   if (version !== row.plan_version || !original.activitySnapshot
     || original.activitySnapshot.planningInputRevision !== inputs.activitySnapshot.planningInputRevision) return null;
-  const current = await buildCurrentAdaptationProposal(userId, parsed, active, date, version, tx, { inputs, strictReads: true, ignoreEpisode: true });
+  const current = await buildCurrentAdaptationProposal(userId, parsed, active, date, version, tx,
+    { inputs, strictReads: true, ignoreEpisode: true, authenticatedObservation: original.activityContext });
   if (!current.proposal || current.persisted) return null;
   if (adaptationPreviewBinding(userId, current.proposal).previewFingerprint !== adaptationPreviewBinding(userId, original).previewFingerprint) return null;
   return { proposal: current.proposal, inputs, version };
@@ -5059,6 +5226,45 @@ function buildAdaptationSurfaceSuccessor({
   ]));
   if (!existingSessions.size) throw surfaceReconcileReviewRequired();
 
+  if (proposedPlan.programCanonicalIdentity?.activity_adaptation) {
+    const policy = require('../lib/activityCanonicalSuccessor');
+    const parent = policy.canonicalSetPayload(canonical);
+    // Execution adapters intentionally omit rest. A withheld canonical slot
+    // must remain in this identity-bound inventory, including its receipt.
+    const rawSessions = (proposedPlan.weeks || []).flatMap(week => planSchema.getDayEntries(week)
+      .flatMap(day => Array.isArray(day.sessions) ? day.sessions : []));
+    const sessionRows = new Map(rawSessions.map(session => [session.session_id, session]));
+    const nextSet = { ...clonePlanValue(proposedPlan.programCanonicalIdentity),
+      sessions: proposedPlan.programCanonicalIdentity.session_content_hashes.map(entry => sessionRows.get(entry.session_id)) };
+    if (sessionRows.size !== rawSessions.length || sessionRows.size !== nextSet.sessions.length
+      || !policy.validateActivitySet(nextSet, { authenticatedParent: parent })) {
+      throw surfaceReconcileReviewRequired('ACTIVITY_SUCCESSOR_PARENT_BINDING_INVALID');
+    }
+    const nextValidity = require('../lib/canonicalWorkout').validateCanonicalSessionSet(nextSet);
+    if (!nextValidity.valid) throw surfaceReconcileReviewRequired(nextValidity.reason_codes?.[0] || 'ACTIVITY_SUCCESSOR_CANONICAL_INVALID');
+    if (!require('../lib/activityProgramReconciliation').validateActivityProgramReconciliation(proposedPlan, nextSet)) {
+      throw surfaceReconcileReviewRequired('ACTIVITY_RECONCILIATION_INVALID');
+    }
+    if (nextSet.activity_adaptation.context.owner_id !== String(canonicalArtifact.user_id)
+      || nextSet.activity_adaptation.context.assignment_id !== String(activeRow.user_plan_id)
+      || nextSet.plan_revision !== nextRevision) throw surfaceReconcileReviewRequired('ACTIVITY_SUCCESSOR_OWNER_REVISION_INVALID');
+    const nextPayload = { ...nextSet, plan_generation_candidate_ref: canonical.plan_generation_candidate_ref,
+      selected_candidate_id: nextSet.candidate_id, selected_candidate_hash: nextSet.candidate_hash };
+    const nextManifest = { ...clonePlanValue(manifest), identity: { ...clonePlanValue(manifest.identity),
+      plan_revision: nextRevision, canonical_session_set_hash: nextSet.content_hash, candidate_hash: nextSet.candidate_hash },
+      sessions: nextSet.sessions, program_reconciliation: proposedPlan.programReconciliation,
+      activity_authority_hash: nextSet.activity_adaptation.receipt_hash };
+    const nextCanonicalArtifact = buildPipelineArtifact({ userId: canonicalArtifact.user_id, kind: 'canonical_session_set',
+      decisionId: canonicalArtifact.decision_id, parentArtifactId: canonicalArtifact.parent_artifact_id,
+      planGenerationCandidateId: canonicalArtifact.plan_generation_candidate_id, schemaVersion: canonicalArtifact.schema_version,
+      policyVersion: canonicalArtifact.policy_version, revision: Number(canonicalArtifact.revision) + 1, createdAt, payload: nextPayload });
+    const nextSurfaceArtifact = buildPipelineArtifact({ userId: surfaceArtifact.user_id, kind: 'surface_manifest',
+      decisionId: surfaceArtifact.decision_id, parentArtifactId: nextCanonicalArtifact.id,
+      planGenerationCandidateId: surfaceArtifact.plan_generation_candidate_id, schemaVersion: surfaceArtifact.schema_version,
+      policyVersion: surfaceArtifact.policy_version, revision: Number(surfaceArtifact.revision) + 1, createdAt, payload: nextManifest });
+    return { plan: clonePlanValue(proposedPlan), canonicalArtifact: nextCanonicalArtifact, surfaceArtifact: nextSurfaceArtifact };
+  }
+
   const nextPlan = clonePlanValue(proposedPlan);
   const nextSessions = planCanonicalSessions(nextPlan).map(({ session, sessionId, date }) => {
     const previous = existingSessions.get(sessionId);
@@ -5189,14 +5395,15 @@ async function updateAcceptedAdaptationPlan(active, userId, proposedPlan, tx) {
     tx,
     artifacts: [successor.canonicalArtifact, successor.surfaceArtifact],
   });
-  if (persisted.inserted !== 2
-    || surfaceManifestAppliedPlanDiagnostic(
+  const successorDiagnostic = surfaceManifestAppliedPlanDiagnostic(
       successor.surfaceArtifact.payload_json,
       candidate,
       active.row,
       successor.canonicalArtifact.payload_json,
-    ).status_code !== 'ACCEPTED') {
-    throw surfaceReconcileReviewRequired();
+    );
+  if (persisted.inserted !== 2 || successorDiagnostic.status_code !== 'ACCEPTED') {
+    throw surfaceReconcileReviewRequired(persisted.inserted !== 2
+      ? 'ACTIVITY_SUCCESSOR_ARTIFACT_WRITE_FAILED' : successorDiagnostic.first_failed_predicate);
   }
   return { surfaceRebound: true };
 }
@@ -5246,6 +5453,10 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
     || canonicalSessionSet?.program_storage_version === 'materialized-program-storage-v1';
   const candidateRefMatches = value => Boolean(candidate.id)
     && diagnosticHash(value) === diagnosticHash(prefixedHash(candidate.id));
+  const activityLineage = canonicalSessionSet?.activity_adaptation;
+  const activityRootHash = activityLineage
+    ? require('../lib/activityCanonicalSuccessor').rootCandidateHash(
+      require('../lib/activityCanonicalSuccessor').canonicalSetPayload(canonicalSessionSet)) : null;
   const predicateEntries = [
     ['SURFACE_ARTIFACT_PRESENT', Boolean(manifest && typeof manifest === 'object' && !Array.isArray(manifest))],
     ['CANDIDATE_BINDING_PRESENT', Boolean(candidate.id)],
@@ -5267,7 +5478,12 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
     ['SURFACE_REVISION_MATCH', Number(manifest?.surface_revision) === Number(candidate.surface_revision)],
     ['CANDIDATE_REVISION_MATCH', Number(identity?.candidate_revision) === Number(candidate.candidate_revision)],
     ['CANDIDATE_DECISION_MATCH', String(identity?.decision_id || '') === String(candidate.decision_id || '')],
-    ['CANDIDATE_CONTENT_HASH_MATCH', hashIdentity(identity?.candidate_hash) === hashIdentity(candidate.selected_candidate_hash)],
+    ['CANDIDATE_CONTENT_HASH_MATCH', hashIdentity(activityLineage ? activityRootHash : identity?.candidate_hash) === hashIdentity(candidate.selected_candidate_hash)],
+    ['ACTIVITY_OWNER_LINEAGE_MATCH', !activityLineage || Boolean(activityRootHash)
+      && activityLineage.context.owner_id === String(candidate.user_id)
+      && activityLineage.context.assignment_id === String(activeRow?.user_plan_id)],
+    ['ACTIVITY_PROGRAM_RECONCILIATION_MATCH', !activityLineage || require('../lib/activityProgramReconciliation')
+      .validateActivityProgramReconciliation(activePlan, require('../lib/activityCanonicalSuccessor').canonicalSetPayload(canonicalSessionSet))],
     ['ATHLETE_STATE_REVISION_MATCH', Number(identity?.athlete_state_revision) === Number(candidate.athlete_state_revision)],
     ['SAFETY_STATE_HASH_MATCH', String(identity?.safety_state_hash || '') === String(candidate.safety_state_hash || '')],
     ['GOAL_BINDING_MATCH', prefixedHash(identity?.goal_revisions || {}) === prefixedHash(candidateGoalRevisions)],
@@ -5424,7 +5640,7 @@ async function canonicalSurfaceManifestForActive(userId, activeRow, query = dbGe
     || !activePlan.canonical_session_set_hash
     || !activePlan.selected_candidate_hash) return null;
   const candidate = await query(
-    `SELECT id, status, decision_id, candidate_revision, athlete_state_revision, safety_state_hash,
+    `SELECT id, user_id, status, decision_id, candidate_revision, athlete_state_revision, safety_state_hash,
             goal_revisions_json, surface_revision, feature_mode, selected_candidate_hash,
             applied_training_plan_id, applied_user_plan_id
      FROM plan_generation_candidates
@@ -5450,6 +5666,10 @@ async function canonicalSurfaceManifestForActive(userId, activeRow, query = dbGe
   );
   const payload = parseJsonValue(artifact?.payload_json, null);
   const canonicalSessionSet = parseJsonValue(artifact?.canonical_payload_json, null);
+  if (canonicalSessionSet?.activity_adaptation) {
+    const diagnostic = surfaceManifestAppliedPlanDiagnostic(payload, candidate, activeRow, canonicalSessionSet);
+    if (diagnostic.status_code !== 'ACCEPTED') console.warn('[plans/activity-surface] validation failed:', diagnostic.first_failed_predicate);
+  }
   const manifest = surfaceManifestMatchesAppliedPlan(payload, candidate, activeRow, canonicalSessionSet)
     ? payload
     : surfaceMismatchManifest(candidate, payload);
@@ -5478,10 +5698,11 @@ async function canonicalSurfaceResponseField(userId, activeRow, query = dbGet) {
 
 const SURFACE_RECONCILE_REVIEW_MESSAGE = 'This plan needs a reviewed rebuild before workouts can start.';
 
-function surfaceReconcileReviewRequired() {
+function surfaceReconcileReviewRequired(reasonCode = 'SURFACE_IDENTITY_INVALID') {
   const error = new Error(SURFACE_RECONCILE_REVIEW_MESSAGE);
   error.code = 'SURFACE_RECONCILE_REVIEW_REQUIRED';
   error.status = 409;
+  error.reasonCode = reasonCode;
   return error;
 }
 
@@ -7273,7 +7494,7 @@ router.get('/adaptive/recommend', auth, async (req, res) => {
 
 function publicProposal(proposal) {
   if (!proposal) return null;
-  const { proposedPlan, plan, ...rest } = proposal;
+  const { proposedPlan, plan, activityContext, ...rest } = proposal;
   return rest;
 }
 
@@ -7352,7 +7573,7 @@ async function missedSessionOptions(userId, clock, database = null, activeInput 
   const assessment = activityAssessment({ athleteId: userId, runs, corrections, planningDateLocal: clock.planningDateLocal,
     timezone: clock.planningTimezone || plan?.programContract?.timezone || 'UTC' });
   const runEvidence = new Map(runCompletionEvidence(rows.filter(item => item.kind === 'run'), assessment,
-    [...completed], { planId }).map(item => [item.sessionId, item]));
+    [...completed], { planId, acceptedPlan: plan }).map(item => [item.sessionId, item]));
   const sessions = rows.map(item => {
     const session = item.session;
     const record = progress.missedSessionOutcomes?.[missedSessionOutcome.outcomeKey(item.date, item.sessionId)] || null;
@@ -7491,7 +7712,19 @@ async function hybridCompletionEvidence(userId, startISO, endISO, timezone, db =
   };
 }
 
+function canonicalHybridOutcomeBinding(userId, active, plan, candidate, inputs, timezone) {
+  if (timezone !== plan.programContract?.timezone) throw candidateError(409, 'HYBRID_OUTCOME_STALE', 'Refresh the session in the accepted calendar timezone.');
+  return { version: 'canonical-hybrid-outcome-v1', owner_id: String(userId), assignment_id: active.row.user_plan_id,
+    plan_id: active.row.plan_id, plan_revision: plan.plan_revision,
+    canonical_set_hash: plan.programCanonicalIdentity.content_hash,
+    session_id: candidate.liftSessionId, scheduled_local_date: candidate.date,
+    session_content_hash: candidate.lift.content_hash, timezone,
+    planning_input_revision: inputs.activitySnapshot.planningInputRevision,
+    activity_fingerprint: inputs.activitySnapshot.fingerprint };
+}
+
 router.get('/reconciliation/current', auth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const planningDateISO = getPlanningDateFromRequest(req);
     const localHour = Number(req.query?.hour ?? new Date().getHours());
@@ -7513,17 +7746,26 @@ router.get('/reconciliation/current', auth, async (req, res) => {
 
     const progress = parseJsonValue(active.row.progress_json, {});
     const startISO = hybridReconciliation.addDays(planningDateISO, -hybridReconciliation.LOOKBACK_DAYS);
-    const evidence = await hybridCompletionEvidence(req.user.id, startISO, planningDateISO, timezone);
+    const canonicalInputs = parsed.programCanonicalIdentity ? await buildAdaptationInputs(req.user.id, parsed, active,
+      planningDateISO, { strictReads: true }) : null;
+    const evidence = canonicalInputs ? { runDates: [], liftDates: [] }
+      : await hybridCompletionEvidence(req.user.id, startISO, planningDateISO, timezone);
     const visiblePlan = planWithoutRemovedSessions(parsed, progress, active.row);
     const reconciliation = hybridReconciliation.buildCurrentPrompt({
       plan: visiblePlan,
       planningDateISO,
       localHour,
-      completedSessionIds: completedSessionIdsFromProgress(progress),
+      completedSessionIds: canonicalInputs?.activityPolicyInput.completedIds || completedSessionIdsFromProgress(progress),
       reconciliations: progress.hybridSessionReconciliations,
       runDates: evidence.runDates,
       liftDates: evidence.liftDates,
     });
+
+    if (reconciliation && canonicalInputs) {
+      const candidate = hybridReconciliation.findCandidate(visiblePlan, reconciliation.sessionDate, reconciliation.liftSessionId);
+      reconciliation.outcomeBinding = canonicalHybridOutcomeBinding(req.user.id, active, parsed, candidate, canonicalInputs, timezone);
+      reconciliation.orderGuidance = 'The paired run has qualified completion evidence. The strength outcome is unconfirmed; no make-up workout is assumed.';
+    }
 
     res.json({
       reconciliation: reconciliation ? {
@@ -7532,6 +7774,7 @@ router.get('/reconciliation/current', auth, async (req, res) => {
       } : null,
     });
   } catch (err) {
+    if (err.status === 409) return res.status(409).json({ error: err.message, code: err.code, refresh_required: true });
     console.error('[plans/reconciliation/current] failed:', err.message);
     res.status(500).json({ error: 'Failed to check the hybrid session' });
   }
@@ -7554,10 +7797,14 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
     if (!isIanaTimezone(timezone)) return res.status(400).json({ error: 'Invalid timezone' });
 
     const result = await withPlanningInputMutation(req.user.id, async (tx) => {
-      const active = await getAssignedPlanForMutation(req.user.id, tx, {
+      let active = await getAssignedPlanForMutation(req.user.id, tx, {
         planningDateLocal: planningDateISO,
+        normalizePersistedIdentities: false,
       });
       if (!active) return planningInputUnchanged({ notFound: true });
+      if (!parsePlan(active.row)?.programCanonicalIdentity) {
+        active = await getAssignedPlanForMutation(req.user.id, tx, { planningDateLocal: planningDateISO });
+      }
       const row = active.row;
       const parsed = parsePlan(row);
       if (!parsed || !planSchema.isSchemaV2(parsed)) {
@@ -7566,7 +7813,7 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
       const progress = parseJsonValue(row.progress_json, {});
       const visiblePlan = planWithoutRemovedSessions(parsed, progress, row);
       const candidates = hybridReconciliation.hybridCandidates(visiblePlan, sessionDate, planningDateISO);
-      const candidate = candidates.find((item) => item.liftSessionId === liftSessionId) || null;
+      const candidate = candidates.find((item) => item.liftSessionId === liftSessionId && item.date === sessionDate) || null;
       if (!candidate) {
         return planningInputUnchanged({ conflict: 'The planned hybrid session changed. Refresh Today and try again.' });
       }
@@ -7575,12 +7822,18 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         : {};
       const key = hybridReconciliation.reconciliationKey(sessionDate, liftSessionId);
       const existing = records[key];
+      const canonicalOutcome = Boolean(parsed.programCanonicalIdentity);
+      if (canonicalOutcome && (!body.outcome_binding
+        || existing?.outcomeBinding && canonicalHash(body.outcome_binding) !== canonicalHash(existing.outcomeBinding))) {
+        return planningInputUnchanged({ conflict: 'Refresh this exact session before recording its outcome.', code: 'HYBRID_OUTCOME_STALE' });
+      }
       if (existing && existing.response === response && (existing.response !== 'later' || existing.respondedDate === planningDateISO)) {
         return planningInputUnchanged({
           ok: true,
           idempotent: true,
           message: existing.message || 'That hybrid session is already reconciled.',
           adjustment: existing.adjustment || null,
+          ...(canonicalOutcome ? { outcome: 'recorded', plan_changed: false, record: existing } : {}),
           pattern: hybridReconciliation.patternSummary(records, planningDateISO),
         });
       }
@@ -7588,8 +7841,17 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         return planningInputUnchanged({ conflict: 'That hybrid session has already been reconciled.' });
       }
 
-      const completed = new Set(completedSessionIdsFromProgress(progress));
-      const evidence = await hybridCompletionEvidence(req.user.id, sessionDate, planningDateISO, timezone, tx);
+      if (canonicalOutcome) await loadActivityCanonicalParent(req.user.id, active, tx);
+      const canonicalInputs = canonicalOutcome ? await buildAdaptationInputs(req.user.id, parsed, active,
+        planningDateISO, { database: tx, strictReads: true }) : null;
+      const outcomeBinding = canonicalInputs ? canonicalHybridOutcomeBinding(req.user.id, active, parsed, candidate, canonicalInputs, timezone) : null;
+      if (outcomeBinding && canonicalHash(body.outcome_binding) !== canonicalHash(outcomeBinding)) {
+        return planningInputUnchanged({ conflict: 'Your activity or accepted calendar changed. Refresh before choosing.', code: 'HYBRID_OUTCOME_STALE' });
+      }
+      const completed = new Set(canonicalInputs?.activityPolicyInput.completedIds || completedSessionIdsFromProgress(progress));
+      const storedCompleted = new Set(completedSessionIdsFromProgress(progress));
+      const evidence = canonicalInputs ? { runDates: [], liftDates: [] }
+        : await hybridCompletionEvidence(req.user.id, sessionDate, planningDateISO, timezone, tx);
       const liftAllocation = hybridReconciliation.allocateSessionEvidence({
         sessions: candidates.map((item) => ({
           key: item.key,
@@ -7614,10 +7876,13 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
       let adjustment = null;
       let message = '';
       if (response === 'completed_untracked') {
-        completed.add(liftSessionId);
+        storedCompleted.add(liftSessionId);
         message = 'Strength session marked complete without inventing workout metrics.';
       } else if (response === 'later') {
         message = 'Got it. We will check again tomorrow only if the strength session is still missing.';
+      } else if (canonicalOutcome) {
+        adjustment = { adjusted: false, reason: 'VALIDATED_ADAPTATION_REVIEW_REQUIRED' };
+        message = 'Recorded. Your prescribed calendar has not changed. Review current coaching for a validated recovery option; no make-up session was added.';
       } else {
         const moved = hybridReconciliation.moveLiftToNextAvailableRestDay(parsed, candidate, planningDateISO);
         if (moved.adjusted) {
@@ -7639,36 +7904,46 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         respondedDate: planningDateISO,
         adjustment,
         message,
+        ...(outcomeBinding ? { outcomeBinding, ownerId: req.user.id, assignmentId: row.user_plan_id } : {}),
       };
       const update = await tx.run(
         'UPDATE user_plans SET progress_json=? WHERE id=? AND user_id=?',
         [JSON.stringify({
           ...progress,
-          completedSessionIds: Array.from(completed),
+          completedSessionIds: Array.from(storedCompleted),
           hybridSessionReconciliations: records,
         }), row.user_plan_id, req.user.id]
       );
       if (update.changes === 0) throw new Error('Hybrid reconciliation progress update failed');
+      if (canonicalOutcome) {
+        const readback = await tx.get('SELECT progress_json FROM user_plans WHERE id=? AND user_id=?', [row.user_plan_id, req.user.id]);
+        if (canonicalHash(parseJsonValue(readback?.progress_json, {})?.hybridSessionReconciliations?.[key]) !== canonicalHash(records[key])) {
+          throw new Error('Hybrid outcome readback mismatch');
+        }
+      }
 
       return {
         ok: true,
         message,
         adjustment,
+        ...(canonicalOutcome ? { outcome: 'recorded', plan_changed: false, record: records[key] } : {}),
         pattern: hybridReconciliation.patternSummary(records, planningDateISO),
       };
     });
 
     if (result.notFound) return res.status(404).json({ error: 'No active plan is assigned.' });
-    if (result.conflict) return res.status(409).json({ error: result.conflict });
+    if (result.conflict) return res.status(409).json({ error: result.conflict, code: result.code, refresh_required: true });
     if (result.alreadyComplete) return res.json({ ok: true, message: 'The strength session is already recorded.', alreadyComplete: true });
     res.json(result);
   } catch (err) {
+    if (err.status === 409) return res.status(409).json({ error: err.message, code: err.code, refresh_required: true, plan_changed: false });
     console.error('[plans/reconciliation/respond] failed:', err.message);
     res.status(500).json({ error: 'Failed to reconcile the hybrid session' });
   }
 });
 
 router.get('/adaptation/current', auth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const planningDateISO = getPlanningDateFromRequest(req);
     if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
@@ -7724,6 +7999,7 @@ router.get('/adaptation/current', auth, async (req, res) => {
 });
 
 router.get('/adaptation/run/:runId', auth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const runId = String(req.params.runId || '').trim();
     if (!runId || runId.length > 128) return res.status(400).json({ error: 'runId is invalid' });
@@ -7812,9 +8088,15 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
       proposal.headline = 'Plan stays as written';
       proposal.reason = 'This run is included in your training load and does not require changing the next 72 hours.';
     }
+    if (parsed.programCanonicalIdentity && proposal.changes?.length) {
+      await materializeActivityAdaptationProposal({ userId: req.user.id, plan: parsed, active, proposal, inputs });
+      // This endpoint explains the viewed run. Decisions still originate from
+      // the fresh current-calendar preview, not a cached per-run ticket.
+    }
     res.json({
       impact: publicProposal({
         ...proposal,
+        observationTicket: undefined,
         id: null,
         decisionStatus: 'preview',
         triggerRunId: run.id,
@@ -7823,6 +8105,7 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
       }),
     });
   } catch (err) {
+    if (err.status === 409) return res.status(409).json({ error: err.message, code: err.code, outcome: 'review', plan_changed: false });
     console.error('[plans/adaptation/run] failed:', err.message);
     res.status(500).json({ error: 'Failed to compute this run\'s plan impact' });
   }
@@ -7856,6 +8139,23 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
       const parsed = canonicalAdaptationPlan(active);
       if (!parsed || !planSchema.isSchemaV2(parsed)) {
         return stale('The active plan no longer supports this adjustment.');
+      }
+
+      if (decision === 'accept') {
+        const prior = await findLatestAdaptation(ownerId, previewRequest.planningDate, previewRequest.proposalPlanVersion, tx);
+        if (prior?.status === 'accepted') {
+          const priorProposal = { ...proposalFromRow(prior), proposedPlan: parseJsonValue(prior.proposed_json, null) };
+          const binding = adaptationPreviewBinding(ownerId, priorProposal);
+          const signed = priorProposal.activityContext && require('../lib/activityObservationTicket').verifyObservation(
+            previewRequest.observationTicket, { ownerId, assignmentId: active.row.user_plan_id });
+          if (binding && secureAdaptationTokenEqual(binding.revision, previewRequest.proposalRevision, 32)
+            && secureAdaptationTokenEqual(binding.previewFingerprint, previewRequest.previewFingerprint, 64)
+            && signed && canonicalHash(signed) === canonicalHash(priorProposal.activityContext)
+            && parsed.canonical_session_set_hash === priorProposal.proposedPlan?.canonical_session_set_hash) {
+            return planningInputUnchanged({ status: 'accepted', proposal: priorProposal, idempotent: true });
+          }
+          return stale('This decision was already applied or a later decision replaced it.', 'ADAPTATION_REPLAYED');
+        }
       }
 
       const inputs = await buildAdaptationInputs(ownerId, parsed, active, previewRequest.planningDate,
@@ -7892,7 +8192,7 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
         previewRequest.planningDate,
         planVersion,
         tx,
-        { strictReads: true, inputs }
+        { strictReads: true, inputs, observationTicket: previewRequest.observationTicket }
       );
       if (computed.persisted) {
         return stale('A current proposal already exists. Refresh before choosing.', 'ADAPTATION_PROPOSAL_CHANGED');
@@ -7965,13 +8265,14 @@ router.post('/adaptation/preview/:decision', auth, async (req, res) => {
       ok: true,
       status: result.status,
       proposal: publicProposal(result.proposal),
-      idempotent: false,
+      idempotent: result.idempotent === true,
     });
   } catch (err) {
     if (err?.code === 'AUTH_ACCOUNT_DELETED') {
       return res.status(401).json({ error: 'Authenticated owner is unavailable' });
     }
     if (err?.code === 'SURFACE_RECONCILE_REVIEW_REQUIRED') {
+      console.warn('[plans/adaptation/preview-decision] surface validation failed:', err.reasonCode);
       return res.status(409).json({
         error: SURFACE_RECONCILE_REVIEW_MESSAGE,
         code: err.code,
@@ -9145,10 +9446,18 @@ router.post('/reschedule-missed', auth, async (req, res) => {
     }
 
     const mutation = await withPlanningInputMutation(req.user.id, async (tx) => {
-      const active = await getActivePlanForMutation(req.user.id, tx, { planningDateLocal: planningDateISO });
+      let active = await getActivePlanForMutation(req.user.id, tx, { planningDateLocal: planningDateISO, normalizePersistedIdentities: false });
       if (!active) return planningInputUnchanged({ status: 404, error: 'No plan found' });
 
-      const parsed = parsePlan(active.row);
+      let parsed = parsePlan(active.row);
+      if (parsed?.programCanonicalIdentity || parsed?.canonical_workout_schema_version === 1) {
+        return planningInputUnchanged({ status: 409, code: 'MISSED_MOVE_REQUIRES_REVIEW', outcome: 'no_change', plan_changed: false,
+          error: 'No workout was moved. Record the missed session and review current coaching; a move must pass fresh activity, recovery, and full-calendar checks first.' });
+      }
+      // Preserve the existing legacy identity-backfill contract only after the
+      // canonical no-move branch has returned without any persistence change.
+      active = await getActivePlanForMutation(req.user.id, tx, { planningDateLocal: planningDateISO });
+      parsed = parsePlan(active.row);
       const progress = parseJsonValue(active.row.progress_json, {});
       const visiblePlan = planWithoutRemovedSessions(parsed, progress, active.row);
       const weekIndex = Math.max(0, Number(active.row.current_week || 1) - 1);
@@ -9210,7 +9519,8 @@ router.post('/reschedule-missed', auth, async (req, res) => {
       };
     });
 
-    if (mutation.error) return res.status(mutation.status || 409).json({ error: mutation.error });
+    if (mutation.error) return res.status(mutation.status || 409).json({ error: mutation.error,
+      ...(mutation.code ? { code: mutation.code, outcome: mutation.outcome, plan_changed: mutation.plan_changed } : {}) });
     res.json(mutation);
   } catch (err) {
     console.error('[plans/reschedule-missed] failed:', err.message);
@@ -9498,6 +9808,7 @@ router.clearActivePlanForUser = clearActivePlanForUser;
 
 router._test = {
   buildAdaptationInputs,
+  buildCurrentAdaptationProposal,
   buildCompletionSummaryForAdaptation,
   adaptationEpisodeDisposition,
   applicableGoalBackwardPlan,

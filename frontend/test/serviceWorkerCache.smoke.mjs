@@ -182,6 +182,17 @@ async function runServiceWorkerCacheSmoke() {
   await dispatchFetch(unpartitionedApi, '/api/users/settings', { headers: { Authorization: 'Bearer user-a' } })
   assert.equal(unpartitionedApi.puts.length, 0, 'API responses without Authorization variance are never cached')
 
+  for (const pathname of ['/api/plans/adaptation/current', '/api/plans/adaptation/run/run-1', '/api/plans/missed-sessions', '/api/plans/reconciliation/current']) {
+    const freshDecision = buildWorkerHarness()
+    freshDecision.setResponse(new Response('{"proposal":"fresh-only"}', { status: 200,
+      headers: { 'content-type': 'application/json', vary: 'Authorization' } }))
+    let intercepted = false
+    freshDecision.listeners.get('fetch')({ request: new Request(`https://forge.test${pathname}`),
+      respondWith() { intercepted = true } })
+    assert.equal(intercepted, false, 'Fresh decisions use the browser network directly, with no offline fallback')
+    assert.equal(freshDecision.puts.length, 0, 'Signed observation and eligibility responses never enter the offline cache')
+  }
+
   for (const pathname of [
     '/api/races/race-1/removal-preview',
     '/api/races/race-1/removal-apply',
@@ -191,6 +202,7 @@ async function runServiceWorkerCacheSmoke() {
     '/api/plans/adaptation/proposal-1/keep',
     '/api/runs/missed',
     '/api/plans/reschedule-missed',
+    '/api/plans/reconciliation/respond',
   ]) {
     const replayUnsafeMutation = buildWorkerHarness()
     replayUnsafeMutation.setFetchError(new Error('offline'))

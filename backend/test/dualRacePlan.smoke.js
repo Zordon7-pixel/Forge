@@ -1595,6 +1595,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       return race && race.user_id === params[1] ? { ...race } : null;
     }
     if ((sql.includes('SELECT id, decision_id, candidate_revision')
+      || sql.includes('SELECT id, user_id, status, decision_id, candidate_revision')
       || sql.includes('SELECT id, status, decision_id, candidate_revision'))
       && sql.includes('FROM plan_generation_candidates')
       && sql.includes('applied_user_plan_id=?')

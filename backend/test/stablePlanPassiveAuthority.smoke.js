@@ -1111,6 +1111,7 @@ async function previewAdaptationDecisionsAreAtomic() {
       response: {
         status(code) { state.statusCode = code; return this; },
         json(value) { state.payload = value; return this; },
+        set() { return this; },
       },
     };
   };
