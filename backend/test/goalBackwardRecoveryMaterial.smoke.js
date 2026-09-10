@@ -1331,6 +1331,21 @@ test('C3-MAT-09', 'support enumeration uses the first whole-metre dose outside e
   assert.equal(minimumRunningDoseWithoutMaterialReduction([null, undefined, 0]), null);
   assert.equal(minimumRunningDoseWithoutMaterialReduction(['25267', [25267], true]), null);
   assert.equal(minimumRunningDoseWithoutMaterialReduction('25267'), null);
+  const baseline = 38624;
+  const evaluateMeters = (candidate, base = baseline) => {
+    const input = materialInput({ candidateMiles: candidate / 1609.344, recentNormalMiles: base / 1609.344 });
+    input.candidate.sessions[0].distance_m = candidate;
+    input.recent_normal_running.median_distance_m = base;
+    return evaluateMaterialDose(input);
+  };
+  assert.equal(minimumRunningDoseWithoutMaterialReduction([baseline]), 34762);
+  assert.equal(evaluateMeters(34762).valid, true, 'Rounded display -10.00% cannot reject an actual reduction below10%');
+  assert.equal(evaluateMeters(baseline * 0.9).valid, false, 'Exact10% reduction stays inclusive');
+  assert.equal(evaluateMeters(34761).valid, false);
+  assert.equal(evaluateMeters(34763).valid, true);
+  assert.equal(evaluateMeters(9000, 10000).valid, true, '10% alone is not material without the existing two-mile absolute reduction');
+  assert.equal(evaluateMeters(30000 - 3218.688, 30000).valid, false, 'Exact absolute boundary remains inclusive when percentage also exceeds10%');
+  assert.equal(evaluateMeters(30000 - 3218.687, 30000).valid, true);
 });
 
 test('C3-MAT-10', 'persisted running distances require primitive finite nonnegative authority', () => {

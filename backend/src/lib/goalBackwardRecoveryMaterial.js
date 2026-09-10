@@ -1200,6 +1200,7 @@ function comparatorReceipt(source, baselineRunning, options = {}) {
   const candidateRunning = options.candidateRunning;
   const deltaMeters = round(candidateRunning - baselineRunning, 3);
   const deltaPercentage = baselineRunning > 0 ? round((deltaMeters / baselineRunning) * 100, 2) : null;
+  const exactDeltaFraction = baselineRunning > 0 ? (candidateRunning - baselineRunning) / baselineRunning : null;
   const policy = GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running;
   return {
     source,
@@ -1208,7 +1209,7 @@ function comparatorReceipt(source, baselineRunning, options = {}) {
     delta_m: deltaMeters,
     delta_percentage: deltaPercentage,
     material_reduction: deltaMeters <= -policy.absolute_m
-      && deltaPercentage !== null && deltaPercentage <= -(policy.percentage * 100),
+      && exactDeltaFraction !== null && exactDeltaFraction <= -policy.percentage,
     baseline_plan_revision: options.baselinePlanRevision ?? null,
     evidence_refs: evidenceRefs(options.evidenceIds),
   };
