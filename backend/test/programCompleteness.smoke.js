@@ -143,12 +143,15 @@ for (const week of longest.accepted.weeks.filter(week => !['taper','race'].inclu
 const longestSet = longest.result.selected_candidate.canonical_session_set;
 const expansionCarry = require('../src/routes/plans')._test.goalBackwardGoalExpansionCarryForwardMaterial;
 const expansionState = { request: {}, races: [{ id: longest.accepted.goals[0].raceId }, { id: 'synthetic-added-race' }] };
-assert.throws(() => expansionCarry('synthetic-artifact-owner', expansionState, longest.accepted, null, ['2026-09-07']),
+// The production reader receives a stored JSON value, not the constructor's
+// shared in-memory object graph. Keep the own-data parser's alias rejection.
+const persistedLongest = JSON.parse(JSON.stringify(longest.accepted));
+assert.throws(() => expansionCarry('synthetic-artifact-owner', expansionState, persistedLongest, null, ['2026-09-07']),
   error => error.code === 'GOAL_EXPANSION_CARRY_FORWARD_SOURCE_INVALID' && /OWN_DATA_SNAPSHOT_INVALID/.test(error.message),
   'Maximum program passes outer bounded snapshot and still requires actual authenticated stored source');
 for (const mutate of [plan => { plan.programContract.version = 'spoof'; },
   plan => { plan.padding = 'x'.repeat(4194304); }]) {
-  const invalid = structuredClone(longest.accepted); mutate(invalid);
+  const invalid = structuredClone(persistedLongest); mutate(invalid);
   assert.throws(() => expansionCarry('synthetic-artifact-owner', expansionState, invalid, null, ['2026-09-07']),
     error => error.code === 'GOAL_EXPANSION_CARRY_FORWARD_SOURCE_INVALID' && /PLAN_SNAPSHOT_INVALID/.test(error.message),
     'Actual outer expansion reader rejects non-versioned or oversized material instead of widening legacy limits');
