@@ -146,6 +146,11 @@ const expansionState = { request: {}, races: [{ id: longest.accepted.goals[0].ra
 // The production reader receives a stored JSON value, not the constructor's
 // shared in-memory object graph. Keep the own-data parser's alias rejection.
 const persistedLongest = JSON.parse(JSON.stringify(longest.accepted));
+const sharedGraph = structuredClone(persistedLongest);
+sharedGraph.shared_alias = sharedGraph.programContract;
+assert.throws(() => expansionCarry('synthetic-artifact-owner', expansionState, sharedGraph, null, ['2026-09-07']),
+  error => error.code === 'GOAL_EXPANSION_CARRY_FORWARD_SOURCE_INVALID' && /PLAN_SNAPSHOT_INVALID/.test(error.message),
+  'Stored JSON cannot contain shared graph aliases; the outer parser remains fail-closed');
 assert.throws(() => expansionCarry('synthetic-artifact-owner', expansionState, persistedLongest, null, ['2026-09-07']),
   error => error.code === 'GOAL_EXPANSION_CARRY_FORWARD_SOURCE_INVALID' && /OWN_DATA_SNAPSHOT_INVALID/.test(error.message),
   'Maximum program passes outer bounded snapshot and still requires actual authenticated stored source');
