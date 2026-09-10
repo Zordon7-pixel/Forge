@@ -363,6 +363,7 @@ source = source.replace(marker, `
       assert.equal(require('../src/lib/canonicalWorkout').validateCanonicalSessionSet(actualSet).valid,true);
       assert.ok(actualSet.sessions.some(session=>session.workout_family==='rest' && session.activity_reduction));
       const nextGet = await request('GET','/plans/adaptation/current?date=2026-09-10');
+      assert.equal(nextGet.status,200,JSON.stringify(nextGet.data));
       assert.equal(nextGet.data.proposal,null,'Accepted unchanged evidence must not immediately reprompt');
       const receiptPath = '/tmp/'+databaseName+'-activity-accepted-program.json';
       require('node:fs').writeFileSync(receiptPath,JSON.stringify({parent:current.data,
@@ -382,9 +383,10 @@ source = source.replace(marker, `
       assert.equal(secondPreview.status,200,JSON.stringify(secondPreview.data));
       const second = secondPreview.data.proposal;
       assert.ok(second?.activityValidation?.valid,JSON.stringify(secondPreview.data));
-      const secondAccepted = await request('POST','/plans/adaptation/preview/accept',{planning_date:second.planningDate,
+      const secondChoice = {planning_date:second.planningDate,
         proposal_revision:second.revision,proposal_plan_version:second.planVersion,preview_fingerprint:second.previewFingerprint,
-        observation_ticket:second.observationTicket});
+        observation_ticket:second.observationTicket};
+      const secondAccepted = await request('POST','/plans/adaptation/preview/accept',secondChoice);
       assert.equal(secondAccepted.status,200,JSON.stringify(secondAccepted.data));
       const secondCurrent = await request('GET','/plans/current'), secondToday = await request('GET','/plans/today?date=2026-09-12');
       assert.equal(secondCurrent.status,200,JSON.stringify(secondCurrent.data));
@@ -394,6 +396,20 @@ source = source.replace(marker, `
       assert.equal(secondCurrent.data.surface_manifest.status,'accepted');
       assert.equal(secondCurrent.data.plan.plan_data.plan_revision,adapted.plan_revision+1);
       assert.equal(secondCurrent.data.plan.plan_data.weeks.length,adapted.weeks.length);
+      assert.deepEqual(secondCurrent.data.plan.plan_data.programContract,adapted.programContract);
+      assert.equal(require('../src/lib/canonicalWorkout').validateCanonicalSessionSet({
+        ...secondCurrent.data.plan.plan_data.programCanonicalIdentity,sessions:secondCurrent.data.surface_manifest.sessions}).valid,true);
+      const secondOnce=JSON.stringify(await acceptedBytes());
+      const secondReplay=await request('POST','/plans/adaptation/preview/accept',secondChoice);
+      assert.equal(secondReplay.status,200,JSON.stringify(secondReplay.data));
+      assert.equal(secondReplay.data.idempotent,true);
+      assert.equal(JSON.stringify(await acceptedBytes()),secondOnce,'Second replay retains the complete accepted state');
+      const secondSettled=await request('GET','/plans/adaptation/current?date=2026-09-12');
+      assert.equal(secondSettled.status,200,JSON.stringify(secondSettled.data));
+      assert.equal(secondSettled.data.proposal,null,'Second accepted unchanged evidence must not immediately reprompt');
+      console.log(JSON.stringify({gate:'second-successor-replay-settled',status:'PASS',
+        preview_ms:secondPreview.elapsed_ms,accept_ms:secondAccepted.elapsed_ms,replay_ms:secondReplay.elapsed_ms,
+        current_ms:secondCurrent.elapsed_ms,today_ms:secondToday.elapsed_ms,settled_ms:secondSettled.elapsed_ms}));
       const secondPath='/tmp/'+databaseName+'-second-activity-accepted-program.json';
       require('node:fs').writeFileSync(secondPath,JSON.stringify({parent:adaptedCurrent.data,
         preview:{...second,observationTicket:undefined},applied:secondAccepted.data,current:secondCurrent.data,today:secondToday.data}));

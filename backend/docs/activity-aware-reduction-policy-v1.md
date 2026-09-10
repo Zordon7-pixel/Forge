@@ -187,6 +187,17 @@ limit. No immutable graph or approval is shared across requests. The extended
 synthetic clock test renews its account via real login rather than changing token
 expiry or manufacturing sessions.
 
+The subsequent2cc52475 second-successor no-repeat gate exposed an independent
+identity bug: the actual accepted UPDATE payload and PostgreSQL JSONB readback
+were structurally identical, with the same complete canonical hash and activity
+fingerprint, but object-key order changed their JSON.stringify-based plan version.
+Plan-version hashing now uses canonical full-payload serialization. No plan,
+assignment, outcome, evidence or array-order field is omitted; genuinely changed
+input still receives a different version and all strict revision/ticket/transaction
+checks remain. This is not suppression by activity fingerprint alone. Normal
+ordering/real-change negatives and real second accept/replay/settled-readback
+assertions cover the distinction.
+
 Named tests and acceptance gaps are mapped in
 [activity-reduction-test-matrix.md](activity-reduction-test-matrix.md).
 Local HTTP tests use only newly registered synthetic owners and real PostgreSQL,

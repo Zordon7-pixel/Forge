@@ -653,7 +653,10 @@ function planVersionFor(active, parsedPlan, activitySnapshot = null) {
   );
   return crypto
     .createHash('sha256')
-    .update(JSON.stringify({
+    // PostgreSQL JSONB reorders object keys. Bind the complete semantic payload
+    // so a successful save/readback cannot masquerade as a new plan decision.
+    // Arrays and every existing plan/progress/evidence field remain bound.
+    .update(canonicalStringify({
       adaptationPolicyVersion: ADAPTATION_POLICY_VERSION,
       source: active?.source || null,
       planId: active?.row?.id || null,
