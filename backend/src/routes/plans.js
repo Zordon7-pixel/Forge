@@ -4076,7 +4076,12 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
         day: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(`${material.date}T12:00:00Z`).getUTCDay()],
         type: 'easy', phase: 'base', distance: material.distance_miles, context: state.context,
         reasonCodes: decision.phase === 'TAPER_RACE_WEEK' ? ['TAPER_VOLUME_REDUCTION', 'ASSESSMENT_REQUIRED'] : ['FOUNDATION_ENTRY'] });
-      return { ...rebuilt, date: material.date, session_id: goalBackwardMaterialId(material) };
+      const usefulTaperMinimum = decision.phase === 'TAPER_RACE_WEEK'
+        && rebuilt.prescription_basis === 'time' && rebuilt.duration_min > 0
+        ? (['BEGINNER', 'RETURNING'].includes(trainingAgeClass) ? 20 : 25) : null;
+      return { ...rebuilt, date: material.date, session_id: goalBackwardMaterialId(material),
+        ...(usefulTaperMinimum && rebuilt.duration_min < usefulTaperMinimum
+          ? { duration_min: usefulTaperMinimum, source_duration_policy: 'existing-meaningful-road-duration-v1' } : {}) };
     }
     if (legacyGoalBackwardFamily(material) !== 'race') return material;
     const goal = goals.find((entry) => entry.race_id && entry.race_id === String(material.race_id || '')
@@ -4101,6 +4106,20 @@ function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLoc
       // lower safety threshold; all complete-load gates still evaluate it.
       return { ...material, duration_min: minimum,
         source_duration_policy: 'existing-meaningful-road-duration-v1' };
+    });
+  }
+  if (dependencies.programWindowDates && built.plan.weeks.some(week => week.phase === 'race'
+    && week.startDate <= planningDateLocal && addPolicyDays(week.startDate, 6) >= planningDateLocal)) {
+    // Below-floor fragments are not eligible primary-role material either.
+    // Keep genuine useful preparation (including the converted source above)
+    // and disclose excluded fragments; never let enumeration keep selecting
+    // an unexecutable first fragment while valid material is consumed as support.
+    candidateMaterial = candidateMaterial.filter(material => {
+      const family = legacyGoalBackwardFamily(material);
+      const minimum = family === 'easy_run' ? (['BEGINNER', 'RETURNING'].includes(trainingAgeClass) ? 20 : 25)
+        : family === 'recovery_run' ? (trainingAgeClass === 'BEGINNER' ? 15 : 20) : null;
+      return !minimum || material.prescription_basis !== 'time' || !(material.duration_min > 0)
+        || material.duration_min >= minimum;
     });
   }
   candidateMaterial = goalBackwardRequiredRoadMaterial(
@@ -4676,7 +4695,8 @@ function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
     const original = windows[index].week;
     const excludedRaceFragments = original.phase === 'race' ? original.days.flatMap(day => day.sessions)
       .filter(session => session.kind === 'run' && session.type !== 'race'
-        && Number(session.duration_min) > 0 && Number(session.duration_min) < 20) : [];
+        && Number(session.duration_min) > 0 && Number(session.duration_min) < 20
+        && !windows[index].selected.sessions.some(selected => selected.session_id === session.id)) : [];
     return reconcileProgramWeek(contract, week, {
       completedRuns: Number(original.currentWeekConstraint?.completedRunsAppliedToQuota || original.completedRunsAtGeneration || 0),
       completedLifts: Number(original.completedStrengthSessionsAtGeneration || 0),
