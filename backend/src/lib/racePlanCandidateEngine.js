@@ -1049,9 +1049,24 @@ function roadCandidateMaterial(source) {
       ? finiteCandidateMaterialNumber(session.running_distance_m)
       : finiteCandidateMaterialNumber(session.distance_m, session.distanceMeters);
     const distanceMiles = finiteCandidateMaterialNumber(session.distance_miles, session.distanceMiles);
-    const qualityWorkDurationMin = finiteCandidateMaterialNumber(
+    const sourceQualityWorkDurationMin = finiteCandidateMaterialNumber(
       session.quality_work_duration_min, session.qualityWorkDurationMin,
     );
+    const qualityFloorStretch = ['threshold_run', 'interval_run', 'race_rhythm_run'].includes(sourceFamily)
+      && !(sourceQualityWorkDurationMin >= 8);
+    const qualityWorkDurationMin = qualityFloorStretch ? 8 : sourceQualityWorkDurationMin;
+    const sourceSession = clone(session);
+    if (qualityFloorStretch) {
+      // Short rolling windows can inherit a legacy quality constructor whose
+      // main set is below the v2.4 eight-minute presentation floor. Stretch
+      // that set inside the existing four-run week instead of rejecting every
+      // candidate or requiring an athlete to expose a fifth weekday.
+      sourceSession.quality_work_duration_min = qualityWorkDurationMin;
+      if (sourceSession.quality_prescription && typeof sourceSession.quality_prescription === 'object') {
+        sourceSession.quality_prescription = { ...sourceSession.quality_prescription };
+        delete sourceSession.quality_prescription.work;
+      }
+    }
     const mainWorkDurationMin = finiteCandidateMaterialNumber(
       session.main_work_duration_min, session.mainWorkDurationMin,
     );
@@ -1074,7 +1089,7 @@ function roadCandidateMaterial(source) {
       main_work_duration_min: mainWorkDurationMin,
       run_station_pair_count: runStationPairCount,
       source_session: {
-        ...clone(session),
+        ...sourceSession,
         duration_min: durationMin,
         distance_m: distanceM,
         distance_miles: distanceMiles,

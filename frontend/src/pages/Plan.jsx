@@ -700,6 +700,47 @@ export default function Plan() {
     }
   }
 
+  const rebuildBlockedPlan = async () => {
+    if (planReviewBusy) return
+    const goals = model?.goals?.length ? model.goals : model?.goal ? [model.goal] : []
+    const raceIds = goals.map((goal) => findRaceForGoal(goal)?.id).filter(Boolean)
+    if (!raceIds.length || raceIds.length !== goals.length) {
+      setPlanReviewError('Review the saved races before rebuilding this calendar.')
+      return
+    }
+    const completionFirst = goals.some((goal) => {
+      const race = findRaceForGoal(goal)
+      return Number(goal?.goalTimeSeconds || 0) > 0 && Number(race?.goal_time_seconds || 0) === 0
+    })
+    setPlanReviewBusy(true)
+    setPlanReviewError('')
+    try {
+      const profileResponse = await api.get('/auth/me').catch((err) => {
+        console.error('[Plan] blocked-plan profile load failed:', err?.message || err)
+        return null
+      })
+      await executeRacePlanGoalRebuild({
+        plan: myPlan,
+        profile: profileResponse?.data?.user,
+        raceIds,
+        completionFirst,
+        previewAndApply: previewAndApplyPlan,
+      })
+      setRaceReconciliationError('')
+      setRaceSaveNotice({ message: 'Training calendar rebuilt and ready to use.' })
+      await loadAll()
+    } catch (err) {
+      if (isPlanCandidateReviewCancelled(err)) {
+        setRaceSaveNotice({ message: 'No calendar changes were applied.' })
+        return
+      }
+      console.error('[Plan] blocked plan rebuild failed:', err?.message || err)
+      setPlanReviewError(err?.response?.data?.error || 'Could not rebuild this plan. Your current workouts remain unavailable.')
+    } finally {
+      setPlanReviewBusy(false)
+    }
+  }
+
   const rebuildTrainingSchedule = async () => {
     if (scheduleSaving) return
     const validationError = validateScheduleDraft(scheduleDraft)
@@ -1134,10 +1175,16 @@ export default function Plan() {
               </button>
             )}
             {!['recovering', 'retry'].includes(surfaceRecoveryPhase) && (
-              <button type="button" onClick={() => navigate('/plan-catalog')} className="mt-3 min-h-11 rounded-lg px-4 py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
-                Review and rebuild plan
-              </button>
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button type="button" onClick={rebuildBlockedPlan} disabled={planReviewBusy} className="min-h-11 rounded-lg px-4 py-3 text-sm font-black disabled:opacity-60" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+                  {planReviewBusy ? 'Building reviewed plan…' : 'Review and rebuild plan'}
+                </button>
+                <button type="button" onClick={() => navigate('/plan-catalog')} disabled={planReviewBusy} className="min-h-11 rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-60" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                  Open plan catalog
+                </button>
+              </div>
             )}
+            {planReviewError && <p role="alert" className="mt-3 rounded-lg p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--danger)' }}>{planReviewError}</p>}
           </section>
         )}
 
