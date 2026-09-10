@@ -10,7 +10,7 @@ function run(id, date, miles, paceSecondsPerMile) {
     distance_miles: miles,
     duration_seconds: Math.round(miles * paceSecondsPerMile),
     health_source: 'strava',
-    type: 'run',
+    type: 'race',
   };
 }
 
@@ -61,4 +61,12 @@ assert.equal(
   'the older exact-distance effort remains historical record truth without regaining fitness authority',
 );
 
-console.log('CONCURRENT PLAN ANCHOR TEST OK (11 checks)');
+for (const type of ['run', 'easy', 'long', undefined]) {
+  const training = buildRunPerformanceProfile([
+    { ...run('ordinary-training', '2026-09-01', 4, 840), type },
+  ], { todayISO: TODAY, targetDistanceMiles: 10 });
+  assert.equal(training.targetAnchor, null, 'Ordinary or unknown-effort pace is not a race-performance forecast');
+  assert.equal(training.historicalTargetAnchor, null);
+  assert.equal(training.sampleCount, 1, 'Training observations remain available for workload, not discarded');
+}
+console.log('CONCURRENT PLAN ANCHOR TEST OK: qualifying race freshness and unknown/easy effort separation');

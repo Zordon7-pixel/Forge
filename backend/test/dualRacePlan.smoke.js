@@ -1049,7 +1049,10 @@ const currentWeekRace = currentWeekPlan.weeks[0].days
   .flatMap((day) => day.sessions.map((session) => ({ date: day.date, session })))
   .find(({ session }) => session.type === 'race');
 assert.equal(currentWeekRace?.date, '2026-08-09');
-assert.equal(currentWeekPlan.weeks[0].currentWeekConstraint?.protectedRaceBeyondQuota, true);
+assert.equal(currentWeekPlan.weeks[0].currentWeekConstraint?.completedRunsAppliedToQuota, 1,
+  'Four activity records on one date credit one distinct running day');
+assert.equal(currentWeekPlan.weeks[0].currentWeekConstraint?.protectedRaceBeyondQuota, false,
+  'The race fills remaining distinct-day quota rather than creating fictitious extra frequency');
 
 function raceSnapshot(candidate, date) {
   for (const week of candidate.weeks) {
@@ -1575,6 +1578,9 @@ async function checkHyroxCandidateImmediateAdoption() {
   }
 
   async function get(sql, params = []) {
+    // Unit adapter only; real JSONB representation/boundary checks run in the
+    // guarded PostgreSQL integration gate, not in this SQL-map fixture.
+    if (sql === 'SELECT pg_column_size(?::jsonb) AS bytes') return { bytes: Buffer.byteLength(params[0]) };
     if (sql.includes('FROM users WHERE id=?') || sql.includes('FROM users WHERE id = ?')) {
       return params[0] === ownerId ? { ...profile } : null;
     }
@@ -2448,10 +2454,12 @@ async function checkHyroxCandidateImmediateAdoption() {
     }));
     assert.ok(remainingArmyProductionShape?.selected_candidate,
       'the 2026-08-19 three-day remaining-Army preview selects a hard-valid candidate');
-    const remainingArmyFoundationSession = remainingArmyProductionShape.selected_candidate.sessions[0];
-    assert.equal(remainingArmyFoundationSession.workout_family, 'recovery_run');
-    assert.equal(remainingArmyFoundationSession.title, 'Recovery run');
-    assert.ok(remainingArmyFoundationSession.derived_totals.duration_s >= 20 * 60);
+    const remainingArmyFoundationSession = remainingArmyProductionShape.selected_candidate.sessions
+      .find(session => session.scheduled_local_date === '2026-08-19');
+    assert.ok(remainingArmyFoundationSession, JSON.stringify(remainingArmyProductionShape.selected_candidate.sessions.map(session => ({ date: session.scheduled_local_date, family: session.workout_family, minutes: session.derived_totals.duration_s / 60 }))), 'The complete program retains the actual first-date session');
+    assert.ok(['easy_run', 'recovery_run'].includes(remainingArmyFoundationSession.workout_family));
+    assert.ok(remainingArmyFoundationSession.derived_totals.duration_s >=
+      (remainingArmyFoundationSession.workout_family === 'easy_run' ? 25 : 20) * 60);
     assert.equal(
       remainingArmyFoundationSession.purpose_reason_codes.includes('BELOW_PRESENTATION_FLOOR_EXCEPTION'),
       false,
@@ -2777,8 +2785,8 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(previewResponse.statusCode, 201, JSON.stringify(previewResponse.payload));
     assert.equal(candidates.get(previewResponse.payload.candidate_id).feature_mode, 'on',
       'the public route persists the selected v2.4 candidate in on/all mode');
-    assert.equal(previewResponse.payload.plan.plan_data.overall_feasibility, 'stretch',
-      'unvalidated goal performance remains a truthful stretch plan, never a supported claim');
+    assert.equal(previewResponse.payload.plan.plan_data.overall_feasibility, 'unvalidated',
+      'unvalidated performance is uncertainty, not a forecast that the aspiration is a stretch');
     assert.deepEqual(
       previewResponse.payload.plan.plan_data.goal_feasibilities.map((entry) => entry.feasibility),
       ['unvalidated', 'unvalidated'],
@@ -4198,35 +4206,40 @@ async function checkHyroxCandidateImmediateAdoption() {
     }));
     assert.ok(roadInspection?.selected_candidate);
     const roadSelected = roadInspection.selected_candidate;
-    const roadSelectedRunningDoseM = roadSelected.sessions.reduce((sum, session) => (
+    const roadSelectedRunningDoseM = roadSelected.sessions.filter(session =>
+      session.scheduled_local_date >= roadClock.planning_date_local
+      && session.scheduled_local_date <= concurrent.addDays(roadClock.planning_date_local, 6)).reduce((sum, session) => (
       sum + (['recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
         'interval_run', 'race_rhythm_run', 'assessment', 'race'].includes(session.workout_family)
         ? Number(session.derived_totals?.distance_m || 0) : 0)
     ), 0);
-    assert.equal(roadSelectedRunningDoseM, 23990,
-      'the Monday route keeps the exact canonical four-session dose instead of stopping on inflated display miles');
+    assert.equal(roadSelectedRunningDoseM, 22049,
+      'the first week keeps four canonical sessions and the exact one-mile benchmark, not inherited whole-run display miles');
     assert.deepEqual(roadInspection.decision.role_multiset.filter((role) => role.role === 'SUPPORTING')
       .map((role) => role.candidate_material_id), [
-      'h3-w1-sun-run', 'h3-w1-tue-run', 'h3-w1-sat-run',
+      'h3-w1-sun-run', 'h3-w1-sat-run', 'h3-w1-tue-run',
     ], 'each supporting role is bound to the exact server-selected source material');
     assert.deepEqual(roadSelected.skeleton_sessions.map((session) => session.candidate_material_id), [
-      'h3-w1-thu-run', 'h3-w1-sun-run', 'h3-w1-tue-run', 'h3-w1-sat-run',
+      'h3-w1-thu-run', 'h3-w1-sun-run', 'h3-w1-sat-run', 'h3-w1-tue-run',
     ], 'enumeration cannot substitute a shorter compatible session after the dose decision');
     const roadAssessment = roadSelected.sessions.find((session) => session.workout_family === 'assessment');
     const assessmentContributor = canonicalRoadContributorFamily('assessment');
     assert.deepEqual(roadAssessment?.contributing_work_families, [assessmentContributor]);
-    assert.deepEqual(roadAssessment?.steps.map((step) => step.workout_family), [assessmentContributor]);
+    assert.deepEqual(roadAssessment?.steps.map((step) => step.workout_family), ['easy_run', assessmentContributor, 'easy_run']);
+    assert.equal(roadAssessment.steps[1].target.distance_m, 1609);
+    assert.equal(roadAssessment.steps[0].target.duration_s, 600);
+    assert.equal(roadAssessment.steps[2].target.duration_s, 600);
     const roadMaterialDose = roadSelected.validation.validator_results.find((entry) => (
       entry.validator === 'material_dose'
     ));
     assert.equal(roadMaterialDose.valid, true);
-    assert.equal(roadMaterialDose.receipt.candidate_running_m, 23990);
+    assert.equal(roadMaterialDose.receipt.candidate_running_m, 22049);
     const observedLowerBoundComparator = roadMaterialDose.receipt.comparators.find((entry) => (
       entry.source === 'OBSERVED_LOWER_BOUND'
     ));
     assert.equal(observedLowerBoundComparator.baseline_running_m, 25267);
-    assert.equal(observedLowerBoundComparator.delta_m, -1277);
-    assert.equal(observedLowerBoundComparator.delta_percentage, -5.05);
+    assert.equal(observedLowerBoundComparator.delta_m, -3218);
+    assert.equal(observedLowerBoundComparator.delta_percentage, -12.74);
     assert.equal(observedLowerBoundComparator.material_reduction, false);
     assert.equal(roadSelected.validation.validator_results.find((entry) => (
       entry.validator === 'presentation_floor'
@@ -4244,13 +4257,14 @@ async function checkHyroxCandidateImmediateAdoption() {
       },
     });
     assert.equal(roadPreview.statusCode, 201, JSON.stringify(roadPreview.payload));
-    assert.ok(['supported', 'stretch'].includes(roadPreview.payload.plan.plan_data.overall_feasibility));
+    assert.equal(roadPreview.payload.plan.plan_data.overall_feasibility, 'unvalidated');
     assert.ok(roadPreview.payload.plan.plan_data.goal_feasibilities.every((entry) => (
       entry.feasibility === 'unvalidated'
         && entry.legacy_feasibility === 'unsafe'
         && entry.reasons.includes('ASSESSMENT_REQUIRED')
-        && entry.legacy_reasons.every((reason) => entry.reasons.includes(reason))
-    )), 'v2.4 stretch truth retains the exact bound legacy goal risks without treating them as support');
+        && !entry.reasons.includes('PEAK_DEMAND_UNREACHABLE')
+        && !entry.reasons.includes('CHECKPOINT_UNPLACEABLE')
+    )), 'unassessed performance retains legacy audit evidence separately, not as an ability forecast');
     const roadApplyBody = {
       ...roadClock,
       choice: 'train_for_target',
@@ -4622,6 +4636,8 @@ async function checkHyroxCandidateImmediateAdoption() {
       delete plan.canonical_workout_schema_version;
       delete plan.canonical_session_set_hash;
       delete plan.selected_candidate_hash;
+      delete plan.programContract;
+      delete plan.programCanonicalIdentity;
       const week = plan.weeks.find((entry) => Array.isArray(entry?.days)
         && entry.days.some((day) => Array.isArray(day?.sessions) && day.sessions.length > 0));
       const dayIndex = week.days.findIndex((day) => Array.isArray(day?.sessions)
@@ -4939,13 +4955,17 @@ async function checkHyroxCandidateImmediateAdoption() {
       delete legacyRoadPlan.canonical_workout_schema_version;
       delete legacyRoadPlan.canonical_session_set_hash;
       delete legacyRoadPlan.selected_candidate_hash;
-      const legacyRunningSessions = (legacyRoadPlan.weeks || []).flatMap((week) => (
+      delete legacyRoadPlan.programContract;
+      delete legacyRoadPlan.programCanonicalIdentity;
+      const legacyRunningSessions = (legacyRoadPlan.weeks || []).filter(week => week.days?.some(day => day.date === roadClock.planning_date_local)).flatMap((week) => (
         (week.days || []).flatMap((day) => (day.sessions || []).filter((session) => (
           ['recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
             'interval_run', 'race_rhythm_run', 'assessment', 'race'].includes(session.workout_family)
         )))
       ));
       assert.ok(legacyRunningSessions.length > 1);
+      const legacyCurrentWeekRunningM = legacyRunningSessions.reduce((sum, session) => sum
+        + Number(session.running_distance_m ?? session.distance_m ?? session.derived_totals?.distance_m ?? 0), 0);
       const legacyTargetRunningM = 22852.685;
       let allocatedLegacyM = 0;
       legacyRunningSessions.forEach((session, index) => {
@@ -4953,7 +4973,7 @@ async function checkHyroxCandidateImmediateAdoption() {
           ?? session.derived_totals?.distance_m ?? 0);
         const scaledM = index === legacyRunningSessions.length - 1
           ? legacyTargetRunningM - allocatedLegacyM
-          : Math.round(((originalM / roadCurrentRunningDoseM) * legacyTargetRunningM) * 1000) / 1000;
+          : Math.round(((originalM / legacyCurrentWeekRunningM) * legacyTargetRunningM) * 1000) / 1000;
         allocatedLegacyM += scaledM;
         session.distance_miles = scaledM / 1609.344;
         delete session.running_distance_m;
@@ -5799,8 +5819,11 @@ async function checkHyroxCandidateImmediateAdoption() {
       sum + Number(session.running_distance_m ?? session.distance_m
         ?? session.derived_totals?.distance_m ?? 0)
     ), 0);
-    assert.ok(removalRunningDoseM >= roadCurrentRunningDoseM,
-      `the successor preserves the exact reviewed applied running dose (${removalRunningDoseM} >= ${roadCurrentRunningDoseM})`);
+    const canceledRaceDoseM = roadCurrentSessions.filter(session => session.workout_family === 'race'
+      && session.event_identity?.race_id === 'yonkers').reduce((sum, session) => sum + session.derived_totals.distance_m, 0);
+    const retainedReviewedDoseM = roadCurrentRunningDoseM - canceledRaceDoseM;
+    assert.ok(removalRunningDoseM >= retainedReviewedDoseM,
+      `the successor preserves reviewed retained work without replacing the explicitly canceled race (${removalRunningDoseM} >= ${retainedReviewedDoseM})`);
     assert.equal(raceRows.has('yonkers'), true, 'preview performs zero race writes');
 
     const roadRemovalApplyBody = {
@@ -6084,17 +6107,20 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(finalHyroxGoal.eventLocalDate, '2026-09-06');
     assert.equal(finalHyroxGoal.division, 'doubles');
     assert.equal(finalHyroxGoal.category, 'men');
-    assert.ok(['supported', 'stretch'].includes(
+    assert.ok(['supported', 'unvalidated', 'at_risk'].includes(
       finalHyroxPreview.payload.plan.plan_data.overall_feasibility,
     ));
-    assert.equal(
-      canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data),
-      25319,
-      'the post-removal goal update preserves the active 23,990m floor and the 25,267m observed lower bound',
-    );
-    assert.ok(canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data)
-      >= roadCurrentRunningDoseM,
-    'the post-removal goal update cannot reduce the exact reviewed active dose');
+    assert.equal(finalHyroxPreview.payload.plan.plan_data.overall_feasibility,
+      finalHyroxPreview.payload.plan.plan_data.goal_feasibilities.some(goal => goal.feasibility === 'at_risk')
+        ? 'at_risk' : finalHyroxPreview.payload.plan.plan_data.goal_feasibilities.some(goal => goal.feasibility === 'unvalidated')
+          ? 'unvalidated' : 'supported', 'Displayed confidence follows canonical evidence, not legacy target feasibility');
+    assert.ok(canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data) >= 25267,
+      'the post-removal goal update preserves the independently observed 25,267m lower bound; legitimate canonical source selection may exceed it');
+    const finalDates = finalHyroxPreview.payload.plan.plan_data.weeks.flatMap(week => week.days.map(day => day.date)).sort();
+    const comparableRoadDoseM = roadCurrentSessions.filter(session => session.scheduled_local_date >= finalDates[0]
+      && session.scheduled_local_date <= finalDates.at(-1)).reduce((sum, session) => sum + session.derived_totals.distance_m, 0);
+    assert.ok(canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data) >= comparableRoadDoseM,
+      'the unchanged one-week HYROX window preserves the reviewed road dose in that exact window, not the entire new road-program horizon');
     assert.ok(canonicalPlanRunningMeters(finalHyroxPreview.payload.plan.plan_data)
       > historicalCollapsedDoseM,
     'the exact post-removal HYROX plus road preview cannot surface the historical collapsed dose');

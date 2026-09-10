@@ -294,6 +294,11 @@ const REDACTION_KEYS = closed([
 ]);
 
 const MAX_PIPELINE_ARTIFACT_BYTES = 256 * 1024;
+// Full programs: existing 20-week constructor horizon × 7 dates × 2
+// modalities. The materialized tier is explicit and remains bounded.
+const PROGRAM_ARTIFACT_STORAGE_VERSION = 'materialized-program-storage-v1';
+const MAX_PROGRAM_ARTIFACT_BYTES = 4 * 1024 * 1024;
+const MAX_PROGRAM_SESSIONS = 280;
 const MAX_ARTIFACT_ID_LENGTH = 200;
 const HASH_PATTERN = /^(?:sha256:)?[a-f0-9]{64}$/;
 const ARTIFACT_KIND_SET = new Set(ARTIFACT_KINDS);
@@ -392,7 +397,7 @@ function validVersion(value) {
     && value.trim() === value;
 }
 
-function validatePipelineArtifact(artifact, { maximumPayloadBytes = MAX_PIPELINE_ARTIFACT_BYTES } = {}) {
+function validatePipelineArtifact(artifact, { maximumPayloadBytes } = {}) {
   const errors = [];
   if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) {
     return { valid: false, errors: [{ code: 'ARTIFACT_NOT_OBJECT', path: 'artifact' }], bytes: null };
@@ -428,9 +433,67 @@ function validatePipelineArtifact(artifact, { maximumPayloadBytes = MAX_PIPELINE
   if (bytes === null && !errors.some((error) => error.code === 'ARTIFACT_PAYLOAD_INVALID')) {
     errors.push({ code: 'ARTIFACT_PAYLOAD_INVALID', path: 'payload_json' });
   }
+  const programPayload = ['canonical_session_set', 'surface_manifest'].includes(artifact.artifact_kind)
+    && artifact.payload_json?.program_storage_version === PROGRAM_ARTIFACT_STORAGE_VERSION;
+  const programSessions = artifact.payload_json?.sessions;
+  const programContract = artifact.payload_json?.program_contract;
+  if (programPayload) {
+    const { fingerprint, ...contractContent } = programContract || {};
+    const start = Date.parse(programContract?.start_date), end = Date.parse(programContract?.end_date);
+    const validIdentity = programContract?.version === 'complete-road-program-v1'
+      && fingerprint === require('./racePlanPolicy').canonicalHash(contractContent)
+      && Number.isFinite(start) && Number.isFinite(end) && end >= start && end - start < 140 * 86400000
+      && Number.isInteger(programContract.run_days_per_week) && programContract.run_days_per_week >= 1 && programContract.run_days_per_week <= 7
+      && Number.isInteger(programContract.lift_days_per_week) && programContract.lift_days_per_week >= 0 && programContract.lift_days_per_week <= 7;
+    if (!validIdentity) errors.push({ code: 'ARTIFACT_PROGRAM_IDENTITY_INVALID', path: 'payload_json.program_contract' });
+  }
+  if (programPayload && (!Array.isArray(programSessions) || !programSessions.length
+    || programSessions.length > MAX_PROGRAM_SESSIONS
+    || programSessions.some(session => session?.canonical_workout_schema_version !== 1
+      || session.scheduled_local_date < programContract?.start_date || session.scheduled_local_date > programContract?.end_date))) {
+    errors.push({ code: 'ARTIFACT_PROGRAM_SESSION_BOUND_INVALID', path: 'payload_json.sessions' });
+  }
+  if (programPayload && Array.isArray(programSessions)) {
+    const canonical = require('./canonicalWorkout');
+    const payload = artifact.payload_json;
+    const identity = artifact.artifact_kind === 'canonical_session_set' ? payload : payload.identity;
+    const validSessions = programSessions.every(session => canonical.validateCanonicalSession(session).valid
+      && canonical.flattenSteps(session.steps).length <= 64
+      && session.plan_id === identity?.plan_id && session.plan_revision === identity?.plan_revision
+      && session.decision_id === identity?.decision_id
+      && typeof session.scheduled_local_date === 'string'
+      && session.scheduled_local_date >= programContract?.start_date
+      && session.scheduled_local_date <= programContract?.end_date);
+    const { plan_generation_candidate_ref, selected_candidate_id, selected_candidate_hash, ...setPayload } = payload;
+    const validSet = artifact.artifact_kind === 'canonical_session_set'
+      ? (!selected_candidate_id || selected_candidate_id === setPayload.candidate_id)
+        && (!selected_candidate_hash || selected_candidate_hash === setPayload.candidate_hash)
+        && canonical.validateCanonicalSessionSet(setPayload).valid
+      : payload.schema_version === 'goal_backward_surface_manifest_v1'
+        && payload.status === 'accepted' && payload.v24_surface_enabled === true
+        && ['preview', 'on'].includes(payload.feature_mode)
+        && ['decision_hash', 'candidate_hash', 'canonical_session_set_hash'].every(key => /^[a-f0-9]{64}$/.test(identity?.[key] || ''))
+        && typeof identity?.candidate_id === 'string' && identity.candidate_id.length > 0
+        && Array.isArray(payload.weeks) && payload.weeks.length >= 1 && payload.weeks.length <= 20;
+    if (!validSessions || !validSet || new Set(programSessions.map(session => session.session_id)).size !== programSessions.length) {
+      errors.push({ code: 'ARTIFACT_PROGRAM_CANONICAL_IDENTITY_INVALID', path: 'payload_json.sessions' });
+    }
+    const byDate = new Map();
+    for (const session of programSessions) {
+      const kinds = byDate.get(session.scheduled_local_date) || [];
+      kinds.push(String(session.workout_family).startsWith('strength_') ? 'lift' : 'run');
+      byDate.set(session.scheduled_local_date, kinds);
+    }
+    if ([...byDate.values()].some(kinds => kinds.length > 2 || new Set(kinds).size !== kinds.length)) {
+      errors.push({ code: 'ARTIFACT_PROGRAM_DAILY_SESSION_BOUND_INVALID', path: 'payload_json.sessions' });
+    }
+    if (artifact.content_hash !== `sha256:${require('./racePlanPolicy').canonicalHash(payload)}`) {
+      errors.push({ code: 'ARTIFACT_PROGRAM_PAYLOAD_HASH_INVALID', path: 'content_hash' });
+    }
+  }
   const boundedMaximum = Number.isSafeInteger(maximumPayloadBytes) && maximumPayloadBytes >= 1
     ? maximumPayloadBytes
-    : MAX_PIPELINE_ARTIFACT_BYTES;
+    : programPayload ? MAX_PROGRAM_ARTIFACT_BYTES : MAX_PIPELINE_ARTIFACT_BYTES;
   if (bytes !== null && bytes > boundedMaximum) {
     errors.push({
       code: 'ARTIFACT_PAYLOAD_TOO_LARGE',
@@ -575,6 +638,9 @@ module.exports = {
   HYROX_RULESET_ID,
   HYROX_RULESET_VERSION,
   MAX_PIPELINE_ARTIFACT_BYTES,
+  MAX_PROGRAM_ARTIFACT_BYTES,
+  MAX_PROGRAM_SESSIONS,
+  PROGRAM_ARTIFACT_STORAGE_VERSION,
   PLANNING_DECISION_SCHEMA_VERSION,
   PLANNING_PHASES,
   PLANNING_POLICY_VERSION,

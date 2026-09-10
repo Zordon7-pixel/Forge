@@ -768,7 +768,7 @@ function normalizeStrengthPolicy(policy, mode) {
   }
   const base = policy && typeof policy === 'object' ? policy : {};
   const rawPerWeek = Number(base.sessionsPerWeek);
-  const sessionsPerWeek = Number.isFinite(rawPerWeek) ? Math.max(1, Math.min(6, Math.round(rawPerWeek))) : 3;
+  const sessionsPerWeek = Number.isFinite(rawPerWeek) ? Math.max(1, Math.min(7, Math.round(rawPerWeek))) : 3;
   const rawMin = Number(base.minimumSessionsPerWeek);
   const minimumSessionsPerWeek = Number.isFinite(rawMin)
     ? Math.max(1, Math.min(sessionsPerWeek, Math.round(rawMin)))

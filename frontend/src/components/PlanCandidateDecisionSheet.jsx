@@ -12,6 +12,16 @@ function candidatePlan(preview = {}) {
 }
 
 function decisionCopy(feasibility, reasons = []) {
+  if (feasibility === 'unvalidated') return {
+    eyebrow: 'Performance not yet assessed',
+    title: 'Keep your goal and start training',
+    summary: 'There is not enough suitable performance evidence to estimate a race result yet. Your goal stays unchanged; this useful program uses controlled effort while an assessment can improve the estimate.',
+  }
+  if (feasibility === 'at_risk') return {
+    eyebrow: 'Goal needs a checkpoint',
+    title: 'Review the evidence and training plan',
+    summary: 'The current evidence identifies a goal-specific concern. Your aspiration stays unchanged and the executable plan still has to pass all training checks.',
+  }
   if (feasibility === 'unsafe') {
     return {
       eyebrow: 'Target needs review',
@@ -88,6 +98,7 @@ export default function PlanCandidateDecisionSheet() {
   const reasons = Array.isArray(plan?.reasons) ? plan.reasons.slice(0, 3) : []
   const copy = decisionCopy(feasibility, Array.isArray(plan?.reasons) ? plan.reasons : [])
   const canApply = candidateFeasibilityCanApply(plan)
+    && !(plan.programReconciliation || []).some(week => !week.valid || week.entries?.some(entry => entry.outcome === 'UNSATISFIABLE'))
   const candidateChoice = ['adjust_goal', 'completion_first'].includes(preview?.choice)
     ? preview.choice : 'train_for_target'
   const effectiveDate = displayDate(preview?.effective_from || preview?.candidate?.effective_from)
@@ -134,6 +145,23 @@ export default function PlanCandidateDecisionSheet() {
           </p>
         )}
 
+        {Array.isArray(plan.programReconciliation) && (
+          <section className="mt-4 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <h3 className="text-sm font-black">Your complete schedule</h3>
+            <p className="mt-2 text-sm">{plan.weeks?.length || 0} weeks through {displayDate(plan.programContract?.end_date)}. Review each weekly run and lift count before accepting.</p>
+            {plan.programReconciliation.map(week => (
+              <div key={week.start_date} className="mt-3 text-sm">
+                <p className="font-bold">Week of {displayDate(week.start_date)}</p>
+                {week.entries.map(entry => (
+                  <p key={entry.modality} className="mt-1">
+                    {entry.modality === 'run' ? 'Runs' : 'Lifts'}: {entry.requested} requested · {entry.delivered} scheduled{entry.completed ? ` · ${entry.completed} already completed` : ''}.
+                    {entry.outcome !== 'EXACT' ? ` ${entry.explanation}` : ''}
+                  </p>
+                ))}
+              </div>
+            ))}
+          </section>
+        )}
         {reasons.length > 0 && (
           <div className="mt-4 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-black uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>What Forged checked</p>

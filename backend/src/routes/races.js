@@ -738,6 +738,7 @@ router.post('/:id/removal-preview', auth, async (req, res) => {
     const planningClock = plansRouter._test.withRequestPlanningClock(req, {
       planning_date_local: req.body?.planning_date_local,
       timezone_offset_minutes: req.body?.timezone_offset_minutes,
+      ...(req.body?.planning_timezone !== undefined ? { planning_timezone: req.body.planning_timezone } : {}),
     });
     const preview = await plansRouter._test.previewRaceRemovalForUser(req.user.id,
       String(req.params.id || ''),
@@ -770,6 +771,7 @@ router.post('/:id/removal-apply', auth, async (req, res) => {
       choice: req.body?.choice,
       planning_date_local: req.body?.planning_date_local,
       timezone_offset_minutes: req.body?.timezone_offset_minutes,
+      ...(req.body?.planning_timezone !== undefined ? { planning_timezone: req.body.planning_timezone } : {}),
     });
     const result = await plansRouter._test.applyPlanCandidate(
       req.user.id,

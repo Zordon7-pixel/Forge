@@ -13,6 +13,22 @@ import { validateSurfaceManifest } from './dailyExecutionCore.js'
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
+export function canonicalPrescribedDurationSeconds(steps) {
+  if (!Array.isArray(steps) || !steps.length) return null
+  let total = 0
+  for (const step of steps) {
+    if (step?.type === 'repeat') {
+      const child = canonicalPrescribedDurationSeconds(step.children)
+      if (child === null || !Number.isInteger(step.repeat_count) || step.repeat_count < 1) return null
+      total += child * step.repeat_count
+    } else {
+      if (!Number.isFinite(step?.target?.duration_s) || step.target.duration_s <= 0) return null
+      total += step.target.duration_s
+    }
+  }
+  return total
+}
+
 const DAY_NAME_TO_INDEX = {
   mon: 0, monday: 0,
   tue: 1, tues: 1, tuesday: 1,
@@ -190,22 +206,29 @@ export function racePlanGenerationTarget(plan, profile = {}) {
   const currentMode = hasPlan ? getPlanMode(plan) : 'run_only'
   const planMode = profileLiftDays > 0
     ? (currentMode === 'hybrid_build' ? 'hybrid_build' : 'hybrid_maintain')
-    : currentMode
+    : hasProfilePreference ? 'run_only' : currentMode
   const liftingEnabled = planMode !== 'run_only'
   const currentPlanLiftDays = currentMode !== 'run_only'
     ? Number(policy.sessionsPerWeek ?? policy.sessions_per_week ?? 0) : 0
   const liftDaysPerWeek = liftingEnabled
-    ? Math.max(1, Math.min(7, Math.round(currentPlanLiftDays || profileLiftDays)))
+    ? Math.max(1, Math.min(7, Math.round(hasProfilePreference ? profileLiftDays : currentPlanLiftDays)))
     : 0
+  const profileDays = value => {
+    if (Array.isArray(value)) return value
+    try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : null } catch { return null }
+  }
+  const runDays = profileDays(profile.run_eligible_weekdays ?? profile.preferred_workout_days)
+    || data.schedulePreferences?.runEligibleWeekdays || data.schedulePreferences?.trainingDays
+  const liftDays = profileDays(profile.lift_eligible_weekdays ?? profile.preferred_workout_days)
+    || data.schedulePreferences?.liftEligibleWeekdays
+  const runCount = Number(profile.run_days_per_week ?? data.schedulePreferences?.runDaysPerWeek)
   return {
     planMode,
     liftingEnabled,
     liftDaysPerWeek,
-    ...(Array.isArray(data.schedulePreferences?.runEligibleWeekdays)
-      ? { runEligibleWeekdays: data.schedulePreferences.runEligibleWeekdays } : {}),
-    ...(Array.isArray(data.schedulePreferences?.liftEligibleWeekdays)
-      ? { liftEligibleWeekdays: data.schedulePreferences.liftEligibleWeekdays } : {}),
-    ...(Number(profile?.run_days_per_week) > 0 ? { runDaysPerWeek: Number(profile.run_days_per_week) } : {}),
+    ...(Array.isArray(runDays) ? { runEligibleWeekdays: runDays, trainingDays: runDays } : {}),
+    ...(Array.isArray(liftDays) ? { liftEligibleWeekdays: liftDays } : {}),
+    ...(runCount > 0 ? { runDaysPerWeek: runCount } : {}),
   }
 }
 
@@ -542,7 +565,8 @@ export function normalizeSession(rawSession, context = {}) {
       isCanonical && Number.isFinite(Number(rawSession.derived_totals?.distance_m))
         ? Number(rawSession.derived_totals.distance_m) / 1609.344 : 0,
     )) || 0
-  const durationMinutes =
+  const prescribedDurationSeconds = isCanonical ? canonicalPrescribedDurationSeconds(rawSession.steps) : null
+  const durationMinutes = prescribedDurationSeconds !== null ? prescribedDurationSeconds / 60 :
     Number(firstDefined(
       rawSession.durationMin,
       rawSession.duration_min,
@@ -584,7 +608,7 @@ export function normalizeSession(rawSession, context = {}) {
     durationMinutes,
     prescriptionBasis,
     distanceIsEstimate: Boolean(firstDefined(rawSession.distance_is_estimate, prescription.distanceIsEstimate, prescription.distance_is_estimate, false)),
-    durationIsEstimated: Boolean(firstDefined(rawSession.durationIsEstimated, prescription.durationIsEstimated, rawSession.duration_is_estimate, prescription.duration_is_estimate, false)),
+    durationIsEstimated: prescribedDurationSeconds !== null ? false : Boolean(firstDefined(rawSession.durationIsEstimated, prescription.durationIsEstimated, rawSession.duration_is_estimate, prescription.duration_is_estimate, false)),
     isBenchmark: Boolean(firstDefined(rawSession.benchmark, prescription.benchmark, false)),
     benchmarkDistanceMiles: Number(firstDefined(rawSession.benchmark_distance_miles, prescription.benchmarkDistanceMiles, prescription.benchmark_distance_miles, 0)) || null,
     anchorState: firstDefined(rawSession.anchorState, prescription.anchorState, rawSession.anchor_state, prescription.anchor_state),

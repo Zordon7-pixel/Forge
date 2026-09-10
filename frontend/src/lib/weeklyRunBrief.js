@@ -281,14 +281,35 @@ function dayPurpose(day, session) {
   ).trim()
 }
 
-function canonicalTargetValue(target = {}) {
+export function canonicalTargetValue(target = {}) {
   if (!target || typeof target !== 'object') return ''
   return Object.entries(target).map(([key, value]) => {
     if (value === null || value === undefined || value === '') return ''
-    const label = String(key).replaceAll('_', ' ')
-    const rendered = Array.isArray(value) ? value.join('–') : String(value)
+    const label = key === 'rpe_range' ? 'RPE' : String(key).replaceAll('_', ' ')
+    const range = value && typeof value === 'object' && !Array.isArray(value)
+      && Number.isFinite(value.minimum) && Number.isFinite(value.maximum)
+      ? value.minimum === value.maximum ? String(value.minimum) : `${value.minimum}–${value.maximum}` : null
+    const rendered = range ?? (Array.isArray(value) ? value.filter(entry => ['number', 'string'].includes(typeof entry)).join('–')
+      : ['string', 'number'].includes(typeof value) ? String(value) : '')
+    if (!rendered) return ''
     return `${label}: ${rendered}`
   }).filter(Boolean).join(' · ')
+}
+
+export function canonicalRunStructure(steps = []) {
+  if (!Array.isArray(steps)) return []
+  return steps.flatMap(step => {
+    if (!step || typeof step !== 'object') return []
+    const target = step.target || {}
+    const seconds = Number.isFinite(target.duration_s) && target.duration_s > 0 ? target.duration_s : null
+    const duration = seconds === null ? '' : seconds % 60 === 0 ? `${seconds / 60} min` : `${Math.floor(seconds / 60)} min ${seconds % 60} sec`
+    const details = [duration, Number.isFinite(target.distance_m) && target.distance_m > 0 ? `${target.distance_m} m` : '',
+      canonicalTargetValue(Object.fromEntries(['rpe_range', 'pace_range_s_per_km', 'heart_rate_range_bpm', 'rest_s']
+        .filter(key => Object.hasOwn(target, key)).map(key => [key, target[key]])))].filter(Boolean)
+    const type = ({ run: 'Run', recovery: 'Recovery', warmup: 'Warm-up', cooldown: 'Cool-down', interval: 'Interval', repeat: 'Repeat' })[step.type] || 'Work'
+    const repeat = Number.isInteger(step.repeat_count) && step.repeat_count > 0 ? ` × ${step.repeat_count}` : ''
+    return [[`${type}${repeat}`, ...details].join(' · '), ...canonicalRunStructure(step.children)]
+  })
 }
 
 function canonicalTargets(session) {
@@ -456,6 +477,7 @@ export function buildWeeklyRunBrief({
     (finite(session.distanceMiles) || 0) > 0 && session.distanceIsEstimate === true
   ))
   const totalMinutes = sessions.reduce((sum, session) => sum + (finite(session.durationMinutes) || 0), 0)
+  const completeDuration = sessions.every((session) => (finite(session.durationMinutes) || 0) > 0)
   const counts = { quality: 0, long: 0, easy: 0, strength: 0, hyrox: 0, rest: 0 }
   for (const day of days) {
     if (day.isRest) {
@@ -491,7 +513,7 @@ export function buildWeeklyRunBrief({
     } : null,
     totalMiles,
     totalMilesLabel: totalMiles > 0 ? `${totalMilesIsEstimate ? '~' : ''}${totalMiles.toFixed(1)} mi` : '',
-    totalTimeLabel: formatMinutes(totalMinutes),
+    totalTimeLabel: completeDuration ? formatMinutes(totalMinutes) : '',
     mix: counts,
     mixLabel: mixLabel(counts),
     days,

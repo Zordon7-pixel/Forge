@@ -9,7 +9,7 @@ import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
 import AiGuidanceNote from '../AiGuidanceNote'
 import WatchWorkoutService from '../../services/WatchWorkoutService'
 import ExerciseGuideAction from '../ExerciseGuideAction'
-import { canonicalWorkoutLabel, normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
+import { canonicalWorkoutLabel, canonicalPrescribedDurationSeconds, normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
 import { executionAllowsSession, executionHasSession, isRestExecutionAuthority } from '../../lib/dailyExecutionCore'
 import {
   canonicalUnitLabel,
@@ -25,6 +25,7 @@ import {
   technicalFactLabel,
 } from '../../lib/goalBackwardPresentation'
 import { trainingEvidenceKindLabel } from '../../lib/trainingEvidence'
+import { canonicalRunStructure } from '../../lib/weeklyRunBrief'
 import './forgedCalendar.css'
 
 const TEXT_SCALES = [0.9, 1, 1.15, 1.3]
@@ -123,13 +124,17 @@ function formatRecordedPace(secondsPerMile) {
 function runFacts(session) {
   const p = session.prescription || {}
   const raw = session.raw || {}
+  const canonical = session.canonical || p.canonical_workout_schema_version === 1 || raw.canonical_workout_schema_version === 1
+  const prescribedDuration = canonical ? canonicalPrescribedDurationSeconds(session.steps || p.steps || raw.steps) : null
   const miles = Number(session.distanceMiles || p.distanceMiles || p.distance_miles || raw.distance_miles || 0)
   const durationMinutes = firstStr(p.duration_min, raw.duration_min)
-  const durationIsEstimated = boolValue(session.durationIsEstimated, p.durationIsEstimated, raw.durationIsEstimated, p.duration_is_estimate, raw.duration_is_estimate)
-  const durationLabel = firstStr(p.duration, p.time, raw.duration, durationMinutes ? `${durationMinutes} min` : '')
+  const durationIsEstimated = prescribedDuration !== null ? false : boolValue(session.durationIsEstimated, p.durationIsEstimated, raw.durationIsEstimated, p.duration_is_estimate, raw.duration_is_estimate)
+  const durationLabel = prescribedDuration !== null ? `${prescribedDuration / 60} min` : firstStr(p.duration, p.time, raw.duration, durationMinutes ? `${durationMinutes} min` : '')
   const distanceIsEstimate = Boolean(session.distanceIsEstimate || p.distance_is_estimate || raw.distance_is_estimate)
   const prescriptionBasis = firstStr(session.prescriptionBasis, p.prescription_basis, raw.prescription_basis)
-  const steps = structuredList(p.steps || p.blocks || p.structure || raw.steps || raw.structure)
+  const sourceSteps = session.steps || p.steps || p.blocks || p.structure || raw.steps || raw.structure
+  const steps = canonical
+    ? canonicalRunStructure(sourceSteps) : structuredList(sourceSteps)
   return {
     purpose: firstStr(p.purpose, p.focus, raw.purpose),
     distance: miles > 0 && prescriptionBasis !== 'time' ? `${distanceIsEstimate ? '~' : ''}${miles.toFixed(1)} mi${distanceIsEstimate ? ' estimated' : ''}` : '',

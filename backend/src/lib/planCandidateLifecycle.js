@@ -196,6 +196,7 @@ function buildPlanningSnapshot({
   planningInputRevision,
   request,
   timezoneOffsetMinutes,
+  planningTimezone,
 }) {
   return {
     active_plan: activePlan ? {
@@ -208,6 +209,7 @@ function buildPlanningSnapshot({
     planning_input_revision: Number(planningInputRevision),
     request: redactSnapshotValue(request || {}),
     timezone_offset_minutes: Number(timezoneOffsetMinutes),
+    ...(planningTimezone ? { planning_timezone: planningTimezone } : {}),
   };
 }
 
@@ -265,6 +267,17 @@ async function persistPipelineArtifacts({ tx, artifacts, requireCompleteLinks = 
     assertPipelineArtifact(artifact);
   });
   if (requireCompleteLinks) rows.forEach((artifact) => assertArtifactPayloadRedacted(artifact.payload_json));
+  // JSON and JSONB sizes are different representations. Check actual database
+  // storage size inside this transaction BEFORE inserting any artifact, rather
+  // than discovering a storage-only rejection midway through the linked chain.
+  const contracts = require('./goalBackwardContracts');
+  for (const artifact of rows.filter(entry => entry.payload_json?.program_storage_version === contracts.PROGRAM_ARTIFACT_STORAGE_VERSION)) {
+    const size = await tx.get('SELECT pg_column_size(?::jsonb) AS bytes', [JSON.stringify(artifact.payload_json)]);
+    if (!Number.isFinite(Number(size?.bytes)) || Number(size.bytes) > contracts.MAX_PROGRAM_ARTIFACT_BYTES) {
+      const error = new Error('Materialized program exceeds its physical storage budget');
+      error.code = 'ARTIFACT_STORAGE_BOUND_EXCEEDED'; throw error;
+    }
+  }
   let inserted = 0;
   for (const artifact of rows) {
     const result = await tx.run(
@@ -389,7 +402,47 @@ function validatePlanStructure(plan) {
   return { valid: errors.length === 0, errors };
 }
 
+const preliminaryProgramPlans = new WeakSet();
+
+function validatedCompleteProgramPlan(plan) {
+  const header = plan?.programCanonicalIdentity;
+  if (!header || header.program_storage_version !== 'materialized-program-storage-v1'
+    || plan.programContract?.version !== 'complete-road-program-v1'
+    || !Array.isArray(plan.weeks) || plan.weeks.length < 1 || plan.weeks.length > 20) return false;
+  const sessions = plan.weeks.flatMap(week => (week.days || []).flatMap(day => (day.sessions || []).map(session => {
+    if (day.date !== session.scheduled_local_date) return null;
+    return session;
+  })));
+  if (!sessions.length || sessions.length > 280 || sessions.some(session => !session)) return false;
+  const { fingerprint, ...contractContent } = plan.programContract;
+  const start = Date.parse(plan.programContract.start_date), end = Date.parse(plan.programContract.end_date);
+  if (fingerprint !== canonicalHash(contractContent) || !Number.isFinite(start) || !Number.isFinite(end)
+    || end < start || end - start >= 140 * 86400000
+    || !Number.isInteger(plan.programContract.run_days_per_week) || plan.programContract.run_days_per_week < 1 || plan.programContract.run_days_per_week > 7
+    || !Number.isInteger(plan.programContract.lift_days_per_week) || plan.programContract.lift_days_per_week < 0 || plan.programContract.lift_days_per_week > 7) return false;
+  const byId = new Map(sessions.map(session => [session.session_id, session]));
+  const ordered = (header.session_content_hashes || []).map(binding => byId.get(binding.session_id));
+  if (ordered.length !== sessions.length || ordered.some(session => !session) || byId.size !== sessions.length) return false;
+  const set = { ...header, sessions: ordered };
+  const canonical = require('./canonicalWorkout');
+  const seenDates = new Set();
+  for (const session of sessions) {
+    const dayModality = `${session.scheduled_local_date}:${String(session.workout_family).startsWith('strength_') ? 'lift' : 'run'}`;
+    if (seenDates.has(dayModality) || canonical.flattenSteps(session.steps).length > 64
+      || session.scheduled_local_date < plan.programContract.start_date || session.scheduled_local_date > plan.programContract.end_date) return false;
+    seenDates.add(dayModality);
+  }
+  const hash = value => String(value || '').replace(/^sha256:/, '');
+  return canonical.validateCanonicalSessionSet(set).valid
+    && canonicalHash(header.program_contract) === canonicalHash(plan.programContract)
+    && hash(header.content_hash) === hash(plan.canonical_session_set_hash)
+    && hash(header.candidate_hash) === hash(plan.selected_candidate_hash)
+    && plan.plan_id === header.plan_id && plan.plan_revision === header.plan_revision
+    && plan.decision_id === header.decision_id;
+}
+
 function assertPersistablePlan(plan) {
+  if (preliminaryProgramPlans.has(plan)) throw Object.assign(new Error('Preliminary constructor material cannot be persisted'), { code: 'PRELIMINARY_PROGRAM_NOT_PERSISTABLE', status: 422 });
   const validation = validatePlanStructure(plan);
   if (!validation.valid) {
     const err = new Error(`Plan failed persistence validation: ${validation.errors[0].code}`);
@@ -398,12 +451,17 @@ function assertPersistablePlan(plan) {
     err.details = validation.errors;
     throw err;
   }
-  assertBoundedJson(plan, RACE_PLAN_POLICY_V1.candidate.maximumPlanBytes, 'candidate plan');
+  assertBoundedJson(plan, validatedCompleteProgramPlan(plan)
+    ? 4 * 1024 * 1024 : RACE_PLAN_POLICY_V1.candidate.maximumPlanBytes, 'candidate plan');
   return cloneJson(plan);
 }
 
 function validateCandidateBundle({ plan, snapshot, trace, replay = null }) {
   const normalizedPlan = assertPersistablePlan(plan);
+  return { plan: normalizedPlan, ...normalizeCandidateMetadata({ snapshot, trace, replay }) };
+}
+
+function normalizeCandidateMetadata({ snapshot, trace, replay = null }) {
   const normalizedSnapshot = redactSnapshotValue(snapshot || {});
   const normalizedTrace = redactSnapshotValue(trace || {});
   assertBoundedJson(normalizedSnapshot, RACE_PLAN_POLICY_V1.candidate.maximumInputBytes, 'planning snapshot');
@@ -411,7 +469,20 @@ function validateCandidateBundle({ plan, snapshot, trace, replay = null }) {
   if (replay !== null) {
     assertBoundedJson(replay, RACE_PLAN_POLICY_V1.candidate.maximumReplayBytes, 'candidate replay');
   }
-  return { plan: normalizedPlan, snapshot: normalizedSnapshot, trace: normalizedTrace };
+  return { snapshot: normalizedSnapshot, trace: normalizedTrace };
+}
+
+// Only the server's preview/on road-construction route uses this intermediate
+// representation. It is not a new persisted legacy tier or a client flag.
+function normalizeProgramConstructorBundle({ plan, snapshot, trace }) {
+  if (!validatePlanStructure(plan).valid || !Array.isArray(plan.weeks) || plan.weeks.length > 20
+    || plan.weeks.flatMap(week => (week.days || []).flatMap(day => day.sessions || [])).length > 280) {
+    throw Object.assign(new Error('Preliminary complete-program structure is invalid'), { code: 'PLAN_INVARIANT_FAILED', status: 422 });
+  }
+  assertBoundedJson(plan, 4 * 1024 * 1024, 'preliminary program constructor');
+  const normalized = cloneJson(plan);
+  preliminaryProgramPlans.add(normalized);
+  return { plan: normalized, ...normalizeCandidateMetadata({ snapshot, trace }) };
 }
 
 function bindingValue(input, camelKey, snakeKey) {
@@ -697,8 +768,13 @@ function buildGoalBackwardShadowBindings({
     apply_bindings: applyBindings,
   };
   let boundedMaterialChange = fullMaterialChange;
-  if (jsonBytes(fullMaterialChange) > MAX_BINDING_JSON_BYTES) {
-    const compactAppendBudget = MAX_BINDING_JSON_BYTES - 128;
+  // Program bindings retain full-change hashes/counts but reserve room for
+  // JSONB's structural overhead inside the unchanged physical 16-KiB limit.
+  // The transaction additionally measures actual JSONB before any insert.
+  const appendLimit = selectedCandidate?.canonical_session_set?.program_storage_version === 'materialized-program-storage-v1'
+    ? 8 * 1024 : MAX_BINDING_JSON_BYTES;
+  if (jsonBytes(fullMaterialChange) > appendLimit) {
+    const compactAppendBudget = appendLimit - 128;
     const sourceChanges = Array.isArray(materialChange.changes) ? materialChange.changes : [];
     const sourceReasonCodes = Array.isArray(materialChange.reason_codes)
       ? materialChange.reason_codes.map((value) => String(value || '')).filter((value) => (
@@ -1143,7 +1219,10 @@ function buildGoalBackwardDecisionArtifacts({
       decisionId: decision.decision_id,
       parentArtifactId,
       planGenerationCandidateId: index >= 3 ? planGenerationCandidateId : null,
-      payload: payloads[kind],
+      // Each chain belongs to its reviewed decision. Otherwise unchanged
+      // athlete/evidence content collides with the storage uniqueness key,
+      // while the next row still references this decision's uninserted ID.
+      payload: { ...payloads[kind], decision_id: decision.decision_id },
       createdAt,
     });
     parentArtifactId = artifact.id;
@@ -1374,6 +1453,8 @@ module.exports = {
   persistGoalBackwardDecisionArtifacts,
   redactSnapshotValue,
   validateCandidateBundle,
+  normalizeProgramConstructorBundle,
+  validatedCompleteProgramPlan,
   validateGoalBackwardCandidateBundle,
   validateGoalBackwardApplyEnvelope,
   validateStoredGoalBackwardCandidateBindings,

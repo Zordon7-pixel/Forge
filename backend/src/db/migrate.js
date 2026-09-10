@@ -81,6 +81,24 @@ async function runAlwaysMigrations() {
   await pg.query('CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_user_decision_kind ON planning_pipeline_artifacts(user_id, decision_id, artifact_kind)');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_candidate_kind ON planning_pipeline_artifacts(plan_generation_candidate_id, artifact_kind)');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_user_kind_created ON planning_pipeline_artifacts(user_id, artifact_kind, created_at DESC)');
+  // Atomic and idempotent: preserve legacy bounds, add only the explicitly
+  // versioned full-program tier. Rollback must preflight oversized new rows.
+  await pg.query(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='planning_pipeline_artifacts_program_storage_v1'
+      AND conrelid='planning_pipeline_artifacts'::regclass) THEN
+      ALTER TABLE planning_pipeline_artifacts DROP CONSTRAINT IF EXISTS planning_pipeline_artifacts_payload_json_check;
+      ALTER TABLE planning_pipeline_artifacts ADD CONSTRAINT planning_pipeline_artifacts_program_storage_v1 CHECK (
+        (CASE WHEN artifact_kind IN ('canonical_session_set', 'surface_manifest')
+          AND payload_json->>'program_storage_version'='materialized-program-storage-v1'
+        THEN pg_column_size(payload_json) <= 4194304
+          AND payload_json->'program_contract'->>'version'='complete-road-program-v1'
+          AND length(payload_json->'program_contract'->>'fingerprint')=64
+          AND jsonb_typeof(payload_json->'sessions')='array'
+          AND jsonb_array_length(payload_json->'sessions') BETWEEN 1 AND 280
+        ELSE pg_column_size(payload_json) <= 262144 END) IS TRUE
+      );
+    END IF;
+  END $$`);
   // M24-03: corrections append attributed canonical values without changing raw evidence.
   await pg.query(`
     CREATE TABLE IF NOT EXISTS planning_evidence_corrections (

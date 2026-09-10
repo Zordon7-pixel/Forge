@@ -20,12 +20,13 @@ const { runActivitySql } = require('../lib/runActivity');
 const { allocatePlanSessionRunEvidence, findPlanSessionRunEvidence } = require('../lib/plannedRunMatch');
 const hybridReconciliation = require('../lib/hybridReconciliation');
 const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
-const { resolveRunSchedule } = require('../lib/runSchedule');
+const { resolveRunSchedule, resolveLiftSchedule } = require('../lib/runSchedule');
 const { buildBodyweightAlternative } = require('../lib/travelTraining');
 const { planningInputUnchanged } = require('../lib/planningRevision');
 const { localDateForOffset } = require('../lib/requestPlanningDate');
 const {
   buildRacePlanCandidate,
+  buildGoalBackwardCandidateSkeleton,
   canonicalRoadCandidateMaterial,
   completeRoleMaterialAssignment,
   enumerateGoalBackwardCandidates,
@@ -35,6 +36,7 @@ const {
 } = require('../lib/racePlanCandidateEngine');
 const {
   buildGoalBackwardPlanningDecision,
+  finalizeGoalBackwardCandidateDecision,
   suppressRejectedGoalBackwardCandidates,
 } = require('../lib/goalBackwardDecisionEngine');
 const { assertPipelineLinks, REQUIRED_REASON_CODES } = require('../lib/goalBackwardContracts');
@@ -45,6 +47,7 @@ const {
   minimumRunningDoseWithoutMaterialReduction,
   normalizeCrossModalReductionEvidence,
   ownDataJsonSnapshot,
+  ownMaterializedProgramSnapshot,
   ownDataRaceRemovalImpact,
   runningDistanceObservation,
 } = require('../lib/goalBackwardRecoveryMaterial');
@@ -63,14 +66,19 @@ const {
   acceptPlanningClock,
   addDays: addPolicyDays,
   canonicalStringify,
+  canonicalHash,
   eventPolicyForGoal,
 } = require('../lib/racePlanPolicy');
 const {
   canonicalSessionSetHash,
   canonicalWorkoutHash,
+  validateCanonicalSession,
   validateCanonicalSessionSet,
 } = require('../lib/canonicalWorkout');
-const { canonicalPrescriptionHash } = require('../lib/goalBackwardValidators');
+const { canonicalPrescriptionHash, compareMaterialChange } = require('../lib/goalBackwardValidators');
+const { validateInterference } = require('../lib/goalBackwardValidators');
+const { validateRollingHardDays } = require('../lib/goalBackwardLoad');
+const { buildProgramContract, reconcileProgramWeek, validateRollingProgramDose } = require('../lib/programContract');
 const { buildDecisionArtifactDiagnosticBundle } = require('../lib/racePlanDiagnostics');
 const {
   assertPersistablePlan,
@@ -92,6 +100,7 @@ const {
   persistGoalBackwardDecisionArtifacts,
   prefixedHash,
   validateCandidateBundle,
+  normalizeProgramConstructorBundle,
   validateGoalBackwardApplyEnvelope,
   validatePlanStructure,
   validateStoredGoalBackwardCandidateBindings,
@@ -306,7 +315,11 @@ function strictRemovalPlanSnapshot(planRow, planningDateLocal, raceId) {
   if (!impact.linked) {
     return Object.freeze({ plan: null, impact, running_observation: null });
   }
-  const plan = ownDataJsonSnapshot(raw);
+  const plan = ownDataJsonSnapshot(raw) || ownMaterializedProgramSnapshot(raw);
+  if (plan?.programContract?.version === 'complete-road-program-v1'
+    && !require('../lib/planCandidateLifecycle').validatedCompleteProgramPlan(plan)) {
+    throw goalBackwardGenerationFailed('REMOVAL_CARRY_FORWARD_SOURCE_INVALID');
+  }
   const normalizedImpact = plan ? ownDataRaceRemovalImpact(plan, raceId) : null;
   if (!plan || !normalizedImpact
     || normalizedImpact.linked !== impact.linked
@@ -2021,13 +2034,13 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   const expectedPerWeek = clampInt(
     target.runDaysPerWeek,
     1,
-    6,
-    clampInt(profile.run_days_per_week, 1, 6, 3)
+    7,
+    clampInt(profile.run_days_per_week, 1, 7, 3)
   ) + clampInt(
     target.liftDaysPerWeek,
     0,
-    4,
-    clampInt(profile.lift_days_per_week, 0, 4, 0)
+    7,
+    clampInt(profile.lift_days_per_week, 0, 7, 0)
   );
   const expectedSessions = weeksObserved * expectedPerWeek;
   const currentWeekStart = concurrentPlan.racePlanWindow(planningDateISO, planningDateISO)?.startDate;
@@ -2173,6 +2186,7 @@ function acceptedPlanningClock(body = {}) {
   const clock = acceptPlanningClock({
     planning_date_local: body.planning_date_local || getTodayISO(),
     timezone_offset_minutes: body.timezone_offset_minutes,
+    ...(body.planning_timezone !== undefined ? { planning_timezone: body.planning_timezone } : {}),
   }, getTodayISO());
   if (!clock.valid) {
     throw candidateError(400, clock.reason, 'Use the current phone date and a valid timezone offset.');
@@ -2372,6 +2386,8 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
     return { target, raceWindow: { weeks: target.weeks, startDate: target.startDate } };
   }
   const finalRace = races[races.length - 1];
+  const liftSchedule = resolveLiftSchedule(profile, requested);
+  if (!liftSchedule.valid) throw candidateError(400, liftSchedule.code, liftSchedule.error);
   const raceWindow = concurrentPlan.racePlanWindow(finalRace.race_date, planningDateLocal);
   if (!raceWindow) throw candidateError(400, 'RACE_DATE_PASSED', 'Race dates must be today or later.');
   if (races[0].race_date < raceWindow.startDate) {
@@ -2397,6 +2413,12 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
     ...requested,
     ...finalTarget,
     raceTargets,
+    liftEligibleWeekdays: liftSchedule.liftEligibleWeekdays,
+    liftDaysPerWeek: liftSchedule.liftDaysPerWeek,
+    liftDaysSource: liftSchedule.liftDaysSource,
+    liftWeekdaysSource: liftSchedule.liftWeekdaysSource,
+    liftingEnabled: liftSchedule.liftingEnabled,
+    runEligibleWeekdays: runSchedule.trainingDays,
     trainingDays: runSchedule.trainingDays,
     runDaysPerWeek: runSchedule.runDaysPerWeek,
     runDaysSource: runSchedule.runDaysSource,
@@ -2416,6 +2438,8 @@ function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
   }
   const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
   if (!runSchedule.valid) throw candidateError(400, 'INVALID_RUN_SCHEDULE', runSchedule.error);
+  const liftSchedule = resolveLiftSchedule(profile, requested);
+  if (!liftSchedule.valid) throw candidateError(400, liftSchedule.code, liftSchedule.error);
   if (requested.hyroxEvent && ![3, 4].includes(runSchedule.runDaysPerWeek)) {
     throw candidateError(400, 'INVALID_HYROX_RUN_FREQUENCY', 'HYROX plans require three or four run days per week.');
   }
@@ -2429,6 +2453,12 @@ function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
   }
   const target = {
     ...requested,
+    liftEligibleWeekdays: liftSchedule.liftEligibleWeekdays,
+    liftDaysPerWeek: liftSchedule.liftDaysPerWeek,
+    liftDaysSource: liftSchedule.liftDaysSource,
+    liftWeekdaysSource: liftSchedule.liftWeekdaysSource,
+    liftingEnabled: liftSchedule.liftingEnabled,
+    runEligibleWeekdays: runSchedule.trainingDays,
     trainingDays: runSchedule.trainingDays,
     runDaysPerWeek: runSchedule.runDaysPerWeek,
     runDaysSource: runSchedule.runDaysSource,
@@ -2501,6 +2531,9 @@ async function loadActiveCanonicalCarryForwardSource(tx, userId, active) {
 async function loadCandidateInputState(userId, request, clock, tx) {
   const profile = await tx.get('SELECT * FROM users WHERE id=?', [userId]);
   if (!profile) throw candidateError(404, 'USER_NOT_FOUND', 'User not found.');
+  // A validated phone IANA zone is request authority, not an inferred account
+  // or event location. Offset-only legacy callers retain their previous fallback.
+  if (clock.planningTimezone) profile.timezone = clock.planningTimezone;
   let removalRace = null;
   if (request.operation === 'remove_race') {
     removalRace = await tx.get(
@@ -2546,6 +2579,7 @@ async function loadCandidateInputState(userId, request, clock, tx) {
     planningInputRevision: profile.planning_input_revision,
     request,
     timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
+    planningTimezone: clock.planningTimezone,
   });
   const names = races.map((race) => race.race_name);
   return {
@@ -2960,6 +2994,12 @@ function goalBackwardRemovalMaterial(plan, availableLocalDates) {
           && (typeof explicitSessionDate !== 'string'
             || !concurrentPlan.isValidISODate(explicitSessionDate)
             || explicitSessionDate !== dayDate)) return [];
+        if (plan.programContract?.version === 'complete-road-program-v1'
+          && session.canonical_workout_schema_version === 1) {
+          const canonical = { ...session }; delete canonical.removal_session_id;
+          if (!validateCanonicalSession(canonical).valid) return [];
+          return [canonical];
+        }
         return [{ ...session, date: dayDate }];
       });
     })
@@ -2993,6 +3033,28 @@ function goalBackwardRemovalCarryForwardMaterial(state, activeAppliedPlan, avail
   });
 }
 
+function goalBackwardRetainedWorkComparator(state, activeAppliedPlan, userId) {
+  if (state?.request?.operation !== 'remove_race'
+    || activeAppliedPlan?.programContract?.version !== 'complete-road-program-v1') return activeAppliedPlan;
+  const removedId = state.request.remove_race_id;
+  const removedGoal = activeAppliedPlan.goals?.find(goal => goal.raceId === removedId);
+  if (!removedGoal || state.races?.some(race => race.id === removedId)) return activeAppliedPlan;
+  // Removing an owned event cancels that event, not the shared training dose.
+  // Keep the original plan for revision/material-change identity; only the
+  // retained-work comparator excludes its exact validated canonical race.
+  return { ...activeAppliedPlan, weeks: activeAppliedPlan.weeks.map(week => ({ ...week,
+    days: week.days.map(day => ({ ...day, sessions: day.sessions.filter(session => {
+      const canonical = { ...session }; delete canonical.removal_session_id;
+      const event = canonical.event_identity;
+      return !(canonical.workout_family === 'race' && canonical.kind === 'run'
+        && event?.race_id === removedId && event.goal_id === `goal-${removedId}`
+        && typeof userId === 'string' && event.athlete_id === userId
+        && event.event_local_date === removedGoal.date
+        && canonical.scheduled_local_date === removedGoal.date
+        && validateCanonicalSession(canonical).valid);
+    }) })) })) };
+}
+
 const CANONICAL_SESSION_SET_PAYLOAD_KEYS = Object.freeze([
   'canonical_workout_schema_version', 'canonical_sessions_materialized',
   'plan_id', 'plan_revision', 'decision_id', 'decision_hash', 'candidate_id',
@@ -3023,7 +3085,7 @@ function exactHashIdentity(value) {
 function storedOwnJsonSnapshot(value) {
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    return ownDataJsonSnapshot(parsed);
+    return ownDataJsonSnapshot(parsed) || ownMaterializedProgramSnapshot(parsed);
   } catch (_error) {
     return null;
   }
@@ -3031,7 +3093,8 @@ function storedOwnJsonSnapshot(value) {
 
 function ownStoredCanonicalCarrySource(value) {
   try {
-    const snapshot = ownDataJsonSnapshot(value, { maximumDepth: 64, maximumNodes: 50000 });
+    const snapshot = ownDataJsonSnapshot(value, { maximumDepth: 64, maximumNodes: 50000 })
+      || ownMaterializedProgramSnapshot(value);
     if (!snapshot || Array.isArray(snapshot)) return null;
     const keys = Object.keys(snapshot);
     if (keys.length !== ACTIVE_CANONICAL_CARRY_SOURCE_KEYS.length
@@ -3083,18 +3146,24 @@ function authenticatedGoalExpansionSessionSet({
   activeAppliedPlan,
   activeSource,
 }) {
-  const plan = ownDataJsonSnapshot(activeAppliedPlan);
+  const plan = ownDataJsonSnapshot(activeAppliedPlan) || ownMaterializedProgramSnapshot(activeAppliedPlan);
   const source = ownStoredCanonicalCarrySource(activeSource);
   if (!plan || !source) invalidGoalExpansionCarrySource('OWN_DATA_SNAPSHOT_INVALID');
   const payload = storedOwnJsonSnapshot(source.artifact_payload_json);
   const materialChange = storedOwnJsonSnapshot(source.candidate_material_change_json);
   if (!payload || !materialChange) invalidGoalExpansionCarrySource('ARTIFACT_PAYLOAD_INVALID');
   const payloadKeys = Object.keys(payload);
-  if (payloadKeys.length !== CANONICAL_SESSION_SET_ARTIFACT_KEYS.size
-    || payloadKeys.some((key) => !CANONICAL_SESSION_SET_ARTIFACT_KEYS.has(key))) {
+  const versionedKeys = Object.hasOwn(payload, 'program_storage_version')
+    ? ['prescribed_dose_versions', 'program_contract', 'program_storage_version']
+    : Object.hasOwn(payload, 'prescribed_dose_versions') ? ['prescribed_dose_versions'] : [];
+  const allowedKeys = new Set([...CANONICAL_SESSION_SET_ARTIFACT_KEYS, ...versionedKeys]);
+  if (Object.hasOwn(payload, 'program_storage_version')
+    && payload.program_storage_version !== require('../lib/goalBackwardContracts').PROGRAM_ARTIFACT_STORAGE_VERSION
+    || payloadKeys.length !== allowedKeys.size
+    || payloadKeys.some((key) => !allowedKeys.has(key))) {
     invalidGoalExpansionCarrySource('ARTIFACT_SCHEMA_INVALID');
   }
-  const sessionSet = Object.fromEntries(CANONICAL_SESSION_SET_PAYLOAD_KEYS.map((key) => [key, payload[key]]));
+  const sessionSet = Object.fromEntries([...CANONICAL_SESSION_SET_PAYLOAD_KEYS, ...versionedKeys].map((key) => [key, payload[key]]));
   const validation = validateCanonicalSessionSet(sessionSet);
   const artifactHash = exactHashIdentity(source.artifact_content_hash);
   const selectedHash = exactHashIdentity(source.candidate_selected_hash);
@@ -3149,8 +3218,18 @@ function authenticatedGoalExpansionSessionSet({
   const failedIdentityCheck = identityChecks.find(([, valid]) => !valid)?.[0];
   if (failedIdentityCheck) invalidGoalExpansionCarrySource(failedIdentityCheck);
   const reconstructed = planSchema.buildCanonicalPlanFromSessionSet(sessionSet);
-  if (!reconstructed
-    || canonicalStringify(plan.weeks) !== canonicalStringify(reconstructed.weeks)) {
+  const materializedProgram = sessionSet.program_storage_version
+    && require('../lib/planCandidateLifecycle').validatedCompleteProgramPlan(plan);
+  const sourceSessions = new Map(sessionSet.sessions.map(session => [session.session_id, session]));
+  const decoratedSources = new Map(planSchema.withRemovalSessionIdentities(reconstructed).weeks
+    .flatMap(week => week.days.flatMap(day => day.sessions.map(session => [session.session_id, session.removal_session_id]))));
+  const programSessionsMatch = materializedProgram && plan.weeks.every(week => week.days.every(day => day.sessions.every(session => {
+    const { removal_session_id, ...prescription } = session;
+    return (!removal_session_id || removal_session_id === decoratedSources.get(session.session_id))
+      && canonicalStringify(prescription) === canonicalStringify(sourceSessions.get(session.session_id));
+  })));
+  if (!reconstructed || (materializedProgram ? !programSessionsMatch
+    : canonicalStringify(plan.weeks) !== canonicalStringify(reconstructed.weeks))) {
     invalidGoalExpansionCarrySource('PLAN_SESSION_BYTES_MISMATCH');
   }
   return { plan, sessionSet };
@@ -3217,10 +3296,10 @@ function goalBackwardGoalExpansionCarryForwardMaterial(
       invalidGoalExpansionCarrySource('SESSION_BINDING_INVALID');
     }
     if (goalIds.some((goalId) => !retainedGoalIds.has(goalId))) continue;
-    const normalized = { ...session, goal_ids: goalIds, date: session.scheduled_local_date };
-    delete normalized.goalIds;
     acceptedMaterialIds.add(id);
-    material.push(Object.freeze(normalized));
+    // Keep the authenticated canonical bytes intact; role adapters can derive
+    // legacy aliases later without invalidating the executable source hash.
+    material.push(Object.freeze({ ...session }));
   }
   return material;
 }
@@ -3246,6 +3325,10 @@ function goalBackwardProjectableRunningMaterial(session, family = legacyGoalBack
 }
 
 function goalBackwardMaterialRunningMeters(session) {
+  if (session?.canonical_workout_schema_version === 1
+    && Number.isFinite(session.derived_totals?.distance_m) && session.derived_totals.distance_m >= 0) {
+    return session.derived_totals.distance_m;
+  }
   const projectable = goalBackwardProjectableRunningMaterial(session);
   const direct = projectable
     ? session?.running_distance_m ?? session?.distance_m ?? session?.distanceMeters
@@ -3574,7 +3657,7 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
   const frequencySupportingCount = requiredPlannedRunCount !== null
     ? Math.max(0, requiredPlannedRunCount - primaryRunningCount) : 0;
   const maximumSupportingCount = requiredPlannedRunCount !== null
-    ? Math.max(frequencySupportingCount, availableSupportingCapacity)
+    ? (options.completeProgramWindow ? Math.min : Math.max)(frequencySupportingCount, availableSupportingCapacity)
     : availableSupportingCapacity;
   let selectedRunningM = 0;
   let selectedRunningCount = 0;
@@ -3618,9 +3701,12 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
       projectable,
       runningM,
       sourceFamily,
+      canonicalTimedWork: options.completeProgramWindow === true
+        && options.validatedTimedMaterialIds instanceof Set
+        && options.validatedTimedMaterialIds.has(goalBackwardMaterialId(session)),
     };
   }).filter((entry) => (
-    !usedMaterialIndexes.has(entry.index) && entry.family && entry.runningM > 0
+    !usedMaterialIndexes.has(entry.index) && entry.family && (entry.runningM > 0 || entry.canonicalTimedWork)
       && (!supportingFamilies || supportingFamilies.has(entry.family))
   )).sort((left, right) => (
     right.runningM - left.runningM
@@ -3632,8 +3718,9 @@ function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumR
     !entry.projectable
   ));
   const usableExactRunningMaterial = exactRunningMaterial.filter(({ durationMin, family }) => (
-    Number.isFinite(durationMin)
-      && durationMin >= (family === 'long_aerobic' ? Math.max(30, presentationFloorMin) : presentationFloorMin)
+    family === 'assessment' || Number.isFinite(durationMin)
+      && durationMin >= (family === 'long_aerobic' ? Math.max(30, presentationFloorMin)
+        : options.completeProgramWindow && family === 'recovery_run' ? (trainingAgeClass === 'BEGINNER' ? 15 : 20) : presentationFloorMin)
   ));
   const projectableRunningMaterial = availableRunningMaterial.filter((entry) => entry.projectable);
   const projectedRunningM = projectableRunningMaterial.reduce((sum, entry) => sum + entry.runningM, 0);
@@ -3748,7 +3835,7 @@ function goalBackwardActiveAppliedPlan(state, persistedPlan) {
   return assignedPlan;
 }
 
-function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDateLocal }, dependencies = {}) {
+function computeGoalBackwardSingleWindow({ userId, state, built, planningDateLocal }, dependencies = {}) {
   const clusterPolicy = built.plan?.hyroxPolicy?.partialRaceOrderCluster || null;
   const selectedClusterWeek = Number.isInteger(clusterPolicy?.selectedWeekIndex)
     ? built.plan?.weeks?.[clusterPolicy.selectedWeekIndex] : null;
@@ -3756,9 +3843,9 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const clusterWeekDates = (selectedClusterWeek?.days || [])
     .filter((day) => day.date >= planningDateLocal && (!preferredWeekdays.size || preferredWeekdays.has(day.day)))
     .map((day) => day.date);
-  const availableLocalDates = clusterPolicy?.required === true && clusterWeekDates.length
+  const availableLocalDates = dependencies.programWindowDates || (clusterPolicy?.required === true && clusterWeekDates.length
     ? clusterWeekDates
-    : goalBackwardAvailableLocalDates(state, planningDateLocal);
+    : goalBackwardAvailableLocalDates(state, planningDateLocal));
   const trainingAgeClass = goalBackwardTrainingAge(state.context);
   const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
   const completedRunningCredit = goalBackwardCompletedRunningCredit(
@@ -3808,6 +3895,14 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const decisionInput = {
     athlete_id: userId,
     planning_date_local: planningDateLocal,
+    candidate_window_end_local: dependencies.programWindowDates?.at(-1),
+    ...(dependencies.programWindowDates ? { available_run_dates: dependencies.programRunDates,
+      requested_run_days_per_week: state.target.runDaysPerWeek } : {}),
+    ...(dependencies.programOpeningPartial ? { partial_week_contract: dependencies.programOpeningPartial } : {}),
+    ...(dependencies.programWindowDates && state.target.runDaysPerWeek === 1 ? {
+      frequency_dose_contract: { version: 'explicit-single-running-day-v1', requested_run_days: 1,
+        planning_date: planningDateLocal, end_date: dependencies.programWindowDates.at(-1), input_hash: state.inputHash },
+    } : {}),
     created_at: `${planningDateLocal}T00:00:00.000Z`,
     timezone: state.context?.profile?.timezone || 'UTC',
     plan_id: state.activePlan?.trainingPlanId || null,
@@ -3880,6 +3975,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     ? state.removalPlanSnapshot
     : (state.active ? parsePlan(state.active.row) : null);
   const activeAppliedPlan = goalBackwardActiveAppliedPlan(state, stableActivePlan);
+  const activeRetainedWorkPlan = goalBackwardRetainedWorkComparator(state, activeAppliedPlan, userId);
   if (!assertedCanonicalRemovalSourceIsValid(state, activeAppliedPlan)) {
     const error = new Error('The active canonical plan cannot authorize removal carry-forward.');
     error.code = 'REMOVAL_CARRY_FORWARD_SOURCE_INVALID';
@@ -3889,11 +3985,22 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     ? goalBackwardCandidateMaterial({ weeks: [selectedClusterWeek] }, availableLocalDates)
     : goalBackwardCandidateMaterial(built.plan, availableLocalDates);
   const completeCandidateMaterial = goalBackwardCandidateMaterial(built.plan, null);
+  if (dependencies.programWindowDates) {
+    // Keep the existing semantically validated long prescription available to
+    // the canonical placement engine. A legacy date conflict must not erase
+    // its material and force an unprescribed placeholder role.
+    for (const material of built.roadSourceMaterial || []) {
+      if (!completeCandidateMaterial.some(entry => legacyGoalBackwardFamily(entry) === 'long_aerobic')) {
+        completeCandidateMaterial.push({ ...material, id: `${material.id}-source-long`,
+          session_id: `${material.id}-source-long` });
+      }
+    }
+  }
   const planningWeekStartLocal = concurrentPlan.racePlanWindow(
     planningDateLocal,
     planningDateLocal,
   )?.startDate;
-  const baseCandidateMaterial = decision.phase === 'DEVELOPMENT'
+  const baseCandidateMaterial = !dependencies.programWindowDates && decision.phase === 'DEVELOPMENT'
     && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
     && (completedRunningCredit || planningDateLocal !== planningWeekStartLocal)
     ? completeCandidateMaterial
@@ -3910,12 +4017,54 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     );
   const carriedLifecycleMaterial = [...carriedRemovalMaterial, ...carriedGoalExpansionMaterial];
   const carriedLifecycleMaterialIds = new Set(carriedLifecycleMaterial.map(goalBackwardMaterialId));
+  const carriedRoadDates = dependencies.programWindowDates && state.request?.operation === 'remove_race'
+    ? new Set(carriedRemovalMaterial.map(session => session.scheduled_local_date || session.date)) : new Set();
   let candidateMaterial = [
     ...carriedLifecycleMaterial,
     ...baseCandidateMaterial.filter((session) => (
       !carriedLifecycleMaterialIds.has(goalBackwardMaterialId(session))
+        && !(session.kind === 'run' && carriedRoadDates.has(session.scheduled_local_date || session.date))
     )),
   ];
+  candidateMaterial = candidateMaterial.map((material) => {
+    if (dependencies.programWindowDates && (decision.phase === 'FOUNDATION' || decision.partial_week_contract)
+      && material.kind === 'run' && ['threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run']
+        .includes(legacyGoalBackwardFamily(material))) {
+      // A foundation source distributes easy work, not a stale quality
+      // template that is later discarded and silently loses a requested day.
+      const sourceWeek = built.plan.weeks.find(week => (week.days || []).some(day => day.date === material.date));
+      const rebuilt = concurrentPlan.rebuildCanonicalRunSession({ session: material,
+        weekNumber: sourceWeek?.week || 1, weekCount: built.plan.weeks.length,
+        day: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(`${material.date}T12:00:00Z`).getUTCDay()],
+        type: 'easy', phase: 'base', distance: material.distance_miles, context: state.context,
+        reasonCodes: ['FOUNDATION_ENTRY'] });
+      return { ...rebuilt, date: material.date, session_id: goalBackwardMaterialId(material) };
+    }
+    if (legacyGoalBackwardFamily(material) !== 'race') return material;
+    const goal = goals.find((entry) => entry.race_id && entry.race_id === String(material.race_id || '')
+      && entry.athlete_id === userId && entry.event_local_date === material.date);
+    if (!goal) return material;
+    return { ...material, event_identity: {
+      athlete_id: userId, goal_id: goal.goal_id, race_id: goal.race_id,
+      event_local_date: goal.event_local_date, event_kind: goal.event_kind,
+      event_revision: goal.event_revision, source_revision: goal.source_revision,
+    } };
+  });
+  if (dependencies.programWindowDates && !built.plan.weeks.some(week => week.phase === 'race'
+    && week.startDate <= planningDateLocal && addPolicyDays(week.startDate, 6) >= planningDateLocal)) {
+    candidateMaterial = candidateMaterial.map(material => {
+      const family = legacyGoalBackwardFamily(material);
+      const minimum = family === 'easy_run' ? (['BEGINNER', 'RETURNING'].includes(trainingAgeClass) ? 20 : 25)
+        : family === 'recovery_run' ? (trainingAgeClass === 'BEGINNER' ? 15 : 20) : null;
+      if (!minimum || material.prescription_basis !== 'time' || !(material.duration_min > 0)
+        || material.duration_min >= minimum) return material;
+      // Choose a useful time-based source BEFORE placement/accounting. This is
+      // the existing presentation minimum, not invented observed mileage or a
+      // lower safety threshold; all complete-load gates still evaluate it.
+      return { ...material, duration_min: minimum,
+        source_duration_policy: 'existing-meaningful-road-duration-v1' };
+    });
+  }
   candidateMaterial = goalBackwardRequiredRoadMaterial(
     candidateMaterial,
     completeCandidateMaterial,
@@ -3932,7 +4081,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         decisionInput.athlete_state.recent_normal_running.confidence || ''
       ).toUpperCase())
       ? decisionInput.athlete_state.recent_normal_running.median_distance_m : null;
-    const activeRunningObservation = activeAppliedPlan ? runningDistanceObservation(activeAppliedPlan, {
+    const activeRunningObservation = activeRetainedWorkPlan ? runningDistanceObservation(activeRetainedWorkPlan, {
       start: planningDateLocal,
       end: addPolicyDays(planningDateLocal, 6),
     }) : null;
@@ -3947,8 +4096,8 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       && Boolean(activeAppliedPlan);
     requiredRunningDoseReceipt = goalBackwardRequiredRunningDoseReceipt(
       goalBackwardRequiredRunningDoseSnapshot(
-        decision.minimum_weekly_demand?.running_m ?? null,
-        materialPreservationMinimumRunningM,
+        dependencies.programOpeningPartial || decision.frequency_dose_contract ? 0 : decision.minimum_weekly_demand?.running_m ?? null,
+        dependencies.programOpeningPartial || decision.frequency_dose_contract ? null : materialPreservationMinimumRunningM,
         activeRemovalSourceRequired && activeRunningObservation?.state === 'KNOWN'
           ? activeRunningObservation.distance_m : null,
         activeRemovalSourceRequired
@@ -3986,6 +4135,13 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         completedRunningM: completedRunningCredit?.completed_running_m || 0,
       },
     );
+    // Validate executable timed work before legacy role descriptors enrich the
+    // source object. Unknown distance is not absence of a useful prescription.
+    const validatedTimedMaterialIds = new Set(candidateMaterial.filter(source => (
+      source.canonical_workout_schema_version === 1
+      && Number(source.derived_totals?.duration_s) > 0
+      && validateCanonicalSession(source).valid
+    )).map(goalBackwardMaterialId));
     const supportCandidateMaterial = canonicalRoadCandidateMaterial(
       candidateMaterial,
       projectionPaceSecondsPerMile,
@@ -3997,6 +4153,17 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       distance_m: material.distance_m,
       distance_miles: material.distance_miles,
     }));
+    if (dependencies.programWindowDates) {
+      const inventory = buildGoalBackwardCandidateSkeleton({ decision,
+        legacy_road_candidate_material: candidateMaterial,
+        hybrid_running_projection_pace_s_per_mile: projectionPaceSecondsPerMile });
+      for (const material of inventory.candidate_material || []) {
+        if (candidateMaterial.some((source) => goalBackwardMaterialId(source) === material.material_id)) continue;
+        const source = { ...material.source_session, session_id: material.material_id };
+        candidateMaterial.push(source);
+        supportCandidateMaterial.push(source);
+      }
+    }
     const completedThroughLocalDate = completedRunningCredit?.through_local_date || null;
     const schedulableLocalDateCount = availableLocalDates.filter((date) => (
       !completedThroughLocalDate || date > completedThroughLocalDate
@@ -4006,10 +4173,11 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       decision.role_multiset,
       requiredRunningM,
       {
-        availableDaysCount: schedulableLocalDateCount,
-        requestedRunDays: planningDateLocal === planningWeekStartLocal
-          && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
-          ? state.target?.runDaysPerWeek : undefined,
+        completeProgramWindow: !!dependencies.programWindowDates,
+        validatedTimedMaterialIds,
+        availableDaysCount: schedulableLocalDateCount - candidateMaterial.filter(source => source.event_identity).length,
+        requestedRunDays: Math.max(0, Number(state.target?.runDaysPerWeek || 0)
+          - candidateMaterial.filter(source => source.event_identity).length),
         completedRunCount: planningDateLocal === planningWeekStartLocal
           && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
           && completedRunningCredit
@@ -4018,11 +4186,36 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
           && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass),
         projectionPaceSecondsPerMile,
         supportingFamilies: ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON']
-          .includes(String(goals[0]?.event_kind || '')) && schedulableLocalDateCount <= 4
-          ? ['recovery_run', 'easy_run', 'long_aerobic', 'steady_run'] : undefined,
+          .includes(String(goals[0]?.event_kind || '')) && (dependencies.programWindowDates || schedulableLocalDateCount <= 4)
+          ? ['recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'assessment'] : undefined,
         trainingAgeClass,
       },
     );
+    const sourceLifts = dependencies.programWindowDates ? candidateMaterial.filter((material) => (
+      ['strength_upper', 'strength_lower', 'strength_full_body'].includes(legacyGoalBackwardFamily(material))
+    )) : [];
+    for (const material of candidateMaterial.filter((source) => source.event_identity)) {
+      const materialId = goalBackwardMaterialId(material);
+      if (decision.role_multiset.some(role => role.any_of?.length === 1 && role.any_of[0] === 'race'
+        && role.scheduled_local_date === material.event_identity.event_local_date
+        && role.supports_goal_id === material.event_identity.goal_id)) continue;
+      // Never substitute another date, event, simulation, or similarly named workout.
+      const existing = supportingStimuli.find((role) => role.candidate_material_id === materialId);
+      const eventRole = { requirement_id: `owned-event-${material.event_identity.race_id}`,
+        role: 'SUPPORTING', any_of: ['race'], candidate_material_id: materialId,
+        scheduled_local_date: material.event_identity.event_local_date,
+        supports_requirement_id: decision.role_multiset.find((role) => role.role === 'PRIMARY_KEY')?.requirement_id };
+      if (existing) Object.assign(existing, eventRole);
+      else supportingStimuli.push(eventRole);
+    }
+    for (const material of sourceLifts) {
+      supportingStimuli.push({
+        requirement_id: `requested-strength-${goalBackwardMaterialId(material)}`,
+        role: 'SUPPORTING', any_of: [legacyGoalBackwardFamily(material)],
+        candidate_material_id: goalBackwardMaterialId(material),
+        supports_requirement_id: decision.role_multiset.find((role) => role.role === 'PRIMARY_KEY')?.requirement_id,
+      });
+    }
     if (supportingStimuli.length) {
       decision = buildDecision({ ...decisionInput, supporting_stimuli: supportingStimuli });
       candidateMaterial = goalBackwardTopUpFullWeekRunningMaterial(
@@ -4042,8 +4235,14 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         {
           enabled: ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON']
             .includes(String(goals[0]?.event_kind || ''))
+            && !dependencies.programOpeningPartial
+            && !decision.frequency_dose_contract
             && ['ESTABLISHED', 'PROVISIONAL'].includes(recentNormalStatus)
-            && (runLoadComplete || incompleteLoadFloorIsSufficient)
+            && (runLoadComplete || incompleteLoadFloorIsSufficient
+              || (dependencies.programWindowDates && activeRemovalSourceRequired
+                && activeAppliedPlan?.canonical_workout_schema_version === 1
+                && activeRunningObservation?.state === 'KNOWN'
+                && activeRunningObservation.distance_m >= requiredRunningM))
             && ['NORMAL', 'MONITOR'].includes(safetyAction),
           projectionPaceSecondsPerMile,
           roles: decision.role_multiset,
@@ -4092,11 +4291,90 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     authorized_ceiling_vector: crossModalReductionEvidence.dimension_ledger.dimensions
       .map((entry) => entry.authorized_ceiling),
   } : null;
+  const runningDoseSource = dependencies.programWindowDates ? {
+    policy_version: require('../lib/runningDoseAccounting').VERSION,
+    authority: 'CONSERVATIVE_TEMPLATE',
+    allow_effort_only: !Number.isFinite(state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile),
+    evidence_snapshot_hash: evidenceSnapshotId,
+    selected_weekly_distance_m: decisionInput.athlete_state.recent_normal_running?.median_distance_m
+      ?? require('../lib/runningDoseAccounting').REFERENCE.distance_m,
+    planning_week: planningWeekStartLocal,
+  } : null;
+  let canonicalLoadSource = null;
+  const canonicalLoadContextHash = canonicalHash({ evidenceSnapshotId, inputHash: state.inputHash,
+    planningWeekStartLocal, decisionHash: decision.decision_hash });
+  if (runningDoseSource) {
+    // Select the phase's executable prescription once, BEFORE placement search.
+    // This source is derived from server-owned constructor/evidence inputs; no
+    // candidate result, claimed stress, or candidate pass/fail can change it.
+    const sourceSkeleton = JSON.parse(JSON.stringify(buildGoalBackwardCandidateSkeleton({ decision,
+      legacy_road_candidate_material: candidateMaterial,
+      hybrid_running_projection_pace_s_per_mile: state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile ?? null })));
+    const reserved = { run: new Set(), lift: new Set() };
+    const modality = session => String(session.workout_family).startsWith('strength_') ? 'lift' : 'run';
+    for (const session of [...sourceSkeleton.sessions].sort((a, b) => Number(b.workout_family === 'race') - Number(a.workout_family === 'race'))) {
+      const material = sourceSkeleton.candidate_material.find(entry => entry.material_id === session.candidate_material_id);
+      if (!material) return { decision, candidates: [], selected_candidate: null,
+        program_failure: 'SOURCE_MATERIAL_INCOMPLETE', source_failure: {
+          requirement_id: session.requirement_id, workout_family: session.workout_family,
+          reason: 'No evidence-compatible executable source prescription exists for this required role.' } };
+      const eligible = modality(session) === 'lift' ? dependencies.programLiftDates : dependencies.programRunDates;
+      session.scheduled_local_date = session.workout_family === 'race' ? material.legacy_scheduled_local_date
+        : eligible.includes(material.legacy_scheduled_local_date) ? material.legacy_scheduled_local_date : null;
+      // A carried and a newly constructed source can prefer the same date.
+      // Calendar frequency counts distinct modality days; assign the later
+      // preference a free eligible date without changing its prescription.
+      if (session.workout_family !== 'race' && reserved[modality(session)].has(session.scheduled_local_date)) {
+        session.scheduled_local_date = null;
+      }
+      if (session.scheduled_local_date) reserved[modality(session)].add(session.scheduled_local_date);
+    }
+    // A full-horizon source uses stable hard-run weekdays across phase
+    // transitions. Dose and material stay unchanged; a deload must not slide
+    // this week's quality/long work next to last week's protected exposures.
+    const sourceRuns = sourceSkeleton.sessions.filter(session => modality(session) === 'run');
+    const quality = sourceRuns.filter(session => ['threshold_run', 'interval_run', 'race_rhythm_run', 'assessment'].includes(session.workout_family));
+    const long = sourceRuns.filter(session => session.workout_family === 'long_aerobic');
+    const runDates = dependencies.programRunDates;
+    if (!sourceRuns.some(session => session.workout_family === 'race') && quality.length === 1
+      && long.length === 1 && runDates.length >= 3 && dependencies.programWindowDates.length === 7) {
+      const move = (session, date) => {
+        const displaced = sourceRuns.find(entry => entry !== session && entry.scheduled_local_date === date);
+        if (displaced) displaced.scheduled_local_date = session.scheduled_local_date;
+        session.scheduled_local_date = date;
+      };
+      move(long[0], runDates.at(-1));
+      move(quality[0], runDates[Math.floor((runDates.length - 1) / 3)]);
+      reserved.run = new Set(sourceRuns.map(session => session.scheduled_local_date).filter(Boolean));
+    }
+    for (const session of sourceSkeleton.sessions.filter(entry => !entry.scheduled_local_date)) {
+      const kind = modality(session), eligible = kind === 'lift' ? dependencies.programLiftDates : dependencies.programRunDates;
+      const date = eligible.find(entry => !reserved[kind].has(entry));
+      if (!date) return { decision, candidates: [], selected_candidate: null,
+        program_failure: 'SOURCE_SCHEDULE_CAPACITY', source_failure: {
+          modality: kind, eligible_date_count: eligible.length,
+          requested_exposures: sourceSkeleton.sessions.filter(entry => modality(entry) === kind).length } };
+      session.scheduled_local_date = date; reserved[kind].add(date);
+    }
+    sourceSkeleton.candidate_skeleton_hash = canonicalHash(sourceSkeleton);
+    const sourceSet = require('../lib/canonicalWorkout').materializeCanonicalSessionSet({
+      candidate: sourceSkeleton, decision, running_dose_source: runningDoseSource,
+      timezone: state.context?.profile?.timezone || decision.timezone || 'UTC',
+      planning_instant: `${planningDateLocal}T00:00:00.000Z`, training_age_class: trainingAgeClass,
+    });
+    canonicalLoadSource = require('../lib/canonicalCombinedLoad').buildCanonicalLoadSource(sourceSet,
+      { contextHash: canonicalLoadContextHash, authority: 'TEMPLATE_BOUNDED', partialWeekContract: decision.partial_week_contract,
+        frequencyDoseContract: decision.frequency_dose_contract });
+  }
   const result = enumerateCandidates({
     decision,
+    program_window: Boolean(dependencies.programWindowDates),
+    exhaustive_program_search: dependencies.exhaustiveProgramSearch === true,
     available_local_dates: availableLocalDates,
+    run_eligible_local_dates: dependencies.programRunDates,
+    lift_eligible_local_dates: dependencies.programLiftDates,
     maximum_session_count: decision.role_multiset.length,
-    maximum_sessions_per_day: planningDateLocal === planningWeekStartLocal
+    maximum_sessions_per_day: dependencies.programWindowDates && state.target?.liftingEnabled === true ? 2 : planningDateLocal === planningWeekStartLocal
       && ['ESTABLISHED', 'ADVANCED'].includes(trainingAgeClass)
       && state.target?.runDaysPerWeek === availableLocalDates.length
       && decision.role_multiset.some((role) => (
@@ -4105,6 +4383,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       )) ? 2 : undefined,
     legacy_road_candidate_material: candidateMaterial,
     active_applied_plan: activeAppliedPlan,
+    material_dose_active_plan: activeRetainedWorkPlan,
     preferred_weekdays: state.target?.trainingDays || [],
     selected_running_volume_m: decision.proposed_running_volume_m,
     // C3 consumes only the canonical C2 load contract. Legacy/synthetic states
@@ -4122,6 +4401,9 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       ?? {},
     ...(crossModalFatigueCeilings ? { fatigue_ceilings: crossModalFatigueCeilings } : {}),
     materialize_canonical: true,
+    ...(runningDoseSource ? { running_dose_source: runningDoseSource,
+      canonical_load_source: canonicalLoadSource, canonical_load_context_hash: canonicalLoadContextHash } : {}),
+    current_plan: built.plan,
     planning_instant: `${planningDateLocal}T00:00:00.000Z`,
     timezone: state.context?.profile?.timezone || decision.timezone || 'UTC',
     validation_options: {
@@ -4132,6 +4414,8 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       recovery_state: recoveryState,
       safety_action: safetyAction,
       event_local_date: primaryEventDate,
+      active_goals: goals,
+      athlete_id: userId,
       mandatory_hyrox_cluster: decision.mandatory_hyrox_cluster === true,
       minimum_weekly_demand: decision.minimum_weekly_demand,
       recent_normal_running: {
@@ -4143,6 +4427,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       observed_lower_bound_evidence_ids: observedLowerBoundWeeklyMiles === null
         ? [] : [evidenceSnapshotId],
       material_reduction_scope: materialReductionScope,
+      partial_week_contract: dependencies.programOpeningPartial,
       completed_running_credit: completedRunningCredit,
       cross_modal_reduction_evidence: crossModalReductionEvidence,
       cross_modal_evidence_ids: crossModalReductionEvidence.valid
@@ -4154,6 +4439,207 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     : result;
   if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(inspectedResult);
   return inspectedResult;
+}
+
+function computeGoalBackwardShadowDiagnostics(input, dependencies = {}) {
+  const { state, built, planningDateLocal } = input;
+  // Lifecycle carry-forward and HYROX retain their independently gated paths.
+  // Road creation composes bounded weekly searches, never one unbounded search
+  // or a validated first week followed by unvalidated legacy sessions.
+  if (state.target?.hyroxEvent || built.plan?.planMode === 'hyrox_build'
+    || (state.request?.operation === 'remove_race' && !state.removalPlanSnapshot?.programContract)
+    || dependencies.enumerateCandidates
+    || dependencies.buildDecision || !Array.isArray(built.plan?.weeks)
+    || built.plan.weeks.some(week => !/^\d{4}-\d{2}-\d{2}$/.test(String(week.startDate || '')))) {
+    return computeGoalBackwardSingleWindow(input, dependencies);
+  }
+  const contract = buildProgramContract({ target: state.target, profile: state.context?.profile,
+    planningDateLocal, constraints: state.planningConstraints, evidenceRevision: state.planningInputRevision,
+    ownedGoals: goalBackwardGoalsForState(input.userId, state), evidenceFingerprint: state.inputHash,
+    activeIdentity: state.activePlan || null });
+  const windows = [];
+  for (const week of built.plan.weeks) {
+    const weekStart = week.startDate;
+    const windowStart = weekStart < planningDateLocal ? planningDateLocal : weekStart;
+    const windowEnd = addPolicyDays(weekStart, 6) < contract.end_date ? addPolicyDays(weekStart, 6) : contract.end_date;
+    if (windowStart > windowEnd) continue;
+    const allDates = [];
+    for (let date = windowStart; date <= windowEnd; date = addPolicyDays(date, 1)) allDates.push(date);
+    const weekday = (date) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${date}T12:00:00Z`).getUTCDay()];
+    const dates = allDates.filter((date) => contract.run_eligible_weekdays.includes(weekday(date))
+      || contract.lift_eligible_weekdays.includes(weekday(date)) || date === contract.end_date);
+    const result = computeGoalBackwardSingleWindow({ ...input,
+      planningDateLocal: windowStart }, { ...dependencies, inspectDecision: undefined, programWindowDates: dates,
+      programOpeningPartial: weekStart < planningDateLocal && week.phase !== 'race'
+        && allDates.filter(date => contract.run_eligible_weekdays.includes(weekday(date))).length < contract.run_days_per_week
+        ? { version: 'opening-partial-week-v1', planning_date: planningDateLocal, week_start: weekStart,
+          end_date: windowEnd, requested_run_days: contract.run_days_per_week,
+          eligible_dates: allDates.filter(date => contract.run_eligible_weekdays.includes(weekday(date))),
+          completed_run_days: Number(week.currentWeekConstraint?.completedRunsAppliedToQuota || 0),
+          input_hash: state.inputHash } : undefined,
+      programRunDates: allDates.filter((date) => contract.run_eligible_weekdays.includes(weekday(date))),
+      programLiftDates: allDates.filter((date) => contract.lift_eligible_weekdays.includes(weekday(date))) });
+    if (!result.selected_candidate) {
+      const failed = { ...result, program_contract: contract, failed_program_week: weekStart };
+      dependencies.inspectDecision?.(failed);
+      return failed;
+    }
+    windows.push({ week, result, selected: null });
+  }
+  if (!windows.length) return computeGoalBackwardSingleWindow(input, dependencies);
+  let expanded = 0, failedWindow = null;
+  const boundaryCache = new Map();
+  const boundaryFailures = new Map();
+  const failedSuffixStates = new Set();
+  const selectProgram = (index, priorSessions) => {
+    if (index === windows.length) return true;
+    const window = windows[index];
+    const suffixKey = `${index}:${canonicalHash(priorSessions.filter(session =>
+      session.scheduled_local_date >= addPolicyDays(window.week.startDate, -6))
+      .map(session => [session.session_id, session.scheduled_local_date, session.content_hash]))}`;
+    if (failedSuffixStates.has(suffixKey)) return false;
+    for (const candidate of window.result.candidates.filter(entry => entry.validation?.valid)
+      .sort((a, b) => Number(b.independent_source_seed) - Number(a.independent_source_seed))) {
+      if (++expanded > 2048) return false;
+      // Only the preceding six days can interact with this weekly window.
+      const earliest = addPolicyDays(window.week.startDate, -6);
+      const sessions = [...priorSessions.filter(session => session.scheduled_local_date >= earliest), ...candidate.sessions];
+      const age = window.result.decision.training_age_class;
+      const boundaryKey = canonicalHash(sessions.map(session => [session.session_id, session.scheduled_local_date, session.content_hash]));
+      if (!boundaryCache.has(boundaryKey)) boundaryCache.set(boundaryKey,
+        validateInterference(sessions, { training_age_class: age }).valid
+        && validateRollingHardDays(sessions, { training_age_class: age, spacing_valid: true }).valid
+        && (candidate.workload_evidence.canonical_load_source
+          ? require('../lib/canonicalCombinedLoad').validateRollingCanonicalLoad(sessions,
+            [...windows.slice(Math.max(0, index - 1), index).map(entry => entry.selected.workload_evidence.canonical_load_source),
+              candidate.workload_evidence.canonical_load_source],
+            { throughDate: addPolicyDays(window.week.startDate, 6) }).valid
+          : validateRollingProgramDose(sessions, candidate.workload_evidence.fatigue_ceilings).valid));
+      if (!boundaryCache.get(boundaryKey)) {
+        if (!boundaryFailures.has(window.week.startDate)) boundaryFailures.set(window.week.startDate, {
+          week: window.week.startDate,
+          interference: validateInterference(sessions, { training_age_class: age }),
+          hard_days: validateRollingHardDays(sessions, { training_age_class: age, spacing_valid: true }),
+          rolling: candidate.workload_evidence.canonical_load_source ? require('../lib/canonicalCombinedLoad').validateRollingCanonicalLoad(sessions,
+            [...windows.slice(Math.max(0, index - 1), index).map(entry => entry.selected.workload_evidence.canonical_load_source),
+              candidate.workload_evidence.canonical_load_source], { throughDate: addPolicyDays(window.week.startDate, 6) }) : null,
+          source_seed: Boolean(candidate.independent_source_seed),
+          sessions: sessions.map(session => ({ date: session.scheduled_local_date, family: session.workout_family,
+            source_id: session.source_session_id, dose: require('../lib/goalBackwardLoad').resolveSessionStress(session).vector })),
+        });
+        continue;
+      }
+      window.selected = candidate;
+      if (selectProgram(index + 1, sessions)) return true;
+    }
+    if (!failedWindow || window.week.startDate > failedWindow) failedWindow = window.week.startDate;
+    window.selected = null;
+    failedSuffixStates.add(suffixKey);
+    return false;
+  };
+  if (!selectProgram(0, []) && dependencies.exhaustiveProgramSearch !== true) {
+    return computeGoalBackwardShadowDiagnostics(input, { ...dependencies, exhaustiveProgramSearch: true });
+  }
+  if (windows.some(window => !window.selected)) return { ...windows[0].result, selected_candidate: null,
+    program_contract: contract, failed_program_week: failedWindow,
+    program_boundary_diagnostics: [...boundaryFailures.values()],
+    program_failure: expanded > 2048 ? 'PROGRAM_SEARCH_BUDGET_EXHAUSTED' : 'ROLLING_WEEK_BOUNDARY_CONFLICT' };
+  const first = windows[0].result;
+  const decisionHash = canonicalHash({ contract, windows: windows.map(({ result, selected }) => ({
+    decision_hash: result.decision.decision_hash, candidate_hash: selected.candidate_hash,
+  })) });
+  const decisionId = `program-decision-${decisionHash.slice(0, 24)}`;
+  const planId = `candidate-plan-${decisionHash.slice(0, 24)}`;
+  const planRevision = windows[0].selected.canonical_session_set.plan_revision;
+  const sessions = windows.flatMap(({ week, selected }) => selected.sessions.map((session) => {
+    const next = JSON.parse(JSON.stringify(session));
+    next.session_id = `${week.startDate}-${session.session_id}`;
+    next.id = next.session_id;
+    next.plan_id = planId; next.plan_revision = planRevision; next.decision_id = decisionId;
+    const bindDecision = (value) => {
+      if (!value || typeof value !== 'object') return;
+      if (Object.hasOwn(value, 'decision_id')) value.decision_id = decisionId;
+      Object.values(value).forEach(bindDecision);
+    };
+    bindDecision(next);
+    if (next.supports_session_id) next.supports_session_id = `${week.startDate}-${next.supports_session_id}`;
+    next.content_hash = canonicalWorkoutHash(next);
+    return next;
+  }));
+  const skeletonHash = canonicalHash({ contract, weekly_candidates: windows.map(({ selected }) => selected.candidate_hash) });
+  const set = { ...JSON.parse(JSON.stringify(windows[0].selected.canonical_session_set)),
+    program_storage_version: require('../lib/goalBackwardContracts').PROGRAM_ARTIFACT_STORAGE_VERSION,
+    program_contract: contract,
+    plan_id: planId, plan_revision: planRevision, decision_id: decisionId, decision_hash: decisionHash,
+    candidate_id: `program-candidate-${skeletonHash.slice(0, 24)}`, candidate_skeleton_hash: skeletonHash,
+    sessions, session_content_hashes: sessions.map((session) => ({ session_id: session.session_id, content_hash: session.content_hash })),
+    derived_totals: Object.fromEntries(Object.keys(sessions[0].derived_totals).map((key) => [key,
+      sessions.reduce((sum, session) => sum + Number(session.derived_totals[key] || 0), 0)])),
+  };
+  set.content_hash = canonicalSessionSetHash(set);
+  set.candidate_hash = canonicalHash({ candidate_skeleton_hash: skeletonHash, canonical_session_set_hash: set.content_hash });
+  const setValidation = validateCanonicalSessionSet(set);
+  if (!setValidation.valid) throw Object.assign(new Error('Composed program identity failed'), { details: setValidation });
+  const canonicalPlan = planSchema.buildCanonicalPlanFromSessionSet(set, { currentPlan: built.plan });
+  // Materialized sessions stay authoritative. Empty calendar dates are explicit
+  // rest entries and cannot introduce an unvalidated prescription.
+  canonicalPlan.weeks = windows.map(({ week }, index) => {
+    const grouped = canonicalPlan.weeks.find((entry) => entry.startDate === week.startDate);
+    const byDate = new Map((grouped?.days || []).map((day) => [day.date, day]));
+    const days = [];
+    for (let date = week.startDate; date <= addPolicyDays(week.startDate, 6) && date <= contract.end_date; date = addPolicyDays(date, 1)) {
+      days.push(byDate.get(date) || { date, day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${date}T12:00:00Z`).getUTCDay()], sessions: [] });
+    }
+    for (const day of days) {
+      if (day.sessions.some(session => session.kind === 'run') && day.sessions.some(session => session.kind === 'lift')) {
+        day.orderGuidance = 'Run first; lift at least 6 hours later.';
+      }
+    }
+    return { ...week, week: index + 1, days,
+      ...(contract.run_days_per_week === 1 && !['race', 'taper'].includes(week.phase) ? {
+        runFrequencyAdjustment: { policy: 'EXPLICIT_SINGLE_RUNNING_DAY_DOSE', requested: 1, prescribed: 1,
+          explanation: 'One requested running day is retained as useful training. This reduced frequency does not promise to maintain the previous multi-day weekly mileage; the race-time aspiration remains unvalidated.' },
+      } : {}),
+      totalMiles: Math.round(days.flatMap(day => day.sessions).filter(session => session.kind === 'run')
+        .reduce((sum, session) => sum + Number(session.distance_miles || 0), 0) * 10) / 10 };
+  });
+  const reconciliation = canonicalPlan.weeks.map((week, index) => {
+    const original = windows[index].week;
+    const excludedRaceFragments = original.phase === 'race' ? original.days.flatMap(day => day.sessions)
+      .filter(session => session.kind === 'run' && session.type !== 'race'
+        && Number(session.duration_min) > 0 && Number(session.duration_min) < 20) : [];
+    return reconcileProgramWeek(contract, week, {
+      completedRuns: Number(original.currentWeekConstraint?.completedRunsAppliedToQuota || original.completedRunsAtGeneration || 0),
+      completedLifts: Number(original.completedStrengthSessionsAtGeneration || 0),
+      raceRunPrescription: original.phase === 'race' ? {
+        expected: windows[index].selected.workload_evidence.canonical_load_source.canonical_session_set.sessions
+          .filter(session => session.kind === 'run').length,
+        authoritative_source_hash: windows[index].selected.workload_evidence.canonical_load_source.content_hash,
+        excluded: excludedRaceFragments.map(session => ({ session_id: session.id, duration_min: session.duration_min,
+          reason: 'BELOW_PRESENTATION_FLOOR' })),
+      } : null,
+    });
+  });
+  if (reconciliation.some((entry) => !entry.valid)) return { ...first, selected_candidate: null,
+    program_contract: contract, program_reconciliation: reconciliation, program_failure: 'PROGRAM_FREQUENCY_UNSATISFIABLE' };
+  const selected = { ...windows[0].selected, candidate_skeleton_id: set.candidate_id, candidate_hash: set.candidate_hash,
+    material_change: compareMaterialChange({ active_applied_plan: goalBackwardActiveAppliedPlan(state, state.active ? parsePlan(state.active.row) : null),
+      candidate: { plan_revision: planRevision, sessions, executability: sessions.some(session => session.executability !== 'EXECUTABLE') ? 'RESTRICTED' : 'EXECUTABLE' },
+      decisive_evidence_ids: [...new Set(windows.flatMap(({ result }) => (result.decision.evidence_used || []).map(entry => typeof entry === 'string' ? entry : entry.evidence_id || entry.id).filter(Boolean)))],
+      decision_id: decisionId, candidate_hash: set.candidate_hash, canonical_session_set_hash: set.content_hash, require_canonical_bindings: true }),
+    canonical_session_set: set, sessions, canonical_sessions: sessions, canonical_plan: {
+      ...canonicalPlan, programContract: contract, programReconciliation: reconciliation,
+      programCanonicalIdentity: Object.fromEntries(Object.entries(set).filter(([key]) => key !== 'sessions')),
+    }, validation: { valid: true, reason_codes: [], violations: [],
+      validator_results: windows.flatMap(({ week, selected: candidate }) => candidate.validation.validator_results.map((entry) => ({ ...entry, week_start: week.startDate }))) },
+  };
+  const decision = finalizeGoalBackwardCandidateDecision({ ...first.decision, decision_id: decisionId, decision_hash: decisionHash,
+    program_contract: contract, program_windows: windows.map(({ week, result }) => ({ start_date: week.startDate, decision: result.decision })) },
+  { candidates: [selected], selectedCandidate: selected, totalUniqueCandidateCount: 1 });
+  const result = { ...first, decision, candidates: [selected], selected_candidate: selected,
+    program_contract: contract, program_reconciliation: reconciliation };
+  dependencies.inspectDecision?.(result);
+  return result;
 }
 
 function buildGoalBackwardArtifacts(input = {}) {
@@ -4259,6 +4745,8 @@ function buildCanonicalSurfaceManifest(input = {}) {
   }));
   return {
     schema_version: 'goal_backward_surface_manifest_v1',
+    ...(sessionSet.program_storage_version ? { program_storage_version: sessionSet.program_storage_version,
+      program_contract: sessionSet.program_contract } : {}),
     surface_revision: Math.max(1, Number(input.surfaceRevision || 1)),
     feature_mode: featureMode,
     v24_surface_enabled: true,
@@ -5235,10 +5723,7 @@ function applicableGoalBackwardFeasibility(currentPlan, goalBackwardResult) {
       legacy_feasibility: legacyUnsafe ? 'unsafe' : entry.feasibility,
       legacy_reasons: reasons,
       feasibility: decisionEntry.status,
-      reasons: [...new Set([
-        ...reasons,
-        ...(Array.isArray(decisionEntry.reason_codes) ? decisionEntry.reason_codes : []),
-      ])],
+      reasons: [...new Set(Array.isArray(decisionEntry.reason_codes) ? decisionEntry.reason_codes : [])],
       next_required_assessment: decisionEntry.next_required_assessment || null,
     });
   }
@@ -5246,7 +5731,8 @@ function applicableGoalBackwardFeasibility(currentPlan, goalBackwardResult) {
   const statuses = [...decisionByRaceId.values()].map((entry) => entry.status);
   return {
     goalFeasibilities: mappedGoalFeasibilities,
-    overallFeasibility: statuses.every((status) => status === 'supported') ? 'supported' : 'stretch',
+    overallFeasibility: statuses.includes('at_risk') ? 'at_risk'
+      : statuses.includes('unvalidated') ? 'unvalidated' : 'supported',
   };
 }
 
@@ -5269,7 +5755,7 @@ function applicableGoalBackwardPlan(currentPlan, goalBackwardResult) {
     overall_feasibility: feasibility.overallFeasibility,
     goal_feasibilities: feasibility.goalFeasibilities,
     reasons: [...new Set([
-      ...(Array.isArray(currentPlan.reasons) ? currentPlan.reasons : []),
+      ...feasibility.goalFeasibilities.flatMap(entry => entry.reasons || []),
       ...(Array.isArray(goalBackwardResult.decision?.reason_codes) ? goalBackwardResult.decision.reason_codes : []),
     ])],
     planningClock: currentPlan.planningClock,
@@ -5300,14 +5786,21 @@ function isRevisionedGoalBackedRequest(userId, state, request = state?.request) 
   ));
 }
 
-function goalBackwardGenerationFailed(reasonCode = 'CANDIDATE_NOT_SELECTED') {
+function goalBackwardGenerationFailed(reasonCode = 'CANDIDATE_NOT_SELECTED', diagnostic = null) {
   const boundedReasonCode = reasonCode === 'REQUIRED_RUNNING_DOSE_INVALID'
     ? reasonCode : 'CANDIDATE_NOT_SELECTED';
   return candidateError(
     409,
     'GOAL_BACKWARD_GENERATION_FAILED',
-    'The goal-backed plan could not be completed. No candidate was saved; review the goal or training inputs and preview again.',
-    { reason_code: boundedReasonCode },
+    'Forged could not construct a complete program that passed its current checks. Your race goal and active plan were not changed. This is not a judgment of your ability.',
+    { reason_code: boundedReasonCode,
+      ...(diagnostic ? { program_failure: diagnostic.program_failure || 'CANDIDATE_NOT_SELECTED',
+        frequency_constraints: (diagnostic.program_reconciliation || []).filter(week => !week.valid).map(week => ({
+          start_date: week.start_date, modalities: week.entries.map(entry => ({ modality: entry.modality,
+            requested: entry.requested, delivered: entry.delivered, completed: entry.completed, outcome: entry.outcome })) })),
+        failed_week: /^\d{4}-\d{2}-\d{2}$/.test(String(diagnostic.failed_program_week || '')) ? diagnostic.failed_program_week : null,
+        failed_checks: [...new Set((diagnostic.rejected_candidates || []).flatMap(candidate => candidate.reason_codes || []))]
+          .filter(code => REQUIRED_RELEASE_TELEMETRY_REASON_CODES.has(code)).slice(0, 16) } : {}) },
   );
 }
 
@@ -5360,7 +5853,12 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     throw candidateError(422, 'PLAN_VALIDATION_FAILED', 'The requested plan did not pass safety validation.', built.validation.errors);
   }
   const trace = buildCandidateTrace(initial, built);
-  const normalized = validateCandidateBundle({ plan: built.plan, snapshot: initial.snapshot, trace });
+  const preliminaryMode = resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies, { allowSyntheticShadow: true });
+  const completeRoadConstructor = ['preview', 'on'].includes(preliminaryMode)
+    && !initial.target?.hyroxEvent && built.plan.planMode !== 'hyrox_build'
+    && isRevisionedGoalBackedRequest(userId, initial, request);
+  const normalized = (completeRoadConstructor ? normalizeProgramConstructorBundle : validateCandidateBundle)(
+    { plan: built.plan, snapshot: initial.snapshot, trace });
   const legacyCandidateHash = prefixedHash(normalized.plan);
   let candidateHash = legacyCandidateHash;
   let persistedPlan = normalized.plan;
@@ -5437,6 +5935,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       response.candidateHash = candidateHash;
       response.plan = persistedPlan;
     } else {
+      if (typeof goalBackwardDependencies.inspectApplicability === 'function') goalBackwardDependencies.inspectApplicability(goalBackwardShadow);
       emitPlanReleaseTelemetry({
         userId,
         eventType: 'mode_resolution',
@@ -5447,7 +5946,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
         surfaceCapability: 'BLOCKED',
         sink: goalBackwardDependencies.telemetrySink,
       });
-      throw goalBackwardGenerationFailed();
+      throw goalBackwardGenerationFailed('CANDIDATE_NOT_SELECTED', goalBackwardShadow);
     }
   }
   if (goalBackwardMode !== 'off') {
@@ -5588,6 +6087,14 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
             ? goalBackwardShadow.selected_candidate?.candidate_hash || candidateHash
             : candidateHash,
         };
+        if (persistedPlan.programContract) {
+          const materialSize = await tx.get('SELECT pg_column_size(?::jsonb) AS bytes',
+            [JSON.stringify(currentBindings.material_change_json)]);
+          if (!Number.isFinite(Number(materialSize?.bytes)) || Number(materialSize.bytes) > 16 * 1024) {
+            const error = new Error('Material change binding exceeds its physical storage budget');
+            error.code = 'ARTIFACT_STORAGE_BOUND_EXCEEDED'; throw error;
+          }
+        }
         await tx.run(
           `INSERT INTO plan_generation_candidates (
              id, user_id, status, training_plan_id, user_plan_id, active_plan_version,
@@ -5636,6 +6143,8 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       } catch (error) {
         await tx.run('ROLLBACK TO SAVEPOINT goal_backward_shadow');
         await tx.run('RELEASE SAVEPOINT goal_backward_shadow');
+        if (error.code === 'ARTIFACT_STORAGE_BOUND_EXCEEDED') throw candidateError(422,
+          'PROGRAM_STORAGE_LIMIT', 'The complete program exceeds its storage budget. Your active plan was not changed.');
         if (error?.code === 'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED') throw error;
         if (typeof goalBackwardDependencies.inspectFailure === 'function') goalBackwardDependencies.inspectFailure(error);
         const applicableModeFailed = ['preview', 'on'].includes(goalBackwardMode);
@@ -5783,6 +6292,10 @@ function replacementLineageForActivePlan(active, fallbackUserPlanId) {
 function candidateFeasibilityCanApply(plan = {}) {
   const feasibility = String(plan.overall_feasibility || '').toLowerCase();
   if (feasibility === 'supported' || feasibility === 'stretch') return true;
+  if (['unvalidated', 'at_risk'].includes(feasibility)
+    && plan.goal_backward_engine_version === 'goal-backward-coaching-v2.4'
+    && plan.canonical_workout_schema_version === 1
+    && isCanonicalHash(plan.canonical_session_set_hash)) return true;
   if (feasibility !== 'not_applicable') return false;
   const goals = Array.isArray(plan.goals) ? plan.goals : plan.goal ? [plan.goal] : [];
   return !goals.some((goal) => concurrentPlan.isValidISODate(goal?.date || goal?.raceDate || goal?.race_date));
@@ -5829,6 +6342,7 @@ function raceRemovalCandidateRequest(raceId, remainingRaceIds, body = {}) {
   return {
     planning_date_local: body.planning_date_local,
     timezone_offset_minutes: body.timezone_offset_minutes,
+    ...(body.planning_timezone !== undefined ? { planning_timezone: body.planning_timezone } : {}),
     operation: 'remove_race',
     remove_race_id: String(raceId || ''),
     race_ids: (Array.isArray(remainingRaceIds) ? remainingRaceIds : []).map(String),
@@ -5990,6 +6504,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     const clock = {
       planningDateLocal: row.planning_date_local,
       timezoneOffsetMinutes: Number(row.timezone_offset_minutes),
+      planningTimezone: storedSnapshot.planning_timezone,
     };
     const current = await loadCandidateInputState(userId, request, clock, tx);
     if (enforceV24Bindings) {
@@ -6058,10 +6573,25 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     assertCandidatePlanningDateCurrent(row);
     await pruneExpiredPlanCandidates(tx, userId, { excludeCandidateId: row.id });
     const schedule = validatedPlan.schedulePreferences || {};
+    const preferenceColumns = [];
+    const preferenceValues = [];
     if (schedule.runDaysSource === 'target' && schedule.trainingDaysSource === 'target') {
+      preferenceColumns.push('run_days_per_week=?', 'preferred_workout_days=?', 'run_eligible_weekdays=?');
+      preferenceValues.push(schedule.runDaysPerWeek, JSON.stringify(schedule.trainingDays || []),
+        JSON.stringify(schedule.runEligibleWeekdays || schedule.trainingDays || []));
+    }
+    if (schedule.liftDaysSource === 'target') {
+      preferenceColumns.push('lift_days_per_week=?');
+      preferenceValues.push(schedule.liftDaysPerWeek);
+    }
+    if (schedule.liftWeekdaysSource === 'target') {
+      preferenceColumns.push('lift_eligible_weekdays=?');
+      preferenceValues.push(JSON.stringify(schedule.liftEligibleWeekdays || []));
+    }
+    if (preferenceColumns.length) {
       const preferenceResult = await tx.run(
-        'UPDATE users SET run_days_per_week=?, preferred_workout_days=? WHERE id=?',
-        [schedule.runDaysPerWeek, JSON.stringify(schedule.trainingDays || []), userId]
+        `UPDATE users SET ${preferenceColumns.join(', ')} WHERE id=?`,
+        [...preferenceValues, userId]
       );
       if (preferenceResult.changes === 0) throw new Error('Plan preferences update failed');
     }
@@ -6209,10 +6739,13 @@ async function rejectPlanCandidate(userId, candidateId, body = {}) {
 
 function defaultPrefillFromProfile(profile = {}) {
   const schedule = resolveRunSchedule(profile);
+  const liftSchedule = resolveLiftSchedule(profile);
   const liftDaysPerWeek = clampInt(profile.lift_days_per_week, 0, 7, 2);
   return {
     inferredTrainingDays: schedule.trainingDaysSource === 'profile' ? schedule.trainingDays : [],
     runDaysPerWeek: schedule.runDaysPerWeek,
+    runEligibleWeekdays: schedule.trainingDays,
+    liftEligibleWeekdays: liftSchedule.liftEligibleWeekdays || schedule.trainingDays,
     liftDaysPerWeek,
     liftingEnabled: liftDaysPerWeek > 0,
   };
@@ -6309,8 +6842,8 @@ function runDetailsForTemplate(title = '', intensity = 'normal') {
 }
 
 function generateSessions(intensity, user = {}) {
-  const runDays = clamp(Number(user.run_days_per_week || 3), 2, 6);
-  const liftDays = clamp(Number(user.lift_days_per_week || 2), 0, 4);
+  const runDays = clamp(Number(user.run_days_per_week ?? 3), 1, 7);
+  const liftDays = clamp(Number(user.lift_days_per_week ?? 2), 0, 7);
   const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const preferredRunDays = parsePreferredDays(user.preferred_run_days);
   const fallbackRunDayOrder = [1, 3, 5, 6, 2, 0, 4];
@@ -6393,7 +6926,7 @@ function normalizeAdaptivePreferences(input = {}) {
   const runDays = Number(input.run_days_per_week);
   const preferred = parsePreferredDays(input.preferred_run_days);
   return {
-    run_days_per_week: Number.isFinite(runDays) ? clamp(runDays, 2, 6) : null,
+    run_days_per_week: Number.isInteger(runDays) && runDays >= 1 && runDays <= 7 ? runDays : null,
     preferred_run_days: preferred.length ? preferred.map((idx) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]) : null,
   };
 }
@@ -7225,7 +7758,7 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
 router.get('/prefill', auth, async (req, res) => {
   let fallback = defaultPrefillFromProfile();
   try {
-    const profile = await dbGet('SELECT run_days_per_week, lift_days_per_week, preferred_workout_days FROM users WHERE id=?', [req.user.id]);
+    const profile = await dbGet('SELECT run_days_per_week, lift_days_per_week, preferred_workout_days, run_eligible_weekdays, lift_eligible_weekdays FROM users WHERE id=?', [req.user.id]);
     fallback = defaultPrefillFromProfile(profile || {});
 
     const since = new Date();
@@ -8614,6 +9147,8 @@ router._test = {
   goalBackwardSafetyState,
   goalBackwardActiveAppliedPlan,
   goalBackwardRemovalCarryForwardMaterial,
+  goalBackwardRetainedWorkComparator,
+  strictRemovalPlanSnapshot,
   goalBackwardRequiredRoadMaterial,
   goalBackwardSelectedMaterialIds,
   goalBackwardTopUpRoadRunningMaterial,

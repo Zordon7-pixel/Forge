@@ -188,17 +188,18 @@ function run() {
   assert.equal(scenario.result.selected_candidate.validation.valid, true);
   assert.deepEqual(
     scenario.result.selected_candidate.validation.validator_results.map((entry) => entry.validator),
-    HARD_VALIDATOR_NAMES,
+    Array.from({ length: scenario.result.selected_candidate.validation.validator_results.length / HARD_VALIDATOR_NAMES.length },
+      () => HARD_VALIDATOR_NAMES).flat(),
   );
   assert.equal(
     scenario.result.selected_candidate.validation.validator_results.every((entry) => entry.valid),
     true,
   );
   assert.equal(
-    new Set(scenario.result.selected_candidate.canonical_sessions.map((session) => (
+    new Set(scenario.result.selected_candidate.canonical_sessions.filter(session => !session.workout_family.startsWith('strength_')).map((session) => (
       session.scheduled_local_date
     ))).size,
-    scenario.result.selected_candidate.canonical_sessions.length,
+    scenario.result.selected_candidate.canonical_sessions.filter(session => !session.workout_family.startsWith('strength_')).length,
     'the four requested runs must occupy four distinct eligible dates',
   );
   const projectedQuality = scenario.result.selected_candidate.canonical_sessions.find((session) => (
@@ -230,7 +231,7 @@ function run() {
     const shortDiagnostic = compactDiagnostic(shortRunway.result);
     assert.equal(shortRunway.built.plan.planMode, 'hybrid_maintain');
     assert.equal(
-      shortRunway.built.plan.weeks.slice(1, -1).every((week) => {
+      shortRunway.built.plan.weeks.slice(1, -1).filter(week => !['taper', 'race'].includes(week.phase)).every((week) => {
         const sessions = (week.days || []).flatMap((day) => day.sessions || []);
         return sessions.filter((session) => session.kind === 'run').length === 4
           && sessions.filter((session) => session.kind === 'lift').length === 4;
@@ -244,10 +245,10 @@ function run() {
     );
     assert.equal(shortRunway.result.selected_candidate.validation.valid, true);
     assert.equal(
-      new Set(shortRunway.result.selected_candidate.canonical_sessions.map((session) => (
+      new Set(shortRunway.result.selected_candidate.canonical_sessions.filter(session => session.kind === 'run').map((session) => (
         session.scheduled_local_date
       ))).size,
-      shortRunway.result.selected_candidate.canonical_sessions.length,
+      shortRunway.result.selected_candidate.canonical_sessions.filter(session => session.kind === 'run').length,
       'the four requested run days stay distinct without requiring a fifth eligible weekday',
     );
     assert.ok(
@@ -276,17 +277,17 @@ function run() {
   );
   assert.equal(completedSaturday.result.decision.role_multiset.length, 3);
   assert.equal(
-    completedSaturday.result.selected_candidate.canonical_sessions.every((session) => (
+    completedSaturday.result.selected_candidate.canonical_sessions.filter(session => session.kind === 'run').every((session) => (
       session.scheduled_local_date > PLANNING_DATE
     )),
     true,
     'completed dates are credit, never duplicate placements',
   );
   assert.equal(
-    new Set(completedSaturday.result.selected_candidate.canonical_sessions.map((session) => (
+    new Set(completedSaturday.result.selected_candidate.canonical_sessions.filter(session => session.kind === 'run').map((session) => (
       session.scheduled_local_date
     ))).size,
-    completedSaturday.result.selected_candidate.canonical_sessions.length,
+    completedSaturday.result.selected_candidate.canonical_sessions.filter(session => session.kind === 'run').length,
   );
   assert.ok(
     plansRouter._test.applicableGoalBackwardPlan(

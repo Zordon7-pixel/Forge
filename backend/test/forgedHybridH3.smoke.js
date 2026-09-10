@@ -143,16 +143,16 @@ assert(interferenceSafe, 'lower-body strength never conflicts with adjacent hard
 section('timed race target progression');
 const performanceProfile = engine.buildRunPerformanceProfile([
   { id: 'walk', date: '2026-07-10', distance_miles: 10, duration_seconds: 6000, health_source: 'apple_health', type: 'walk' },
-  { id: 'apple-10mi', date: '2026-06-10', distance_miles: 10.02, duration_seconds: 6000, health_source: 'apple_health', type: 'run' },
-  { id: 'strava-10mi', date: '2026-07-01', distance_miles: 9.98, duration_seconds: 5700, health_source: 'strava', type: 'run' },
-  { id: 'strava-5k', date: '2026-07-08', distance_miles: 3.107, duration_seconds: 1500, health_source: 'strava', type: 'run' },
+  { id: 'apple-10mi', date: '2026-06-10', distance_miles: 10.02, duration_seconds: 6000, health_source: 'apple_health', type: 'race' },
+  { id: 'strava-10mi', date: '2026-07-01', distance_miles: 9.98, duration_seconds: 5700, health_source: 'strava', type: 'race' },
+  { id: 'strava-5k', date: '2026-07-08', distance_miles: 3.107, duration_seconds: 1500, health_source: 'strava', type: 'race' },
 ], { todayISO: '2026-07-13', targetDistanceMiles: 10 });
 assert(performanceProfile.sampleCount === 3 && performanceProfile.sources.includes('apple_health') && performanceProfile.sources.includes('strava'), 'Apple Health and Strava true runs share one performance history while walks are excluded');
 assert(performanceProfile.records.some((record) => record.key === '10_mile'), 'synced history produces a 10-mile observed best effort');
 assert(performanceProfile.targetAnchor.kind === 'observed_distance_band' && performanceProfile.targetAnchor.runId === 'strava-10mi', 'exact-distance best effort is preferred for the target race');
 
 const crossDistanceProfile = engine.buildRunPerformanceProfile([
-  { id: 'apple-7mi', date: '2026-07-10', distance_miles: 7.3, duration_seconds: 5100, health_source: 'apple_health', type: 'run' },
+  { id: 'apple-7mi', date: '2026-07-10', distance_miles: 7.3, duration_seconds: 5100, health_source: 'apple_health', type: 'time_trial' },
 ], { todayISO: '2026-07-13', targetDistanceMiles: 10 });
 assert(crossDistanceProfile.targetAnchor.kind === 'cross_distance_estimate' && crossDistanceProfile.targetAnchor.observedDistanceMiles === 7.3, 'a credible nonstandard distance becomes a clearly labeled target-distance estimate');
 
@@ -177,7 +177,7 @@ const completionPlan = engine.buildConcurrentPlan({
 assert(completionPlan.goal.goalTimeSeconds === null, 'an explicit completion goal is never replaced by an automatic PR target');
 
 const staleProfile = engine.buildRunPerformanceProfile([
-  { id: 'old-10mi', date: '2025-01-01', distance_miles: 10, duration_seconds: 5400, health_source: 'strava', type: 'run' },
+  { id: 'old-10mi', date: '2025-01-01', distance_miles: 10, duration_seconds: 5400, health_source: 'strava', type: 'race' },
 ], { todayISO: '2026-07-13', targetDistanceMiles: 10 });
 assert(staleProfile.targetAnchor === null && staleProfile.historicalTargetAnchor?.runId === 'old-10mi', 'an old PR remains visible as history but cannot set current training pace');
 

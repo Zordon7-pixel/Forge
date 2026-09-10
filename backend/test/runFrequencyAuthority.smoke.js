@@ -235,12 +235,19 @@ const quotaAlreadyMetContext = partialWeekContext({
   runCount: 5,
   runDates: ['2026-07-20', '2026-07-21', '2026-07-22'],
 });
-const quotaAlreadyMetPlan = assertValidPartialWeek(quotaAlreadyMetContext, 'completed runs already above target');
-assert.equal(runSessions(quotaAlreadyMetPlan.weeks[0]).length, 0);
-assert.equal(quotaAlreadyMetPlan.weeks[0].completedRunsAtGeneration, 5);
-assert.equal(quotaAlreadyMetPlan.weeks[0].currentWeekConstraint.completedRunsAppliedToQuota, 4);
-assert.equal(quotaAlreadyMetPlan.weeks[0].currentWeekConstraint.remainingRunQuota, 0);
+const quotaAlreadyMetPlan = assertValidPartialWeek(quotaAlreadyMetContext, 'five activities on three dates credit three running days');
+assert.equal(runSessions(quotaAlreadyMetPlan.weeks[0]).length, 1);
+assert.equal(quotaAlreadyMetPlan.weeks[0].completedRunsAtGeneration, 3);
+assert.equal(quotaAlreadyMetPlan.weeks[0].currentWeekConstraint.completedRunsAppliedToQuota, 3);
+assert.equal(quotaAlreadyMetPlan.weeks[0].currentWeekConstraint.remainingRunQuota, 1);
 assert.equal(quotaAlreadyMetPlan.weeks[0].currentWeekConstraint.totalRunsTowardTarget, 4);
+const fourDistinctDaysPlan = assertValidPartialWeek(partialWeekContext({
+  todayISO: '2026-07-23', frequency: 4, trainingDays: ['Wed', 'Thu', 'Sat', 'Sun'],
+  runCount: 5, runDates: ['2026-07-20', '2026-07-21', '2026-07-22', '2026-07-23'],
+}), 'four distinct completed days meet the requested quota');
+assert.equal(runSessions(fourDistinctDaysPlan.weeks[0]).length, 0);
+assert.equal(fourDistinctDaysPlan.weeks[0].currentWeekConstraint.completedRunsAppliedToQuota, 4);
+assert.equal(fourDistinctDaysPlan.weeks[0].currentWeekConstraint.remainingRunQuota, 0);
 
 const lateWeekContext = partialWeekContext({
   todayISO: '2026-07-24',
@@ -1091,7 +1098,9 @@ async function checkPartialWeekRoutesDoNotReject() {
       user: { id: profile.id },
     });
     assert.equal(response.statusCode, 201, `completed quota route must not return HTTP ${response.statusCode}: ${response.payload?.error || ''}`);
-    assert.equal(runSessions(response.payload.plan.plan_data.weeks[0]).length, 0);
+    assert.equal(runSessions(response.payload.plan.plan_data.weeks[0]).length, 1,
+      'five activities on Thursday credit one distinct day, with Saturday the one remaining eligible date');
+    assert.equal(response.payload.plan.plan_data.weeks[0].currentWeekConstraint.completedRunsAppliedToQuota, 1);
 
     scenario.todayISO = '2026-07-24';
     scenario.runs = [];
@@ -1121,10 +1130,10 @@ async function checkPartialWeekRoutesDoNotReject() {
     });
     assert.equal(response.statusCode, 201, `race-week completed quota must not return HTTP ${response.statusCode}: ${response.payload?.error || ''}`);
     const protectedRaceSessions = runSessions(response.payload.plan.plan_data.weeks[0]);
-    assert.equal(protectedRaceSessions.length, 1);
-    assert.equal(protectedRaceSessions[0].day, 'Sun');
-    assert.equal(protectedRaceSessions[0].session.type, 'race');
-    assert.equal(response.payload.plan.plan_data.weeks[0].currentWeekConstraint.protectedRaceBeyondQuota, true);
+    assert.equal(protectedRaceSessions.length, 2, 'four activities on Friday are one completed running day');
+    assert.equal(protectedRaceSessions.at(-1).day, 'Sun');
+    assert.equal(protectedRaceSessions.at(-1).session.type, 'race');
+    assert.equal(response.payload.plan.plan_data.weeks[0].currentWeekConstraint.completedRunsAppliedToQuota, 1);
   } finally {
     global.Date = RealDate;
     delete require.cache[plansRoutePath];

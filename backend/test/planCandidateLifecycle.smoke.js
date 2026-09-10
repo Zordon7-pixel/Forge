@@ -663,8 +663,9 @@ async function run() {
   assert.match(source, /includeFuture: true/);
   assert.doesNotMatch(source, /function persistConcurrentPlan\(/, 'obsolete direct plan persistence cannot bypass candidate lineage');
   const writeBoundaryGuard = source.lastIndexOf('assertCandidatePlanningDateCurrent(row);');
-  const firstPlanWrite = source.indexOf("'UPDATE users SET run_days_per_week=?", writeBoundaryGuard);
+  const firstPlanWrite = source.indexOf('`UPDATE users SET ${preferenceColumns.join', writeBoundaryGuard);
   assert.ok(writeBoundaryGuard > 0 && firstPlanWrite > writeBoundaryGuard, 'the local-date guard runs inside apply immediately before plan writes');
+  assert.match(source.slice(writeBoundaryGuard, firstPlanWrite), /preferenceColumns\.push\('run_days_per_week=\?'/);
   const applyStart = source.indexOf('async function applyPlanCandidate');
   const bindingGuard = source.indexOf('validateGoalBackwardApplyEnvelope(expectedApplyEnvelope', applyStart);
   const replayBranch = source.indexOf("row.status === 'applied'", applyStart);

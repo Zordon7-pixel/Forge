@@ -10,12 +10,13 @@ export function phonePlanningClock(date = new Date()) {
   return {
     planning_date_local: `${year}-${month}-${day}`,
     timezone_offset_minutes: date.getTimezoneOffset(),
+    planning_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   }
 }
 
 export async function previewAndApplyPlan(path, body = {}, config = {}) {
   const clock = phonePlanningClock()
-  const preview = await api.post(path, { ...body, ...clock }, config)
+  const preview = await api.post(path, { ...body, ...clock }, { timeout: 90000, ...config })
   if (!preview.data?.requires_apply) return preview
 
   const candidateId = String(preview.data.candidate_id || '').trim()
@@ -38,7 +39,7 @@ export async function previewAndApplyPlan(path, body = {}, config = {}) {
         choice: previewedChoice,
         ...clock,
       },
-      config,
+      { ...config, timeout: 45000 },
     ),
   )
   return {

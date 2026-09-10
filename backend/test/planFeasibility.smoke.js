@@ -147,8 +147,8 @@ assert.ok(noAnchorCandidate.plan.reasons.includes('NO_PERFORMANCE_ANCHOR'));
 assertions += 2;
 
 const recentWeightedProfile = buildRunPerformanceProfile([
-  { id: 'nine-month-pr', date: '2025-11-03', distance_miles: 10, duration_seconds: 5100, health_source: 'strava', type: 'run' },
-  { id: 'recent-ten-mile', date: '2026-07-27', distance_miles: 10, duration_seconds: 6000, health_source: 'apple_health', type: 'run' },
+  { id: 'nine-month-pr', date: '2025-11-03', distance_miles: 10, duration_seconds: 5100, health_source: 'strava', type: 'race' },
+  { id: 'recent-ten-mile', date: '2026-07-27', distance_miles: 10, duration_seconds: 6000, health_source: 'apple_health', type: 'race' },
 ], { todayISO: PLANNING_DATE, targetDistanceMiles: 10 });
 assert.equal(recentWeightedProfile.targetAnchor?.runId, 'recent-ten-mile', 'a nine-month PR cannot beat a recent slower run for current doability');
 assert.equal(recentWeightedProfile.historicalTargetAnchor?.runId, 'nine-month-pr', 'the old PR remains historical context');
@@ -301,14 +301,14 @@ async function assertFoundationApplyLifecycle() {
       name: 'stretch goal',
       raceDate: addDays(PLANNING_DATE, 34),
       goalTimeSeconds: 4800,
-      runs: [...recentBase, { id: 'fresh-slower-10m', date: '2026-07-20', distance_miles: 10, duration_seconds: 6000, type: 'easy' }],
+      runs: [...recentBase, { id: 'fresh-slower-10m', date: '2026-07-20', distance_miles: 10, duration_seconds: 6000, type: 'race' }],
       reason: 'ASSESSMENT_REQUIRED',
     },
     {
       name: 'short runway',
       raceDate: addDays(PLANNING_DATE, 12),
       goalTimeSeconds: 5250,
-      runs: [...recentBase, { id: 'fresh-10m', date: '2026-07-20', distance_miles: 10, duration_seconds: 5355, type: 'easy' }],
+      runs: [...recentBase, { id: 'fresh-10m', date: '2026-07-20', distance_miles: 10, duration_seconds: 5355, type: 'race' }],
       reason: 'QUALITY_EXPOSURE_MISSING',
     },
     {
