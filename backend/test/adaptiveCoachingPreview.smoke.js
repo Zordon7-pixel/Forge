@@ -37,6 +37,10 @@ async function main() {
   assert.equal(computations, 1, 'authorized preview invokes the real adaptive engine');
   assert.ok(prepared.foundation && result.selected_candidate, 'real acquired fixture selects canonical work internally');
   assert.ok(result.selected_candidate.sessions.length);
+  const preview = require('../src/lib/adaptiveCoachingPreview').build({ prepared, result });
+  assert.equal(preview.candidateHash, `sha256:${result.selected_candidate.candidate_hash}`);
+  assert.deepEqual(preview.plan.weekly_objectives, result.decision.weekly_objectives);
+  assert.deepEqual(require('../src/lib/adaptiveCoachingPreview').build({ prepared, result }), preview);
   const nonCohort = await plans.previewPlanForUser(OWNER, request, options('preview', []));
   assert.equal(computations, 1);
   assert.deepEqual(nonCohort.plan, off.plan);
