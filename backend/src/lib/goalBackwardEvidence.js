@@ -1582,6 +1582,7 @@ function buildAthleteState({
   subjectiveReadiness = null,
   biometrics = {},
   recentStress = null,
+  adaptiveFoundation = null,
 } = {}) {
   if (!snapshot?.evidence_snapshot_id || !snapshot?.athlete_id) throw new Error('buildAthleteState requires an EvidenceSnapshot');
   const recentNormal = deriveRecentNormalRunning({
@@ -1656,6 +1657,30 @@ function buildAthleteState({
     reason_codes: reasonCodes,
     confidence,
   };
+  // Opt-in enrichment is hashed by the same canonical state/revision authority.
+  // Legacy callers keep their exact state shape and hash.
+  if (adaptiveFoundation) {
+    content.adaptive_foundation = adaptiveFoundation;
+    const contextSafety = adaptiveFoundation.context_safety || {};
+    if (contextSafety.active_injury || contextSafety.injury_notes_present || contextSafety.comeback_mode) {
+      if (['NORMAL', 'MONITOR'].includes(content.safety_action)) {
+        content.safety_action = contextSafety.active_injury || contextSafety.injury_notes_present
+          ? 'MODIFIED_SESSION_ONLY' : 'NO_HIGH_INTENSITY';
+      }
+      if (content.recovery_state !== 'RECOVERY') content.recovery_state = 'CAUTION';
+      content.consistency_state = 'RETURNING';
+      content.reason_codes = [...new Set([...content.reason_codes, 'INJURY_SCOPE', 'TRAINING_GAP_REBUILD'])].sort();
+    }
+    const eligible = new Set(recentNormal.eligible_week_ids);
+    let cursor = addLocalDays(snapshot.planning_date_local,
+      -((new Date(`${snapshot.planning_date_local}T12:00:00Z`).getUTCDay() + 6) % 7) - 7);
+    let consistentWeeks = 0;
+    while (eligible.has(cursor) && consistentWeeks < 8) {
+      consistentWeeks += 1;
+      cursor = addLocalDays(cursor, -7);
+    }
+    content.consistent_weeks = content.consistency_state === 'CONSISTENT' ? consistentWeeks : 0;
+  }
   const comparableHash = prefixedHash(content);
   const previousComparable = previousState?.state_content_hash || null;
   const revision = previousState

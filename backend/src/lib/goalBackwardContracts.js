@@ -52,6 +52,8 @@ const EVENT_STATES = closed(['SCHEDULED', 'COMPLETED', 'DNS', 'CANCELLED', 'POST
 const GOAL_PRIORITIES = closed(['A', 'B', 'C', 'UNSPECIFIED']);
 const GOAL_TYPES = closed(['completion', 'performance', 'PR', 'experience']);
 const FEASIBILITY_STATUSES = closed(['supported', 'unvalidated', 'at_risk', 'not_currently_supported']);
+const GOAL_GAP_STATUSES = closed(['SUPPORTED', 'AT_RISK', 'NOT_CURRENTLY_SUPPORTED']);
+const PROGRESSION_ACTIONS = closed(['ADVANCE', 'HOLD', 'REGRESS', 'OMIT']);
 const PLANNING_PHASES = closed([
   'FOUNDATION',
   'DEVELOPMENT',
@@ -232,6 +234,19 @@ const REQUIRED_REASON_CODES = closed([
   'EXPORT_MANUAL_COMPONENT_REQUIRED',
   'SURFACE_REVISION_MISMATCH',
 ]);
+const ADAPTIVE_FOUNDATION_REASON_CODES = closed([
+  'EVENT_RESULT_UNCONFIRMED',
+  'SAFE_WORKLOAD_DEMAND_UNREACHABLE',
+  'STATE_LED_PHASE',
+  'GOAL_DEMAND_UNSUPPORTED',
+  'WEEKLY_OBJECTIVE_REQUIRED',
+  'FREQUENCY_IS_CAPACITY',
+  'MEANINGFUL_DOSE_REQUIRED',
+  'PROGRESSION_OBSERVED_ADVANCE',
+  'PROGRESSION_HOLD',
+  'PROGRESSION_REGRESS',
+  'PROGRESSION_OMIT',
+]);
 
 const REASON_CODE_FAMILIES = Object.freeze({
   evidence: closed(REQUIRED_REASON_CODES.slice(0, 8)),
@@ -244,7 +259,7 @@ const REASON_CODE_FAMILIES = Object.freeze({
   surface_export: closed(REQUIRED_REASON_CODES.slice(66)),
 });
 const REASON_CODE_MIGRATION_ALIASES = Object.freeze({ NO_IMPACT: 'MODIFY_IMPACT' });
-const REQUIRED_REASON_CODE_SET = new Set(REQUIRED_REASON_CODES);
+const REQUIRED_REASON_CODE_SET = new Set([...REQUIRED_REASON_CODES, ...ADAPTIVE_FOUNDATION_REASON_CODES]);
 
 function normalizeReasonCode(value, { allowMigrationAlias = false } = {}) {
   const code = String(value || '');
@@ -609,6 +624,9 @@ function assertPipelineLinks(artifacts) {
 }
 
 module.exports = {
+  ADAPTIVE_FOUNDATION_REASON_CODES,
+  GOAL_GAP_STATUSES,
+  PROGRESSION_ACTIONS,
   ARTIFACT_KINDS,
   ATHLETE_STATE_SCHEMA_VERSION,
   CANONICAL_UNITS,
@@ -666,5 +684,5 @@ module.exports = {
   validatePipelineLinks,
   VERSION_CONSTANTS: CONTRACT_VERSIONS,
   PIPELINE_ARTIFACT_KINDS: ARTIFACT_KINDS,
-  REASON_CODES: REQUIRED_REASON_CODES,
+  REASON_CODES: closed([...REQUIRED_REASON_CODES, ...ADAPTIVE_FOUNDATION_REASON_CODES]),
 };
