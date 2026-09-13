@@ -1027,6 +1027,8 @@ function canonicalizeRunLoadInput({
   correctionsComplete = true,
   correctionInputCount = null,
   includeActivitySources = false,
+  captureSnapshot = null,
+  snapshotEvidence = null,
 } = {}) {
   const snapshot = buildEvidenceSnapshot({
     athleteId,
@@ -1035,7 +1037,10 @@ function canonicalizeRunLoadInput({
     runs,
     providerCoverage,
     corrections,
+    lifts: snapshotEvidence?.lifts || [],
+    checkIns: snapshotEvidence?.checkIns || [],
   });
+  if (typeof captureSnapshot === 'function') captureSnapshot(snapshot);
   const localPlanningDate = planningDateLocal || snapshot.planning_date_local;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(localPlanningDate || ''))) {
     throw new Error('canonicalizeRunLoadInput requires a valid planning local date');

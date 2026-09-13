@@ -43,6 +43,9 @@ const {
 } = require('../lib/goalBackwardDecisionEngine');
 const { assertPipelineLinks, REQUIRED_REASON_CODES } = require('../lib/goalBackwardContracts');
 const { canonicalizeRunLoadInput } = require('../lib/goalBackwardEvidence');
+const adaptiveShadow = require('../lib/adaptiveCoachingShadow');
+// Private observed inputs; never serialized into legacy plans, hashes or responses.
+const adaptiveObservedInputs = new WeakMap();
 const {
   deriveMaterialReductionScope,
   deriveScopedRecoveryState,
@@ -2173,10 +2176,11 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   const sinceDate = addPolicyDays(planningDateISO, -55);
   const planningWeekStartDate = concurrentPlan.racePlanWindow(planningDateISO, planningDateISO)?.startDate || planningDateISO;
   const runHistoryStartDate = addPolicyDays(planningWeekStartDate, -56);
-  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, evidenceCorrections] = await Promise.all([
+  let adaptiveSourceFailure = false;
+  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, evidenceCorrections, evidenceCheckIns] = await Promise.all([
     all(
       `SELECT id, date, distance_miles, duration_seconds, avg_heart_rate,
-              pace_avg, health_source, created_at,
+              pace_avg, health_source, created_at, plan_session_id, planned_session_json,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
               type, watch_activity_type, watch_normalized_type,
               health_source_workout_id, health_start_at
@@ -2218,16 +2222,19 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
        ORDER BY logged_at DESC
        LIMIT 200`,
       [userId, `${sinceDate}T00:00:00`]
-    ).catch((err) => {
-      console.error('[plans/generate] recent exercise lookup failed:', err.message);
+    ).catch(() => {
+      adaptiveSourceFailure = true;
+      console.error('[plans/generate] recent exercise lookup failed:');
       return [];
     }),
-    get('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
-      console.error('[plans/generate] health sync lookup failed:', err.message);
+    get('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch(() => {
+      adaptiveSourceFailure = true;
+      console.error('[plans/generate] health sync lookup failed:');
       return null;
     }),
-    get('SELECT id FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 1', [userId]).catch((err) => {
-      console.error('[plans/generate] injury lookup failed:', err.message);
+    get('SELECT id FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 1', [userId]).catch(() => {
+      adaptiveSourceFailure = true;
+      console.error('[plans/generate] injury lookup failed:');
       return null;
     }),
     all(
@@ -2239,11 +2246,20 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
        ORDER BY raw_evidence_ref ASC, revision ASC, id ASC
        LIMIT 1001`,
       [userId]
-    ).catch((err) => {
-      console.error('[plans/generate] evidence correction lookup failed:', err.message);
+    ).catch(() => {
+      adaptiveSourceFailure = true;
+      console.error('[plans/generate] evidence correction lookup failed:');
+      return [];
+    }),
+    all(`SELECT id, checkin_date, feeling, legs, drive, sleep_hours, time_available, life_flags, created_at
+         FROM daily_checkins WHERE user_id=? AND checkin_date>=? AND checkin_date<=?
+         ORDER BY checkin_date ASC, id ASC LIMIT 65`, [userId, sinceDate, planningDateISO]).catch(() => {
+      adaptiveSourceFailure = true;
+      console.error('[plans/generate] readiness evidence lookup failed');
       return [];
     }),
   ]);
+  if (evidenceCheckIns.length > 64) adaptiveSourceFailure = true;
   const rawRuns = Array.isArray(runs) ? runs : [];
   const sensorSources = [...new Set(rawRuns.map((run) => String(run.health_source || '').trim().toLowerCase())
     .filter((source) => ['apple_health', 'healthkit', 'health_connect', 'garmin', 'garmin_csv', 'fit'].includes(source)))].sort();
@@ -2268,7 +2284,10 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     correctionsComplete,
     correctionInputCount: correctionRows.length,
   };
-  const runLoadInput = canonicalizeRunLoadInput({ ...loadInputOptions, runs: rawRuns });
+  let observedSnapshot;
+  const runLoadInput = canonicalizeRunLoadInput({ ...loadInputOptions, runs: rawRuns,
+    captureSnapshot: snapshot => { observedSnapshot = snapshot; },
+    snapshotEvidence: { lifts: legacyLifts, checkIns: evidenceCheckIns.slice(0, 64) } });
   const planningRuns = runLoadInput.canonical_run_rows;
   const performanceLoadInput = canonicalizeRunLoadInput({
     ...loadInputOptions,
@@ -2334,7 +2353,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     todayISO: planningDateISO,
     targetDistanceMiles: target.distanceMiles,
   });
-  return {
+  const context = {
     profile,
     target,
     todayISO: planningDateISO,
@@ -2394,6 +2413,9 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       metrics: healthSignals.metrics || {},
     },
   };
+  adaptiveObservedInputs.set(context, adaptiveShadow.freeze({ snapshot: observedSnapshot, rawRuns,
+    sourceFailed: adaptiveSourceFailure || !correctionsComplete, load: runLoadInput }));
+  return context;
 }
 
 function clamp(n, min, max) {
@@ -6288,10 +6310,32 @@ function emitPlanReleaseTelemetry({
   }
 }
 
+function prepareAdaptiveCandidateInput(userId, initial) {
+  let prepared = null;
+  let adaptiveReason = null;
+  try {
+    const source = adaptiveObservedInputs.get(initial.context);
+    let accepted = null;
+    let acceptedReason = null;
+    if (initial.active) {
+      try { accepted = authenticatedGoalExpansionSessionSet({ userId, state: initial,
+        activeAppliedPlan: goalBackwardActiveAppliedPlan(initial, parsePlan(initial.active.row)),
+        activeSource: initial.activeCanonicalCarryForwardSource }).sessionSet;
+      } catch (error) { acceptedReason = adaptiveShadow.reason(error); }
+    }
+    prepared = adaptiveShadow.prepare({ userId, state: initial, source, accepted, acceptedReason,
+      goals: goalBackwardGoalsForState(userId, initial), trainingAgeClass: goalBackwardTrainingAge(initial.context) });
+  } catch (error) { adaptiveReason = adaptiveShadow.reason(error); }
+  // The foundation and the legacy builder consume this same captured input.
+  adaptiveShadow.freeze(initial);
+  return { prepared, adaptiveReason };
+}
+
 async function previewPlanForUser(userId, body = {}, { store = true, goalBackwardDependencies = {} } = {}) {
   const clock = acceptedPlanningClock(body);
   const request = normalizeCandidateRequest(body);
   const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx));
+  let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial);
   const built = buildDeterministicCandidate(initial.context, {
     planningDateLocal: clock.planningDateLocal,
     timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
@@ -6339,7 +6383,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
   let goalBackwardMode = resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies, {
     allowSyntheticShadow: true,
   });
-  if (goalBackwardMode !== 'off' && !isRevisionedGoalBackedRequest(userId, initial, request)) {
+  if (['preview', 'on'].includes(goalBackwardMode) && !isRevisionedGoalBackedRequest(userId, initial, request)) {
     emitPlanReleaseTelemetry({
       userId,
       eventType: 'mode_resolution',
@@ -6352,10 +6396,26 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     });
     goalBackwardMode = 'off';
   }
+  let adaptiveResult = null;
+  let adaptiveComparison = null;
+  if (goalBackwardMode === 'shadow') {
+    try {
+      if (!prepared) throw Object.assign(new Error('Foundation unavailable'), { code: adaptiveReason });
+      adaptiveResult = adaptiveShadow.compute(prepared);
+      adaptiveComparison = adaptiveShadow.compare(prepared, adaptiveResult, normalized.plan);
+      adaptiveReason = adaptiveResult.selected_candidate ? 'COMPUTED' : 'CANDIDATE_DEFERRED';
+    } catch (error) { adaptiveResult = null; adaptiveComparison = null; adaptiveReason = adaptiveShadow.reason(error); }
+    adaptiveShadow.diagnose(goalBackwardDependencies.adaptiveDiagnosticSink, adaptiveReason);
+    try { emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'shadow', outcome: 'control_selected',
+      candidateSelected: Boolean(adaptiveResult?.selected_candidate), surfaceCapability: 'NOT_EXPOSED',
+      failReasonCodes: adaptiveResult?.selected_candidate ? [] : ['CANDIDATE_NOT_SELECTED'],
+      sink: goalBackwardDependencies.telemetrySink });
+    } catch { adaptiveShadow.diagnose(null, 'DIAGNOSTIC_SINK_FAILED'); }
+  }
   let goalBackwardShadow = null;
   let goalBackwardFailure = null;
   await maybeComputeGoalBackwardShadowDiagnostics({
-    mode: goalBackwardMode,
+    mode: goalBackwardMode === 'shadow' ? 'off' : goalBackwardMode,
     response,
     compute: async () => {
       try {
@@ -6372,7 +6432,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       }
     },
   });
-  if (goalBackwardMode !== 'off' && !goalBackwardShadow) {
+  if (['preview', 'on'].includes(goalBackwardMode) && !goalBackwardShadow) {
     emitPlanReleaseTelemetry({
       userId,
       eventType: 'mode_resolution',
@@ -6409,7 +6469,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       throw goalBackwardGenerationFailed('CANDIDATE_NOT_SELECTED', goalBackwardShadow);
     }
   }
-  if (goalBackwardMode !== 'off') {
+  if (['preview', 'on'].includes(goalBackwardMode)) {
     const candidateSelected = Boolean(goalBackwardShadow?.selected_candidate);
     const passReasonCodes = candidateSelected
       ? (goalBackwardShadow.selected_candidate.validation?.reason_codes || []).filter((code) => REQUIRED_RELEASE_TELEMETRY_REASON_CODES.has(code))
@@ -6449,7 +6509,10 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
 
   await withUserMutation(userId, async (tx) => {
     const current = await loadCandidateInputState(userId, request, clock, tx);
-    if (current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash) {
+    if (current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash
+      || canonicalHash(current.planningConstraints) !== canonicalHash(initial.planningConstraints)
+      || (prepared && !adaptiveShadow.sameObserved(prepared, current, adaptiveObservedInputs.get(current.context)))) {
+      if (goalBackwardMode === 'shadow') adaptiveShadow.diagnose(goalBackwardDependencies.adaptiveDiagnosticSink, 'STALE_INPUT');
       throw candidateError(409, 'CANDIDATE_STALE', 'Training data changed while the preview was being built. Preview again.');
     }
     await pruneExpiredPlanCandidates(tx, userId);
@@ -6485,6 +6548,24 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       baseValues
     );
     let shadowPersisted = false;
+    if (goalBackwardMode === 'shadow' && adaptiveResult) {
+      await tx.run('SAVEPOINT adaptive_shadow');
+      try {
+        await insertCurrentCandidate();
+        await adaptiveShadow.persist({ tx, userId, candidateId, currentCandidateHash: candidateHash,
+          prepared, result: adaptiveResult, comparison: adaptiveComparison });
+        await tx.run('RELEASE SAVEPOINT adaptive_shadow');
+        shadowPersisted = true;
+      } catch (error) {
+        await tx.run('ROLLBACK TO SAVEPOINT adaptive_shadow');
+        await tx.run('RELEASE SAVEPOINT adaptive_shadow');
+        adaptiveShadow.diagnose(goalBackwardDependencies.adaptiveDiagnosticSink,
+          adaptiveShadow.reason(error) === 'COMPUTATION_FAILED' ? 'PERSISTENCE_FAILED' : adaptiveShadow.reason(error));
+        if (error.code === 'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED') throw candidateError(409,
+          'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED',
+          'This unchanged plan candidate was already rejected. Change the goal, evidence, constraints, or policy before previewing again.');
+      }
+    }
     if (goalBackwardMode !== 'off' && goalBackwardShadow) {
       await tx.run('SAVEPOINT goal_backward_shadow');
       try {
@@ -6978,6 +7059,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       return planningInputUnchanged({ status: 409, error: 'Training inputs changed. Preview again.', code: 'CANDIDATE_STALE' });
     }
 
+    prepareAdaptiveCandidateInput(userId, current);
     const fresh = buildDeterministicCandidate(current.context, {
       planningDateLocal: clock.planningDateLocal,
       timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
