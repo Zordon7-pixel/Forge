@@ -8,6 +8,8 @@ const { canonicalStrengthExercise, EXERCISES_BY_ID } = require('./strengthDoseAc
 const { validateDistributedSession } = require('./distributedStrength');
 const { classifyCompletionOutcome } = require('./adaptationEngine');
 
+const { ownedEventEntries, strengthVariants, timedStructure, observedTargetInputs, observedHybridEntry } = require('./adaptiveCoachingDomain');
+
 const POLICY = 'adaptive-observed-dose-v1';
 const isStrength = family => family.startsWith('strength_');
 const isRun = family => ['easy_run', 'recovery_run', 'long_aerobic', 'threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run', 'race'].includes(family);
@@ -85,7 +87,9 @@ function partitionStrength(pool, count) {
   }
   return { parts, withheld_sets: remaining.reduce((n, e) => n + e.sets, 0) };
 }
-function buildAdaptiveSessionSelection(foundation) {
+function buildAdaptiveSessionSelection(foundation, domain = {}) {
+  if (!domain || typeof domain !== 'object' || Array.isArray(domain) || Object.keys(domain).some(k => k !== 'event_material')) throw new Error('Unsupported adaptive domain inputs');
+  const events = ownedEventEntries(foundation, domain.event_material);
   const state = foundation.athlete_state, base = foundation.decision;
   const pairs = usablePairs(state), capacity = base.weekly_objectives.capacities;
   const taper = base.phase === 'TAPER_RACE_WEEK';
@@ -95,13 +99,23 @@ function buildAdaptiveSessionSelection(foundation) {
   const recent = state.recent_normal_running;
   const gapRatio = recent.status === 'TRAINING_GAP' ? (recent.median_distance_m > 0 && recent.forward_load_seed_m !== null
     ? Math.min(1, recent.forward_load_seed_m / recent.median_distance_m) : 0) : 1;
-  const observedSeconds = recent.median_duration_s === null ? null : Math.floor(recent.median_duration_s * gapRatio);
-  const runBudget = Number.isFinite(observedSeconds) ? Math.floor(observedSeconds * factor) : 0;
-  const runDistance = recent.median_distance_m === null ? null : Math.floor(recent.median_distance_m * gapRatio);
+  let observedSeconds = recent.median_duration_s === null ? null : Math.floor(recent.median_duration_s * gapRatio);
+  let runBudget = Number.isFinite(observedSeconds) ? Math.floor(observedSeconds * factor) : 0;
+  let runDistance = recent.median_distance_m === null ? null : Math.floor(recent.median_distance_m * gapRatio);
   const observedRuns = (foundation.artifacts[0].payload_json.canonical_activities || []).filter(a => a.activity_kind === 'run'
     && a.quality_state === 'COMPLETE' && Number.isFinite(a.duration_s) && a.duration_s > 0
     && daysBetween(a.local_activity_date || a.observed_at.slice(0, 10), state.planning_date_local) >= 0
     && daysBetween(a.local_activity_date || a.observed_at.slice(0, 10), state.planning_date_local) <= 28);
+  let recentExposure = null;
+  if (observedSeconds === null && recent.status !== 'TRAINING_GAP' && ['BEGINNER', 'RETURNING'].includes(state.training_age_class)) {
+    recentExposure = observedRuns.filter(a => daysBetween(a.local_activity_date || a.observed_at.slice(0, 10), state.planning_date_local) <= 7)
+      .sort((a, b) => String(b.observed_at).localeCompare(String(a.observed_at)))[0] || null;
+    if (recentExposure) {
+      observedSeconds = recentExposure.duration_s;
+      runDistance = recentExposure.distance_m;
+      runBudget = Math.floor(observedSeconds * factor);
+    }
+  }
   const durations = observedRuns.map(a => a.duration_s).sort((a, b) => a - b);
   const typicalObservedRun = durations.length ? durations[Math.floor((durations.length - 1) / 2)] : 0;
   const pool = strengthPool(state, pairs, taper);
@@ -111,6 +125,10 @@ function buildAdaptiveSessionSelection(foundation) {
     return { ...e, sets: action === 'OMIT' ? 0 : action === 'REGRESS' ? Math.floor(e.sets * 0.9) : e.sets };
   }).filter(e => e.sets >= 2);
   const objectives = clone(base.weekly_objectives.objectives);
+  for (const event of events) objectives.push({ objective_id: event.objective_ids[0],
+    requirement_id: event.requirement_id, role: event.role, priority_score: event.priority_score,
+    candidate_families: ['race'], goal_ids: [event.event_identity.goal_id], reason_codes: event.reason_codes,
+    evidence_ids: event.dose_basis.source_evidence_ids });
   const taperQuality = taper && pairs.find(p => ['threshold_run', 'interval_run'].includes(p.prescribed_session.workout_family));
   if (taperQuality && ['READY', 'NORMAL'].includes(state.recovery_state) && ['NORMAL', 'MONITOR'].includes(state.safety_action)) {
     objectives.push({ objective_id: `objective-taper-touch-${state.athlete_state_hash.slice(0, 24)}`,
@@ -128,38 +146,74 @@ function buildAdaptiveSessionSelection(foundation) {
         requirement_id: `aerobic_dose_partition_${n}`, role: 'SUPPORTING', priority_score: 580 - n * 10 });
     }
   }
-  const weeklyContent = { ...clone(base.weekly_objectives), objectives,
+  const weeklyContent = { ...clone(base.weekly_objectives), objectives, owned_events: base.goal_gap.map(g => g.goal).filter(g => g.planning_eligible),
     dose_policy: { policy_id: POLICY, running_duration_ceiling_s: runBudget,
       running_distance_ceiling_m: Number.isFinite(runDistance) ? Math.floor(runDistance * factor) : null,
       taper_event_policy_id: taper ? policy?.event_policy_id ?? null : null,
       running_factor: factor, strength: pool } };
   delete weeklyContent.weekly_objectives_hash;
   const weekly = { ...weeklyContent, weekly_objectives_hash: canonicalHash(weeklyContent) };
-  const entries = [], deferred = [];
-  let remainingSeconds = runBudget, remainingMeters = weekly.dose_policy.running_distance_ceiling_m, runCount = 0;
+  const entries = [...events], deferred = [];
+  let remainingSeconds = Math.max(0, runBudget - events.reduce((n, e) => n + e.duration_s, 0));
+  let remainingMeters = weekly.dose_policy.running_distance_ceiling_m === null ? null
+    : Math.max(0, weekly.dose_policy.running_distance_ceiling_m - events.reduce((n, e) => n + e.distance_m, 0));
+  let runCount = events.length;
   const defer = (o, reason) => deferred.push({ objective_id: o.objective_id, role: o.role, reason_codes: [reason] });
   const ordered = objectives.filter(o => o.role !== 'REST').sort((a, b) => b.priority_score - a.priority_score || a.objective_id.localeCompare(b.objective_id));
   const blocked = ['FULL_REST', 'PROFESSIONAL_ASSESSMENT_RECOMMENDED', 'MODIFIED_SESSION_ONLY'].includes(state.safety_action);
   for (const objective of ordered) {
+    if (events.some(e => e.requirement_id === objective.requirement_id)) continue;
     if (blocked) { defer(objective, 'INJURY_SCOPE'); continue; }
     if (objective.candidate_families.some(isStrength)) continue;
     const family = objective.candidate_families.find(isRun);
-    if (!family) { defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue; }
+    if (!family) {
+      const hybrid = observedHybridEntry(objective, pairs, state, base.goal_gap.find(g => objective.goal_ids.includes(g.goal_id))?.goal.event_kind);
+      const resources = hybrid ? require('./adaptiveCoachingObjectives').capacitiesFor(hybrid.workout_family) : [];
+      const used = resource => entries.filter(e => require('./adaptiveCoachingObjectives').capacitiesFor(e.workout_family).includes(resource)).length;
+      const progression = hybrid && weekly.progression.find(p => p.family === hybrid.progression_family);
+      if (!hybrid || progression?.action === 'OMIT' || progression?.action === 'REGRESS' || taper) {
+        defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue;
+      }
+      if (resources.some(r => used(r) >= capacity[r])) { defer(objective, 'FREQUENCY_IS_CAPACITY'); continue; }
+      entries.push(hybrid);
+      if (resources.includes('run')) {
+        remainingSeconds -= hybrid.duration_s;
+        if (remainingMeters !== null) remainingMeters -= hybrid.running_distance_m;
+        runCount++;
+      }
+      continue;
+    }
     if (runCount >= capacity.run) { defer(objective, 'FREQUENCY_IS_CAPACITY'); continue; }
     const progression = weekly.progression.find(p => p.family === progressionFamilyFor(family));
     if (progression?.action === 'OMIT') { defer(objective, 'PROGRESSION_OMIT'); continue; }
     const prior = pairs.filter(p => p.prescribed_session.workout_family === family).at(-1);
-    let seconds, qualitySeconds = null;
+    let seconds, qualitySeconds = null, structureScale = null;
+    if (['threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run', 'long_aerobic'].includes(family)
+      && (!Number.isFinite(prior?.observation.observed_duration_s) || prior.observation.observed_duration_s <= 0
+        || !Number.isFinite(prior.observation.observed_work_duration_s) || prior.observation.observed_work_duration_s <= 0
+        || prior.observation.observed_work_duration_s > prior.observation.observed_duration_s)) {
+      defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue;
+    }
     if (['threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run'].includes(family)) {
       if (!prior) { defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue; }
       const priorTotal = prior.prescribed_session.derived_totals.duration_s;
-      qualitySeconds = prior.prescribed_session.derived_totals.work_duration_s;
+      qualitySeconds = prior.observation.observed_work_duration_s;
       if (!qualitySeconds || !priorTotal) { defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue; }
       const change = progression?.action === 'ADVANCE' ? 1 + progression.max_increase_fraction
         : progression?.action === 'REGRESS' ? 0.9 : 1;
       qualitySeconds = Math.floor(qualitySeconds * (taper ? 0.5 : change));
-      if (taper) qualitySeconds = Math.min(prior.prescribed_session.derived_totals.work_duration_s, Math.max(480, qualitySeconds));
-      seconds = qualitySeconds + 1200;
+      if (taper) qualitySeconds = Math.min(prior.observation.observed_work_duration_s, Math.max(480, qualitySeconds));
+      const structure = timedStructure(prior);
+      if (!structure) { defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue; }
+      const scale = structureScale = qualitySeconds / prior.prescribed_session.derived_totals.work_duration_s;
+      const meaningfulLeaves = steps => steps.every(s => s.type === 'repeat' ? meaningfulLeaves(s.children)
+        : s.step_role !== 'WORK' || Math.floor(s.target.duration_s * scale) > 0);
+      if (!meaningfulLeaves(structure)) { defer(objective, 'MEANINGFUL_DOSE_REQUIRED'); continue; }
+      const scaledWork = (steps, multiplier = 1) => steps.reduce((n, s) => n + (s.type === 'repeat'
+        ? scaledWork(s.children, multiplier * s.repeat_count)
+        : s.step_role === 'WORK' ? Math.floor(s.target.duration_s * scale) * multiplier : 0), 0);
+      qualitySeconds = scaledWork(structure);
+      seconds = qualitySeconds + priorTotal - prior.prescribed_session.derived_totals.work_duration_s;
     } else if (family === 'long_aerobic') {
       const longest = prior?.observation.observed_duration_s ?? prior?.prescribed_session.derived_totals.duration_s;
       if (!longest) { defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue; }
@@ -177,10 +231,10 @@ function buildAdaptiveSessionSelection(foundation) {
     const capSeconds = state.adaptive_foundation.max_session_minutes === null ? Infinity : state.adaptive_foundation.max_session_minutes * 60;
     seconds = Math.floor(Math.min(seconds, capSeconds));
     if (seconds > remainingSeconds || seconds < floorFor(family, state)
-      || qualitySeconds !== null && (qualitySeconds < 480 || seconds < qualitySeconds + 1200)) {
+      || qualitySeconds !== null && (qualitySeconds < 480 || seconds < qualitySeconds + (prior.prescribed_session.derived_totals.duration_s - prior.prescribed_session.derived_totals.work_duration_s))) {
       defer(objective, 'MEANINGFUL_DOSE_REQUIRED'); continue;
     }
-    let distance = Number.isFinite(runDistance) && observedSeconds > 0 ? (seconds === remainingSeconds ? remainingMeters : Math.floor(seconds * runDistance / observedSeconds)) : null;
+    let distance = Number.isFinite(runDistance) && observedSeconds > 0 ? (seconds === remainingSeconds ? remainingMeters : Math.min(remainingMeters, Math.floor(seconds * runDistance / observedSeconds))) : null;
     if (progression?.allowed_variable === 'distance_m' && progression.next_level_ceiling !== null) {
       distance = Math.min(distance ?? progression.next_level_ceiling, progression.next_level_ceiling);
     }
@@ -188,11 +242,14 @@ function buildAdaptiveSessionSelection(foundation) {
     entries.push({ selection_id: id, objective_ids: [objective.objective_id], requirement_id: objective.requirement_id,
       role: objective.role, priority_score: objective.priority_score, workout_family: family,
       progression_family: progressionFamilyFor(family), progression, duration_s: seconds, distance_m: distance,
-      quality_work_s: qualitySeconds, dose_basis: { policy_id: POLICY, authority: 'OBSERVED_WEEKLY_RUNNING',
-        observed_weekly_duration_s: observedSeconds, source_evidence_ids: prior ? [prior.observation.evidence_id].filter(Boolean) : [...new Set(observedRuns.flatMap(a => a.evidence_ids))],
+      quality_work_s: qualitySeconds,
+      ...(qualitySeconds !== null ? { completed_prescription_structure: timedStructure(prior), structure_work_scale: structureScale } : {}),
+      target_inputs: observedTargetInputs(pairs, family), dose_basis: { policy_id: POLICY, authority: recentExposure ? 'OBSERVED_RECENT_SINGLE_EXPOSURE_CAP' : 'OBSERVED_WEEKLY_RUNNING',
+        observed_weekly_duration_s: recentExposure ? null : observedSeconds,
+        ...(recentExposure ? { observed_recent_exposure_duration_s: recentExposure.duration_s } : {}), source_evidence_ids: prior ? [prior.observation.evidence_id].filter(Boolean) : recentExposure ? recentExposure.evidence_ids : [...new Set(observedRuns.flatMap(a => a.evidence_ids))],
         taper_factor: factor,
-        ...(prior ? { observed_session_duration_s: prior.prescribed_session.derived_totals.duration_s,
-          observed_work_duration_s: prior.prescribed_session.derived_totals.work_duration_s } : {}) }, reason_codes: objective.reason_codes });
+        ...(prior && Number.isFinite(prior.observation.observed_duration_s) && Number.isFinite(prior.observation.observed_work_duration_s) ? { observed_session_duration_s: prior.observation.observed_duration_s,
+          observed_work_duration_s: prior.observation.observed_work_duration_s } : {}) }, reason_codes: objective.reason_codes });
     remainingSeconds -= seconds; if (distance !== null) remainingMeters -= distance; runCount++;
   }
   const strengthObjective = objectives.find(o => o.candidate_families.some(isStrength));
@@ -212,7 +269,7 @@ function buildAdaptiveSessionSelection(foundation) {
     if (!partition.parts.length) defer(strengthObjective, 'MEANINGFUL_DOSE_REQUIRED');
   }
   entries.sort((a, b) => b.priority_score - a.priority_score || a.selection_id.localeCompare(b.selection_id));
-  return { weekly_objectives: weekly, entries: entries.map((e, i) => ({ ...e, priority_rank: i + 1 })),
+  return { weekly_objectives: weekly, entries: entries.map((e, i) => ({ ...e, priority_rank: i + 1, dose_variants: strengthVariants(e).slice(1) })),
     deferred_objectives: deferred, unused_running_duration_s: remainingSeconds, placement_validated: false };
 }
 module.exports = { POLICY, isRun, isStrength, buildAdaptiveSessionSelection };

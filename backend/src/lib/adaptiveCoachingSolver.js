@@ -30,12 +30,12 @@ function restReasons(date, sessions, constraints, state, selection) {
   if (active.length >= 6 || active.length < selection.entries.length) return ['REST_REQUIRED_RECOVERY_WINDOW'];
   return ['REST_MEANINGFUL_DOSE_EXHAUSTED'];
 }
-function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availability, search = {} } = {}) {
+function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availability, domain = {}, search = {} } = {}) {
   if (foundation && foundationInput) throw new Error('Supply foundation or foundationInput, not both');
   const f = foundation || buildAdaptiveCoachingFoundation(foundationInput);
   if (!f?.athlete_state?.adaptive_foundation || f.decision?.athlete_state_hash !== f.athlete_state.athlete_state_hash
     || f.artifacts?.length !== 3 || !Object.isFrozen(f)) throw new Error('Use buildAdaptiveCoachingFoundation output');
-  const state = f.athlete_state, selection = buildAdaptiveSessionSelection(f);
+  const state = f.athlete_state, selection = buildAdaptiveSessionSelection(f, domain);
   const constraints = { ...normalizeSolverConstraints(state, availability), planning_instant: f.artifacts[0].created_at };
   if (selection.entries.length > LIMITS.sessions) throw new Error('Adaptive selection exceeds bounded session limit');
   const maxNodes = search.max_nodes ?? LIMITS.nodes;
@@ -52,7 +52,12 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
   const decisionHash = canonicalHash(content);
   const decision = { ...content, decision_id: `decision-${decisionHash.slice(0, 24)}`, decision_hash: decisionHash };
   const instant = f.artifacts[0].created_at;
-  const material = selection.entries.map(e => buildAdaptiveWorkoutMaterial(e, decision, instant));
+  const variants = selection.entries.map(e => [e, ...(e.dose_variants || [])]);
+  const materialVariants = variants.map(list => list.map((e, i) => {
+    const m = buildAdaptiveWorkoutMaterial(e, decision, instant);
+    return { ...m, material_id: `${e.selection_id}-dose-${i}` };
+  }));
+  const material = materialVariants.flat();
   const source = { authority: 'COMPATIBLE_SERVER_HISTORY', policy_version: VERSION,
     evidence_snapshot_hash: f.artifacts[0].content_hash, allow_effort_only: true,
     adaptive_dose_policy_hash: canonicalHash(selection.weekly_objectives.dose_policy) };
@@ -61,28 +66,38 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
     candidate_material_id: entry.selection_id, scheduled_local_date: date, scheduled_start_at: start,
     ...(entry.role === 'SUPPORTING' ? { supports_requirement_id: entry.objective_ids[0] } : {}) });
   const prototypes = selection.entries.map((entry, i) => materializeCanonicalSession({ decision,
-    skeleton: skeletonFor(entry, constraints.start_date), source: material[i].source_session,
+    skeleton: skeletonFor(entry, constraints.start_date), source: materialVariants[i][0].source_session,
     planning_instant: instant, timezone: state.timezone }));
   // Independent selected-dose denominator exists before any placement search.
   const runningSource = selectRunningDoseSource(prototypes, source);
   const choices = selection.entries.map((entry, i) => {
-    const windows = constraints[isStrength(entry.workout_family) ? 'lift' : 'run'];
+    const resources = require('./adaptiveCoachingObjectives').capacitiesFor(entry.workout_family);
+    const windows = resources.length === 2 ? constraints.run.flatMap(a => constraints.lift.filter(b => a.date === b.date).flatMap(b => {
+      const start = a.start_at > b.start_at ? a.start_at : b.start_at;
+      const end = a.end_at < b.end_at ? a.end_at : b.end_at;
+      return start < end ? [{ date: a.date, start_at: start, end_at: end }] : [];
+    })) : constraints[resources[0] || 'run'];
     const pins = constraints.locks.filter(l => l.active !== false && (
       l.requirement_id === entry.requirement_id || l.session_id === entry.selection_id
       || l.workout_family === entry.workout_family && (!l.role || l.role === entry.role)));
-    return windows.filter(w => !constraints.blocked_dates.includes(w.date)
+    return variants[i].flatMap((variant, variantIndex) => windows.filter(w => !constraints.blocked_dates.includes(w.date)
+      && (!entry.fixed_date || w.date === entry.fixed_date)
+      && (!entry.earliest_date || w.date >= entry.earliest_date)
       && pins.every(l => !(l.scheduled_local_date || l.local_date || l.date)
         || (l.scheduled_local_date || l.local_date || l.date) === w.date)).map(w => {
-      const skeleton = skeletonFor(entry, w.date, w.start_at);
+      const skeleton = { ...skeletonFor(entry, w.date, w.start_at), candidate_material_id: materialVariants[i][variantIndex].material_id };
       const session = attachRunningDose(materializeCanonicalSession({ decision, skeleton,
-        source: material[i].source_session, planning_instant: instant, timezone: state.timezone }), runningSource);
-      return { skeleton, session };
-    }).filter(c => validateAdaptivePlacement([c.session], constraints, state, selection.weekly_objectives).valid);
+        source: materialVariants[i][variantIndex].source_session, planning_instant: instant, timezone: state.timezone }), runningSource);
+      return { skeleton, session, variant_index: variantIndex };
+    })).filter(c => validateAdaptivePlacement([c.session], constraints, state, selection.weekly_objectives).valid);
   });
   let frontier = [{ placed: [], mask: [] }], nodes = 0, truncated = false;
   const rejectionCounts = {};
   const compare = (a, b) => {
     for (let i = 0; i < Math.max(a.mask.length, b.mask.length); i++) if (a.mask[i] !== b.mask[i]) return (b.mask[i] || 0) - (a.mask[i] || 0);
+    const reductionA = a.placed.reduce((n, p) => n + p.variant_index, 0);
+    const reductionB = b.placed.reduce((n, p) => n + p.variant_index, 0);
+    if (reductionA !== reductionB) return reductionA - reductionB;
     // Spread demanding work; use stable chronological tie-breaks only after safety.
     const occupiedA = new Set(a.placed.map(p => p.session.scheduled_local_date)).size;
     const occupiedB = new Set(b.placed.map(p => p.session.scheduled_local_date)).size;
@@ -144,11 +159,24 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
     reason_codes: [truncated && nodes >= maxNodes ? 'CANDIDATE_SEARCH_NODE_BUDGET_EXHAUSTED' : 'REQUIRED_EXPOSURE_UNPLACEABLE'] }));
   const deferred = [...selection.deferred_objectives, ...omitted];
   const missedPrimary = deferred.some(d => d.role === 'PRIMARY_KEY' || d.role === 'ASSESSMENT');
-  const eventInWindow = decision.goal_gap.some(g => g.goal.event_local_date >= constraints.start_date && g.goal.event_local_date <= constraints.end_date);
+  const eventInWindow = decision.goal_gap.some(g => g.goal.planning_eligible && g.goal.event_local_date >= constraints.start_date
+    && g.goal.event_local_date <= constraints.end_date && !candidate?.sessions.some(s => s.workout_family === 'race'
+      && s.event_identity?.goal_id === g.goal_id && s.scheduled_local_date === g.goal.event_local_date));
   const status = !candidate ? (truncated ? 'DEFERRED' : 'INFEASIBLE') : missedPrimary || eventInWindow ? 'DEFERRED' : deferred.length ? 'VALID_WITH_TRADEOFFS' : 'VALID';
   const resultContent = { status, applicable: Boolean(candidate) && !missedPrimary && !eventInWindow,
     decision, selected_candidate: candidate, deferred_objectives: deferred,
-    rest_days: restReceipt, event_execution_deferred: eventInWindow,
+    rest_days: restReceipt,
+    strength_dose_receipt: {
+      pool_authority: selection.weekly_objectives.dose_policy.strength.basis,
+      pool_sets: selection.weekly_objectives.dose_policy.strength.exercises.reduce((n, e) => n + e.sets, 0),
+      unpartitioned_sets: selection.weekly_objectives.dose_policy.strength.exercises.reduce((n, e) => n + e.sets, 0)
+        - selection.entries.flatMap(e => e.exercises || []).reduce((n, e) => n + e.sets, 0),
+      selected_sets: selection.entries.flatMap(e => e.exercises || []).reduce((n, e) => n + e.sets, 0),
+      prescribed_sets: candidate?.sessions.filter(s => isStrength(s.workout_family)).reduce((n, s) => n + s.derived_totals.sets, 0) ?? 0,
+      withheld_sets: selection.entries.flatMap(e => e.exercises || []).reduce((n, e) => n + e.sets, 0)
+        - (candidate?.sessions.filter(s => isStrength(s.workout_family)).reduce((n, s) => n + s.derived_totals.sets, 0) ?? 0),
+      reductions: candidate?.sessions.filter(s => s.dose_basis?.variant).map(s => ({ session_id: s.session_id, ...s.dose_basis })) || [],
+    }, event_execution_deferred: eventInWindow,
     occupancy: calendarOccupancy({ runCount: selection.entries.filter(e => !isStrength(e.workout_family)).length,
       liftCount: selection.entries.filter(e => isStrength(e.workout_family)).length,
       runEligibleWeekdays: constraints.run.map(w => weekday(w.date)), liftEligibleWeekdays: constraints.lift.map(w => weekday(w.date)), timezone: state.timezone }),

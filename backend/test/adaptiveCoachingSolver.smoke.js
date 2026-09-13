@@ -25,7 +25,7 @@ function windows() {
     lift: Array.from({ length: 7 }, (_, i) => ({ start_at: `${addDays(DATE, i)}T17:00:00Z`, end_at: `${addDays(DATE, i)}T20:00:00Z` })) };
 }
 let checks = 0;
-function test(name, fn) { fn(); checks++; console.log(`ok - ${name}`); }
+function test(name, fn) { if (require.main !== module) return; fn(); checks++; console.log(`ok - ${name}`); }
 test('complete canonical candidate is validator-backed and deterministic', () => {
   const input = { foundationInput: fixture(), availability: windows() };
   const r = buildAdaptiveCoachingCandidate(input);
@@ -64,7 +64,7 @@ function withObservedWork(input, { strengthSets = 0, quality = false } = {}) {
       planning_instant: `${date}T00:00:00Z`, timezone: 'UTC' });
     return { prescribed_session: prescribed, observation: { linked_session_id: id, evidence_id: evidenceId,
       observed_at: `${date}T12:00:00Z`, quality_state: 'COMPLETE', completed: true, target_met: true,
-      observed_duration_s: prescribed.derived_totals.duration_s, observed_distance_m: prescribed.derived_totals.distance_m } };
+      observed_duration_s: prescribed.derived_totals.duration_s, observed_work_duration_s: prescribed.derived_totals.work_duration_s, observed_distance_m: prescribed.derived_totals.distance_m } };
   });
   return input;
 }
@@ -210,4 +210,5 @@ test('occupied work consumes real weekly dose and unsupported HYROX remains defe
   assert.equal(h.selected_candidate, null);
   assert.ok(h.deferred_objectives.length);
 });
-console.log(`${checks} adaptive solver assertion groups passed`);
+if (require.main === module) console.log(`${checks} adaptive solver assertion groups passed`);
+module.exports = { fixture, windows, withObservedWork };

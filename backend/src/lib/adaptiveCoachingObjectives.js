@@ -133,4 +133,4 @@ function buildSessionSelectionContracts({ athleteState, weeklyObjectives } = {})
   return { contracts: selected, deferred_objectives: deferred, used_capacity: used,
     unstacked_stress_vector: stress, placement_validated: false };
 }
-module.exports = { buildWeeklyObjectives, buildSessionSelectionContracts };
+module.exports = { buildWeeklyObjectives, buildSessionSelectionContracts, capacitiesFor };

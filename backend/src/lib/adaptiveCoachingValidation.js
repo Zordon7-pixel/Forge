@@ -1,8 +1,8 @@
+const { capacitiesFor } = require('./adaptiveCoachingObjectives');
 const { aggregateWeeklyStress, evaluateStressBudget, validateRollingHardDays } = require('./goalBackwardLoad');
 const { validateGoalBackwardCandidate, validateInterference, validateConstraints, longestRequiredSeparation } = require('./goalBackwardValidators');
 const { validateCanonicalSession } = require('./canonicalWorkout');
 const { addDays, canonicalHash } = require('./racePlanPolicy');
-const { isRun, isStrength } = require('./adaptiveCoachingSelection');
 const { EXERCISES_BY_ID } = require('./strengthDoseAccounting');
 const localDate = (instant, timezone) => new Intl.DateTimeFormat('en-CA', { timeZone: timezone,
   year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(instant));
@@ -44,9 +44,9 @@ function validateAdaptivePlacement(sessions, constraints, state, weeklyObjective
   const inWindow = s => s.scheduled_local_date >= constraints.start_date && s.scheduled_local_date <= constraints.end_date;
   for (const s of sessions.filter(s => s.workout_family !== 'rest')) {
     const start = Date.parse(s.scheduled_start_at), end = start + duration(s) * 1000;
-    const modality = isStrength(s.workout_family) ? 'lift' : 'run';
+    const resources = capacitiesFor(s.workout_family);
     if (!Number.isFinite(start) || constraints.planning_instant && start < Date.parse(constraints.planning_instant) || duration(s) <= 0 || constraints.blocked_dates.includes(s.scheduled_local_date)
-      || !constraints[modality].some(w => w.date === s.scheduled_local_date && start >= Date.parse(w.start_at) && end <= Date.parse(w.end_at))
+      || resources.some(modality => !constraints[modality].some(w => w.date === s.scheduled_local_date && start >= Date.parse(w.start_at) && end <= Date.parse(w.end_at)))
       || state.adaptive_foundation.max_session_minutes !== null && duration(s) > state.adaptive_foundation.max_session_minutes * 60) {
       violations.push({ code: 'SCHEDULE_CONSTRAINT', session_id: s.session_id });
     }
@@ -71,23 +71,30 @@ function validateAdaptivePlacement(sessions, constraints, state, weeklyObjective
     const day = active.filter(s => s.scheduled_local_date === date);
     const minutes = state.time_constraints?.[date]?.available_minutes ?? state.time_constraints?.[date]?.maximum_minutes;
     if (typeof minutes === 'number' && Number.isFinite(minutes) && day.reduce((n, s) => n + duration(s), 0) > minutes * 60) violations.push({ code: 'SCHEDULE_CONSTRAINT', scheduled_local_date: date });
-    if (day.length > 2 || day.filter(s => isRun(s.workout_family)).length > 1 || day.filter(s => isStrength(s.workout_family)).length > 1) {
+    if (day.length > 2 || day.filter(s => capacitiesFor(s.workout_family).includes('run')).length > 1 || day.filter(s => capacitiesFor(s.workout_family).includes('lift')).length > 1) {
       violations.push({ code: 'DAILY_MODALITY_CAPACITY', scheduled_local_date: date });
     }
   }
-  for (const [modality, predicate] of [['run', isRun], ['lift', isStrength]]) {
-    if (active.filter(s => inWindow(s) && predicate(s.workout_family)).length > weeklyObjectives.capacities[modality]) violations.push({ code: 'FREQUENCY_IS_CAPACITY', modality });
+  for (const modality of ['run', 'lift']) {
+    if (active.filter(s => inWindow(s) && capacitiesFor(s.workout_family).includes(modality)).length > weeklyObjectives.capacities[modality]) violations.push({ code: 'FREQUENCY_IS_CAPACITY', modality });
   }
-  const plannedRuns = all.filter(s => inWindow(s) && isRun(s.workout_family));
-  const sum = key => plannedRuns.reduce((n, s) => n + s.derived_totals[key], 0);
+  const plannedRuns = all.filter(s => inWindow(s) && capacitiesFor(s.workout_family).includes('run'));
+  const sum = key => plannedRuns.reduce((n, s) => n + (key === 'distance_m' && s.workout_family.startsWith('hyrox_')
+    ? s.running_distance_m ?? s.steps.filter(step => ['run', 'interval', 'warmup', 'cooldown', 'recovery'].includes(step.type)).reduce((m, step) => m + (step.target.distance_m || 0), 0)
+    : s.derived_totals[key]), 0);
   const dose = weeklyObjectives.dose_policy;
   if (sum('duration_s') > dose.running_duration_ceiling_s || dose.running_distance_ceiling_m !== null && sum('distance_m') > dose.running_distance_ceiling_m) {
     violations.push({ code: 'OBSERVED_RUNNING_DOSE_EXCEEDED' });
   }
   const options = { training_age_class: state.training_age_class, consistency_state: state.consistency_state,
-    recovery_state: state.recovery_state, safety_action: state.safety_action };
+    recovery_state: state.recovery_state, safety_action: state.safety_action,
+    mandatory_hyrox_cluster: weeklyObjectives.objectives.some(o => o.candidate_families.includes('hyrox_partial_simulation')) };
   const interference = validateInterference(all, options);
-  const rolling = validateRollingHardDays(all, { ...options, spacing_valid: interference.valid });
+  const rollingResults = [validateRollingHardDays(all, { ...options, spacing_valid: interference.valid }),
+    ...(weeklyObjectives.owned_events || []).map(goal => validateRollingHardDays(all, { ...options,
+      spacing_valid: interference.valid, event_local_date: goal.event_local_date,
+      athlete_id: state.athlete_id, active_goals: weeklyObjectives.owned_events }))];
+  const rolling = { valid: rollingResults.every(r => r.valid), violations: rollingResults.flatMap(r => r.violations) };
   const aggregate = aggregateWeeklyStress(all.filter(inWindow));
   const budget = evaluateStressBudget(aggregate, { normal_ceiling_vector: weeklyObjectives.weekly_stress_budget,
     authorized_ceiling_vector: weeklyObjectives.weekly_stress_budget });
@@ -107,11 +114,17 @@ function validateAdaptiveCandidate(candidate, constraints, state, selection) {
   const traceViolations = candidate.sessions.flatMap(s => !Array.isArray(s.objective_ids) || !s.objective_ids.length
     || s.objective_ids.some(id => !objectiveIds.has(id)) ? [{ code: 'OBJECTIVE_TRACE_MISSING', session_id: s.session_id }] : []);
   for (const session of candidate.sessions.filter(s => s.workout_family !== 'rest')) {
-    const entry = selection.entries.find(e => e.selection_id === session.session_id);
+    const original = selection.entries.find(e => e.selection_id === session.session_id);
+    const entry = original && [original, ...(original.dose_variants || [])].find(e => canonicalHash(e.dose_basis) === canonicalHash(session.dose_basis));
     const prescribedExercises = entry?.exercises?.map(require('./strengthDoseAccounting').canonicalStrengthExercise);
     const actualExercises = session.steps.filter(s => s.type === 'strength_exercise');
+    const graphDose = steps => steps.map(({ step_id, provenance, ...step }) => ({ ...step, ...(step.children ? { children: graphDose(step.children) } : {}) }));
     const doseMismatch = !entry || entry.workout_family !== session.workout_family
       || canonicalHash(entry.dose_basis) !== canonicalHash(session.dose_basis)
+      || entry.canonical_steps && canonicalHash(graphDose(entry.canonical_steps)) !== canonicalHash(graphDose(session.steps))
+      || entry.earliest_date && session.scheduled_local_date < entry.earliest_date
+      || entry.fixed_date && entry.fixed_date !== session.scheduled_local_date
+      || entry.event_identity && canonicalHash(entry.event_identity) !== canonicalHash(session.event_identity)
       || entry.duration_s !== undefined && session.derived_totals.duration_s !== entry.duration_s
       || entry.distance_m !== undefined && entry.distance_m !== null && session.derived_totals.distance_m !== entry.distance_m
       || entry.quality_work_s !== undefined && entry.quality_work_s !== null && session.derived_totals.work_duration_s !== entry.quality_work_s
@@ -131,6 +144,9 @@ function validateAdaptiveCandidate(candidate, constraints, state, selection) {
     available_local_dates: Array.from({ length: 7 }, (_, i) => addDays(constraints.start_date, i)),
     recent_normal_running_minutes_per_week: state.recent_normal_running.median_duration_s / 60,
     minimum_weekly_demand: selection.weekly_objectives.running_demand,
+    event_local_date: selection.weekly_objectives.owned_events?.find(g => g.event_kind?.startsWith('HYROX'))?.event_local_date,
+    athlete_id: state.athlete_id, active_goals: selection.weekly_objectives.owned_events,
+    mandatory_hyrox_cluster: primary.some(o => o.candidate_families.includes('hyrox_partial_simulation')),
     required_exposure_ledger: primary.map(o => ({ requirement_id: o.requirement_id, any_of: o.candidate_families, role: o.role })),
     workload_evidence: actual, planning_date_local: constraints.start_date,
     candidate_window_end_local: constraints.end_date,

@@ -1524,6 +1524,11 @@ function materializeCanonicalSession(input = {}) {
     ? FAMILY_TITLES[family]
     : source.title || FAMILY_TITLES[family] || family;
   let canonicalInput = {
+    ...(adaptive && family.startsWith('hyrox_') ? Object.fromEntries([
+      'hyrox_event_state', 'partial_race_order_cluster', 'run_station_pair_count', 'main_work_duration_s',
+      'main_work_duration_min', 'main_set_rpe_range', 'main_set_running_m', 'warmup_cooldown_running_m',
+      'running_distance_m', 'ruleset_id', 'ruleset_version',
+    ].filter(key => source[key] !== undefined).map(key => [key, clone(source[key])])) : {}),
     ...(source.workout_id === 'benchmark_mile' ? { benchmark_distance_miles: 1 } : {}),
     session_id: sessionId,
     session_revision: nextSessionRevision(input, skeleton),
@@ -1550,7 +1555,8 @@ function materializeCanonicalSession(input = {}) {
     safety_scope: clone(decision.safety_state?.scope || []),
     executability: ['NORMAL', 'MONITOR'].includes(String(decision.safety_state?.action || 'NORMAL').toUpperCase())
       ? 'EXECUTABLE' : 'RESTRICTED',
-    event_kind: decision.active_goals?.[0]?.event_kind,
+    event_kind: adaptive && family === 'race' && source.event_identity
+      ? source.event_identity.event_kind : decision.active_goals?.[0]?.event_kind,
     ...(adaptive ? {
       purpose: source.purpose || 'Recover to support the next useful training exposure.',
       objective_ids: clone(source.adaptive_prescription.objective_ids),
@@ -1566,7 +1572,7 @@ function materializeCanonicalSession(input = {}) {
       source_session_id: source.id || source.session_id } : {}),
     ...(family === 'race' && source.event_identity ? { event_identity: clone(source.event_identity) } : {}),
   };
-  const canonical = family === 'hyrox_partial_simulation'
+  const canonical = family === 'hyrox_partial_simulation' && !adaptive
     ? buildPartialRaceOrderCluster({
       ...clone(source),
       ...canonicalInput,
