@@ -1,5 +1,4 @@
-// Slice 2A: real SQL acquisition and adaptive computation, with exposure closed
-// until the existing candidate/surface lineage is connected in slices 2B–2C.
+// Real SQL acquisition, adaptive candidate authority and preview-only lifecycle.
 const assert = require('node:assert/strict');
 const { createDb } = require('./helpers/adaptiveShadowDb');
 const shadow = require('../src/lib/adaptiveCoachingShadow');
@@ -32,11 +31,19 @@ async function main() {
   db.prepare(`INSERT INTO daily_checkins(id,user_id,checkin_date,feeling,time_available)
     VALUES ('ready',?,'2026-09-14',4,60)`).run(OWNER);
   const off = await plans.previewPlanForUser(OWNER, request, options('off'));
-  await assert.rejects(plans.previewPlanForUser(OWNER, request, options('preview')),
-    e => e.code === 'GOAL_BACKWARD_GENERATION_FAILED');
+  const exposed = await plans.previewPlanForUser(OWNER, request, options('preview'));
   assert.equal(computations, 1, 'authorized preview invokes the real adaptive engine');
   assert.ok(prepared.foundation && result.selected_candidate, 'real acquired fixture selects canonical work internally');
   assert.ok(result.selected_candidate.sessions.length);
+  assert.equal(exposed.surfaceManifest.status, 'preview');
+  assert.equal(exposed.surfaceManifest.feature_mode, 'preview');
+  assert.equal(exposed.surfaceManifest.v24_surface_enabled, true);
+  assert.equal(exposed.surfaceManifest.authoritative_engine, 'adaptive-joint-solver-v1');
+  assert.deepEqual(exposed.surfaceManifest.sessions, result.selected_candidate.sessions);
+  assert.equal(db.prepare('SELECT feature_mode FROM plan_generation_candidates WHERE id=?').get(exposed.id).feature_mode, 'preview');
+  const applied = await plans.applyPlanCandidate(OWNER, exposed.id, { choice: 'train_for_target',
+    candidate_hash: exposed.candidateHash, planning_date_local: '2026-09-14' });
+  assert.equal(applied.code, 'GOAL_BACKWARD_PREVIEW_APPLY_DISABLED');
   const preview = require('../src/lib/adaptiveCoachingPreview').build({ prepared, result });
   assert.equal(preview.candidateHash, `sha256:${result.selected_candidate.candidate_hash}`);
   assert.deepEqual(preview.plan.weekly_objectives, result.decision.weekly_objectives);
@@ -57,11 +64,11 @@ async function main() {
     e => e.code === 'GOAL_BACKWARD_GENERATION_FAILED');
   hooks.before = null;
   assert.equal(computations, 2, 'missing foundation never invokes compute');
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM plan_generation_candidates WHERE feature_mode='preview'").get().n, 0);
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM plan_generation_candidates WHERE feature_mode='preview'").get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n, 1);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM user_plans').get().n, 0);
   assert.ok(telemetry.some(row => JSON.stringify(row).includes('BLOCKED')));
-  console.log('ok - 2A real adaptive preview compute, closed exposure, missing evidence, cohort isolation, off/shadow parity');
+  console.log('ok - real adaptive preview authority, seven artifacts, apply denial, missing evidence, cohort isolation, off/shadow parity');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   shadow.compute = realCompute; global.Date = RealDate; db.close();

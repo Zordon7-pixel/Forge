@@ -6343,6 +6343,59 @@ function prepareAdaptiveCandidateInput(userId, initial) {
   return { prepared, adaptiveReason };
 }
 
+async function previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
+  generationOptions, store, goalBackwardDependencies }) {
+  const previewAdapter = require('../lib/adaptiveCoachingPreview');
+  try {
+    if (!prepared) throw Object.assign(new Error('EVIDENCE_MISSING'), { code: 'EVIDENCE_MISSING' });
+    const result = adaptiveShadow.compute(prepared);
+    const preview = previewAdapter.build({ prepared, result });
+    const plan = assertPersistablePlan(preview.plan);
+    const candidateId = uuidv4();
+    const expiresAt = new Date(Date.now() + RACE_PLAN_POLICY_V1.candidate.ttlHours * 3600000).toISOString();
+    const bundle = previewAdapter.artifacts({ userId, candidateId, prepared, result, preview,
+      buildSurface: buildCanonicalSurfaceManifest });
+    const row = { id: candidateId, user_id: userId, status: 'preview',
+      training_plan_id: initial.activePlan?.trainingPlanId || null,
+      user_plan_id: initial.activePlan?.userPlanId || null,
+      active_plan_version: initial.activePlan?.planVersion ?? null,
+      planning_input_revision: initial.planningInputRevision, planning_date_local: clock.planningDateLocal,
+      timezone_offset_minutes: clock.timezoneOffsetMinutes, input_hash: initial.inputHash,
+      candidate_hash: preview.candidateHash, engine_version: plan.engineVersion,
+      policy_version: RACE_PLAN_POLICY_V1.version, invariant_version: RACE_PLAN_POLICY_V1.invariantVersion,
+      planning_snapshot_json: initial.snapshot, candidate_plan_json: plan,
+      generation_trace_json: buildCandidateTrace(initial, { plan, validation: preview.selected.validation }), expires_at: expiresAt };
+    await withUserMutation(userId, async tx => {
+      const current = await loadCandidateInputState(userId, request, clock, tx, generationOptions);
+      if (resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies) !== 'preview'
+        || current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash
+        || canonicalHash(current.planningConstraints) !== canonicalHash(initial.planningConstraints)
+        || !adaptiveShadow.sameObserved(prepared, current, adaptiveObservedInputs.get(current.context), adaptiveAcceptedInput(userId, current))) {
+        throw candidateError(409, 'CANDIDATE_STALE', 'Training data changed while the preview was being built. Preview again.');
+      }
+      if (store) await previewAdapter.persist({ tx, row, bundle });
+    });
+    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',
+      outcome: 'candidate_selected', candidateSelected: true, surfaceCapability: 'PREVIEW_ONLY',
+      sink: goalBackwardDependencies.telemetrySink });
+    return { id: candidateId, candidateHash: preview.candidateHash, plan,
+      effectiveFrom: candidateEffectiveFrom(initial.active, clock.planningDateLocal, { immediate: true }),
+      expiresAt, meta: initial.meta, planningDateLocal: clock.planningDateLocal, races: initial.races,
+      replacesActivePlan: Boolean(initial.active), choice: request.choice,
+      surfaceManifest: bundle.surface,
+      ...(store ? { applyBindings: buildGoalBackwardApplyEnvelope({ ...row, ...bundle.bindings }) } : {}),
+    };
+  } catch (error) {
+    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',
+      outcome: 'candidate_rejected', candidateSelected: false, surfaceCapability: 'BLOCKED',
+      failReasonCodes: error.code === 'EVIDENCE_MISSING' ? ['EVIDENCE_MISSING'] : ['CANDIDATE_NOT_SELECTED'],
+      sink: goalBackwardDependencies.telemetrySink });
+    if (typeof goalBackwardDependencies.inspectFailure === 'function') goalBackwardDependencies.inspectFailure(error);
+    if (['CANDIDATE_STALE', 'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED'].includes(error.code)) throw error;
+    throw goalBackwardGenerationFailed(error.code || adaptiveReason);
+  }
+}
+
 async function previewPlanForUser(userId, body = {}, { store = true, goalBackwardDependencies = {} } = {}) {
   const clock = acceptedPlanningClock(body);
   const request = normalizeCandidateRequest(body);
@@ -6352,18 +6405,8 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
   const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx, generationOptions));
   let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial);
   if (adaptiveMode === 'preview') {
-    // Slice 2A acquires and computes from the same Phase 1 foundation. Exposure
-    // stays closed until the selected canonical set has candidate/surface bindings.
-    // Never fall through to classic diagnostics or concurrent preview success.
-    let previewResult = null;
-    try {
-      if (prepared) previewResult = adaptiveShadow.compute(prepared);
-    } catch (error) { adaptiveReason = adaptiveShadow.reason(error); }
-    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',
-      outcome: 'candidate_rejected', candidateSelected: false, surfaceCapability: 'BLOCKED',
-      failReasonCodes: !prepared ? ['EVIDENCE_MISSING'] : ['CANDIDATE_NOT_SELECTED'],
-      sink: goalBackwardDependencies.telemetrySink });
-    throw goalBackwardGenerationFailed(previewResult?.selected_candidate ? 'CANDIDATE_NOT_SELECTED' : adaptiveReason);
+    return previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
+      generationOptions, store, goalBackwardDependencies });
   }
   const built = buildDeterministicCandidate(initial.context, {
     planningDateLocal: clock.planningDateLocal,
