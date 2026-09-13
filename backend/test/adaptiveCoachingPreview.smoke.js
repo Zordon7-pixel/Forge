@@ -61,8 +61,21 @@ async function main() {
   assert.equal(computations, 1);
   assert.deepEqual(nonCohort.plan, off.plan);
   assert.equal(nonCohort.candidateHash, off.candidateHash);
-  const response = await plans.previewPlanForUser(OWNER, request, options('shadow'));
+  for (const cohortRefs of [undefined, 'malformed', [OWNER], []]) {
+    const denied = await plans.previewPlanForUser(OWNER, request, { goalBackwardDependencies: {
+      mode: 'preview', audience: 'cohort', cohortRefs, telemetrySink: () => {},
+    } });
+    assert.equal(computations, 1);
+    assert.deepEqual(denied.plan, off.plan);
+    assert.equal(denied.candidateHash, off.candidateHash);
+    assert.equal(denied.surfaceManifest, undefined);
+  }
+  const publicPreview = await plans.previewPlanForUser(OWNER, request, { store: false,
+    goalBackwardDependencies: { mode: 'preview', audience: 'all', telemetrySink: () => {} } });
+  assert.equal(publicPreview.candidateHash, exposed.candidateHash, 'existing all resolver supports the same canonical authority');
   assert.equal(computations, 2);
+  const response = await plans.previewPlanForUser(OWNER, request, options('shadow'));
+  assert.equal(computations, 3);
   assert.deepEqual(response.plan, off.plan);
   assert.equal(response.candidateHash, off.candidateHash);
   assert.ok(db.prepare('SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE plan_generation_candidate_id=?').get(response.id).n >= 5);
@@ -72,7 +85,7 @@ async function main() {
   await assert.rejects(plans.previewPlanForUser(OWNER, request, options('preview')),
     e => e.code === 'GOAL_BACKWARD_GENERATION_FAILED');
   hooks.before = null;
-  assert.equal(computations, 2, 'missing foundation never invokes compute');
+  assert.equal(computations, 3, 'missing foundation never invokes compute');
   assert.equal(db.prepare("SELECT COUNT(*) n FROM plan_generation_candidates WHERE feature_mode='preview'").get().n, 1);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n, 1);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM user_plans').get().n, 0);
