@@ -31,6 +31,18 @@ function diagnose(sink, code) {
   if (typeof sink === 'function') { try { sink(payload); } catch { diagnose(null, 'DIAGNOSTIC_SINK_FAILED'); } }
   return payload;
 }
+// Generation-only subjective evidence. Never called by live adaptation or apply.
+async function loadGenerationSource({ tx, userId, planningDateISO, observationInstant }) {
+  try {
+    const checkIns = await tx.all(`SELECT id, checkin_date, feeling, legs, drive, sleep_hours, time_available, life_flags, created_at
+      FROM daily_checkins WHERE user_id=? AND checkin_date>=? AND checkin_date<=?
+      ORDER BY checkin_date ASC, id ASC LIMIT 65`, [userId, addDays(planningDateISO, -55), planningDateISO]);
+    return { checkIns: checkIns.slice(0, 64), sourceFailed: checkIns.length > 64, observationInstant };
+  } catch {
+    console.error('[plans/generate] readiness evidence lookup failed');
+    return { checkIns: [], sourceFailed: true, observationInstant };
+  }
+}
 function observedBinding(state, source, { accepted = null, acceptedReason = null } = {}) {
   return hash({ input_hash: state.inputHash, revision: state.planningInputRevision,
     constraints: state.planningConstraints, accepted, acceptedReason,
@@ -216,4 +228,4 @@ async function persist(input) {
   await persistPipelineArtifacts({ tx, artifacts });
   await readback({ tx, userId, candidateId, binding: prepared.binding });
 }
-module.exports = { prepare, compute, compare, persist, readback, sameObserved, freeze, reason, diagnose, diagnosticSnapshot: () => [...diagnostics] };
+module.exports = { loadGenerationSource, prepare, compute, compare, persist, readback, sameObserved, freeze, reason, diagnose, diagnosticSnapshot: () => [...diagnostics] };

@@ -2169,7 +2169,7 @@ function confidenceAwareMileageBaseline(rows, runLoadInput, options = {}) {
   };
 }
 
-async function buildConcurrentContext(userId, profile, target, tx = null, observationInstant = null) {
+async function buildConcurrentContext(userId, profile, target, tx = null, adaptiveGenerationSource = null) {
   const all = tx?.all || dbAll;
   const get = tx?.get || dbGet;
   const planningDateISO = /^\d{4}-\d{2}-\d{2}$/.test(String(target.todayISO || '')) ? target.todayISO : getTodayISO();
@@ -2177,7 +2177,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null, observ
   const planningWeekStartDate = concurrentPlan.racePlanWindow(planningDateISO, planningDateISO)?.startDate || planningDateISO;
   const runHistoryStartDate = addPolicyDays(planningWeekStartDate, -56);
   let adaptiveSourceFailure = false;
-  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, evidenceCorrections, evidenceCheckIns] = await Promise.all([
+  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, evidenceCorrections] = await Promise.all([
     all(
       `SELECT id, date, distance_miles, duration_seconds, avg_heart_rate,
               pace_avg, health_source, created_at, plan_session_id, planned_session_json,
@@ -2251,15 +2251,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null, observ
       console.error('[plans/generate] evidence correction lookup failed:');
       return [];
     }),
-    all(`SELECT id, checkin_date, feeling, legs, drive, sleep_hours, time_available, life_flags, created_at
-         FROM daily_checkins WHERE user_id=? AND checkin_date>=? AND checkin_date<=?
-         ORDER BY checkin_date ASC, id ASC LIMIT 65`, [userId, sinceDate, planningDateISO]).catch(() => {
-      adaptiveSourceFailure = true;
-      console.error('[plans/generate] readiness evidence lookup failed');
-      return [];
-    }),
   ]);
-  if (evidenceCheckIns.length > 64) adaptiveSourceFailure = true;
   const rawRuns = Array.isArray(runs) ? runs : [];
   const sensorSources = [...new Set(rawRuns.map((run) => String(run.health_source || '').trim().toLowerCase())
     .filter((source) => ['apple_health', 'healthkit', 'health_connect', 'garmin', 'garmin_csv', 'fit'].includes(source)))].sort();
@@ -2286,8 +2278,12 @@ async function buildConcurrentContext(userId, profile, target, tx = null, observ
   };
   let observedSnapshot;
   const runLoadInput = canonicalizeRunLoadInput({ ...loadInputOptions, runs: rawRuns,
-    captureSnapshot: snapshot => { observedSnapshot = snapshot; }, snapshotPlanningInstant: observationInstant,
-    snapshotEvidence: { lifts: legacyLifts, checkIns: evidenceCheckIns.slice(0, 64) } });
+    ...(adaptiveGenerationSource ? {
+      captureSnapshot: snapshot => { observedSnapshot = snapshot; },
+      snapshotPlanningInstant: adaptiveGenerationSource.observationInstant,
+      snapshotEvidence: { lifts: legacyLifts, checkIns: adaptiveGenerationSource.checkIns },
+    } : {}),
+  });
   const planningRuns = runLoadInput.canonical_run_rows;
   const performanceLoadInput = canonicalizeRunLoadInput({
     ...loadInputOptions,
@@ -2413,8 +2409,8 @@ async function buildConcurrentContext(userId, profile, target, tx = null, observ
       metrics: healthSignals.metrics || {},
     },
   };
-  adaptiveObservedInputs.set(context, adaptiveShadow.freeze({ snapshot: observedSnapshot, rawRuns,
-    sourceFailed: adaptiveSourceFailure || !correctionsComplete, load: runLoadInput }));
+  if (adaptiveGenerationSource) adaptiveObservedInputs.set(context, adaptiveShadow.freeze({ snapshot: observedSnapshot, rawRuns,
+    sourceFailed: adaptiveGenerationSource.sourceFailed || adaptiveSourceFailure || !correctionsComplete, load: runLoadInput }));
   return context;
 }
 
@@ -2804,7 +2800,7 @@ async function loadActiveCanonicalCarryForwardSource(tx, userId, active) {
   );
 }
 
-async function loadCandidateInputState(userId, request, clock, tx) {
+async function loadCandidateInputState(userId, request, clock, tx, { adaptiveGeneration = false } = {}) {
   const profile = await tx.get('SELECT * FROM users WHERE id=?', [userId]);
   if (!profile) throw candidateError(404, 'USER_NOT_FOUND', 'User not found.');
   // A validated phone IANA zone is request authority, not an inferred account
@@ -2822,7 +2818,12 @@ async function loadCandidateInputState(userId, request, clock, tx) {
   const resolved = races.length
     ? targetFromOwnedRaces(profile, races, request.target, clock.planningDateLocal)
     : targetWithoutOwnedRace(profile, request.target, clock.planningDateLocal);
-  const context = await buildConcurrentContext(userId, profile, resolved.target, tx, adaptivePlanningInstants.get(clock) || null);
+  // Optional SHADOW evidence belongs only to generation and its stale recheck.
+  // Apply and legacy off/preview/on never acquire subjective planning inputs.
+  const adaptiveGenerationSource = adaptiveGeneration
+    ? await adaptiveShadow.loadGenerationSource({ tx, userId, planningDateISO: clock.planningDateLocal,
+      observationInstant: adaptivePlanningInstants.get(clock) || null }) : null;
+  const context = await buildConcurrentContext(userId, profile, resolved.target, tx, adaptiveGenerationSource);
   const active = await getActivePlanForUser(userId, tx, {
     includeFuture: true,
     planningDateLocal: clock.planningDateLocal,
@@ -6338,7 +6339,9 @@ function prepareAdaptiveCandidateInput(userId, initial) {
 async function previewPlanForUser(userId, body = {}, { store = true, goalBackwardDependencies = {} } = {}) {
   const clock = acceptedPlanningClock(body);
   const request = normalizeCandidateRequest(body);
-  const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx));
+  const generationOptions = { adaptiveGeneration: resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies,
+    { allowSyntheticShadow: true }) === 'shadow' };
+  const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx, generationOptions));
   let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial);
   const built = buildDeterministicCandidate(initial.context, {
     planningDateLocal: clock.planningDateLocal,
@@ -6512,7 +6515,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
   }
 
   await withUserMutation(userId, async (tx) => {
-    const current = await loadCandidateInputState(userId, request, clock, tx);
+    const current = await loadCandidateInputState(userId, request, clock, tx, generationOptions);
     if (current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash
       || canonicalHash(current.planningConstraints) !== canonicalHash(initial.planningConstraints)
       || (prepared && !adaptiveShadow.sameObserved(prepared, current, adaptiveObservedInputs.get(current.context), adaptiveAcceptedInput(userId, current)))) {

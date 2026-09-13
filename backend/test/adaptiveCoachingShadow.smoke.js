@@ -26,7 +26,8 @@ engine.buildRacePlanCandidate = (context, options) => {
   return realLegacy(context, options);
 };
 const plans = require('../src/routes/plans')._test;
-const { db, tx, hooks } = fixture;
+const { db, tx, hooks, calls } = fixture;
+const readinessReads = () => calls.filter(c => /FROM daily_checkins/i.test(c.sql));
 async function main() {
   for (const id of [OWNER, OTHER]) db.prepare(`INSERT INTO users(id,name,email,password_hash,timezone,training_age_class,
     run_days_per_week,lift_days_per_week,preferred_workout_days,planning_input_revision) VALUES (?,?,?,?,?,?,?,?,?,?)`)
@@ -48,10 +49,16 @@ async function main() {
     target: { runDaysPerWeek: 2, liftDaysPerWeek: 0, trainingDays: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] } };
   const diagnostics = [];
   const options = mode => ({ goalBackwardDependencies: { mode, audience: 'all', telemetrySink: () => {}, adaptiveDiagnosticSink: d => diagnostics.push(d) } });
+  const directReadCount = readinessReads().length;
+  await plans.buildConcurrentContext(OWNER, { timezone: 'UTC' }, { ...request.target, todayISO: DATE }, tx);
+  assert.equal(readinessReads().length, directReadCount, 'shared planning context has no subjective source read');
   const off = await plans.previewPlanForUser(OWNER, request, options('off'));
+  assert.equal(readinessReads().length, directReadCount, 'off generation has no subjective source enrichment');
   assert.equal(adaptiveComputations, 0);
   const response = await plans.previewPlanForUser(OWNER, request, options('shadow'));
   assert.equal(adaptiveComputations, 1);
+  assert.equal(readinessReads().length, directReadCount + 2, 'SHADOW reads real source for generation and stale recheck only');
+  assert.ok(readinessReads().every(c => c.params[0] === OWNER), 'SHADOW readiness reads remain owner-scoped');
   assert.deepEqual(response.plan, off.plan);
   assert.equal(response.candidateHash, off.candidateHash);
   assert.equal(response.surfaceManifest, undefined);
@@ -92,9 +99,11 @@ async function main() {
   const totalRows = table => db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n;
   for (const mode of ['off', 'shadow ', 'preview', 'on']) {
     const startCount = totalRows('planning_pipeline_artifacts');
+    const readCount = readinessReads().length;
     const plain = await plans.previewPlanForUser(OWNER, { ...request, goalBackwardDependencies: { mode: 'shadow', audience: 'all' } }, options(mode));
     assert.deepEqual(plain.plan, off.plan);
     assert.equal(totalRows('planning_pipeline_artifacts'), startCount);
+    assert.equal(readinessReads().length, readCount, `${mode} does not acquire SHADOW readiness inputs`);
   }
   const injected = await plans.previewPlanForUser(OWNER, { ...request, mode: 'shadow',
     goalBackwardDependencies: { mode: 'shadow', audience: 'all' } });
@@ -130,6 +139,26 @@ async function main() {
   assert.equal(totalRows('planning_pipeline_artifacts'), storedBeforeFailure);
   assert.equal(diagnostics.at(-1).reason_code, 'SOURCE_UNAVAILABLE');
   assert.equal(JSON.stringify(shadow.diagnosticSnapshot()).includes('private-source'), false);
+  // Subjective source failures fail closed for SHADOW, while legacy generation
+  // never touches this optional source. These exercise actual SQL, not source text.
+  const readinessFailureCount = totalRows('planning_pipeline_artifacts');
+  hooks.before = (method, sql) => { if (method === 'all' && /FROM daily_checkins/i.test(sql)) throw new Error('readiness unavailable'); };
+  const noReadiness = await plans.previewPlanForUser(OWNER, request, options('shadow'));
+  assert.equal(diagnostics.at(-1).reason_code, 'SOURCE_UNAVAILABLE');
+  assert.equal(totalRows('planning_pipeline_artifacts'), readinessFailureCount);
+  assert.deepEqual(noReadiness.plan, off.plan);
+  assert.deepEqual((await plans.previewPlanForUser(OWNER, request, options('off'))).plan, off.plan);
+  hooks.before = null;
+  // A check-in edit without a planning revision still invalidates the captured
+  // SHADOW evidence before any candidate/artifact write.
+  let readinessTransactions = 0;
+  const readinessCandidates = totalRows('plan_generation_candidates');
+  hooks.beforeTransaction = () => { if (++readinessTransactions === 2) db.prepare('UPDATE daily_checkins SET time_available=? WHERE id=? AND user_id=?')
+    .run(5, 'ready', OWNER); };
+  await assert.rejects(plans.previewPlanForUser(OWNER, request, options('shadow')), e => e.code === 'CANDIDATE_STALE');
+  hooks.beforeTransaction = null;
+  assert.equal(totalRows('plan_generation_candidates'), readinessCandidates);
+  db.prepare('UPDATE daily_checkins SET time_available=? WHERE id=? AND user_id=?').run(60, 'ready', OWNER);
   // A late revision change fails before candidate/artifact writes, including pruning.
   let transactions = 0;
   const staleCandidates = totalRows('plan_generation_candidates');
@@ -167,7 +196,11 @@ async function main() {
 
   const applyBody = { candidate_hash: repeat.candidateHash, choice: 'train_for_target',
     planning_date_local: DATE, timezone_offset_minutes: 0 };
+  const applyReadCount = readinessReads().length;
+  hooks.before = (method, sql) => { if (method === 'all' && /FROM daily_checkins/i.test(sql)) throw new Error('apply must not acquire subjective authority'); };
   const applied = await plans.applyPlanCandidate(OWNER, repeat.id, applyBody);
+  hooks.before = null;
+  assert.equal(readinessReads().length, applyReadCount, 'legacy SHADOW apply has no generation enrichment');
   assert.equal(applied.status, 200);
   const saved = db.prepare('SELECT plan_data FROM training_plans WHERE id=? AND user_id=?').get(applied.payload.plan_id, OWNER);
   assert.deepEqual(JSON.parse(saved.plan_data), off.plan);
