@@ -102,6 +102,26 @@ function resolveStressVector(workoutFamily, options = {}) {
   return vector;
 }
 
+function resolvePrescribedDose(source, family, vector) {
+  let dose = String(family).startsWith('strength_') ? strengthPrescribedDose(source, vector)
+    : require('./runningDoseAccounting').runningPrescribedDose(source, vector);
+  // Adaptive quality/long exposures carry an independently selected observed
+  // same-family dose. Existing callers retain protected family accounting.
+  if (source.dose_basis?.policy_id === 'adaptive-observed-dose-v1'
+    && ['long_aerobic', 'threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run'].includes(family)) {
+    const basis = source.dose_basis;
+    const total = source.derived_totals?.duration_s, work = source.derived_totals?.work_duration_s;
+    const valid = source.content_hash && require('./canonicalWorkout').canonicalWorkoutHash(source) === source.content_hash
+      && Number.isFinite(total) && total > 0 && Number.isFinite(work) && work > 0
+      && Number.isFinite(basis.observed_session_duration_s) && basis.observed_session_duration_s > 0
+      && Number.isFinite(basis.observed_work_duration_s) && basis.observed_work_duration_s > 0;
+    const factor = valid ? Math.max(total / basis.observed_session_duration_s, work / basis.observed_work_duration_s) : null;
+    dose = { ...dose, valid: Boolean(valid && vector), vector: valid && vector ? vector.map(v => v * factor) : null,
+      state: valid ? 'ADAPTIVE_OBSERVED_FAMILY_DOSE' : 'INVALID_ADAPTIVE_OBSERVED_DOSE' };
+  }
+  return dose;
+}
+
 const immutableDoseResults = new WeakMap();
 function resolveSessionStress(session = {}, index = 0) {
   const source = session && typeof session === 'object' && !Array.isArray(session) ? session : {};
@@ -111,8 +131,7 @@ function resolveSessionStress(session = {}, index = 0) {
     event_kind: source.event_kind ?? source.eventKind,
     contributing_work_families: source.contributing_work_families ?? source.contributingWorkFamilies,
   });
-  const dose = String(family).startsWith('strength_') ? strengthPrescribedDose(source, vector)
-    : require('./runningDoseAccounting').runningPrescribedDose(source, vector);
+  const dose = resolvePrescribedDose(source, family, vector);
   const resolved = {
     session_id: String(source.session_id ?? source.sessionId ?? source.id ?? `session-${index + 1}`),
     workout_family: family ?? null,
@@ -171,8 +190,7 @@ function resolveSession(session = {}, index = 0) {
       violation: { code: 'WORKOUT_FAMILY_UNRESOLVED', session_id: sessionId, workout_family: family ?? null },
     };
   }
-  const dose = String(family).startsWith('strength_') ? strengthPrescribedDose(source, vector)
-    : require('./runningDoseAccounting').runningPrescribedDose(source, vector);
+  const dose = resolvePrescribedDose(source, family, vector);
   if (!dose.valid) return { valid: false, violation: {
     code: 'CROSS_MODAL_FATIGUE_LIMIT', session_id: sessionId, reason: 'INVALID_CANONICAL_STRENGTH_DOSE',
   } };

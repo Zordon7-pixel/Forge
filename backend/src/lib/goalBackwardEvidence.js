@@ -865,6 +865,7 @@ function buildEvidenceSnapshot({
   timezone,
   runs = [],
   lifts = [],
+  physicalSources = null,
   checkIns = [],
   painReports = [],
   illnessReports = [],
@@ -975,6 +976,7 @@ function buildEvidenceSnapshot({
     provider_coverage_intervals: coverage,
     modality_eligibility: modalityEligibility(coverage),
     activity_summary: { value_state: activityValueState, value: activityValue, canonical_unit: 'm' },
+    ...(physicalSources ? { physical_sources: physicalSources } : {}),
     source_row_counts: {
       runs: runRecords.length,
       lifts: Array.isArray(lifts) ? lifts.length : 0,
@@ -1027,6 +1029,9 @@ function canonicalizeRunLoadInput({
   correctionsComplete = true,
   correctionInputCount = null,
   includeActivitySources = false,
+  captureSnapshot = null,
+  snapshotEvidence = null,
+  snapshotPlanningInstant = null,
 } = {}) {
   const snapshot = buildEvidenceSnapshot({
     athleteId,
@@ -1035,7 +1040,16 @@ function canonicalizeRunLoadInput({
     runs,
     providerCoverage,
     corrections,
+    lifts: snapshotEvidence?.lifts || [],
+    checkIns: snapshotEvidence?.checkIns || [],
   });
+  // Legacy load identity retains its established date-end projection. The shared
+  // adaptive snapshot uses the single accepted request instant, without changing
+  // the legacy load/candidate hash contract or issuing another database read.
+  if (typeof captureSnapshot === 'function') captureSnapshot(snapshotPlanningInstant === null ? snapshot
+    : buildEvidenceSnapshot({ athleteId, planningInstant: snapshotPlanningInstant, timezone, runs,
+      providerCoverage, corrections, lifts: snapshotEvidence?.measured?.lifts || snapshotEvidence?.lifts || [],
+      physicalSources: snapshotEvidence?.measured?.receipt || null, checkIns: snapshotEvidence?.checkIns || [] }));
   const localPlanningDate = planningDateLocal || snapshot.planning_date_local;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(localPlanningDate || ''))) {
     throw new Error('canonicalizeRunLoadInput requires a valid planning local date');
@@ -1104,7 +1118,9 @@ function canonicalizeRunLoadInput({
       return date && date >= startDate && date <= endDate;
     });
     const measurementsComplete = activities.every((item) => finite(item.distance_m) !== null && finite(item.duration_s) !== null);
-    const eligible = coverageComplete && measurementsComplete && ['COMPLETE', 'VALID_ZERO'].includes(loadInputState);
+    // Current-day partial coverage does not invalidate a separately attested
+    // completed week. Failed/stale/unknown sources still fail closed.
+    const eligible = coverageComplete && measurementsComplete && ['COMPLETE', 'VALID_ZERO', 'PARTIAL'].includes(loadInputState);
     return {
       week_start_local: startDate,
       week_end_local: endDate,
@@ -1582,6 +1598,7 @@ function buildAthleteState({
   subjectiveReadiness = null,
   biometrics = {},
   recentStress = null,
+  adaptiveFoundation = null,
 } = {}) {
   if (!snapshot?.evidence_snapshot_id || !snapshot?.athlete_id) throw new Error('buildAthleteState requires an EvidenceSnapshot');
   const recentNormal = deriveRecentNormalRunning({
@@ -1656,6 +1673,30 @@ function buildAthleteState({
     reason_codes: reasonCodes,
     confidence,
   };
+  // Opt-in enrichment is hashed by the same canonical state/revision authority.
+  // Legacy callers keep their exact state shape and hash.
+  if (adaptiveFoundation) {
+    content.adaptive_foundation = adaptiveFoundation;
+    const contextSafety = adaptiveFoundation.context_safety || {};
+    if (contextSafety.active_injury || contextSafety.injury_notes_present || contextSafety.comeback_mode) {
+      if (['NORMAL', 'MONITOR'].includes(content.safety_action)) {
+        content.safety_action = contextSafety.active_injury || contextSafety.injury_notes_present
+          ? 'MODIFIED_SESSION_ONLY' : 'NO_HIGH_INTENSITY';
+      }
+      if (content.recovery_state !== 'RECOVERY') content.recovery_state = 'CAUTION';
+      content.consistency_state = 'RETURNING';
+      content.reason_codes = [...new Set([...content.reason_codes, 'INJURY_SCOPE', 'TRAINING_GAP_REBUILD'])].sort();
+    }
+    const eligible = new Set(recentNormal.eligible_week_ids);
+    let cursor = addLocalDays(snapshot.planning_date_local,
+      -((new Date(`${snapshot.planning_date_local}T12:00:00Z`).getUTCDay() + 6) % 7) - 7);
+    let consistentWeeks = 0;
+    while (eligible.has(cursor) && consistentWeeks < 8) {
+      consistentWeeks += 1;
+      cursor = addLocalDays(cursor, -7);
+    }
+    content.consistent_weeks = content.consistency_state === 'CONSISTENT' ? consistentWeeks : 0;
+  }
   const comparableHash = prefixedHash(content);
   const previousComparable = previousState?.state_content_hash || null;
   const revision = previousState

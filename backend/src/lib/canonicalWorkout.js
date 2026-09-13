@@ -1506,7 +1506,10 @@ function materializeCanonicalSession(input = {}) {
     decision_id: String(decision.decision_id || ''),
     session_id: sessionId,
   };
-  const steps = HYROX_STATION_FAMILIES.has(family)
+  // The adaptive seam supplies the same closed canonical step graph, resolved
+  // before placement. buildCanonicalSession still validates every target/hash.
+  const adaptive = source.adaptive_prescription?.version === 'adaptive-prescription-v1';
+  const steps = adaptive ? clone(source.adaptive_prescription.steps) : HYROX_STATION_FAMILIES.has(family)
     ? materializeHyroxStationSteps(family, source, materializationInput)
     : family === 'hyrox_partial_simulation' ? null
       : HYROX_MIXED_FAMILIES.has(family)
@@ -1521,6 +1524,11 @@ function materializeCanonicalSession(input = {}) {
     ? FAMILY_TITLES[family]
     : source.title || FAMILY_TITLES[family] || family;
   let canonicalInput = {
+    ...(adaptive && family.startsWith('hyrox_') ? Object.fromEntries([
+      'hyrox_event_state', 'partial_race_order_cluster', 'run_station_pair_count', 'main_work_duration_s',
+      'main_work_duration_min', 'main_set_rpe_range', 'main_set_running_m', 'warmup_cooldown_running_m',
+      'running_distance_m', 'ruleset_id', 'ruleset_version',
+    ].filter(key => source[key] !== undefined).map(key => [key, clone(source[key])])) : {}),
     ...(source.workout_id === 'benchmark_mile' ? { benchmark_distance_miles: 1 } : {}),
     session_id: sessionId,
     session_revision: nextSessionRevision(input, skeleton),
@@ -1534,6 +1542,7 @@ function materializeCanonicalSession(input = {}) {
     title: String(title),
     purpose_reason_codes: purposeReasonCodes,
     scheduled_local_date: skeleton.scheduled_local_date,
+    ...(skeleton.scheduled_start_at ? { scheduled_start_at: skeleton.scheduled_start_at } : {}),
     timezone: String(input.timezone || decision.timezone || 'UTC'),
     steps,
     success_criteria: ['Complete the canonical work as prescribed.'],
@@ -1546,13 +1555,24 @@ function materializeCanonicalSession(input = {}) {
     safety_scope: clone(decision.safety_state?.scope || []),
     executability: ['NORMAL', 'MONITOR'].includes(String(decision.safety_state?.action || 'NORMAL').toUpperCase())
       ? 'EXECUTABLE' : 'RESTRICTED',
-    event_kind: decision.active_goals?.[0]?.event_kind,
+    event_kind: adaptive && family === 'race' && source.event_identity
+      ? source.event_identity.event_kind : decision.active_goals?.[0]?.event_kind,
+    ...(adaptive ? {
+      purpose: source.purpose || 'Recover to support the next useful training exposure.',
+      objective_ids: clone(source.adaptive_prescription.objective_ids),
+      progression_family: source.adaptive_prescription.progression_family,
+      dose_basis: clone(source.adaptive_prescription.dose_basis),
+      success_criteria: ['Complete the work within the prescribed effort range.'],
+      adjustment_criteria: ['Reduce effort or omit remaining repetitions if the target cannot be maintained.',
+        'Do not make up omitted work on a recovery day.'],
+      stop_criteria: ['Stop for pain, dizziness, chest discomfort, or unusual breathlessness.'],
+    } : {}),
     ...(STRENGTH_FAMILIES.has(family) ? { strength_dose_accounting_version: require('./strengthDoseAccounting').VERSION } : {}),
     ...(source.strength_distribution ? { strength_distribution: clone(source.strength_distribution),
       source_session_id: source.id || source.session_id } : {}),
     ...(family === 'race' && source.event_identity ? { event_identity: clone(source.event_identity) } : {}),
   };
-  const canonical = family === 'hyrox_partial_simulation'
+  const canonical = family === 'hyrox_partial_simulation' && !adaptive
     ? buildPartialRaceOrderCluster({
       ...clone(source),
       ...canonicalInput,
@@ -1564,7 +1584,7 @@ function materializeCanonicalSession(input = {}) {
     })
     : buildCanonicalSession(canonicalInput);
   const canonicalExercises = STRENGTH_FAMILIES.has(family) ? (source.main || source.exercises).map((exercise, index) => {
-    const target = canonical.steps[index].target;
+    const target = canonical.steps.filter(step => step.type === 'strength_exercise')[index].target;
     return { ...clone(exercise), sourcePrescription: clone(exercise.sourcePrescription || exercise), sets: target.sets,
       reps: String(exercise.reps).includes('each side') ? `${target.repetitions / 2} each side` : String(target.repetitions),
       rest: `${target.rest_s} sec`,

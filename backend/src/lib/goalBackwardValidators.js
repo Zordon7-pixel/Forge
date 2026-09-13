@@ -1711,6 +1711,7 @@ module.exports = {
   buildSafetyExecutability,
   canonicalPrescriptionHash,
   classifyInterferencePredicates,
+  longestRequiredSeparation,
   compareMaterialChange,
   validateGoalBackwardCandidate,
   validateGoalBackwardAdaptationCandidate,

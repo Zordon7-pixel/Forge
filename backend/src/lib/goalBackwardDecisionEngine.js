@@ -297,6 +297,12 @@ function selectGoalBackwardPhase(input = {}) {
   const recoveryBufferDays = Number(policy?.recovery_buffer_days ?? 2);
   const dueExposureCount = Math.max(0, Number(input.due_exposure_count ?? input.dueExposureCount ?? 0));
   const reasonCodes = [];
+  const stateLed = input.phase_authority === 'adaptive-foundation-v1';
+  const state = input.athlete_state || input.athleteState || {};
+  const stateReady = hasFoundationGate(state)
+    && ['READY', 'NORMAL'].includes(state.recovery_state)
+    && ['NORMAL', 'MONITOR'].includes(state.safety_action);
+  if (stateLed) reasonCodes.push('STATE_LED_PHASE');
   let phase;
   if (eventState === 'COMPLETED' && input.transition_exit_met !== true) {
     phase = 'POST_RACE_TRANSITION';
@@ -304,6 +310,11 @@ function selectGoalBackwardPhase(input = {}) {
   } else if (daysToEvent !== null && daysToEvent < 0 && ['SCHEDULED', 'POSTPONED', 'UNKNOWN'].includes(eventState)) {
     phase = 'POST_RACE_TRANSITION';
     reasonCodes.push('EVENT_RESULT_UNCONFIRMED');
+  } else if (stateLed && !(daysToEvent !== null && daysToEvent >= 0 && daysToEvent <= 6)
+    && !stateReady) {
+    phase = 'FOUNDATION';
+    reasonCodes.push('FOUNDATION_ENTRY');
+    if (!['READY', 'NORMAL'].includes(state.recovery_state)) reasonCodes.push('RECOVERY_VOLUME_REDUCTION');
   } else if (daysToEvent !== null && (daysToEvent <= taperDays
     || (windowEndDaysToEvent !== null && windowEndDaysToEvent >= 0 && windowEndDaysToEvent <= taperDays))) {
     phase = 'TAPER_RACE_WEEK';
@@ -316,19 +327,20 @@ function selectGoalBackwardPhase(input = {}) {
     reasonCodes.push('TAPER_ENTRY', allowed.has(override) ? override : 'CROSS_MODAL_FATIGUE_LIMIT');
   } else {
     const preTaperDays = daysToEvent === null ? null : daysToEvent - taperDays;
-    const safeUsefulPeakFits = input.safe_useful_peak_fits === true
+    const gapPermitsSpecificity = !stateLed || input.goal_gap?.feasibility_status === 'SUPPORTED';
+    const safeUsefulPeakFits = gapPermitsSpecificity && input.safe_useful_peak_fits === true
       && preTaperDays !== null && preTaperDays >= recoveryBufferDays;
-    if (dueExposureCount > 0 && preTaperDays !== null && preTaperDays < recoveryBufferDays) {
+    if (!stateLed && dueExposureCount > 0 && preTaperDays !== null && preTaperDays < recoveryBufferDays) {
       phase = 'SHARPENING';
       reasonCodes.push('SHARPENING_ENTRY', 'LATE_BUILD_PREVENTED', 'REQUIRED_EXPOSURE_UNPLACEABLE');
-    } else if (input.peak_exposure_complete === true) {
+    } else if (gapPermitsSpecificity && input.peak_exposure_complete === true) {
       phase = 'SHARPENING';
       reasonCodes.push('SHARPENING_ENTRY');
     } else if (!hasFoundationGate(input.athlete_state || input.athleteState || {})) {
       phase = 'FOUNDATION';
       reasonCodes.push('FOUNDATION_ENTRY');
     } else if (safeUsefulPeakFits || (
-      input.development_gate_complete === true
+      gapPermitsSpecificity && input.development_gate_complete === true
       && dueExposureCount > 0
       && preTaperDays !== null
       && Math.floor(preTaperDays / 7) >= 3
