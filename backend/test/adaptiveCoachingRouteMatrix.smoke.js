@@ -72,9 +72,15 @@ async function main() {
     assert.equal(week.source_support.stored_priority_used, false);
     assert.ok(prepared.foundation.athlete_state.adaptive_foundation.completion_pairs.every(p => p.prescribed_session.kind !== 'lift'));
     const sourceLimited = week.source_support.source_limited;
-    assert.equal(sourceLimited, lift > 0 || events.length > 0);
+    // Road strength objectives lack measured caps here. FOUNDATION HYROX
+    // asks only for aerobic consistency; absent station work is explicitly
+    // unsupported but not required for this week's conservative objective.
+    assert.equal(sourceLimited, index > 0 && index < 7);
     if (!sourceLimited) assert.equal(result.applicable, true, 'sparse maintenance schedule is supported');
-    if (index === 7) assert.ok(week.source_support.limits.some(l => l.reason_code === 'INDIVIDUAL_DOUBLES_BURDEN_UNKNOWN'));
+    if (index === 7) {
+      assert.ok(week.source_support.limits.some(l => l.reason_code === 'INDIVIDUAL_DOUBLES_BURDEN_UNKNOWN' && l.required === false && l.status === 'UNSUPPORTED'));
+      assert.ok(sessions.every(s => !s.workout_family.startsWith('hyrox_')));
+    }
     assert.ok(sessions.filter(s => s.workout_family === 'rest').every(s => s.purpose_reason_codes.length));
     console.log(JSON.stringify({ class: name, phase: result.decision.phase, active_goal_id: result.decision.active_goal_id,
       roles: sessions.map(s => [s.workout_family,s.role]), dose: sessions.map(s => [s.workout_family,s.derived_totals.duration_s,s.derived_totals.distance_m]),

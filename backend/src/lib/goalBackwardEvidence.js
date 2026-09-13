@@ -1118,7 +1118,9 @@ function canonicalizeRunLoadInput({
       return date && date >= startDate && date <= endDate;
     });
     const measurementsComplete = activities.every((item) => finite(item.distance_m) !== null && finite(item.duration_s) !== null);
-    const eligible = coverageComplete && measurementsComplete && ['COMPLETE', 'VALID_ZERO'].includes(loadInputState);
+    // Current-day partial coverage does not invalidate a separately attested
+    // completed week. Failed/stale/unknown sources still fail closed.
+    const eligible = coverageComplete && measurementsComplete && ['COMPLETE', 'VALID_ZERO', 'PARTIAL'].includes(loadInputState);
     return {
       week_start_local: startDate,
       week_end_local: endDate,

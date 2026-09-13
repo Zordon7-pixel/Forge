@@ -2,6 +2,7 @@
 const { randomUUID } = require('node:crypto');
 const { canonicalHash, addDays } = require('./racePlanPolicy');
 const { ownDataJsonSnapshot } = require('./goalBackwardRecoveryMaterial');
+const { dateInTimezone } = require('./challengeRules');
 const VERSION = 'garmin-terminal-coverage-v1';
 const PAGE_SIZE = 200, MAX_PAGES = 32;
 const latest = (tx, owner) => tx.get(`SELECT * FROM provider_import_receipts WHERE user_id=? AND provider='garmin' ORDER BY revision DESC LIMIT 1`, [owner]);
@@ -19,7 +20,7 @@ async function physical(tx, owner, id) {
 }
 // Pagination always runs to exhaustion. We do not assume undocumented ordering
 // or treat a short page as terminal; an explicit empty page is required.
-async function sync({ userId, client, ingest, toPayload, mutation, now = new Date().toISOString() }) {
+async function sync({ userId, client, ingest, toPayload, mutation, timezone = 'UTC', now = new Date().toISOString() }) {
   const start = addDays(now.slice(0,10), -56), batch = randomUUID();
   const base = { version: VERSION, batch_id: batch, modality: 'running', window_start: `${start}T00:00:00.000Z`,
     window_end: now, status: 'PARTIAL', terminal: false, pages: 0, unknown_items: 0, failed_items: 0, bindings: [] };
@@ -56,12 +57,12 @@ async function sync({ userId, client, ingest, toPayload, mutation, now = new Dat
         }
         try {
           const input = toPayload(activity);
-          if (running && input.date !== new Date(at).toISOString().slice(0,10)) payload.unknown_items++;
+          if (running && input.date !== dateInTimezone(new Date(at), timezone)) payload.unknown_items++;
           const result = await ingest(userId,input);
           if (!result || !result.id || running && (!result.created_record_id || result.routed_section!=='run'
             || result.duplicate && result.duplicate_reason!=='garmin_activity_id')) { payload.unknown_items++; continue; }
-          if (running) payload.bindings.push({ activity_id: key, record_id: result.created_record_id, watch_sync_id: result.id, date:input.date, distance_miles:input.distance_miles, duration_seconds:input.duration_seconds });
-          imported.push({ id:result.id, garminActivityId:key, activityName:activity.activityName || result.activity_name, startTimeLocal:activity.startTimeLocal || null });
+          if (running) payload.bindings.push({ activity_id: key, record_id: result.created_record_id, observed_at: new Date(at).toISOString(), watch_sync_id: result.id, date:input.date, distance_miles:input.distance_miles, duration_seconds:input.duration_seconds });
+          if (!result.duplicate) imported.push({ id:result.id, garminActivityId:key, activityName:activity.activityName || result.activity_name, startTimeLocal:activity.startTimeLocal || null });
         } catch { payload.failed_items++; }
       }
     }
@@ -88,18 +89,26 @@ async function load({ tx, userId, observationInstant, timezone='UTC' }) {
     || !['COMPLETE','PARTIAL','FAILED'].includes(p.status) || !Array.isArray(p.bindings) || p.bindings.length>6400
     || !Number.isSafeInteger(row.revision) || row.revision<1) throw new Error('Invalid importer receipt');
   let status=p.status.toLowerCase();
-  if (p.status==='COMPLETE' && (!p.terminal || p.unknown_items || p.failed_items)) status='partial';
+  const partial = () => { if (status !== 'failed') status='partial'; };
+  if (p.status==='COMPLETE' && (!p.terminal || p.unknown_items || p.failed_items)) partial();
   for (const b of p.bindings) {
     const actual=await physical(tx,userId,b.record_id); bindings.push({ record_id:b.record_id, physical:actual });
-    if (canonicalHash(actual)!==b.physical_hash) status='partial';
+    if (canonicalHash(actual)!==b.physical_hash
+      || (b.observed_at ? dateInTimezone(b.observed_at, timezone)!==b.date : timezone!=='UTC')) partial();
   }
   const at=Date.parse(observationInstant), end=Date.parse(p.window_end), start=Date.parse(p.window_start);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end<start || end>at || at-end>48*3600000
-    || !Number.isFinite(Date.parse(row.created_at)) || Date.parse(row.created_at)>at) status='partial';
-  // UTC window dates cannot prove whole local days for another timezone yet.
-  if (timezone!=='UTC') status='partial';
+    || !Number.isFinite(Date.parse(row.created_at)) || Date.parse(row.created_at)>at) partial();
+  // Inclusive whole local days only. Calendar arithmetic crosses DST without
+  // assuming a day has 24 hours; a boundary partial day proves no coverage.
+  const first = dateInTimezone(new Date(start), timezone);
+  const last = dateInTimezone(new Date(end), timezone);
+  const startsAtMidnight = first && dateInTimezone(new Date(start - 1), timezone) !== first;
+  const wholeStart = first && (startsAtMidnight ? first : addDays(first, 1));
+  const wholeEnd = last && addDays(last, -1);
+  if (!wholeStart || !wholeEnd || wholeStart > wholeEnd) partial();
   return { rows:[row], bindings, coverage:[{ id:row.id, source_system:'garmin', modalities:['running'], status,
-    coverage_start_local:p.window_start.slice(0,10), coverage_end_local:p.window_end.slice(0,10), synced_at:p.window_end }] };
+    coverage_start_local:wholeStart, coverage_end_local:wholeEnd, synced_at:p.window_end }] };
 }
 function merge(coverage, runs, legacy=[]) {
   const sources=new Set(legacy.map(r=>r.source_system));

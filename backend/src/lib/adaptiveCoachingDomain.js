@@ -79,7 +79,9 @@ function strengthVariants(entry) {
   if (!entry.exercises) return [entry];
   const originalSets = entry.exercises.reduce((n, e) => n + e.sets, 0);
   const variants = [entry];
-  for (const fraction of [0.75, 0.5]) {
+  // Include the existing two-set/exercise maintenance floor. A half-dose
+  // from a large pool can still be a hard lower-body session.
+  for (const fraction of [0.75, 0.5, 0]) {
     const exercises = entry.exercises.map(e => ({ ...e, sets: Math.max(2, Math.floor(e.sets * fraction)) }));
     const retained = exercises.reduce((n, e) => n + e.sets, 0);
     if (retained === originalSets || variants.some(v => canonicalHash(v.exercises) === canonicalHash(exercises))) continue;

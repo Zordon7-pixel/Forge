@@ -92,7 +92,15 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
     })).filter(c => validateAdaptivePlacement([c.session], constraints, state, selection.weekly_objectives).valid);
   });
   let frontier = [{ placed: [], mask: [] }], nodes = 0, truncated = false;
-  const rejectionCounts = {};
+  const rejectionCounts = {}, rejectionExamples = {};
+  // Identical aerobic partitions have no calendar identity until placement.
+  // Keep one chronological permutation, except when athlete constraints bind
+  // session identity. This removes factorial branches without losing a dose.
+  const interchangeable = selection.entries.map(e => ['easy_run', 'recovery_run'].includes(e.workout_family)
+    && !constraints.locks.length && !constraints.manual_edits.length
+    ? canonicalHash({ family: e.workout_family, duration: e.duration_s, distance: e.distance_m,
+      role: e.role, target: e.target_inputs, fixed: e.fixed_date || null, earliest: e.earliest_date || null }) : null);
+  let symmetryPruned = 0;
   const compare = (a, b) => {
     for (let i = 0; i < Math.max(a.mask.length, b.mask.length); i++) if (a.mask[i] !== b.mask[i]) return (b.mask[i] || 0) - (a.mask[i] || 0);
     const reductionA = a.placed.reduce((n, p) => n + p.variant_index, 0);
@@ -101,7 +109,14 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
     // Spread demanding work; use stable chronological tie-breaks only after safety.
     const occupiedA = new Set(a.placed.map(p => p.session.scheduled_local_date)).size;
     const occupiedB = new Set(b.placed.map(p => p.session.scheduled_local_date)).size;
-    return occupiedB - occupiedA || canonicalHash(a.placed.map(p => p.skeleton)).localeCompare(canonicalHash(b.placed.map(p => p.skeleton)));
+    const futureRoom = branch => branch.placed.reduce((score, p) => {
+      const index = selection.entries.findIndex(e => e.selection_id === p.session.session_id);
+      if (!interchangeable[index]) return score;
+      const next = interchangeable.findIndex((key, i) => i >= branch.mask.length && key === interchangeable[index]);
+      return next < 0 ? score : score + choices[next].filter(c => c.session.scheduled_start_at > p.session.scheduled_start_at).length;
+    }, 0);
+    return futureRoom(b) - futureRoom(a) || occupiedB - occupiedA
+      || canonicalHash(a.placed.map(p => p.skeleton)).localeCompare(canonicalHash(b.placed.map(p => p.skeleton)));
   };
   for (let index = 0; index < selection.entries.length; index++) {
     const next = [];
@@ -110,16 +125,48 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
       // objective priority preserves primary/long before every supporting session.
       next.push({ placed: branch.placed, mask: [...branch.mask, 0] });
       for (const choice of choices[index]) {
+        const previous = interchangeable[index] && branch.placed.findLast(p =>
+          interchangeable[selection.entries.findIndex(e => e.selection_id === p.session.session_id)] === interchangeable[index]);
+        if (previous && previous.session.scheduled_start_at >= choice.session.scheduled_start_at) { symmetryPruned++; continue; }
         if (nodes >= maxNodes) { truncated = true; break; }
         nodes++;
         const placed = [...branch.placed, choice];
         const result = validateAdaptivePlacement(placed.map(p => p.session), constraints, state, selection.weekly_objectives);
         if (result.valid) next.push({ placed, mask: [...branch.mask, 1] });
-        else for (const v of result.violations) rejectionCounts[v.code] = (rejectionCounts[v.code] || 0) + 1;
+        else for (const v of result.violations) {
+          rejectionCounts[v.code] = (rejectionCounts[v.code] || 0) + 1;
+          if (!rejectionExamples[v.code]) rejectionExamples[v.code] = v;
+        }
       }
     }
-    if (next.length > LIMITS.frontier) truncated = true;
-    frontier = next.sort(compare).slice(0, LIMITS.frontier);
+    // Reserve expansion capacity for every remaining objective. Early calendar
+    // permutations may use only the frontier that the remaining work can afford.
+    const remainingChoices = choices.slice(index + 1).reduce((n, c) => n + c.length, 0);
+    const frontierLimit = remainingChoices ? Math.min(LIMITS.frontier,
+      Math.max(1, Math.floor((maxNodes - nodes) / remainingChoices))) : LIMITS.frontier;
+    if (next.length > frontierLimit) truncated = true;
+    // Preserve dose alternatives before spending the frontier on equivalent
+    // placements of the largest dose. A later lower-priority exposure may fit
+    // only after reducing earlier supporting strength.
+    const masks = new Map();
+    for (const branch of next.sort(compare)) {
+      const mask = JSON.stringify(branch.mask), dose = JSON.stringify(branch.placed.map(p => p.variant_index));
+      if (!masks.has(mask)) masks.set(mask, new Map());
+      const portfolios = masks.get(mask);
+      if (!portfolios.has(dose)) portfolios.set(dose, []);
+      portfolios.get(dose).push(branch);
+    }
+    frontier = [];
+    for (const portfolios of masks.values()) {
+      const groups = [...portfolios.values()];
+      for (let rank = 0; frontier.length < frontierLimit && groups.some(g => g.length > rank); rank++) {
+        for (const group of groups) {
+          if (group[rank]) frontier.push(group[rank]);
+          if (frontier.length === frontierLimit) break;
+        }
+      }
+      if (frontier.length === frontierLimit) break;
+    }
   }
   const tested = [], restReceipt = [];
   let candidate = null, selectedBranch = null;
@@ -162,8 +209,11 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
   const eventInWindow = decision.goal_gap.some(g => g.goal.planning_eligible && g.goal.event_local_date >= constraints.start_date
     && g.goal.event_local_date <= constraints.end_date && !candidate?.sessions.some(s => s.workout_family === 'race'
       && s.event_identity?.goal_id === g.goal_id && s.scheduled_local_date === g.goal.event_local_date));
-  const status = !candidate ? (truncated ? 'DEFERRED' : 'INFEASIBLE') : missedPrimary || eventInWindow ? 'DEFERRED' : deferred.length ? 'VALID_WITH_TRADEOFFS' : 'VALID';
-  const resultContent = { status, applicable: Boolean(candidate) && !missedPrimary && !eventInWindow,
+  const unsupportedGoalWork = selection.deferred_objectives.filter(d => d.reason_codes.includes('OBSERVED_FAMILY_DOSE_UNAVAILABLE')
+    && selection.weekly_objectives.objectives.some(o => o.objective_id === d.objective_id
+      && o.goal_ids?.length && o.candidate_families.some(f => f.startsWith('hyrox_'))));
+  const status = unsupportedGoalWork.length ? 'UNSUPPORTED' : !candidate ? (truncated ? 'DEFERRED' : 'INFEASIBLE') : missedPrimary || eventInWindow ? 'DEFERRED' : deferred.length ? 'VALID_WITH_TRADEOFFS' : 'VALID';
+  const resultContent = { status, applicable: Boolean(candidate) && !missedPrimary && !eventInWindow && !unsupportedGoalWork.length,
     decision, selected_candidate: candidate, deferred_objectives: deferred,
     rest_days: restReceipt,
     strength_dose_receipt: {
@@ -181,7 +231,7 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
       liftCount: selection.entries.filter(e => isStrength(e.workout_family)).length,
       runEligibleWeekdays: constraints.run.map(w => weekday(w.date)), liftEligibleWeekdays: constraints.lift.map(w => weekday(w.date)), timezone: state.timezone }),
     search: { ...LIMITS, node_limit: maxNodes, expanded_nodes: nodes, truncated, tested_candidates: tested,
-      rejection_counts: rejectionCounts, optimality_claimed: false },
+      rejection_counts: rejectionCounts, rejection_examples: rejectionExamples, symmetry_pruned: symmetryPruned, optimality_claimed: false },
     accepted_surface_manifest: null };
   const resultHash = canonicalHash(resultContent);
   // Six truthful existing stages. Surface acceptance belongs to lifecycle/apply.

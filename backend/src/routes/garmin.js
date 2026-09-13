@@ -267,10 +267,13 @@ router.post('/sync', auth, async (req, res) => {
     const session = await loadConnectedClient(req.user.id);
     if (!session) return res.status(400).json({ error: 'Garmin is not connected' });
 
-    const { synced, imported } = await require('../lib/providerImportCoverage').sync({
+    const { synced, imported, status } = await require('../lib/providerImportCoverage').sync({
       userId: req.user.id, client: session.client, ingest: watchSync.ingestActivity,
+      timezone: (await dbGet('SELECT timezone FROM users WHERE id=?', [req.user.id]))?.timezone || 'UTC',
       toPayload: toIngestPayload, mutation: withPlanningInputMutation,
     });
+
+    if (status === 'FAILED') return res.status(500).json({ error: 'Garmin sync failed', status, synced, activities: imported });
 
     let sleepSynced = 0;
     const sleepPayloads = [];
@@ -294,8 +297,8 @@ router.post('/sync', auth, async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    await upsertUserSetting(req.user.id, GARMIN_LAST_SYNC_KEY, now);
-    res.json({ synced, sleepSynced, activities: imported });
+    if (status === 'COMPLETE') await upsertUserSetting(req.user.id, GARMIN_LAST_SYNC_KEY, now);
+    res.json({ synced, sleepSynced, activities: imported, status });
   } catch (err) {
     res.status(500).json({ error: 'Garmin sync failed' });
   }

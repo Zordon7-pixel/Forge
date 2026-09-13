@@ -100,26 +100,40 @@ async function loadMeasuredSources({ tx, userId, planningDateISO, observationIns
 function sourceSupport(foundation) {
   const state = foundation.athlete_state;
   const goals = foundation.decision.goal_gap.map(g => g.goal);
-  const pairs = state.adaptive_foundation.completion_pairs;
-  const protectedRun = pairs.some(p => ['threshold_run','interval_run','race_rhythm_run','steady_run','long_aerobic'].includes(p.prescribed_session.workout_family)
+  const pairs = require('./adaptiveCoachingSelection').usablePairs(state);
+  const objectives = foundation.decision.weekly_objectives.objectives;
+  const protectedFamilies = ['threshold_run','interval_run','race_rhythm_run','steady_run','long_aerobic'];
+  const requiredRuns = objectives.filter(o => ['PRIMARY_KEY','ASSESSMENT'].includes(o.role)
+    && o.candidate_families.some(f => protectedFamilies.includes(f)));
+  const measuredRun = family => pairs.some(p => p.prescribed_session.workout_family === family
     && p.observation.measured_receipt_id && p.observation.quality_state === 'COMPLETE'
     && p.observation.observed_work_duration_s > 0);
+  const protectedRun = requiredRuns.length ? requiredRuns.every(o => o.candidate_families.some(measuredRun))
+    : protectedFamilies.some(measuredRun);
   const strength = pairs.some(p => p.prescribed_session.kind === 'lift' && p.observation.measured_receipt_id
-    && p.observation.quality_state === 'COMPLETE');
+    && p.observation.quality_state === 'COMPLETE' && foundation.artifacts[0].payload_json.evidence.some(e =>
+      e.evidence_id === p.observation.evidence_id && e.truth_class === 'OBSERVED' && e.value?.sets > 0));
+  const hybrid = goals.some(g => g.planning_eligible && g.event_kind?.startsWith('HYROX'));
+  const hybridWork = objectives.some(o => o.candidate_families.some(f => f.startsWith('hyrox_')));
   const limits = [
-    { objective: 'protected_running_work', status: protectedRun ? 'SUPPORTED' : 'UNSUPPORTED', reason_code: protectedRun ? 'MEASURED_RUN_WORK_LINKED' : 'MEASURED_RUN_WORK_SOURCE_ABSENT' },
-    { objective: 'strength_prescription_completion', status: strength ? 'SUPPORTED' : 'UNSUPPORTED', reason_code: strength ? 'MEASURED_STRENGTH_LINKED' : 'CANONICAL_STRENGTH_LINK_ABSENT',
-      ...(strength ? { measurement_scope: 'TOTAL_SET_CAP_AND_ACCEPTED_REPERTOIRE', individual_exercise_completion_verified: false } : {}) },
-    { objective: 'individual_hyrox_station_work', status: 'UNSUPPORTED', reason_code: 'MEASURED_STATION_SOURCE_ABSENT' },
+    { objective: 'protected_running_work', required: requiredRuns.length > 0,
+      required_families: requiredRuns.map(o => o.candidate_families.filter(f => protectedFamilies.includes(f))),
+      status: protectedRun ? 'SUPPORTED' : 'UNSUPPORTED', reason_code: protectedRun ? 'MEASURED_RUN_WORK_LINKED' : 'MEASURED_RUN_WORK_SOURCE_ABSENT' },
+    { objective: 'strength_prescription_completion', required: objectives.some(o => o.candidate_families.some(f => f.startsWith('strength_'))),
+      status: strength ? 'SUPPORTED' : 'UNSUPPORTED', reason_code: strength ? 'MEASURED_STRENGTH_LINKED' : 'CANONICAL_STRENGTH_LINK_ABSENT',
+      measurement_scope: 'TOTAL_SET_CAP_AND_ACCEPTED_REPERTOIRE', individual_exercise_completion_verified: false },
+    { objective: 'individual_hyrox_station_work', required: hybridWork, status: 'UNSUPPORTED', reason_code: 'MEASURED_STATION_SOURCE_ABSENT' },
   ];
-  if (goals.some(g => g.event_kind?.startsWith('HYROX'))) limits.push({ objective: 'hyrox_event_execution',
-    status: 'DEFERRED', reason_code: 'COMPLETE_TIMED_OWNED_HYROX_MATERIAL_ABSENT' });
-  if (goals.some(g => g.event_kind === 'HYROX_DOUBLES')) limits.push({ objective: 'individual_doubles_burden',
-    status: 'UNSUPPORTED', reason_code: 'INDIVIDUAL_DOUBLES_BURDEN_UNKNOWN' });
+  if (hybrid) limits.push({ objective: 'hyrox_event_execution',
+    required: goals.some(g => g.planning_eligible && g.event_kind?.startsWith('HYROX')
+      && g.event_local_date >= state.planning_date_local && g.event_local_date <= require('./racePlanPolicy').addDays(state.planning_date_local,6)),
+    status: 'DEFERRED', measurement_scope: 'PLANNED_EVENT_DEMAND', reason_code: 'COMPLETE_TIMED_OWNED_HYROX_MATERIAL_ABSENT' });
+  if (goals.some(g => g.planning_eligible && g.event_kind === 'HYROX_DOUBLES')) limits.push({ objective: 'individual_doubles_burden',
+    required: hybridWork, status: 'UNSUPPORTED', reason_code: 'INDIVIDUAL_DOUBLES_BURDEN_UNKNOWN' });
   return { version: 'adaptive-source-support-v1', active_goal_id: foundation.decision.active_goal_id,
     priority_authority: 'CURRENT_CHRONOLOGICAL_DEFAULT', stored_priority_used: false,
-    source_limited: goals.some(g => Boolean(g.race_id)) || state.adaptive_foundation.capacities.lift > 0,
-    scope: 'MISSION_EVIDENCE_COMPLETENESS',
+    source_limited: limits.some(l => l.required && l.status !== 'SUPPORTED'),
+    scope: 'REQUIRED_OBJECTIVE_SOURCE_COMPLETENESS',
     observed_coverage: foundation.artifacts[0].payload_json.provider_coverage_intervals?.length
       && foundation.artifacts[0].payload_json.provider_coverage_intervals.every(r => r.complete === true) ? 'COMPLETE' : 'UNKNOWN', limits,
     receipt_hash: foundation.artifacts[0].payload_json.physical_sources

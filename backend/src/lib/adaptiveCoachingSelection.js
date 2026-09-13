@@ -88,7 +88,12 @@ function partitionStrength(pool, count) {
   for (let i = 0; i < count; i++) {
     const choices = remaining.filter(e => e.sets >= 2).sort((a, b) => b.sets - a.sets || a.name.localeCompare(b.name));
     if (choices.length < 2) break;
-    const part = choices.slice(0, 2).map(e => { e.sets -= 2; return { ...e, sets: 2 }; });
+    // Keep compatible regions together when the accepted repertoire permits
+    // it. Mixing every partition needlessly duplicates lower-body fatigue.
+    const region = e => canonicalStrengthExercise(e).region;
+    const compatible = choices.filter(e => region(e) === region(choices[0]));
+    const selected = compatible.length >= 2 ? compatible : choices;
+    const part = selected.slice(0, 2).map(e => { e.sets -= 2; return { ...e, sets: 2 }; });
     parts.push(part);
   }
   // Conserve the observed objective dose where capacity permits it; leftovers
@@ -332,4 +337,4 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
   return { weekly_objectives: weekly, entries: entries.map((e, i) => ({ ...e, priority_rank: i + 1, dose_variants: strengthVariants(e).slice(1) })),
     deferred_objectives: deferred, unused_running_duration_s: remainingSeconds, placement_validated: false };
 }
-module.exports = { POLICY, isRun, isStrength, buildAdaptiveSessionSelection };
+module.exports = { POLICY, isRun, isStrength, usablePairs, buildAdaptiveSessionSelection };
