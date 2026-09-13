@@ -6349,7 +6349,7 @@ async function previewAdaptivePlanForUser({ userId, request, clock, initial, pre
   try {
     if (!prepared) throw Object.assign(new Error('EVIDENCE_MISSING'), { code: 'EVIDENCE_MISSING' });
     const result = adaptiveShadow.compute(prepared);
-    const preview = previewAdapter.build({ prepared, result });
+    const preview = previewAdapter.build({ prepared, result, planMode: initial.target.planMode });
     const plan = assertPersistablePlan(preview.plan);
     const candidateId = uuidv4();
     const expiresAt = new Date(Date.now() + RACE_PLAN_POLICY_V1.candidate.ttlHours * 3600000).toISOString();
@@ -6383,7 +6383,11 @@ async function previewAdaptivePlanForUser({ userId, request, clock, initial, pre
       expiresAt, meta: initial.meta, planningDateLocal: clock.planningDateLocal, races: initial.races,
       replacesActivePlan: Boolean(initial.active), choice: request.choice,
       surfaceManifest: bundle.surface,
-      ...(store ? { applyBindings: buildGoalBackwardApplyEnvelope({ ...row, ...bundle.bindings }) } : {}),
+      ...(store ? { applyBindings: buildGoalBackwardApplyEnvelope({ ...row, ...bundle.bindings }) } : {
+        diagnostics: { active_plan: initial.activePlan,
+          active_plan_data: initial.removalPlanSnapshot || (initial.active ? parsePlan(initial.active.row) : null),
+          snapshot: initial.snapshot, trace: row.generation_trace_json },
+      }),
     };
   } catch (error) {
     emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',

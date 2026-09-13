@@ -7,7 +7,7 @@ const { assertPipelineLinks } = require('./goalBackwardContracts');
 const hash = value => `sha256:${canonicalHash(value)}`;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 
-function build({ prepared, result }) {
+function build({ prepared, result, planMode }) {
   const selected = result?.selected_candidate;
   const set = selected?.canonical_session_set;
   if (!prepared?.foundation) fail('EVIDENCE_MISSING');
@@ -20,14 +20,21 @@ function build({ prepared, result }) {
     || canonicalHash(set.sessions) !== canonicalHash(selected.sessions)) fail('CANDIDATE_NOT_SELECTED');
   const plan = buildCanonicalPlanFromSessionSet(set);
   const decision = result.decision;
+  // A valid schedule does not establish the athlete's race target. Keep the
+  // goal-gap evidence status independent of solver validity and use UI labels.
+  const goalStatuses = (decision.goal_gap || []).map(gap => gap.legacy_feasibility?.status);
+  const feasibility = goalStatuses.includes('at_risk') ? 'at_risk'
+    : !goalStatuses.length || goalStatuses.some(status => status !== 'supported') ? 'unvalidated'
+      : result.status === 'VALID' ? 'supported' : 'at_risk';
   const reasons = [...new Set([...decision.phase_reason_codes,
+    ...(decision.goal_gap || []).flatMap(gap => gap.reason_codes || []),
     ...selected.sessions.flatMap(session => session.purpose_reason_codes || [])])];
   return {
     candidateHash: `sha256:${selected.candidate_hash.replace(/^sha256:/, '')}`,
-    plan: { ...plan, planMode: selected.sessions.some(session => session.kind === 'lift') ? 'hybrid_maintain' : 'run_only',
+    plan: { ...plan, planMode: planMode || (selected.sessions.some(session => session.kind === 'lift') ? 'hybrid_maintain' : 'run_only'),
       engineVersion: 'adaptive-joint-solver-v1', goal_backward_engine_version: 'adaptive-joint-solver-v1',
       goal_backward_policy_versions: decision.policy_versions,
-      purpose: 'Adaptive coaching preview', overall_feasibility: result.status, reasons,
+      purpose: 'Adaptive coaching preview', overall_feasibility: feasibility, reasons,
       goal_gap: decision.goal_gap, weekly_objectives: decision.weekly_objectives,
       weeks: plan.weeks.map(week => ({ ...week, phase: decision.phase,
         purpose: 'Adaptive coaching preview', weekly_objectives: decision.weekly_objectives })),
@@ -92,7 +99,7 @@ async function persist({ tx, row, bundle }) {
   lifecycle.validateStoredGoalBackwardCandidateBindings(read, { allowedModes: ['preview'] });
   if (!read || fields.some((field, index) => field.endsWith('_json')
     ? hash(typeof read[field] === 'string' ? JSON.parse(read[field]) : read[field]) !== hash(stored[field])
-    : read[field] !== values[index])) fail('READBACK_INVALID');
+    : (read[field] instanceof Date ? read[field].toISOString() : read[field]) !== values[index])) fail('READBACK_INVALID');
   const readArtifacts = await tx.all('SELECT * FROM planning_pipeline_artifacts WHERE plan_generation_candidate_id=? AND user_id=?', [row.id, row.user_id]);
   if (readArtifacts.length !== 7) fail('READBACK_INVALID');
   const ordered = bundle.artifacts.map(expected => {
@@ -101,7 +108,7 @@ async function persist({ tx, row, bundle }) {
     const payload = typeof actual.payload_json === 'string' ? JSON.parse(actual.payload_json) : actual.payload_json;
     if (hash(payload) !== expected.content_hash || actual.content_hash !== expected.content_hash
       || actual.plan_generation_candidate_id !== row.id || actual.user_id !== row.user_id) fail('READBACK_INVALID');
-    return { ...actual, payload_json: payload };
+    return { ...actual, created_at: actual.created_at instanceof Date ? actual.created_at.toISOString() : actual.created_at, payload_json: payload };
   });
   assertPipelineLinks(ordered);
 }

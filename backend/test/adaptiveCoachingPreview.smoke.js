@@ -53,6 +53,11 @@ async function main() {
   assert.throws(() => buildFitWorkoutRepresentation({ surfaceManifest: exposed.surfaceManifest,
     sessionId: result.selected_candidate.sessions.find(session => session.kind === 'run').session_id, exportRevision: 1 }),
   error => error.code === 'CANONICAL_MANIFEST_NOT_ACCEPTED');
+  const { validateSurfaceManifest } = await import('../../frontend/src/lib/dailyExecutionCore.js');
+  assert.ok(exposed.surfaceManifest.sessions.some(session=>session.executability==='EXECUTABLE'), 'canonical capability remains intrinsic');
+  const closedSurface = validateSurfaceManifest({plan:{plan_data:exposed.plan},manifest:exposed.surfaceManifest});
+  assert.equal(closedSurface.status,'blocked');
+  assert.equal(closedSurface.sessionsById.size,0);
   const preview = require('../src/lib/adaptiveCoachingPreview').build({ prepared, result });
   assert.equal(preview.candidateHash, `sha256:${result.selected_candidate.candidate_hash}`);
   assert.deepEqual(preview.plan.weekly_objectives, result.decision.weekly_objectives);
@@ -79,15 +84,75 @@ async function main() {
   assert.deepEqual(response.plan, off.plan);
   assert.equal(response.candidateHash, off.candidateHash);
   assert.ok(db.prepare('SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE plan_generation_candidate_id=?').get(response.id).n >= 5);
+  const adapter = require('../src/lib/adaptiveCoachingPreview');
+  assert.equal(adapter.build({prepared,result,planMode:'hybrid_build'}).plan.planMode,'hybrid_build');
+  assert.ok(!['VALID','VALID_WITH_TRADEOFFS'].includes(exposed.plan.overall_feasibility));
+  const counts = () => ['plan_generation_candidates','planning_pipeline_artifacts','user_plans']
+    .map(table=>db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n);
+  const beforeDiagnostic = counts();
+  const diagnostic = await plans.previewPlanForUser(OWNER,request,{...options('preview'),store:false});
+  assert.ok(diagnostic.diagnostics.snapshot && diagnostic.diagnostics.trace);
+  assert.equal(diagnostic.diagnostics.active_plan,null);
+  assert.deepEqual(counts(),beforeDiagnostic,'read-only diagnostic writes nothing');
+  // PostgreSQL returns JSONB objects and timestamp Dates; SQLite returns strings.
+  hooks.after = (method,sql,value) => {
+    if (!/SELECT \* FROM (plan_generation_candidates|planning_pipeline_artifacts)/.test(sql)) return value;
+    const pg = row => row && Object.fromEntries(Object.entries(row).map(([key,v])=>[key,
+      key.endsWith('_json') && typeof v==='string' ? JSON.parse(v) :
+        ['created_at','expires_at'].includes(key) && v ? new Date(v) : v]));
+    return Array.isArray(value) ? value.map(pg) : pg(value);
+  };
+  const pg = await plans.previewPlanForUser(OWNER,request,options('preview'));
+  hooks.after = null;
+  assert.equal(pg.candidateHash,exposed.candidateHash);
+  const baseline = counts();
+  for (const fault of ['stale','authority','compute','candidate','json','timestamp','incomplete','artifact','persist']) {
+    const deps = options('preview'); let loads = 0;
+    hooks.before = (method,sql) => {
+      if (fault === 'persist' && method==='run' && sql.includes('INSERT INTO planning_pipeline_artifacts')) throw new Error('injected write failure');
+    };
+    hooks.after = (method,sql,value) => {
+      if (method==='get' && sql.includes('FROM users') && ++loads===2) {
+        if(fault==='stale') return {...value,planning_input_revision:Number(value.planning_input_revision)+1};
+        if(fault==='authority') deps.goalBackwardDependencies.cohortRefs=[];
+      }
+      if(method==='get' && sql.includes('SELECT * FROM plan_generation_candidates') && value) {
+        if(fault==='candidate') return {...value,candidate_hash:'sha256:'+ '0'.repeat(64)};
+        if(fault==='json') return {...value,candidate_plan_json:'{}'};
+        if(fault==='timestamp') return {...value,expires_at:new Date('2027-01-01')};
+      }
+      if(method==='all' && sql.includes('SELECT * FROM planning_pipeline_artifacts')) {
+        if(fault==='incomplete') return value.slice(1);
+        if(fault==='artifact') return value.map((r,i)=>i===0?{...r,payload_json:'{}'}:r);
+      }
+      return value;
+    };
+    if(fault==='compute') shadow.compute=()=>{throw new Error('injected computation failure');};
+    await assert.rejects(plans.previewPlanForUser(OWNER,request,deps),error=>
+      error.code===(['stale','authority'].includes(fault)?'CANDIDATE_STALE':'GOAL_BACKWARD_GENERATION_FAILED'),fault);
+    shadow.compute = input => { computations++; prepared=input; result=realCompute(input); return result; };
+    hooks.before=null; hooks.after=null;
+    assert.deepEqual(counts(),baseline,`${fault}: transaction rolls back all candidate/artifact writes`);
+  }
+  const foreign = await plans.applyPlanCandidate('22222222-2222-4222-8222-222222222222',exposed.id,{...exposed.applyBindings,candidate_hash:exposed.candidateHash,choice:'train_for_target'});
+  assert.equal(foreign.code,'CANDIDATE_NOT_FOUND');
+  const bypass = await plans.applyPlanCandidate(OWNER,exposed.id,{...exposed.applyBindings,
+    candidate_hash:exposed.candidateHash,feature_mode:'on',apply_disabled:false,v24_surface_enabled:true,choice:'train_for_target'});
+  assert.equal(bypass.code,'GOAL_BACKWARD_PREVIEW_APPLY_DISABLED');
+  const rejection = await plans.rejectPlanCandidate(OWNER,exposed.id,{...exposed.applyBindings,candidate_hash:exposed.candidateHash});
+  assert.equal(rejection.status,200);
+  assert.equal((await plans.rejectPlanCandidate(OWNER,exposed.id,{...exposed.applyBindings,candidate_hash:exposed.candidateHash})).replay,true);
+  await assert.rejects(plans.previewPlanForUser(OWNER,request,options('preview')),e=>e.code==='IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED');
+  const computationsBeforeMissing = computations;
   hooks.before = (method, sql) => {
     if (method === 'all' && sql.includes('FROM daily_checkins')) throw new Error('synthetic missing evidence');
   };
   await assert.rejects(plans.previewPlanForUser(OWNER, request, options('preview')),
     e => e.code === 'GOAL_BACKWARD_GENERATION_FAILED');
   hooks.before = null;
-  assert.equal(computations, 3, 'missing foundation never invokes compute');
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM plan_generation_candidates WHERE feature_mode='preview'").get().n, 1);
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n, 1);
+  assert.equal(computations, computationsBeforeMissing, 'missing foundation never invokes compute');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM plan_generation_candidates WHERE feature_mode='preview'").get().n, 2);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n, 2);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM user_plans').get().n, 0);
   assert.ok(telemetry.some(row => JSON.stringify(row).includes('BLOCKED')));
   console.log('ok - real adaptive preview authority, seven artifacts, apply denial, missing evidence, cohort isolation, off/shadow parity');

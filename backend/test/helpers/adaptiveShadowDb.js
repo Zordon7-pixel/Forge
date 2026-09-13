@@ -39,7 +39,8 @@ function createDb() {
     calls.push({ method, sql, params });
     if (/ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS/.test(sql)) return { changes: 0 };
     if (hooks.before) await hooks.before(method, sql, params);
-    try { return db.prepare(translate(sql))[method](...params); }
+    try { const result = db.prepare(translate(sql))[method](...params);
+      return hooks.after ? await hooks.after(method, sql, result) : result; }
     catch (error) { error.test_sql = sql; throw error; }
   };
   let transactions = 0;
