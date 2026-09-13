@@ -44,6 +44,15 @@ async function main() {
   const applied = await plans.applyPlanCandidate(OWNER, exposed.id, { choice: 'train_for_target',
     candidate_hash: exposed.candidateHash, planning_date_local: '2026-09-14' });
   assert.equal(applied.code, 'GOAL_BACKWARD_PREVIEW_APPLY_DISABLED');
+  for (const mode of ['off', 'shadow', 'preview', 'on']) {
+    const denied = await plans.applyPlanCandidate(OWNER, exposed.id, { choice: 'train_for_target',
+      candidate_hash: exposed.candidateHash, planning_date_local: '2026-09-14' }, options(mode));
+    assert.equal(denied.code, 'GOAL_BACKWARD_PREVIEW_APPLY_DISABLED', 'mode change cannot promote a stored preview');
+  }
+  const { buildFitWorkoutRepresentation } = await import('../../frontend/src/services/fit/encodeWorkoutFit.js');
+  assert.throws(() => buildFitWorkoutRepresentation({ surfaceManifest: exposed.surfaceManifest,
+    sessionId: result.selected_candidate.sessions.find(session => session.kind === 'run').session_id, exportRevision: 1 }),
+  error => error.code === 'CANONICAL_MANIFEST_NOT_ACCEPTED');
   const preview = require('../src/lib/adaptiveCoachingPreview').build({ prepared, result });
   assert.equal(preview.candidateHash, `sha256:${result.selected_candidate.candidate_hash}`);
   assert.deepEqual(preview.plan.weekly_objectives, result.decision.weekly_objectives);
