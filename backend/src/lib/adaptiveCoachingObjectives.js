@@ -2,7 +2,7 @@ const { canonicalHash, eventPolicyForGoal, minimumWeeklyDemandFor, STRESS_TAXONO
 const { buildDueExposureLedger } = require('./goalBackwardDecisionEngine');
 const { calculateFatigueCeilings, resolveStressVector } = require('./goalBackwardLoad');
 const { validatePresentationFloor } = require('./goalBackwardValidators');
-const { progressionFamilyFor } = require('./adaptiveCoachingProgression');
+const { progressionFamilyFor, buildLongRunDemand } = require('./adaptiveCoachingProgression');
 
 function meaningfulDose(family, state) {
   const constraints = { validator: 'presentation_floor', training_age_class: state.training_age_class,
@@ -93,7 +93,9 @@ function buildWeeklyObjectives({ athleteState, goalGaps, phaseDecision, progress
   objectives.sort((a, b) => b.priority_score - a.priority_score || a.objective_id.localeCompare(b.objective_id));
   const content = { version: 'adaptive-weekly-objectives-v1', athlete_state_hash: athleteState.athlete_state_hash,
     goal_gap_hashes: goalGaps.map(g => g.goal_gap_hash), phase, week_intent: phase,
-    objectives, progression, running_demand: demand, weekly_stress_budget: budget,
+    objectives, progression, running_demand: demand,
+    long_run_demand: buildLongRunDemand({ athleteState, goalGap: primary, progression: progression.find(p => p.family === 'long_run') }),
+    weekly_stress_budget: budget,
     fatigue_ceiling_evidence: ceilings, capacities: capacity,
     reason_codes: ['FREQUENCY_IS_CAPACITY', ...phaseDecision.reason_codes] };
   return { ...content, weekly_objectives_hash: canonicalHash(content) };

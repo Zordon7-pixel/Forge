@@ -80,13 +80,17 @@ function buildAdaptiveCoachingFoundation({ snapshot, context = {}, stateOptions 
   });
   const goalGaps = buildGoalGaps({ athleteState, goals, races, feasibilityByGoal });
   const primary = goalGaps[0];
+  // A previous event's development/peak receipt cannot authorize its successor.
+  const phaseBindingMatches = primary && ['goal_id', 'event_revision', 'source_revision', 'event_local_date']
+    .every(key => phaseEvidence[key] === primary.goal[key]);
+  const activePhaseEvidence = (goals.length <= 1 && !phaseEvidence.goal_id) || phaseBindingMatches ? phaseEvidence : {};
   const phaseDecision = selectGoalBackwardPhase({
     goal: primary?.goal || {}, event_policy: primary ? eventPolicyForGoal(primary.goal) : null,
     planning_date_local: snapshot.planning_date_local, athlete_state: athleteState,
     goal_gap: primary, phase_authority: 'adaptive-foundation-v1',
-    development_gate_complete: phaseEvidence.development_gate_complete === true,
-    peak_exposure_complete: phaseEvidence.peak_exposure_complete === true,
-    safe_useful_peak_fits: phaseEvidence.safe_useful_peak_fits === true,
+    development_gate_complete: activePhaseEvidence.development_gate_complete === true,
+    peak_exposure_complete: activePhaseEvidence.peak_exposure_complete === true,
+    safe_useful_peak_fits: activePhaseEvidence.safe_useful_peak_fits === true,
     due_exposure_count: primary ? eventPolicyForGoal(primary.goal)?.required_exposure_ledger?.EVENT_SPECIFIC_DEVELOPMENT?.length || 0 : 0,
   });
   const progression = buildFamilyProgression({ athleteState, completionPairs: pairs,
@@ -97,6 +101,7 @@ function buildAdaptiveCoachingFoundation({ snapshot, context = {}, stateOptions 
     athlete_state_hash: athleteState.athlete_state_hash, athlete_state_revision: athleteState.athlete_state_revision,
     evidence_snapshot_id: snapshot.evidence_snapshot_id, planning_date_local: snapshot.planning_date_local,
     phase: phaseDecision.phase, phase_reason_codes: phaseDecision.reason_codes,
+    active_goal_id: primary?.goal_id || null,
     goal_gap: goalGaps, weekly_objectives: weeklyObjectives, session_selection: selection,
     pipeline_stages: ['athlete_state', 'goal_gap', 'phase', 'weekly_objectives', 'session_selection'],
     reason_codes: weeklyObjectives.reason_codes };

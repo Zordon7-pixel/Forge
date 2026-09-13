@@ -2,6 +2,7 @@
 // never workout prescriptions or a calendar-index progression curve.
 const { classifyCompletionOutcome } = require('./adaptationEngine');
 const { decideWeeklyRamp } = require('./weeklyRampEngine');
+const { addDays, mondayFor, daysBetween, eventPolicyForGoal, peakLongRunDemand } = require('./racePlanPolicy');
 const { PLANNING_PHASES } = require('./goalBackwardContracts');
 
 const definitions = {
@@ -80,6 +81,7 @@ function buildFamilyProgression({ athleteState, completionPairs = [], weeklyMile
     else if (!uncertainLatest && policy.recovery_requirements.includes(athleteState.recovery_state)
       && ['NORMAL', 'MONITOR'].includes(actionSafety) && currentLevel !== null
       && !['TAPER_RACE_WEEK', 'SHARPENING', 'POST_RACE_TRANSITION'].includes(phase)
+      && (policy.family !== 'long_run' || planning - last.instant <= 7 * 86400000)
       && recent.slice(-2).length === 2 && recent.slice(-2).every(r => r.hasActual && r.outcome.outcome === 'ON_TARGET')
       && new Set(recent.slice(-2).map(r => r.outcome.observed_at.slice(0, 10))).size === 2
       && (!policy.family.startsWith('aerobic') && policy.family !== 'long_run' || ramp.decision === 'ADVANCE')) action = 'ADVANCE';
@@ -96,4 +98,42 @@ function buildFamilyProgression({ athleteState, completionPairs = [], weeklyMile
     };
   });
 }
-module.exports = { PROGRESSION_FAMILIES, progressionFamilyFor, buildFamilyProgression };
+// Backward demand is a conditional target, not a ledger of completed weeks.
+// Only the existing observed progression gate can authorize the next exposure.
+function buildLongRunDemand({ athleteState, goalGap, progression } = {}) {
+  const goal = goalGap?.goal, policy = goal && eventPolicyForGoal(goal);
+  if (!goal?.planning_eligible || !['ROAD_ENDURANCE', 'MARATHON'].includes(policy?.event_kind)
+    || !goal.distance_miles || !goal.event_local_date) return null;
+  const peak = Math.round(peakLongRunDemand(goal.distance_miles,
+    goal.target_time_s !== null ? 'pr' : goal.goal_type) * 1609.344);
+  const peakDate = addDays(goal.event_local_date, -policy.taper_days - policy.recovery_buffer_days);
+  const days = daysBetween(athleteState.planning_date_local, peakDate);
+  const steps = Math.max(0, Math.ceil(days / 7));
+  const growth = progression.max_increase_fraction;
+  const demand = Math.ceil(peak / (1 + growth) ** Math.max(0, steps - 1));
+  const observed = progression.current_level;
+  const ceiling = progression.next_level_ceiling;
+  const observedAt = progression.previous_successful_exposure?.observed_at;
+  const nextObservedWeek = observedAt ? addDays(mondayFor(observedAt.slice(0, 10)), 7) : null;
+  const observedSteps = nextObservedWeek ? Math.max(0, Math.ceil(daysBetween(nextObservedWeek, peakDate) / 7)) : null;
+  const observedDemand = observedSteps === null ? null : Math.ceil(peak / (1 + growth) ** Math.max(0, observedSteps - 1));
+  const next = observed === null || ceiling === null ? null : Math.min(ceiling,
+    progression.action === 'ADVANCE' ? Math.max(observed, Math.min(peak, observedDemand)) : ceiling);
+  return { policy_id: policy.event_policy_id, goal_id: goal.goal_id,
+    event_revision: goal.event_revision, source_revision: goal.source_revision,
+    event_local_date: goal.event_local_date, peak_date_local: peakDate,
+    registry_peak_distance_m: peak, remaining_exposure_opportunities: steps,
+    backward_demand_distance_m: demand, observation_bound_demand_distance_m: observedDemand, observed_success_distance_m: observed,
+    observed_evidence_ids: progression.previous_successful_exposure?.source_evidence_ids || [],
+    actual_progression_action: progression.action, observed_next_level_ceiling_m: ceiling,
+    next_distance_ceiling_m: next,
+    runway_supports_peak: observed === null ? null : observed >= peak
+      || progression.action === 'ADVANCE' && observed * (1 + growth) ** steps >= peak,
+    curve_requires_future_observed_success: true,
+    demand_is_observation: false, future_success_assumed: false,
+    // Bounded diagnostic curve; no sessions or observed coverage are created.
+    curve: Array.from({ length: Math.min(52, steps) }, (_, i) => ({
+      opportunity: i + 1, demand_distance_m: Math.ceil(peak / (1 + growth) ** Math.max(0, steps - i - 1)),
+    })), curve_truncated: steps > 52 };
+}
+module.exports = { PROGRESSION_FAMILIES, progressionFamilyFor, buildFamilyProgression, buildLongRunDemand };

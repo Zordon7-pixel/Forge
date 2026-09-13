@@ -175,7 +175,10 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
   if (aerobicObjective) {
     for (let n = objectives.filter(o => o.candidate_families.includes('easy_run')).length; n < 6; n++) {
       objectives.push({ ...clone(aerobicObjective), objective_id: `${aerobicObjective.objective_id}-partition-${n}`,
-        requirement_id: `aerobic_dose_partition_${n}`, role: 'SUPPORTING', priority_score: 580 - n * 10 });
+        requirement_id: `aerobic_dose_partition_${n}`, role: 'SUPPORTING', priority_score: 580 - n * 10,
+        // Retain supported taper touches at the existing recovery floor; the
+        // primary easy exposure and total reduced budget remain authoritative.
+        ...(taper ? { candidate_families: ['recovery_run'] } : {}) });
     }
   }
   const weeklyContent = { ...clone(base.weekly_objectives), objectives, owned_events: base.goal_gap.map(g => g.goal).filter(g => g.planning_eligible),
@@ -219,7 +222,7 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
     const progression = weekly.progression.find(p => p.family === progressionFamilyFor(family));
     if (progression?.action === 'OMIT') { defer(objective, 'PROGRESSION_OMIT'); continue; }
     const prior = pairs.filter(p => p.prescribed_session.workout_family === family).at(-1);
-    let seconds, qualitySeconds = null, structureScale = null;
+    let seconds, qualitySeconds = null, structureScale = null, longDistance = null;
     if (['threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run', 'long_aerobic'].includes(family)
       && (!Number.isFinite(prior?.observation.observed_duration_s) || prior.observation.observed_duration_s <= 0
         || !Number.isFinite(prior.observation.observed_work_duration_s) || prior.observation.observed_work_duration_s <= 0
@@ -249,7 +252,13 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
     } else if (family === 'long_aerobic') {
       const longest = prior?.observation.observed_duration_s ?? prior?.prescribed_session.derived_totals.duration_s;
       if (!longest) { defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue; }
-      seconds = Math.floor(longest * (taper ? 0.5 : progression?.action === 'REGRESS' ? 0.9 : 1));
+      const demand = weekly.long_run_demand;
+      const measuredDistance = prior.observation.observed_distance_m;
+      const requestedDistance = demand?.next_distance_ceiling_m;
+      if (!taper && Number.isFinite(requestedDistance) && measuredDistance > 0) {
+        longDistance = Math.min(requestedDistance, progression.next_level_ceiling);
+        seconds = Math.ceil(longest * longDistance / measuredDistance);
+      } else seconds = Math.floor(longest * (taper ? 0.5 : progression?.action === 'REGRESS' ? 0.9 : 1));
     } else if (family === 'race') {
       defer(objective, 'EVENT_EXECUTION_MATERIAL_REQUIRED'); continue;
     } else {
@@ -267,6 +276,8 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
       defer(objective, 'MEANINGFUL_DOSE_REQUIRED'); continue;
     }
     let distance = Number.isFinite(runDistance) && observedSeconds > 0 ? (seconds === remainingSeconds ? remainingMeters : Math.min(remainingMeters, Math.floor(seconds * runDistance / observedSeconds))) : null;
+    if (longDistance !== null) distance = Math.min(remainingMeters ?? longDistance,
+      longDistance, Math.floor(prior.observation.observed_distance_m * seconds / prior.observation.observed_duration_s));
     if (progression?.allowed_variable === 'distance_m' && progression.next_level_ceiling !== null) {
       distance = Math.min(distance ?? progression.next_level_ceiling, progression.next_level_ceiling);
     }

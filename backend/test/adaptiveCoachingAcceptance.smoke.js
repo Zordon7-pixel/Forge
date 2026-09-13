@@ -148,7 +148,7 @@ check('eight classes: nontrivial internal schedule summaries and distinct constr
   sparse.goals = [{ ...roadInput('2026-10-01').goals[0], target_time_s: 1000 }];
   const returning = fixture(3,1,120); returning.stateOptions.trainingAgeClass = 'RETURNING'; returning.stateOptions.weeks = [];
   returning.context.safety = { comebackMode: true };
-  const developing = establishDimensions(withObservedWork(fixture(3,2,180), { quality: true }));
+  const developing = establishDimensions(withObservedWork(fixture(3,2,180), { quality: true, strengthSets: 6 }));
   developing.goals = roadInput('2026-11-15').goals;
   developing.context.target.liftDaysPerWeek = 2; developing.stateOptions.trainingAgeClass = 'DEVELOPING';
   const high = establishDimensions(withObservedWork(fixture(6,4,360), { strengthSets: 6 }));
@@ -162,6 +162,22 @@ check('eight classes: nontrivial internal schedule summaries and distinct constr
     const r = solve(input, windows(), true), sessions = active(r);
     assert.ok(sessions.length >= 1 && sessions.every(s => s.derived_totals.duration_s > 0), name);
     assert.equal(r.applicable, true, name);
+    if (name === 'developing hybrid') {
+      assert.equal(sessions.filter(s => s.kind === 'run').length, 3);
+      const lifts = sessions.filter(s => s.kind === 'lift');
+      assert.equal(lifts.length, 2);
+      assert.ok(lifts.every(s => s.derived_totals.sets >= 4 && s.steps.filter(t => t.type === 'strength_exercise').length >= 2));
+      assert.equal(r.strength_dose_receipt.pool_authority, 'OBSERVED_TOTAL_SET_CAP_FUTURE_DISTRIBUTION');
+      assert.equal(r.strength_dose_receipt.prescribed_sets + r.strength_dose_receipt.withheld_sets, 24);
+      assert.equal(sessions.filter(s => ['threshold_run','long_aerobic'].includes(s.workout_family) && s.role === 'PRIMARY_KEY').length, 2);
+      const moved = solve(input, { ...windows(), locks: [
+        { constraint_kind: 'day_lock', workout_family: 'threshold_run', scheduled_local_date: '2026-09-15' },
+        { constraint_kind: 'day_lock', workout_family: 'long_aerobic', scheduled_local_date: '2026-09-19' },
+      ] });
+      assert.equal(active(moved).filter(s => s.kind === 'lift').length, 2);
+      assert.equal(active(moved).find(s => s.workout_family === 'threshold_run').scheduled_local_date, '2026-09-15');
+      assert.equal(active(moved).find(s => s.workout_family === 'long_aerobic').scheduled_local_date, '2026-09-19');
+    }
     const summary = { structural_class: name, phase: r.decision.phase, safety_action: r.decision.safety_state.action, capacities: r.decision.weekly_objectives.capacities,
       owned_goals: r.decision.goal_gap.map(g => ({ kind: g.goal.event_kind, date: g.goal.event_local_date, priority: g.goal.priority })),
       sessions: sessions.map(s => ({ date: s.scheduled_local_date, family: s.workout_family, role: s.role,
