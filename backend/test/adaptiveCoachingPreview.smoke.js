@@ -1,0 +1,64 @@
+// Slice 2A: real SQL acquisition and adaptive computation, with exposure closed
+// until the existing candidate/surface lineage is connected in slices 2B–2C.
+const assert = require('node:assert/strict');
+const { createDb } = require('./helpers/adaptiveShadowDb');
+const shadow = require('../src/lib/adaptiveCoachingShadow');
+const { targetRef } = require('../src/lib/betaPlanRollout');
+const fixture = createDb();
+const { db, hooks } = fixture;
+const dbPath = require.resolve('../src/db');
+require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: fixture.exports };
+const RealDate = Date, NOW = '2026-09-14T12:00:00Z';
+global.Date = class extends RealDate {
+  constructor(...args) { super(...(args.length ? args : [NOW])); }
+  static now() { return RealDate.parse(NOW); }
+};
+const realCompute = shadow.compute;
+let computations = 0, result, prepared;
+shadow.compute = input => { computations++; prepared = input; result = realCompute(input); return result; };
+const plans = require('../src/routes/plans')._test;
+const OWNER = '11111111-1111-4111-8111-111111111111';
+const request = { planning_date_local: '2026-09-14', planning_timezone: 'UTC', timezone_offset_minutes: 0,
+  target: { runDaysPerWeek: 2, liftDaysPerWeek: 0, trainingDays: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] } };
+const telemetry = [];
+const options = (mode, cohortRefs = [targetRef(OWNER)]) => ({ goalBackwardDependencies: {
+  mode, audience: 'cohort', cohortRefs, telemetrySink: row => telemetry.push(row),
+} });
+async function main() {
+  db.prepare(`INSERT INTO users(id,name,email,password_hash,timezone,training_age_class,planning_input_revision)
+    VALUES (?,'Synthetic','preview@example.invalid','','UTC','BEGINNER',1)`).run(OWNER);
+  db.prepare(`INSERT INTO runs(id,user_id,date,type,distance_miles,duration_seconds)
+    VALUES ('observed',?,'2026-09-12','easy',4,3600)`).run(OWNER);
+  db.prepare(`INSERT INTO daily_checkins(id,user_id,checkin_date,feeling,time_available)
+    VALUES ('ready',?,'2026-09-14',4,60)`).run(OWNER);
+  const off = await plans.previewPlanForUser(OWNER, request, options('off'));
+  await assert.rejects(plans.previewPlanForUser(OWNER, request, options('preview')),
+    e => e.code === 'GOAL_BACKWARD_GENERATION_FAILED');
+  assert.equal(computations, 1, 'authorized preview invokes the real adaptive engine');
+  assert.ok(prepared.foundation && result.selected_candidate, 'real acquired fixture selects canonical work internally');
+  assert.ok(result.selected_candidate.sessions.length);
+  const nonCohort = await plans.previewPlanForUser(OWNER, request, options('preview', []));
+  assert.equal(computations, 1);
+  assert.deepEqual(nonCohort.plan, off.plan);
+  assert.equal(nonCohort.candidateHash, off.candidateHash);
+  const response = await plans.previewPlanForUser(OWNER, request, options('shadow'));
+  assert.equal(computations, 2);
+  assert.deepEqual(response.plan, off.plan);
+  assert.equal(response.candidateHash, off.candidateHash);
+  assert.ok(db.prepare('SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE plan_generation_candidate_id=?').get(response.id).n >= 5);
+  hooks.before = (method, sql) => {
+    if (method === 'all' && sql.includes('FROM daily_checkins')) throw new Error('synthetic missing evidence');
+  };
+  await assert.rejects(plans.previewPlanForUser(OWNER, request, options('preview')),
+    e => e.code === 'GOAL_BACKWARD_GENERATION_FAILED');
+  hooks.before = null;
+  assert.equal(computations, 2, 'missing foundation never invokes compute');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM plan_generation_candidates WHERE feature_mode='preview'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM user_plans').get().n, 0);
+  assert.ok(telemetry.some(row => JSON.stringify(row).includes('BLOCKED')));
+  console.log('ok - 2A real adaptive preview compute, closed exposure, missing evidence, cohort isolation, off/shadow parity');
+}
+main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
+  shadow.compute = realCompute; global.Date = RealDate; db.close();
+});

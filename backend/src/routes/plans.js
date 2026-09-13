@@ -6346,10 +6346,25 @@ function prepareAdaptiveCandidateInput(userId, initial) {
 async function previewPlanForUser(userId, body = {}, { store = true, goalBackwardDependencies = {} } = {}) {
   const clock = acceptedPlanningClock(body);
   const request = normalizeCandidateRequest(body);
-  const generationOptions = { adaptiveGeneration: resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies,
-    { allowSyntheticShadow: true }) === 'shadow' };
+  const adaptiveMode = resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies,
+    { allowSyntheticShadow: true });
+  const generationOptions = { adaptiveGeneration: ['shadow', 'preview'].includes(adaptiveMode) };
   const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx, generationOptions));
   let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial);
+  if (adaptiveMode === 'preview') {
+    // Slice 2A acquires and computes from the same Phase 1 foundation. Exposure
+    // stays closed until the selected canonical set has candidate/surface bindings.
+    // Never fall through to classic diagnostics or concurrent preview success.
+    let previewResult = null;
+    try {
+      if (prepared) previewResult = adaptiveShadow.compute(prepared);
+    } catch (error) { adaptiveReason = adaptiveShadow.reason(error); }
+    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',
+      outcome: 'candidate_rejected', candidateSelected: false, surfaceCapability: 'BLOCKED',
+      failReasonCodes: !prepared ? ['EVIDENCE_MISSING'] : ['CANDIDATE_NOT_SELECTED'],
+      sink: goalBackwardDependencies.telemetrySink });
+    throw goalBackwardGenerationFailed(previewResult?.selected_candidate ? 'CANDIDATE_NOT_SELECTED' : adaptiveReason);
+  }
   const built = buildDeterministicCandidate(initial.context, {
     planningDateLocal: clock.planningDateLocal,
     timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
