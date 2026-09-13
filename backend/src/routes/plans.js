@@ -2277,14 +2277,17 @@ async function buildConcurrentContext(userId, profile, target, tx = null, adapti
     correctionInputCount: correctionRows.length,
   };
   let observedSnapshot;
-  const runLoadInput = canonicalizeRunLoadInput({ ...loadInputOptions, runs: rawRuns,
-    ...(adaptiveGenerationSource ? {
-      captureSnapshot: snapshot => { observedSnapshot = snapshot; },
-      snapshotPlanningInstant: adaptiveGenerationSource.observationInstant,
-      snapshotEvidence: { lifts: legacyLifts, checkIns: adaptiveGenerationSource.checkIns,
-        measured: adaptiveGenerationSource.measured },
-    } : {}),
-  });
+  const runLoadInput = canonicalizeRunLoadInput({ ...loadInputOptions, runs: rawRuns });
+  // Independent SHADOW projection from the same acquired rows. Legacy context,
+  // mileage baselines and hashes continue using runLoadInput above.
+  const adaptiveRunLoad = adaptiveGenerationSource ? canonicalizeRunLoadInput({ ...loadInputOptions, runs: rawRuns,
+    providerCoverage: require('../lib/providerImportCoverage').merge(
+      adaptiveGenerationSource.measured?.receipt?.provider_imports?.coverage || [], rawRuns, planningProviderCoverage),
+    captureSnapshot: snapshot => { observedSnapshot = snapshot; },
+    snapshotPlanningInstant: adaptiveGenerationSource.observationInstant,
+    snapshotEvidence: { lifts: legacyLifts, checkIns: adaptiveGenerationSource.checkIns,
+      measured: adaptiveGenerationSource.measured },
+  }) : null;
   const planningRuns = runLoadInput.canonical_run_rows;
   const performanceLoadInput = canonicalizeRunLoadInput({
     ...loadInputOptions,
@@ -2411,7 +2414,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null, adapti
     },
   };
   if (adaptiveGenerationSource) adaptiveObservedInputs.set(context, adaptiveShadow.freeze({ snapshot: observedSnapshot, rawRuns,
-    sourceFailed: adaptiveGenerationSource.sourceFailed || adaptiveSourceFailure || !correctionsComplete, load: runLoadInput }));
+    sourceFailed: adaptiveGenerationSource.sourceFailed || adaptiveSourceFailure || !correctionsComplete, load: adaptiveRunLoad }));
   return context;
 }
 

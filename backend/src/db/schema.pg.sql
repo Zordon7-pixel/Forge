@@ -918,3 +918,14 @@ CREATE TABLE IF NOT EXISTS activity_measured_receipts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (user_id, activity_kind, activity_id, revision)
 );
+
+CREATE TABLE IF NOT EXISTS provider_import_receipts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider = 'garmin'),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  payload_json JSONB NOT NULL CHECK (pg_column_size(payload_json) <= 524288),
+  content_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (user_id, provider, revision)
+);

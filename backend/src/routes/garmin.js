@@ -267,35 +267,10 @@ router.post('/sync', auth, async (req, res) => {
     const session = await loadConnectedClient(req.user.id);
     if (!session) return res.status(400).json({ error: 'Garmin is not connected' });
 
-    const activities = await session.client.getActivities(0, 200);
-    const since = Date.now() - (30 * 24 * 60 * 60 * 1000);
-    const recent = (Array.isArray(activities) ? activities : []).filter((a) => {
-      const started = new Date(a.startTimeLocal || a.startTimeGMT || 0).getTime();
-      return Number.isFinite(started) && started >= since;
+    const { synced, imported } = await require('../lib/providerImportCoverage').sync({
+      userId: req.user.id, client: session.client, ingest: watchSync.ingestActivity,
+      toPayload: toIngestPayload, mutation: withPlanningInputMutation,
     });
-
-    let synced = 0;
-    const imported = [];
-
-    for (const activity of recent) {
-      const garminActivityId = String(activity.activityId || '');
-      if (!garminActivityId) continue;
-
-      const existing = await dbGet(
-        'SELECT id FROM watch_sync WHERE user_id = ? AND garmin_activity_id = ? LIMIT 1',
-        [req.user.id, garminActivityId]
-      );
-      if (existing?.id) continue;
-
-      const result = await watchSync.ingestActivity(req.user.id, toIngestPayload(activity));
-      synced += 1;
-      imported.push({
-        id: result.id,
-        garminActivityId,
-        activityName: activity.activityName || result.activity_name,
-        startTimeLocal: activity.startTimeLocal || null
-      });
-    }
 
     let sleepSynced = 0;
     const sleepPayloads = [];
@@ -401,3 +376,5 @@ router.delete('/disconnect', auth, async (req, res) => {
 });
 
 module.exports = router;
+
+module.exports._coverageTest = { toIngestPayload };

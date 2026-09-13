@@ -49,7 +49,7 @@ function measured(p, b, now) {
     if (!positive(r.distance_miles) || r.distance_miles > 500 || r.plan_session_id && r.plan_session_id !== b.session_id) fail();
     if (r.planned_session_json) {
       let link;
-      try { link = JSON.parse(r.planned_session_json); } catch { fail(); }
+      try { link = typeof r.planned_session_json === 'string' ? JSON.parse(r.planned_session_json) : ownDataJsonSnapshot(r.planned_session_json); } catch { fail(); }
       if (!link || Array.isArray(link) || require('./plannedRunMatch').isExplicitlyUnlinkedRun(r.planned_session_json)
         || link.content_hash && link.content_hash !== b.session_hash || link.planId && link.planId !== b.plan_id
         || link.sessionId && link.sessionId !== b.session_id) fail();
@@ -108,26 +108,45 @@ async function record({ tx, userId, input, accepted, now }) {
   return { id, revision, content_hash: canonicalHash(payload) };
 }
 async function load({ tx, userId, observationInstant }) {
-  const rows = await tx.all(`SELECT id,user_id,activity_kind,activity_id,plan_id,session_id,revision,payload_json,content_hash,created_at
-    FROM activity_measured_receipts WHERE user_id=? ORDER BY activity_kind,activity_id,revision LIMIT 65`, [userId]);
-  if (rows.length > 64) throw Object.assign(new Error('Measured source overflow'), { code: 'SOURCE_OVERFLOW' });
-  const latest = new Map(), bindings = [], ids = new Set();
-  for (const row of rows) {
-    if (row.user_id !== userId || ids.has(row.id)) fail();
-    ids.add(row.id);
-    const key = `${row.activity_kind}:${row.activity_id}`, prior = latest.get(key);
-    const payload = ownDataJsonSnapshot(typeof row.payload_json === 'string' && row.payload_json.length <= 32768
-      ? JSON.parse(row.payload_json) : row.payload_json, { maximumDepth: 10, maximumNodes: 4096 });
-    if (!keys(payload, ['version','binding','provenance','completeness','physical_hash','actual','supersedes_receipt_id']) || canonicalHash(payload) !== row.content_hash || payload.version !== VERSION
-      || payload.provenance !== 'OWNER_SCOPED_MANUAL_RECORDER') fail();
-    const b = inputSnapshot(payload.binding);
-    if (!Number.isFinite(Date.parse(row.created_at)) || payload.completeness !== b.completeness
-      || !keys(payload.actual, ['observed_at','duration_s','distance_m','work_duration_s','sets'])
-      || prior && ['plan_id','plan_revision','session_id','session_revision','session_hash'].some(k => prior.payload.binding[k] !== b[k])) fail();
-    if (b.activity_kind !== row.activity_kind || b.activity_id !== row.activity_id || b.plan_id !== row.plan_id || b.session_id !== row.session_id
-      || row.revision !== (prior?.row.revision || 0) + 1 || b.expected_revision !== row.revision - 1
-      || payload.supersedes_receipt_id !== (prior?.row.id || null)) fail();
-    latest.set(key, { row, payload });
+  const since = new Date(Date.parse(observationInstant)-57*86400000).toISOString();
+  const activities = await tx.all(`SELECT activity_kind,activity_id FROM activity_measured_receipts
+    WHERE user_id=? GROUP BY activity_kind,activity_id HAVING MAX(created_at)>=?
+    ORDER BY activity_kind,activity_id LIMIT 513`, [userId,since]);
+  if (activities.length > 512) throw Object.assign(new Error('Measured source overflow'), { code: 'SOURCE_OVERFLOW' });
+  // Stream and validate the immutable prior chain, retaining latest successors
+  // plus a digest of every historical row for the transaction stale reread.
+  // This is read-time compaction; no history deletion or data backfill.
+  const rows = [], chain_receipts = [];
+  const latest = new Map(), bindings = [];
+  for (const activity of activities) {
+    let offset=0, digest=null, tail=[];
+    while (true) {
+      const page = await tx.all(`SELECT id,user_id,activity_kind,activity_id,plan_id,session_id,revision,payload_json,content_hash,created_at
+        FROM activity_measured_receipts WHERE user_id=? AND activity_kind=? AND activity_id=?
+        ORDER BY revision LIMIT 256 OFFSET ?`, [userId,activity.activity_kind,activity.activity_id,offset]);
+      if (!page.length) break;
+      for (const row of page) {
+        if (row.user_id !== userId) fail();
+        const key = `${row.activity_kind}:${row.activity_id}`, prior = latest.get(key);
+        const payload = ownDataJsonSnapshot(typeof row.payload_json === 'string' && row.payload_json.length <= 32768
+          ? JSON.parse(row.payload_json) : row.payload_json, { maximumDepth: 10, maximumNodes: 4096 });
+        if (!keys(payload, ['version','binding','provenance','completeness','physical_hash','actual','supersedes_receipt_id']) || canonicalHash(payload) !== row.content_hash || payload.version !== VERSION
+          || payload.provenance !== 'OWNER_SCOPED_MANUAL_RECORDER') fail();
+        const b = inputSnapshot(payload.binding);
+        if (!Number.isFinite(Date.parse(row.created_at)) || payload.completeness !== b.completeness
+          || !keys(payload.actual, ['observed_at','duration_s','distance_m','work_duration_s','sets'])
+          || prior && ['plan_id','plan_revision','session_id','session_revision','session_hash'].some(k => prior.payload.binding[k] !== b[k])) fail();
+        if (b.activity_kind !== row.activity_kind || b.activity_id !== row.activity_id || b.plan_id !== row.plan_id || b.session_id !== row.session_id
+          || row.revision !== (prior?.row.revision || 0) + 1 || b.expected_revision !== row.revision - 1
+          || payload.supersedes_receipt_id !== (prior?.row.id || null)) fail();
+        latest.set(key, { row, payload });
+        digest=canonicalHash({ prior:digest, row });
+        tail=[...tail,row].slice(-2);
+      }
+      offset+=page.length;
+    }
+    rows.push(...tail);
+    chain_receipts.push({ ...activity, revisions:offset, content_hash:digest });
   }
   const usable = [];
   for (const entry of latest.values()) {
@@ -143,7 +162,7 @@ async function load({ tx, userId, observationInstant }) {
       usable.push(entry);
     } catch (e) { if (e.code !== 'ACTIVITY_MEASUREMENT_INVALID') throw e; }
   }
-  return { rows, bindings, usable };
+  return { rows, chain_receipts, bindings, usable };
 }
 function pairs(receipts, accepted, snapshot) {
   const out = [];

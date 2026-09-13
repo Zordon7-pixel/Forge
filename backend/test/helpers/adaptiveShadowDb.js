@@ -10,7 +10,7 @@ function createDb() {
   const schema = fs.readFileSync(path.join(__dirname, '../../src/db/schema.pg.sql'), 'utf8');
   const tables = new Set(['users', 'runs', 'lifts', 'workout_sessions', 'workout_sets', 'health_sync',
     'injury_logs', 'daily_checkins', 'race_events', 'training_plans', 'user_plans', 'planning_constraints',
-    'activity_measured_receipts', 'planning_evidence_corrections', 'planning_pipeline_artifacts', 'plan_generation_candidates', 'plan_candidate_rejections']);
+    'provider_import_receipts', 'watch_sync', 'activity_measured_receipts', 'planning_evidence_corrections', 'planning_pipeline_artifacts', 'plan_generation_candidates', 'plan_candidate_rejections']);
   const translate = sql => sql.replace(/\s+FOR (?:KEY SHARE|UPDATE)/g, '').replace(/::(?:jsonb|date|text|timestamptz)/g, '')
     .replace(/\bNOW\(\)/gi, 'CURRENT_TIMESTAMP').replace(/\bILIKE\b/g, 'LIKE');
   for (const match of schema.matchAll(/CREATE TABLE IF NOT EXISTS (\w+) \([\s\S]*?\n\);/g)) {
@@ -24,7 +24,7 @@ function createDb() {
   }
   // Fields from the existing startup additive migrations, absent in baseline DDL.
   for (const [table, columns] of Object.entries({ users: ['timezone TEXT', 'training_age_class TEXT', 'preferred_workout_days TEXT', 'run_eligible_weekdays TEXT', 'lift_eligible_weekdays TEXT'],
-    runs: ['plan_session_id TEXT', 'planned_session_json TEXT'] })) {
+    watch_sync: ['sync_uuid TEXT'], runs: ['plan_session_id TEXT', 'planned_session_json TEXT'] })) {
     for (const column of columns) { try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`); }
       catch (e) { if (!e.message.includes('duplicate column')) throw e; } }
   }
@@ -37,6 +37,7 @@ function createDb() {
   const tx = {};
   for (const method of ['get', 'all', 'run']) tx[method] = async (sql, params = []) => {
     calls.push({ method, sql, params });
+    if (/ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS/.test(sql)) return { changes: 0 };
     if (hooks.before) await hooks.before(method, sql, params);
     try { return db.prepare(translate(sql))[method](...params); }
     catch (error) { error.test_sql = sql; throw error; }

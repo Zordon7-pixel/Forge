@@ -120,7 +120,8 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
         && e.value.time_available_minutes <= 1440).map(e => [e.value.local_date, { available_minutes: e.value.time_available_minutes }])),
       locks: constraints.locks, manualEdits: constraints.manual_edits,
       // Only existing fully covered observed weeks; no profile or planned mileage as actual.
-      weeks: source.load.recent_normal_weeks.map(w => ({ week_id: w.week_start_local,
+      // Complete empty weeks remain in the load snapshot, but cannot establish training consistency.
+      weeks: source.load.recent_normal_weeks.filter(w => w.activity_count > 0).map(w => ({ week_id: w.week_start_local,
         distance_m: w.distance_m, duration_s: w.duration_s, coverage: snapshot.provider_coverage_intervals,
         partial_days: !w.eligible })) } });
   const start = snapshot.planning_date_local, end = addDays(start, 6);

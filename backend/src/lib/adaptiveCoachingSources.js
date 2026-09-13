@@ -3,7 +3,7 @@
 const { addDays, canonicalHash } = require('./racePlanPolicy');
 const { canonicalLiftActivities } = require('./activityObservation');
 const { localDate } = require('./adaptiveCoachingValidation');
-const LIMIT = 64, SET_LIMIT = 256;
+const LIMIT = 64, SET_LIMIT = 8192;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const positive = n => typeof n === 'number' && Number.isFinite(n) && n > 0;
 function bounded(rows, limit, owner) {
@@ -31,17 +31,25 @@ async function loadMeasuredSources({ tx, userId, planningDateISO, observationIns
       ORDER BY started_at,id LIMIT 65`, [userId, sessionSince, until]), LIMIT, userId);
     // Include only sets belonging to this owner's bounded session window. A
     // foreign-owned set on an owned session is excluded by the second owner gate.
-    const workoutSets = bounded(await tx.all(`SELECT s.id,s.user_id,s.session_id,s.exercise_name,
+    const setRows = [];
+    for (let offset = 0; ; offset += 257) {
+      const page = await tx.all(`SELECT s.id,s.user_id,s.session_id,s.exercise_name,
       s.set_number,s.reps,s.weight_lbs,s.logged_at FROM workout_sets s
       JOIN workout_sessions w ON w.id=s.session_id AND w.user_id=s.user_id
       WHERE s.user_id=? AND w.user_id=? AND w.started_at>=? AND w.started_at<?
-      ORDER BY s.session_id,s.id LIMIT 257`, [userId, userId, sessionSince, until]), SET_LIMIT, userId);
+      ORDER BY s.session_id,s.id LIMIT 257 OFFSET ?`, [userId, userId, sessionSince, until, offset]);
+      setRows.push(...page);
+      if (setRows.length > SET_LIMIT) fail('SOURCE_OVERFLOW');
+      if (page.length < 257) break;
+    }
+    const workoutSets = bounded(setRows, SET_LIMIT, userId);
     const corrections = bounded(await tx.all(`SELECT id,user_id,raw_evidence_kind,raw_evidence_ref,revision,created_at
       FROM planning_evidence_corrections WHERE user_id=? AND raw_evidence_kind<>'run'
       ORDER BY id LIMIT 65`, [userId]), LIMIT, userId);
     // Existing correction resolution supports run values only. Never let an
     // unsupported correction silently fall back to an uncorrected strength dose.
     if (corrections.length) fail('SOURCE_CORRECTION_UNSUPPORTED');
+    const providerImports = await require('./providerImportCoverage').load({ tx, userId, observationInstant, timezone });
     const measuredReceipts = await require('./activityMeasuredReceipt').load({ tx, userId, observationInstant });
     const at = Date.parse(observationInstant);
     if (!Number.isFinite(at)) fail('SOURCE_ROW_INVALID');
@@ -77,7 +85,7 @@ async function loadMeasuredSources({ tx, userId, planningDateISO, observationIns
     // Bind ALL acquired rows, including withheld/future/duplicate records, so an
     // edit or deletion without a planning revision changes the same snapshot.
     const receipt = { version: 'adaptive-physical-sources-v1', lifts, workouts, workout_sets: workoutSets,
-      canonical_lift_activities: identities, sessions, correction_rows: corrections, measured_receipts: measuredReceipts,
+      canonical_lift_activities: identities, sessions, correction_rows: corrections, measured_receipts: measuredReceipts, provider_imports: providerImports,
       coverage_state: 'UNKNOWN', reason_codes: [...diagnostics].sort() };
     const linkedMeasurements = measuredReceipts.usable.filter(e => e.row.activity_kind === 'lift').map(e => ({ id: e.row.id, user_id: userId,
       started_at: e.payload.actual.observed_at, created_at: e.row.created_at,
@@ -112,7 +120,8 @@ function sourceSupport(foundation) {
     priority_authority: 'CURRENT_CHRONOLOGICAL_DEFAULT', stored_priority_used: false,
     source_limited: goals.some(g => Boolean(g.race_id)) || state.adaptive_foundation.capacities.lift > 0,
     scope: 'MISSION_EVIDENCE_COMPLETENESS',
-    observed_coverage: 'UNKNOWN', limits,
+    observed_coverage: foundation.artifacts[0].payload_json.provider_coverage_intervals?.length
+      && foundation.artifacts[0].payload_json.provider_coverage_intervals.every(r => r.complete === true) ? 'COMPLETE' : 'UNKNOWN', limits,
     receipt_hash: foundation.artifacts[0].payload_json.physical_sources
       ? canonicalHash(foundation.artifacts[0].payload_json.physical_sources) : null,
     requested_strength_capacity: state.adaptive_foundation.capacities.lift };

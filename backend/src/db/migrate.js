@@ -29,7 +29,25 @@ async function ensureActivityMeasuredReceipts(query, dialect = 'postgres') {
   await query(sql);
 }
 
+async function ensureProviderImportReceipts(query, dialect = 'postgres') {
+  if (!['postgres', 'sqlite'].includes(dialect)) throw new Error('Unsupported coverage migration dialect');
+  let sql = `CREATE TABLE IF NOT EXISTS provider_import_receipts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider = 'garmin'),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  payload_json JSONB NOT NULL CHECK (pg_column_size(payload_json) <= 524288),
+  content_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (user_id, provider, revision)
+);`;
+  if (dialect === 'sqlite') sql = sql.replace('JSONB', 'TEXT')
+    .replace('pg_column_size(payload_json)', 'length(payload_json)').replace('TIMESTAMPTZ', 'TEXT');
+  await query(sql);
+}
+
 async function runAlwaysMigrations() {
+  await ensureProviderImportReceipts(sql => pg.query(sql));
   await ensureActivityMeasuredReceipts(sql => pg.query(sql));
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS run_eligible_weekdays TEXT');
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS lift_eligible_weekdays TEXT');
@@ -720,4 +738,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { ensureActivityMeasuredReceipts, ensureUniqueActiveUserPlanIndex, runMigrations, runAlwaysMigrations };
+module.exports = { ensureProviderImportReceipts, ensureActivityMeasuredReceipts, ensureUniqueActiveUserPlanIndex, runMigrations, runAlwaysMigrations };

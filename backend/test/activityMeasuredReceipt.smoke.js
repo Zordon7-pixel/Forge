@@ -199,13 +199,83 @@ async function main() {
   hooks.before=null;
   assert.equal(db.prepare('SELECT COUNT(*) n FROM activity_measured_receipts').get().n,before);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n,0);
-  // Every successor counts toward bounded acquisition; overflow fails closed.
+  // Distinct recent activities remain bounded; revisions do not consume activity capacity.
   db.exec('SAVEPOINT receipt_overflow');
-  for(let i=0;i<65;i++) db.prepare(`INSERT INTO activity_measured_receipts(id,user_id,activity_kind,activity_id,plan_id,session_id,revision,payload_json,content_hash,created_at)
+  for(let i=0;i<513;i++) db.prepare(`INSERT INTO activity_measured_receipts(id,user_id,activity_kind,activity_id,plan_id,session_id,revision,payload_json,content_hash,created_at)
     VALUES (?,?,'run',?,'overflow-plan','overflow-session',1,'{}','invalid',?)`).run(`overflow-${i}`,a.owner,`overflow-physical-${i}`,NOW);
   const overflow=await require('../src/lib/adaptiveCoachingSources').loadMeasuredSources({tx,userId:a.owner,planningDateISO:DATE,observationInstant:NOW});
   assert.equal(overflow.reason_code,'SOURCE_OVERFLOW');
   db.exec('ROLLBACK TO receipt_overflow');db.exec('RELEASE receipt_overflow');
+  // Real server pagination + existing watchSync ingestion, entirely synthetic pages.
+  const coverage = require('../src/lib/providerImportCoverage');
+  const ingest = require('../src/routes/watchSync').ingestActivity;
+  const toPayload = require('../src/routes/garmin')._coverageTest.toIngestPayload;
+  const migrationCoverage = require('../src/db/migrate').ensureProviderImportReceipts;
+  await migrationCoverage(sql=>db.exec(sql),'sqlite'); await migrationCoverage(sql=>db.exec(sql),'sqlite');
+  const generated=[]; await migrationCoverage(sql=>generated.push(sql),'postgres');
+  assert.ok(pgSchema.includes(generated[0]));
+  for (const f of [a,b]) {
+    const pages = Array.from({length:28},(_,i)=>({ activityId:10000+i,
+      startTimeGMT:`${addDays(DATE,-i-1)}T08:00:00`, startTimeLocal:`${addDays(DATE,-i-1)}T08:00:00`,
+      activityType:{typeKey:'running'},activityName:'Synthetic measured running',distance:4800,duration:2100 }));
+    const offsets=[];
+    const runImport = client => coverage.sync({userId:f.owner,client,ingest,toPayload,mutation:fixture.exports.withPlanningInputMutation,now:NOW});
+    const terminal=await runImport({getActivities:async(offset,size)=>{ offsets.push([offset,size]); return offset===0?pages:[]; }});
+    assert.equal(terminal.status,'COMPLETE'); assert.deepEqual(offsets,[[0,200],[200,200]]);
+    assert.equal(terminal.synced,28);
+    assert.equal(coverage.merge([{source_system:'garmin',status:'complete'}],[{health_source:'apple_health'}]).find(r=>r.source_system==='apple_health').status,'unknown');
+    const duplicate=await runImport({getActivities:async offset=>offset===0?pages:[]});
+    assert.equal(duplicate.status,'COMPLETE');
+    const loaded=await coverage.load({tx,userId:f.owner,observationInstant:NOW});
+    assert.equal(loaded.coverage[0].status,'complete'); assert.equal(loaded.bindings.length,28);
+    // JSONB object and timestamp string readback, as configured by db/index.js.
+    const driverTx={...tx,get:async(sql,args)=>{const row=await tx.get(sql,args);return row?.payload_json?{...row,payload_json:JSON.parse(row.payload_json),created_at:'2026-09-14 12:00:00+00'}:row;}};
+    assert.equal((await coverage.load({tx:driverTx,userId:f.owner,observationInstant:NOW})).coverage[0].status,'complete');
+    const off=await plans.previewPlanForUser(f.owner,f.req,options('off'));
+    const shadowResult=await plans.previewPlanForUser(f.owner,f.req,options('shadow'));
+    assert.deepEqual(shadowResult.plan,off.plan); assert.equal(shadowResult.candidateHash,off.candidateHash);
+    assert.equal(prepared.foundation.artifacts[0].payload_json.physical_sources.provider_imports.rows.length,1);
+    assert.equal(prepared.foundation.athlete_state.consistent_weeks,4);
+    assert.equal(prepared.foundation.athlete_state.recent_normal_running.status,'ESTABLISHED');
+    assert.equal(prepared.foundation.artifacts[0].payload_json.provider_coverage_intervals[0].complete,true);
+    console.log(JSON.stringify({coverage_after:f===a?'developing3/2':'established6/4',phase:result.decision.phase,
+      consistent_weeks:prepared.foundation.athlete_state.consistent_weeks,recent_normal:prepared.foundation.athlete_state.recent_normal_running,
+      families:result.selected_candidate?.sessions.map(s=>[s.workout_family,s.derived_totals.sets,s.derived_totals.duration_s]),
+      status:result.status, applicable:result.applicable, search:result.search, deferred:result.deferred_objectives, selection:result.session_selection, strength:result.strength_dose_receipt}));
+    if (f===a) {
+      let transactions=0; hooks.beforeTransaction=()=>{ if(++transactions===2) db.prepare(`UPDATE provider_import_receipts SET created_at=? WHERE id=? AND user_id=?`).run('2026-09-14T11:00:00Z',loaded.rows[0].id,f.owner); };
+      await assert.rejects(plans.previewPlanForUser(f.owner,f.req,options('shadow')),e=>e.code==='CANDIDATE_STALE');
+      hooks.beforeTransaction=null;
+    }
+    // Stale physical import bindings and latest failed interval suppress completeness.
+    db.exec('SAVEPOINT imported_drift');
+    db.prepare('UPDATE runs SET distance_miles=distance_miles+1 WHERE id=? AND user_id=?').run(loaded.bindings[0].record_id,f.owner);
+    assert.equal((await coverage.load({tx,userId:f.owner,observationInstant:NOW})).coverage[0].status,'partial');
+    db.exec('ROLLBACK TO imported_drift');db.exec('RELEASE imported_drift');
+    assert.equal((await coverage.load({tx,userId:f.owner,observationInstant:'2026-09-17T12:00:00Z'})).coverage[0].status,'partial');
+    assert.equal((await coverage.load({tx,userId:f.owner,observationInstant:NOW,timezone:'America/New_York'})).coverage[0].status,'partial');
+    const failed=await runImport({getActivities:async()=>{throw new Error('synthetic provider failure');}});
+    assert.equal(failed.status,'FAILED'); assert.equal((await coverage.load({tx,userId:f.owner,observationInstant:NOW})).coverage[0].status,'failed');
+    const repeated=await runImport({getActivities:async()=>pages});
+    assert.equal(repeated.status,'PARTIAL');
+    let touches=0;const hostile=new Proxy({}, {get(){touches++;throw new Error('opaque');},ownKeys(){touches++;throw new Error('opaque');}});
+    assert.equal((await runImport({getActivities:async()=>[hostile]})).status,'PARTIAL'); assert.equal(touches,0);
+  }
+  // Four weeks x four substantive 24-set workouts exceed the old 256-set cap.
+  db.exec('SAVEPOINT measured_matrix');
+  for (let i=0;i<16;i++) {
+    const id=`matrix-work-${i}`,date=addDays(DATE,-i-1);
+    db.prepare('INSERT INTO workout_sessions(id,user_id,started_at,ended_at,total_seconds,created_at) VALUES (?,?,?,?,?,?)').run(id,b.owner,`${date}T08:00:00Z`,`${date}T09:00:00Z`,3600,`${date}T09:00:00Z`);
+    for(let j=0;j<24;j++) db.prepare('INSERT INTO workout_sets(id,user_id,session_id,exercise_name,set_number,reps,weight_lbs,logged_at) VALUES (?,?,?,?,?,?,?,?)').run(`${id}-${j}`,b.owner,id,'Measured exercise',j+1,8,50,`${date}T08:30:00Z`);
+  }
+  const matrix=await require('../src/lib/adaptiveCoachingSources').loadMeasuredSources({tx,userId:b.owner,planningDateISO:DATE,observationInstant:NOW});
+  assert.equal(matrix.sourceFailed,false);assert.ok(matrix.receipt.workout_sets.length>=384);
+  db.exec('ROLLBACK TO measured_matrix');db.exec('RELEASE measured_matrix');
+  // Lifetime revisions no longer consume a fixed 64-row quota.
+  for(let revision=1;revision<70;revision++) await plans.recordActivityMeasurement(b.owner,{...b.bodies[0],expected_revision:revision});
+  const history=await receipts.load({tx,userId:b.owner,observationInstant:NOW});
+  assert.equal(history.chain_receipts.find(r=>r.activity_id===b.bodies[0].activity_id).revisions,70);
+  assert.ok(history.usable.some(r=>r.row.revision===70));
   console.log('ok - recorder/authenticated source, SQL migration, measured routes, revision correction, stale snapshot, owner/hash/revision/interval/hostile boundaries');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>{global.Date=RealDate;shadow.prepare=realPrepare;shadow.compute=realCompute;db.close();});
