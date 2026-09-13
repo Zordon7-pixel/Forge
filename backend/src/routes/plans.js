@@ -9857,6 +9857,31 @@ function enforcePlanSessionRules(planData = {}, options = {}) {
   return { ...planData, weeks };
 }
 
+// Measurement recording is an explicit owner action. It never applies a plan,
+// changes feature modes, or uses a request prescription as measurement authority.
+async function recordActivityMeasurement(userId, input) {
+  const measurement = require('../lib/activityMeasuredReceipt');
+  const body = measurement.inputSnapshot(input);
+  const now = new Date().toISOString();
+  return withPlanningInputMutation(userId, async tx => {
+    const active = await getActivePlanForUser(userId, tx, { includeFuture: true, planningDateLocal: now.slice(0, 10) });
+    if (!active) throw candidateError(409, 'ACTIVITY_MEASUREMENT_INVALID', 'Accepted plan unavailable.');
+    const state = { active, activePlan: activeCandidateMetadata(active),
+      activeCanonicalCarryForwardSource: await loadActiveCanonicalCarryForwardSource(tx, userId, active) };
+    const authenticated = adaptiveAcceptedInput(userId, state);
+    if (!authenticated.accepted) throw candidateError(409, 'ACTIVITY_MEASUREMENT_INVALID', 'Accepted plan unavailable.');
+    return measurement.record({ tx, userId, input: body, accepted: authenticated.accepted, now });
+  });
+}
+router.post('/activity-measurements', auth, async (req, res) => {
+  try { res.status(201).json(await recordActivityMeasurement(req.user.id, req.body)); }
+  catch (error) {
+    if (error.code === 'ACTIVITY_MEASUREMENT_INVALID') return res.status(409).json({ error: 'Activity measurement rejected.' });
+    console.error('[plans/activity-measurements] recording failed');
+    res.status(500).json({ error: 'Could not record activity measurement.' });
+  }
+});
+
 router.post('/generate', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
     if (Array.isArray(req.body?.target?.raceTargets) && req.body.target.raceTargets.length > 0) {
@@ -9907,6 +9932,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router.clearActivePlanForUser = clearActivePlanForUser;
 
 router._test = {
+  recordActivityMeasurement,
   buildAdaptationInputs,
   buildCurrentAdaptationProposal,
   buildCompletionSummaryForAdaptation,

@@ -7,7 +7,30 @@ const { ensureUniqueActiveUserPlanIndex: ensureActivePlanIndex } = require('./ac
 
 const ensureUniqueActiveUserPlanIndex = (query = pg.query) => ensureActivePlanIndex(query);
 
+// Additive migration shared by PostgreSQL startup and SQLite consumers/tests.
+// No backfill; no production application outside the existing migration runner.
+async function ensureActivityMeasuredReceipts(query, dialect = 'postgres') {
+  if (!['postgres', 'sqlite'].includes(dialect)) throw new Error('Unsupported measurement migration dialect');
+  let sql = `CREATE TABLE IF NOT EXISTS activity_measured_receipts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  activity_kind TEXT NOT NULL CHECK (activity_kind IN ('run', 'lift')),
+  activity_id TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  payload_json JSONB NOT NULL CHECK (pg_column_size(payload_json) <= 32768),
+  content_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (user_id, activity_kind, activity_id, revision)
+);`;
+  if (dialect === 'sqlite') sql = sql.replace('JSONB', 'TEXT')
+    .replace('pg_column_size(payload_json)', 'length(payload_json)').replace('TIMESTAMPTZ', 'TEXT');
+  await query(sql);
+}
+
 async function runAlwaysMigrations() {
+  await ensureActivityMeasuredReceipts(sql => pg.query(sql));
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS run_eligible_weekdays TEXT');
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS lift_eligible_weekdays TEXT');
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS planning_input_revision BIGINT NOT NULL DEFAULT 0');
@@ -697,4 +720,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { ensureUniqueActiveUserPlanIndex, runMigrations, runAlwaysMigrations };
+module.exports = { ensureActivityMeasuredReceipts, ensureUniqueActiveUserPlanIndex, runMigrations, runAlwaysMigrations };

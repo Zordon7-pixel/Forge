@@ -10,7 +10,7 @@ function createDb() {
   const schema = fs.readFileSync(path.join(__dirname, '../../src/db/schema.pg.sql'), 'utf8');
   const tables = new Set(['users', 'runs', 'lifts', 'workout_sessions', 'workout_sets', 'health_sync',
     'injury_logs', 'daily_checkins', 'race_events', 'training_plans', 'user_plans', 'planning_constraints',
-    'planning_evidence_corrections', 'planning_pipeline_artifacts', 'plan_generation_candidates', 'plan_candidate_rejections']);
+    'activity_measured_receipts', 'planning_evidence_corrections', 'planning_pipeline_artifacts', 'plan_generation_candidates', 'plan_candidate_rejections']);
   const translate = sql => sql.replace(/\s+FOR (?:KEY SHARE|UPDATE)/g, '').replace(/::(?:jsonb|date|text|timestamptz)/g, '')
     .replace(/\bNOW\(\)/gi, 'CURRENT_TIMESTAMP').replace(/\bILIKE\b/g, 'LIKE');
   for (const match of schema.matchAll(/CREATE TABLE IF NOT EXISTS (\w+) \([\s\S]*?\n\);/g)) {

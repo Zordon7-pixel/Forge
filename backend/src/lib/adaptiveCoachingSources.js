@@ -1,5 +1,5 @@
-// Generation-only acquisition of existing physical rows. No JSON measurement
-// parser, guessed prescription link, coverage attestation or completion claim.
+// Generation-only acquisition of physical rows and closed recorder receipts.
+// No arbitrary metrics JSON, guessed prescription link or interval coverage claim.
 const { addDays, canonicalHash } = require('./racePlanPolicy');
 const { canonicalLiftActivities } = require('./activityObservation');
 const { localDate } = require('./adaptiveCoachingValidation');
@@ -42,6 +42,7 @@ async function loadMeasuredSources({ tx, userId, planningDateISO, observationIns
     // Existing correction resolution supports run values only. Never let an
     // unsupported correction silently fall back to an uncorrected strength dose.
     if (corrections.length) fail('SOURCE_CORRECTION_UNSUPPORTED');
+    const measuredReceipts = await require('./activityMeasuredReceipt').load({ tx, userId, observationInstant });
     const at = Date.parse(observationInstant);
     if (!Number.isFinite(at)) fail('SOURCE_ROW_INVALID');
     const past = value => Number.isFinite(Date.parse(value)) && Date.parse(value) <= at;
@@ -76,21 +77,31 @@ async function loadMeasuredSources({ tx, userId, planningDateISO, observationIns
     // Bind ALL acquired rows, including withheld/future/duplicate records, so an
     // edit or deletion without a planning revision changes the same snapshot.
     const receipt = { version: 'adaptive-physical-sources-v1', lifts, workouts, workout_sets: workoutSets,
-      canonical_lift_activities: identities, sessions, correction_rows: corrections,
+      canonical_lift_activities: identities, sessions, correction_rows: corrections, measured_receipts: measuredReceipts,
       coverage_state: 'UNKNOWN', reason_codes: [...diagnostics].sort() };
-    return { lifts: usableLifts, receipt, sourceFailed: false };
+    const linkedMeasurements = measuredReceipts.usable.filter(e => e.row.activity_kind === 'lift').map(e => ({ id: e.row.id, user_id: userId,
+      started_at: e.payload.actual.observed_at, created_at: e.row.created_at,
+      workout_duration_seconds: e.payload.completeness === 'COMPLETE' ? e.payload.actual.duration_s : null, sets: e.payload.actual.sets }));
+    return { lifts: [...usableLifts, ...linkedMeasurements], receipt, sourceFailed: false };
   } catch (error) {
     return { lifts: [], receipt: null, sourceFailed: true,
-      reason_code: ['SOURCE_OVERFLOW', 'SOURCE_ROW_INVALID', 'SOURCE_CORRECTION_UNSUPPORTED'].includes(error.code)
+      reason_code: error.code === 'ACTIVITY_MEASUREMENT_INVALID' ? 'SOURCE_ROW_INVALID' : ['SOURCE_OVERFLOW', 'SOURCE_ROW_INVALID', 'SOURCE_CORRECTION_UNSUPPORTED'].includes(error.code)
         ? error.code : 'SOURCE_SQL_FAILED' };
   }
 }
 function sourceSupport(foundation) {
   const state = foundation.athlete_state;
   const goals = foundation.decision.goal_gap.map(g => g.goal);
+  const pairs = state.adaptive_foundation.completion_pairs;
+  const protectedRun = pairs.some(p => ['threshold_run','interval_run','race_rhythm_run','steady_run','long_aerobic'].includes(p.prescribed_session.workout_family)
+    && p.observation.measured_receipt_id && p.observation.quality_state === 'COMPLETE'
+    && p.observation.observed_work_duration_s > 0);
+  const strength = pairs.some(p => p.prescribed_session.kind === 'lift' && p.observation.measured_receipt_id
+    && p.observation.quality_state === 'COMPLETE');
   const limits = [
-    { objective: 'protected_running_work', status: 'UNSUPPORTED', reason_code: 'MEASURED_RUN_WORK_SOURCE_ABSENT' },
-    { objective: 'strength_prescription_completion', status: 'UNSUPPORTED', reason_code: 'CANONICAL_STRENGTH_LINK_ABSENT' },
+    { objective: 'protected_running_work', status: protectedRun ? 'SUPPORTED' : 'UNSUPPORTED', reason_code: protectedRun ? 'MEASURED_RUN_WORK_LINKED' : 'MEASURED_RUN_WORK_SOURCE_ABSENT' },
+    { objective: 'strength_prescription_completion', status: strength ? 'SUPPORTED' : 'UNSUPPORTED', reason_code: strength ? 'MEASURED_STRENGTH_LINKED' : 'CANONICAL_STRENGTH_LINK_ABSENT',
+      ...(strength ? { measurement_scope: 'TOTAL_SET_CAP_AND_ACCEPTED_REPERTOIRE', individual_exercise_completion_verified: false } : {}) },
     { objective: 'individual_hyrox_station_work', status: 'UNSUPPORTED', reason_code: 'MEASURED_STATION_SOURCE_ABSENT' },
   ];
   if (goals.some(g => g.event_kind?.startsWith('HYROX'))) limits.push({ objective: 'hyrox_event_execution',

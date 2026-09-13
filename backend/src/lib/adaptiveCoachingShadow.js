@@ -78,7 +78,12 @@ function completionPairs(source, accepted, state, userId) {
   // Empty completedIds: a progress checkbox cannot authenticate interval work or actual dose.
   const receipts = runCompletionEvidence(sessions, { athleteId: userId, canonicalRuns, sources }, [],
     { planId: accepted.plan_id });
-  return receipts.filter(r => r.attempted && !r.reason).map(r => {
+  const measuredReceipts = source.snapshot.physical_sources?.measured_receipts;
+  const measuredPairs = require('./activityMeasuredReceipt').pairs(measuredReceipts, accepted, source.snapshot);
+  // Any measured successor, including failed/partial/stale, suppresses aggregate
+  // fallback for that bound session. Older success cannot resurrect after correction.
+  const measuredSessions = new Set((measuredReceipts?.rows || []).map(r => r.session_id));
+  return [...measuredPairs, ...receipts.filter(r => !measuredSessions.has(r.sessionId) && r.attempted && !r.reason).map(r => {
     const activity = activities.find(a => a.canonical_activity_id === r.activityId);
     return { prescribed_session: sessions.find(s => s.session_id === r.sessionId), observation: {
       athlete_id: userId, linked_session_id: r.sessionId, evidence_id: activity.evidence_ids[0],
@@ -92,7 +97,7 @@ function completionPairs(source, accepted, state, userId) {
         ? activity.heart_rate_resolution.value : null,
       heart_rate_resolution: activity.heart_rate_resolution ?? null,
     } };
-  });
+  })];
 }
 function prepare({ userId, state, source, accepted, acceptedReason = null, goals, trainingAgeClass }) {
   if (!source?.snapshot || source.sourceFailed) fail('SOURCE_UNAVAILABLE');
