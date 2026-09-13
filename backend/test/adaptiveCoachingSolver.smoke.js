@@ -6,11 +6,11 @@ const { validateCanonicalSessionSet } = require('../src/lib/canonicalWorkout');
 const { validatePipelineArtifact } = require('../src/lib/goalBackwardContracts');
 const { addDays } = require('../src/lib/racePlanPolicy');
 const DATE = '2026-09-14';
-function fixture(runs = 4, lifts = 2, minutes = 240) {
-  const snapshot = buildEvidenceSnapshot({ athleteId: 'solver-fixture', timezone: 'UTC', planningInstant: `${DATE}T00:00:00Z`,
+function fixture(runs = 4, lifts = 2, minutes = 240, athleteId = 'solver-fixture') {
+  const snapshot = buildEvidenceSnapshot({ athleteId, timezone: 'UTC', planningInstant: `${DATE}T00:00:00Z`,
     checkIns: [{ id: 'ready', date: DATE, feeling: 4 }],
     lifts: [{ id: 'observed-lift', date: '2026-09-10', workout_duration_seconds: 3600, sets: 24, reps: 144 }],
-    runs: Array.from({ length: 8 }, (_, i) => ({ id: `history-${i}`, user_id: 'solver-fixture',
+    runs: Array.from({ length: 8 }, (_, i) => ({ id: `history-${i}`, user_id: athleteId,
       date: addDays(DATE, -1 - i * 3), distance_miles: minutes * 140 / 2 / 1609.344,
       duration_seconds: minutes * 30, type: 'easy' })) });
   const weeks = ['2026-08-17', '2026-08-24', '2026-08-31', '2026-09-07'].map(week => ({
