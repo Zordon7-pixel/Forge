@@ -91,6 +91,11 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
       return { skeleton, session, variant_index: variantIndex };
     })).filter(c => validateAdaptivePlacement([c.session], constraints, state, selection.weekly_objectives).valid);
   });
+  // Retain one complete single-branch sweep as headroom. The old reserve
+  // could allocate every last node to the final objective (especially when
+  // symmetry no longer removes any choices). Count all dates AND dose variants.
+  // Tiny explicit budgets still attempt one branch and truthfully exhaust.
+  const nodeReserve = choices.reduce((n, list) => n + list.length, 0);
   let frontier = [{ placed: [], mask: [] }], nodes = 0, truncated = false;
   const rejectionCounts = {}, rejectionExamples = {};
   // Identical aerobic partitions have no calendar identity until placement.
@@ -143,7 +148,7 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
     // permutations may use only the frontier that the remaining work can afford.
     const remainingChoices = choices.slice(index + 1).reduce((n, c) => n + c.length, 0);
     const frontierLimit = remainingChoices ? Math.min(LIMITS.frontier,
-      Math.max(1, Math.floor((maxNodes - nodes) / remainingChoices))) : LIMITS.frontier;
+      Math.max(1, Math.floor((maxNodes - nodes - nodeReserve) / remainingChoices))) : LIMITS.frontier;
     if (next.length > frontierLimit) truncated = true;
     // Preserve dose alternatives before spending the frontier on equivalent
     // placements of the largest dose. A later lower-priority exposure may fit
