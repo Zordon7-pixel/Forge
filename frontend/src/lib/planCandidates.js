@@ -1,6 +1,7 @@
 import api from './api.js'
 import {
   reviewPlanCandidateBeforeApply,
+  isAdaptivePreview,
 } from './planCandidateReview.js'
 
 export function phonePlanningClock(date = new Date()) {
@@ -17,6 +18,9 @@ export function phonePlanningClock(date = new Date()) {
 export async function previewAndApplyPlan(path, body = {}, config = {}) {
   const clock = phonePlanningClock()
   const preview = await api.post(path, { ...body, ...clock }, { timeout: 90000, ...config })
+  if (isAdaptivePreview(preview.data)) {
+    await reviewPlanCandidateBeforeApply(preview.data, () => { throw new Error('Preview cannot apply.') })
+  }
   if (!preview.data?.requires_apply) return preview
 
   const candidateId = String(preview.data.candidate_id || '').trim()

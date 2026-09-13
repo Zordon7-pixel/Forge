@@ -32,6 +32,12 @@ async function main() {
     VALUES ('ready',?,'2026-09-14',4,60)`).run(OWNER);
   const off = await plans.previewPlanForUser(OWNER, request, options('off'));
   const exposed = await plans.previewPlanForUser(OWNER, request, options('preview'));
+  const payload = plans.publicCandidatePayload(exposed);
+  assert.equal(payload.generation_source, 'adaptive-joint-solver-v1');
+  assert.equal(payload.requires_apply, false);
+  assert.deepEqual(payload.surface_manifest.sessions, exposed.surfaceManifest.sessions);
+  assert.equal(plans.publicCandidatePayload(off).requires_apply, true);
+  assert.equal(plans.publicCandidatePayload(off).generation_source, 'race_plan_candidate_engine');
   assert.equal(computations, 1, 'authorized preview invokes the real adaptive engine');
   assert.ok(prepared.foundation && result.selected_candidate, 'real acquired fixture selects canonical work internally');
   assert.ok(result.selected_candidate.sessions.length);

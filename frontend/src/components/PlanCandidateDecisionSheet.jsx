@@ -4,8 +4,11 @@ import { useNavigate } from 'react-router'
 import { activateModalDialog } from '../lib/modalDialog'
 import {
   registerPlanCandidateReviewer,
+  isAdaptivePreview,
 } from '../lib/planCandidateReview'
 import { candidateFeasibilityCanApply } from '../lib/planCandidateFeasibility'
+
+import { adaptivePreviewSessions, previewLabel, previewSteps } from '../lib/adaptivePreviewView'
 
 function candidatePlan(preview = {}) {
   return preview?.plan?.plan_data || preview?.candidate?.plan_data || {}
@@ -96,8 +99,11 @@ export default function PlanCandidateDecisionSheet() {
   const plan = useMemo(() => candidatePlan(preview), [preview])
   const feasibility = String(plan?.overall_feasibility || '').toLowerCase()
   const reasons = Array.isArray(plan?.reasons) ? plan.reasons.slice(0, 3) : []
-  const copy = decisionCopy(feasibility, Array.isArray(plan?.reasons) ? plan.reasons : [])
-  const canApply = candidateFeasibilityCanApply(plan)
+  const reviewOnly = isAdaptivePreview(preview)
+  const sessions = reviewOnly ? adaptivePreviewSessions(preview) : []
+  const copy = reviewOnly ? { eyebrow: 'Preview only', title: 'Your adaptive training preview',
+    summary: 'Your current plan stays unchanged. Review this seven-day training preview; it is not a full race program.' } : decisionCopy(feasibility, Array.isArray(plan?.reasons) ? plan.reasons : [])
+  const canApply = candidateFeasibilityCanApply(plan) && !reviewOnly
     && !(plan.programReconciliation || []).some(week => !week.valid || week.entries?.some(entry => entry.outcome === 'UNSATISFIABLE'))
   const candidateChoice = ['adjust_goal', 'completion_first'].includes(preview?.choice)
     ? preview.choice : 'train_for_target'
@@ -123,7 +129,7 @@ export default function PlanCandidateDecisionSheet() {
         aria-modal="true"
         aria-labelledby="plan-candidate-review-title"
         className="w-full max-w-[480px] rounded-2xl p-5"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', maxHeight: 'min(84dvh, 720px)', overflowY: 'auto', boxSizing: 'border-box' }}
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', maxHeight: 'min(84dvh, 720px)', overflowY: 'auto', boxSizing: 'border-box', minWidth: 0, overflowWrap: 'anywhere' }}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -139,13 +145,13 @@ export default function PlanCandidateDecisionSheet() {
           {feasibility === 'unsafe' ? <AlertTriangle size={22} /> : <ShieldCheck size={22} />}
         </div>
         <p className="mt-3 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{copy.summary}</p>
-        {effectiveDate && (
+        {effectiveDate && !reviewOnly && (
           <p className="mt-2 text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
             {preview?.replaces_active_plan ? `Your current plan stays in place today. This plan starts ${effectiveDate}.` : `This plan starts ${effectiveDate}.`}
           </p>
         )}
 
-        {Array.isArray(plan.programReconciliation) && (
+        {!reviewOnly && Array.isArray(plan.programReconciliation) && (
           <section className="mt-4 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <h3 className="text-sm font-black">Your complete schedule</h3>
             <p className="mt-2 text-sm">{plan.weeks?.length || 0} weeks through {displayDate(plan.programContract?.end_date)}. Review each weekly run and lift count before accepting.</p>
@@ -162,6 +168,20 @@ export default function PlanCandidateDecisionSheet() {
             ))}
           </section>
         )}
+        {reviewOnly && (
+          <section className="mt-4 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <h3 className="text-sm font-black">Seven-day candidate</h3>
+            {sessions.length ? <>
+              <p className="mt-2 text-sm">{displayDate(sessions[0].scheduled_local_date)}–{displayDate(sessions.at(-1).scheduled_local_date)}. Targets below come from this candidate.</p>
+              {sessions.map(session => <article key={session.session_id} className="mt-4 text-sm">
+                <p className="font-bold">{displayDate(session.scheduled_local_date)} · {previewLabel(session.role, 'Training session')}</p>
+                <p>{String(session.title || '').includes('_') ? 'Planned training' : session.title}</p>
+                <ul className="mt-2 space-y-1">{previewSteps(session.steps).map((step, index) => <li key={index}>{step}</li>)}</ul>
+                <p className="mt-2" style={{ color: 'var(--text-muted)' }}>{previewLabel(session.purpose_reason_codes?.[0])}</p>
+              </article>)}
+            </> : <p className="mt-2 text-sm">This preview is unavailable or out of date. Generate a fresh preview to review its sessions. Your current plan stays unchanged.</p>}
+          </section>
+        )}
         {reasons.length > 0 && (
           <div className="mt-4 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-black uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>What Forged checked</p>
@@ -169,7 +189,7 @@ export default function PlanCandidateDecisionSheet() {
               {reasons.map((reason) => (
                 <li key={reason} className="flex gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
                   <Check size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
-                  <span>{String(reason).replaceAll('_', ' ')}</span>
+                  <span>{reviewOnly ? previewLabel(reason) : String(reason).replaceAll('_', ' ')}</span>
                 </li>
               ))}
             </ul>

@@ -3000,6 +3000,8 @@ function buildDeterministicCandidate(context, options) {
 
 function publicCandidatePayload(candidate) {
   const plan = candidate.plan;
+  const adaptivePreview = plan?.engineVersion === 'adaptive-joint-solver-v1'
+    && candidate.surfaceManifest?.feature_mode === 'preview';
   return {
     candidate: {
       candidate_hash: candidate.candidateHash,
@@ -3013,7 +3015,7 @@ function publicCandidatePayload(candidate) {
     candidate_hash: candidate.candidateHash,
     candidate_id: candidate.id,
     effective_from: candidate.effectiveFrom,
-    generation_source: 'race_plan_candidate_engine',
+    generation_source: adaptivePreview ? 'adaptive-joint-solver-v1' : 'race_plan_candidate_engine',
     choice: candidate.choice || 'train_for_target',
     replaces_active_plan: Boolean(candidate.replacesActivePlan),
     plan: {
@@ -3023,7 +3025,7 @@ function publicCandidatePayload(candidate) {
       plan_json: plan,
       preview: true,
     },
-    requires_apply: true,
+    requires_apply: !adaptivePreview,
     ...(candidate.applyBindings ? { apply_bindings: candidate.applyBindings } : {}),
     ...(candidate.surfaceManifest ? { surface_manifest: candidate.surfaceManifest } : {}),
   };
@@ -6989,6 +6991,9 @@ async function previewRaceRemovalForUser(userId, raceId, body = {}) {
   );
   return {
     ...publicCandidatePayload(candidate),
+    // Removal uses this flag to distinguish a linked-plan operation from direct deletion.
+    // Keep its existing apply gate even when the candidate itself is review-only.
+    requires_apply: true,
     impact: 'active_plan_rebuild',
     removal: { race_id: raceId, remaining_race_ids: state.impact.remainingRaceIds },
   };
@@ -9997,6 +10002,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router.clearActivePlanForUser = clearActivePlanForUser;
 
 router._test = {
+  publicCandidatePayload,
   recordActivityMeasurement,
   buildAdaptationInputs,
   buildCurrentAdaptationProposal,

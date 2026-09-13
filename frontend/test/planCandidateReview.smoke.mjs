@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { adaptivePreviewPublicFixture, adaptivePreviewNow } from './fixtures/adaptivePreviewPublic.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
@@ -38,6 +39,27 @@ assert.equal(await requestPlanCandidateReview({ candidate_id: 'candidate-1' }), 
 assert.deepEqual(reviewed, { candidate_id: 'candidate-1' })
 unregister()
 await assert.rejects(requestPlanCandidateReview({}), (error) => error?.code === 'PLAN_REVIEW_UNAVAILABLE')
+
+// Supported first candidates must still review; a hostile reviewer cannot apply.
+for (const marker of [
+  { apply_bindings: { feature_mode: 'preview' } },
+  { surface_manifest: { feature_mode: 'preview', authoritative_engine: 'adaptive-joint-solver-v1' } },
+  { plan: { plan_data: { engineVersion: 'adaptive-joint-solver-v1', overall_feasibility: 'supported' } } },
+]) {
+  const preview = { requires_apply: false, candidate_id: 'adaptive', candidate_hash: 'hash',
+    plan: { plan_data: { overall_feasibility: 'supported' } }, ...marker }
+  let reviews = 0, applies = 0
+  const stop = registerPlanCandidateReviewer(async () => { reviews++; return 'apply' })
+  assert.equal(planCandidateRequiresReview(preview), true)
+  await assert.rejects(reviewPlanCandidateBeforeApply(preview, () => { applies++ }), isPlanCandidateReviewCancelled)
+  const post = api.post
+  api.post = async (url) => { if (url.includes('/apply')) applies++; return { data: preview } }
+  try { await assert.rejects(previewAndApplyPlan('/preview'), isPlanCandidateReviewCancelled) }
+  finally { api.post = post; stop() }
+  assert.equal(reviews, 2)
+  assert.equal(applies, 0)
+}
+assert.equal(planCandidateRequiresReview({ candidate: { status: 'preview', plan_data: { overall_feasibility: 'supported' } } }), false)
 
 const cancellation = new PlanCandidateReviewCancelled('cancel')
 assert.equal(isPlanCandidateReviewCancelled(cancellation), true)
@@ -200,4 +222,35 @@ for (const page of ['Onboarding.jsx', 'Plan.jsx', 'PlanCatalog.jsx', 'Races.jsx'
   assert.match(read(`frontend/src/pages/${page}`), /isPlanCandidateReviewCancelled\(err\)/, `${page} treats an athlete cancellation as a non-error`)
 }
 
-console.log('PLAN CANDIDATE REVIEW SMOKE OK (runtime preview/apply/read-back covered)')
+
+// Read-only projection must reject missing, stale and mismatched canonical manifests.
+const { adaptivePreviewSessions, previewSteps } = await import('../src/lib/adaptivePreviewView.js')
+const payload = structuredClone(adaptivePreviewPublicFixture)
+const now = Date.parse(adaptivePreviewNow)
+assert.equal(adaptivePreviewSessions(payload, now).length, 7)
+assert.equal(adaptivePreviewSessions({ ...payload, surface_manifest: null }, now).length, 0)
+assert.equal(adaptivePreviewSessions(payload, Date.parse('2026-09-16')).length, 0)
+assert.equal(adaptivePreviewSessions({ ...payload, candidate_hash: 'wrong' }, now).length, 0)
+const staleBinding = structuredClone(payload)
+staleBinding.apply_bindings.athlete_state_revision++
+assert.equal(adaptivePreviewSessions(staleBinding, now).length, 0)
+const unknown = structuredClone(payload)
+unknown.plan.plan_data.overall_feasibility = 'unsupported'
+unknown.surface_manifest.feasibility.status = 'unsupported'
+assert.equal(adaptivePreviewSessions(unknown, now).length, 0)
+const drift = structuredClone(payload)
+drift.surface_manifest.sessions[0].steps[0].target.duration_s++
+assert.equal(adaptivePreviewSessions(drift, now).length, 0)
+const unsupported = structuredClone(payload)
+unsupported.surface_manifest.status = 'unsupported'
+assert.equal(adaptivePreviewSessions(unsupported, now).length, 0)
+assert.ok(previewSteps(payload.surface_manifest.sessions[0].steps).some(text => text.includes('975') || text.includes('16 min 15 sec')))
+assert.deepEqual(previewSteps([{ type: 'UNKNOWN_STEP', target: { UNKNOWN_TARGET: 100 }, children: [] }]), ['Training step'])
+
+for (const mode of ['off', 'shadow', 'on']) {
+  assert.equal(planCandidateRequiresReview({ candidate: { status: 'preview' },
+    surface_manifest: { feature_mode: mode, status: 'preview' },
+    plan: { plan_data: { overall_feasibility: 'supported', engineVersion: 'adaptive-joint-solver-v1' } } }), false)
+}
+
+console.log('PLAN CANDIDATE REVIEW SMOKE OK (runtime preview/apply/read-back and unconditional canonical projection covered)')
