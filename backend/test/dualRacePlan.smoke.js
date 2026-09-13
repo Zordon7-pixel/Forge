@@ -2140,7 +2140,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     }, {
       store: false,
       goalBackwardDependencies: {
-        mode: 'preview',
+        mode: 'on',
         cohortRefs: [goalBackwardTargetRef(ownerId)],
         alertEntries: [],
         telemetrySink: (entry) => eligibilityTelemetry.push(entry),
@@ -2155,9 +2155,20 @@ async function checkHyroxCandidateImmediateAdoption() {
       EVIDENCE_MISSING: { pass: 0, fail: 1 },
     });
     assert.equal(eligibilityTelemetry[0].event_type, 'mode_resolution');
-    assert.equal(eligibilityTelemetry[0].mode, 'preview');
+    assert.equal(eligibilityTelemetry[0].mode, 'on');
     assert.equal(eligibilityTelemetry[0].outcome, 'candidate_rejected');
     assert.equal(eligibilityTelemetry[0].surface_capability, 'BLOCKED');
+    // Classic construction assertions below remain on the unchanged ON path.
+    // Adaptive PREVIEW requires physical source acquisition; this legacy mock
+    // has no authenticated adaptive foundation and must never fall back to it.
+    await assert.rejects(() => plansRouter._test.previewPlanForUser(ownerId, {
+      ...requestClock, race_ids: ['hyrox', 'army'],
+      target: { trainingDays: ['Tue','Thu','Sat','Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+    }, { goalBackwardDependencies: { mode: 'preview', cohortRefs: [goalBackwardTargetRef(ownerId)],
+      telemetrySink: entry => eligibilityTelemetry.push(entry) } }),
+    error => error.code === 'GOAL_BACKWARD_GENERATION_FAILED');
+    assert.equal(candidates.size,currentCandidateCountBeforeIneligible);
+    assert.equal(eligibilityTelemetry.at(-1).surface_capability,'BLOCKED');
     const candidateCountBeforeForcedFailure = candidates.size;
     const artifactCountBeforeForcedFailure = planningArtifacts.size;
     const activePlanBeforeForcedFailure = currentAssignment().id;
@@ -2168,7 +2179,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
       }, {
         goalBackwardDependencies: {
-          mode: 'preview',
+          mode: 'on',
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           enumerateCandidates: () => { throw new Error('synthetic forced v2.4 construction failure'); },
@@ -2220,7 +2231,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       }, {
         store: false,
         goalBackwardDependencies: {
-          mode: 'preview',
+          mode: 'on',
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           inspectDecision: (result) => { beginnerResult = result; },
@@ -2257,7 +2268,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       }, {
         store: false,
         goalBackwardDependencies: {
-          mode: 'preview',
+          mode: 'on',
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           inspectDecision: (result) => { moderateResult = result; },
@@ -2294,7 +2305,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         }, {
           store: false,
           goalBackwardDependencies: {
-            mode: 'preview',
+            mode: 'on',
             cohortRefs: [goalBackwardTargetRef(ownerId)],
             alertEntries: [],
             inspectDecision: (result) => { sweepResult = result; },
@@ -2338,7 +2349,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       }, {
         store: false,
         goalBackwardDependencies: {
-          mode: 'preview',
+          mode: 'on',
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           inspectDecision: (result) => { missingProjectionEvidenceResult = result; },
@@ -2396,7 +2407,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       }, {
         store: false,
         goalBackwardDependencies: {
-          mode: 'preview',
+          mode: 'on',
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           inspectDecision: (result) => { threeDayProductionShape = result; },
@@ -2414,7 +2425,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       }, {
         store: false,
         goalBackwardDependencies: {
-          mode: 'preview',
+          mode: 'on',
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           inspectDecision: (result) => { remainingArmyProductionShape = result; },
@@ -2487,7 +2498,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         },
       }, {
         goalBackwardDependencies: {
-          mode: 'preview',
+          mode: 'on',
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           sourceRevision: 'd4169340b99469895372dd45ef6505c4e25d049e',
@@ -2667,7 +2678,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.ok(onResult.search_diagnostics.expanded_node_count <= MAX_GOAL_BACKWARD_SEARCH_NODES);
     assert.ok(onResult.search_diagnostics.generated_leaf_count <= MAX_GOAL_BACKWARD_SEARCH_FRONTIER);
     const authorizedRow = candidates.get(authorizedPreview.id);
-    assert.equal(authorizedRow.feature_mode, 'preview');
+    assert.equal(authorizedRow.feature_mode, 'on');
     assert.equal(authorizedRow.engine_version, 'goal-backward-coaching-v2.4');
     assert.ok(authorizedRow.decision_id);
     assert.ok(Number(authorizedRow.athlete_state_revision) >= 1);
