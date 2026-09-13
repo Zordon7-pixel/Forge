@@ -27,7 +27,7 @@ function ownedEventEntries(foundation, material = []) {
     }
     const objective = `objective-event-${canonicalHash(session.event_identity).slice(0, 24)}`;
     return { selection_id: `adaptive-event-${canonicalHash(session.event_identity).slice(0, 24)}`,
-      objective_ids: [objective], requirement_id: objective, role: 'PRIMARY_KEY', priority_score: 3000,
+      objective_ids: [objective], requirement_id: objective, role: 'PRIMARY_KEY', priority_score: 3000 + ({ A: 30, B: 20, C: 10 }[goal.priority] || 0),
       workout_family: 'race', progression_family: null, duration_s: session.derived_totals.duration_s,
       distance_m: session.derived_totals.distance_m, quality_work_s: null,
       fixed_date: goal.event_local_date, event_identity: clone(session.event_identity), canonical_steps: clone(session.steps),
@@ -37,6 +37,43 @@ function ownedEventEntries(foundation, material = []) {
   });
   if (new Set(entries.map(e => e.event_identity.goal_id)).size !== entries.length) throw new Error('Duplicate event prescription');
   return entries;
+}
+// Server-owned, effort-only road event factory. A measured ordinary running
+// pace estimates scheduling time only, never target pace or goal achievability.
+function buildOwnedEventMaterial(foundation) {
+  const { materializeCanonicalSession } = require('./canonicalWorkout');
+  const { buildAdaptiveWorkoutMaterial } = require('./adaptiveCoachingWorkouts');
+  const state = foundation.athlete_state, snapshot = foundation.artifacts[0].payload_json;
+  const observations = snapshot.canonical_activities.filter(a => a.activity_kind === 'run'
+    && a.quality_state === 'COMPLETE' && a.distance_m > 0 && a.duration_s > 0
+    && Date.parse(a.observed_at) <= Date.parse(snapshot.created_at)
+    && (a.local_activity_date || a.observed_at.slice(0, 10)) < state.planning_date_local
+    && (a.local_activity_date || a.observed_at.slice(0, 10)) >= addDays(state.planning_date_local, -28)
+    && a.duration_s * 1609.344 / a.distance_m >= 180 && a.duration_s * 1609.344 / a.distance_m <= 2400);
+  if (!observations.length) return [];
+  const paces = observations.map(a => a.duration_s / a.distance_m).sort((a, b) => a - b);
+  const pace = paces[Math.floor(paces.length / 2)];
+  return foundation.decision.goal_gap.map(g => g.goal).filter(g => g.planning_eligible && g.race_id
+    && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(g.event_kind) && g.distance_miles > 0
+    && g.event_local_date >= state.planning_date_local && g.event_local_date <= addDays(state.planning_date_local, 6)).map(goal => {
+    const distance = Math.round(goal.distance_miles * 1609.344), seconds = Math.ceil(distance * pace) + 600;
+    const entry = { selection_id: `owned-event-${canonicalHash(goal).slice(0, 24)}`, workout_family: 'race',
+      objective_ids: ['owned-event-source'], progression_family: null, duration_s: seconds, distance_m: distance,
+      quality_work_s: null, event_identity: Object.fromEntries(EVENT_KEYS.map(k => [k, goal[k]])),
+      dose_basis: { policy_id: 'adaptive-observed-dose-v1', authority: 'OWNED_EVENT_PRESCRIPTION',
+        source_evidence_ids: [...new Set(observations.flatMap(a => a.evidence_ids))] }, reason_codes: ['WEEKLY_OBJECTIVE_REQUIRED'] };
+    const material = buildAdaptiveWorkoutMaterial(entry, foundation.decision, snapshot.created_at);
+    // Registered race distance belongs wholly to WORK. Easy bookend meters are
+    // future dose estimated from observed pace, never observed event distance.
+    for (const step of material.source_session.adaptive_prescription.steps) {
+      if (step.step_role === 'WORK') step.target.distance_m = distance;
+      else step.target.distance_m = Math.floor(step.target.duration_s / pace);
+    }
+    return materializeCanonicalSession({ decision: { ...foundation.decision, active_goals: [goal] },
+      source: material.source_session, skeleton: { session_id: entry.selection_id, workout_family: 'race',
+        role: 'PRIMARY_KEY', scheduled_local_date: goal.event_local_date },
+      planning_instant: snapshot.created_at, timezone: state.timezone });
+  });
 }
 function strengthVariants(entry) {
   if (!entry.exercises) return [entry];
@@ -130,4 +167,4 @@ function observedHybridEntry(objective, pairs, state, eventKind) {
       observed_duration_s: observation.observed_duration_s, observed_running_distance_m: observation.observed_running_distance_m ?? null,
       progression: 'HOLD_VERIFIED_STATION_DOSE' }, reason_codes: objective.reason_codes };
 }
-module.exports = { ownedEventEntries, strengthVariants, timedStructure, observedTargetInputs, observedHybridEntry };
+module.exports = { buildOwnedEventMaterial, ownedEventEntries, strengthVariants, timedStructure, observedTargetInputs, observedHybridEntry };

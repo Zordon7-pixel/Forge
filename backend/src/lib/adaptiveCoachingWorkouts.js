@@ -6,7 +6,7 @@ function buildAdaptiveWorkoutMaterial(entry, decision, planningInstant) {
   const id = entry.selection_id, family = entry.workout_family;
   const provenance = units => [{ source_evidence_ids: entry.dose_basis.source_evidence_ids,
     derived_athlete_state_field: entry.dose_basis.source_evidence_ids.length ? entry.dose_basis.authority : 'UNKNOWN_RAW_EVIDENCE_REFS_STATE_WEEKLY_AGGREGATE', policy_id: entry.dose_basis.policy_id,
-    policy_version: 1, confidence: entry.dose_basis.source_evidence_ids.length ? 'MEDIUM' : 'LOW',
+    policy_version: 1, confidence: entry.dose_basis.confidence ?? (entry.dose_basis.source_evidence_ids.length ? 'MEDIUM' : 'LOW'),
     derived_at: planningInstant, decision_id: decision.decision_id, canonical_units: units }];
   const target = (f, seconds, distance) => {
     // RPE is the conservative canonical resolver fallback. Requested goal pace

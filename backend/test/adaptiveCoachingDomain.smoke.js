@@ -6,7 +6,7 @@ const { buildCanonicalSession, materializeCanonicalSession, validateCanonicalSes
 const { buildAdaptiveWorkoutMaterial } = require('../src/lib/adaptiveCoachingWorkouts');
 const clone = value => JSON.parse(JSON.stringify(value));
 let checks = 0;
-function test(name, fn) { fn(); console.log(`ok - ${name}`); checks++; }
+function test(name, fn) { if (require.main !== module) return; fn(); console.log(`ok - ${name}`); checks++; }
 function valid(result) {
   assert.ok(result.selected_candidate, JSON.stringify({ deferred: result.deferred_objectives, tested: result.search.tested_candidates, rejects: result.search.rejection_counts }));
   assert.equal(result.selected_candidate.validation.valid, true);
@@ -234,4 +234,5 @@ test('verified canonical HYROX cluster preserves official graph and fails outsid
   const wrongFormat = clone(input); wrongFormat.goals[0].event_kind = 'HYROX_DOUBLES';
   assert.equal(buildAdaptiveCoachingCandidate({ foundationInput: wrongFormat, availability }).selected_candidate, null);
 });
-console.log(`${checks} adaptive domain assertion groups passed`);
+if (require.main === module) console.log(`${checks} adaptive domain assertion groups passed`);
+module.exports = { roadInput, raceMaterial, hybridInput, establishDimensions };

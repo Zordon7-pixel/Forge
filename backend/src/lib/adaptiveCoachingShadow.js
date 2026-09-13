@@ -31,13 +31,13 @@ function diagnose(sink, code) {
   if (typeof sink === 'function') { try { sink(payload); } catch { diagnose(null, 'DIAGNOSTIC_SINK_FAILED'); } }
   return payload;
 }
-function observedBinding(state, source) {
+function observedBinding(state, source, { accepted = null, acceptedReason = null } = {}) {
   return hash({ input_hash: state.inputHash, revision: state.planningInputRevision,
-    constraints: state.planningConstraints, active: state.active, canonical: state.activeCanonicalCarryForwardSource,
+    constraints: state.planningConstraints, accepted, acceptedReason,
     snapshot: source?.snapshot?.canonical_hash ?? null, source_failed: source?.sourceFailed ?? true,
     links: (source?.rawRuns || []).map(r => [r.id, r.plan_session_id ?? null, r.planned_session_json ?? null]) });
 }
-function sameObserved(prepared, state, source) { return prepared.observed_binding === observedBinding(state, source); }
+function sameObserved(prepared, state, source, authenticated) { return prepared.observed_binding === observedBinding(state, source, authenticated); }
 function midnight(date, timezone) {
   let instant = Date.parse(`${date}T00:00:00Z`);
   for (let i = 0; i < 4; i++) {
@@ -74,6 +74,10 @@ function completionPairs(source, accepted, state, userId) {
       observed_duration_s: activity.duration_s, observed_distance_m: activity.distance_m,
       // Whole-activity totals cannot establish work-segment or strength-set execution.
       observed_work_duration_s: null,
+      // Reuse reconciled measurement provenance, never prescribed HR zones.
+      observed_avg_heart_rate_bpm: activity.heart_rate_resolution?.quality_state === 'COMPLETE'
+        ? activity.heart_rate_resolution.value : null,
+      heart_rate_resolution: activity.heart_rate_resolution ?? null,
     } };
   });
 }
@@ -108,23 +112,27 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
   const availability = { run: [], lift: [], occupied_sessions: occupied };
   for (let i = 0; i < 7; i++) {
     const date = addDays(start, i), a = midnight(date, snapshot.timezone), b = midnight(addDays(date, 1), snapshot.timezone);
-    // Date preferences are all-day capacity. Midnight is a deterministic internal
-    // placement choice, not an athlete-authored appointment. DST-long dates defer.
-    if (b - a > 86400000) fail('OCCUPANCY_UNAVAILABLE');
+    // Bounded within-day alternatives are internal placements, not appointments.
+    // Elapsed-time offsets keep both DST transitions valid; every interval stays
+    // within its true local date and the unchanged <=24-hour validator bound.
+    const captured = Date.parse(snapshot.created_at);
     for (const modality of ['run', 'lift']) {
       const days = modality === 'run' ? state.target.trainingDays : state.target.liftEligibleWeekdays;
-      if ((days || []).includes(weekday(date)) && a >= Date.parse(snapshot.created_at)) {
-        availability[modality].push({ start_at: new Date(a).toISOString(), end_at: new Date(b).toISOString() });
+      if (!(days || []).includes(weekday(date))) continue;
+      const starts = [...new Set([6, 17].map(hour => Math.max(a + hour * 3600000, captured)))];
+      for (const startAt of starts) if (startAt < b && b - startAt <= 86400000) {
+        availability[modality].push({ start_at: new Date(startAt).toISOString(), end_at: new Date(b).toISOString() });
       }
     }
   }
-  return freeze({ foundation, availability, blockedReason, observed_binding: observedBinding(state, source),
+  return freeze({ foundation, availability, blockedReason, observed_binding: observedBinding(state, source, { accepted, acceptedReason }),
     binding: { input_hash: state.inputHash, planning_input_revision: state.planningInputRevision,
       lock_revision: constraints.lock_revision, edit_revision: constraints.edit_revision,
       constraint_fingerprint: constraints.constraint_fingerprint },
-    window_policy: 'date-capacity-midnight-v1' });
+    window_policy: 'phone-instant-date-capacity-two-placements-v2' });
 }
-function compute(prepared) { if (prepared.blockedReason) fail(prepared.blockedReason); return buildAdaptiveCoachingCandidate({ foundation: prepared.foundation, availability: prepared.availability }); }
+function compute(prepared) { if (prepared.blockedReason) fail(prepared.blockedReason); return buildAdaptiveCoachingCandidate({ foundation: prepared.foundation, availability: prepared.availability,
+  domain: { event_material: require('./adaptiveCoachingDomain').buildOwnedEventMaterial(prepared.foundation) } }); }
 function artifactsFor({ userId, candidateId, currentCandidateHash, prepared, result, comparison }) {
   const artifacts = [];
   for (const input of result.artifacts) {

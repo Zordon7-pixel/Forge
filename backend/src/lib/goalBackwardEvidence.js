@@ -1029,6 +1029,7 @@ function canonicalizeRunLoadInput({
   includeActivitySources = false,
   captureSnapshot = null,
   snapshotEvidence = null,
+  snapshotPlanningInstant = null,
 } = {}) {
   const snapshot = buildEvidenceSnapshot({
     athleteId,
@@ -1040,7 +1041,12 @@ function canonicalizeRunLoadInput({
     lifts: snapshotEvidence?.lifts || [],
     checkIns: snapshotEvidence?.checkIns || [],
   });
-  if (typeof captureSnapshot === 'function') captureSnapshot(snapshot);
+  // Legacy load identity retains its established date-end projection. The shared
+  // adaptive snapshot uses the single accepted request instant, without changing
+  // the legacy load/candidate hash contract or issuing another database read.
+  if (typeof captureSnapshot === 'function') captureSnapshot(snapshotPlanningInstant === null ? snapshot
+    : buildEvidenceSnapshot({ athleteId, planningInstant: snapshotPlanningInstant, timezone, runs,
+      providerCoverage, corrections, lifts: snapshotEvidence?.lifts || [], checkIns: snapshotEvidence?.checkIns || [] }));
   const localPlanningDate = planningDateLocal || snapshot.planning_date_local;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(localPlanningDate || ''))) {
     throw new Error('canonicalizeRunLoadInput requires a valid planning local date');

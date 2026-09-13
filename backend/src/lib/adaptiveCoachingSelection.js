@@ -40,14 +40,26 @@ function floorFor(family, state) {
   }
   return Infinity;
 }
-function strengthPool(state, pairs, taper) {
-  const rows = pairs.filter(p => isStrength(p.prescribed_session.workout_family));
+function strengthPool(state, pairs, taper, evidence) {
+  // Duration/checkbox success cannot prove working sets. The existing observed
+  // lift envelope can cap total future sets, but not per-exercise execution.
+  const measuredSets = pair => {
+    const raw = evidence.find(e => e.evidence_id === pair.observation.evidence_id);
+    return raw?.truth_class === 'OBSERVED' && raw.quality_state === 'COMPLETE'
+      && raw.value?.activity_kind === 'lift' && Number.isSafeInteger(raw.value.sets)
+      && raw.value.sets > 0 ? raw.value.sets : null;
+  };
+  const rows = pairs.filter(p => isStrength(p.prescribed_session.workout_family) && measuredSets(p) !== null)
+    .filter((p, i, all) => all.findIndex(q => q.observation.evidence_id === p.observation.evidence_id) === i);
   const week = rows.map(p => mondayFor(p.observation.observed_at.slice(0, 10))).sort().at(-1);
   const latest = rows.filter(p => mondayFor(p.observation.observed_at.slice(0, 10)) === week);
   const byExercise = new Map();
   for (const pair of latest) for (const step of pair.prescribed_session.steps.filter(s => s.type === 'strength_exercise')) {
     const e = exerciseFromStep(step);
     if (!e) continue;
+    const selectedTotal = pair.prescribed_session.steps.filter(s => s.type === 'strength_exercise').reduce((n, s) => n + s.target.sets, 0);
+    e.sets = Math.floor(e.sets * Math.min(1, measuredSets(pair) / selectedTotal));
+    if (e.sets < 2) continue;
     const prior = byExercise.get(e.name);
     if (prior) prior.sets += e.sets;
     else byExercise.set(e.name, e);
@@ -67,7 +79,8 @@ function strengthPool(state, pairs, taper) {
     exercises = exercises.map(e => ({ ...e, sets: Math.floor(e.sets * 0.5), rpe: '6-7' })).filter(e => e.sets >= 2);
   }
   return { exercises, observed, evidence_ids: latest.map(p => p.observation.evidence_id).filter(Boolean),
-    basis: observed ? 'OBSERVED_COMPLETED_WEEK_STRENGTH' : 'EXISTING_MINIMUM_MAINTENANCE_POLICY', week };
+    basis: observed ? 'OBSERVED_TOTAL_SET_CAP_FUTURE_DISTRIBUTION' : 'EXISTING_MINIMUM_MAINTENANCE_POLICY',
+    confidence: observed ? 'LOW' : 'INSUFFICIENT', individual_exercise_completion_verified: false, week };
 }
 function partitionStrength(pool, count) {
   // Two distinct exercises with >=2 sets each in every admitted partition.
@@ -104,6 +117,7 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
   let runDistance = recent.median_distance_m === null ? null : Math.floor(recent.median_distance_m * gapRatio);
   const observedRuns = (foundation.artifacts[0].payload_json.canonical_activities || []).filter(a => a.activity_kind === 'run'
     && a.quality_state === 'COMPLETE' && Number.isFinite(a.duration_s) && a.duration_s > 0
+    && Date.parse(a.observed_at) <= Date.parse(foundation.artifacts[0].payload_json.created_at)
     && daysBetween(a.local_activity_date || a.observed_at.slice(0, 10), state.planning_date_local) >= 0
     && daysBetween(a.local_activity_date || a.observed_at.slice(0, 10), state.planning_date_local) <= 28);
   let recentExposure = null;
@@ -116,9 +130,27 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
       runBudget = Math.floor(observedSeconds * factor);
     }
   }
+  let lowerBoundSeed = null;
+  if (observedSeconds === null && recent.status !== 'TRAINING_GAP'
+    && !['BEGINNER', 'RETURNING'].includes(state.training_age_class)) {
+    // A forward prescription cap, not a complete-week observation or an
+    // established fitness baseline. Use the smaller of the observed recent
+    // seven days and the 28-day weekly average; never extrapolate missing days.
+    const recentRuns = observedRuns.filter(a => daysBetween(a.local_activity_date || a.observed_at.slice(0, 10), state.planning_date_local) < 7);
+    const sum = (rows, key) => rows.reduce((n, a) => n + (Number.isFinite(a[key]) ? a[key] : 0), 0);
+    const seconds = Math.floor(Math.min(sum(recentRuns, 'duration_s'), sum(observedRuns, 'duration_s') / 4));
+    if (seconds > 0) {
+      lowerBoundSeed = { duration_s: seconds, confidence: 'LOW', coverage_state: 'UNKNOWN',
+        source_evidence_ids: [...new Set(observedRuns.flatMap(a => a.evidence_ids))] };
+      observedSeconds = seconds;
+      runDistance = observedRuns.every(a => Number.isFinite(a.distance_m))
+        ? Math.floor(Math.min(sum(recentRuns, 'distance_m'), sum(observedRuns, 'distance_m') / 4)) : null;
+      runBudget = Math.floor(seconds * factor);
+    }
+  }
   const durations = observedRuns.map(a => a.duration_s).sort((a, b) => a - b);
   const typicalObservedRun = durations.length ? durations[Math.floor((durations.length - 1) / 2)] : 0;
-  const pool = strengthPool(state, pairs, taper);
+  const pool = strengthPool(state, pairs, taper, foundation.artifacts[0].payload_json.evidence);
   if (pool.observed && !taper) pool.exercises = pool.exercises.map(e => {
     const family = canonicalStrengthExercise(e).region === 'upper' ? 'strength_upper' : 'strength';
     const action = base.weekly_objectives.progression.find(p => p.family === family)?.action;
@@ -147,7 +179,7 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
     }
   }
   const weeklyContent = { ...clone(base.weekly_objectives), objectives, owned_events: base.goal_gap.map(g => g.goal).filter(g => g.planning_eligible),
-    dose_policy: { policy_id: POLICY, running_duration_ceiling_s: runBudget,
+    dose_policy: { policy_id: POLICY, forward_lower_bound_seed: lowerBoundSeed, running_duration_ceiling_s: runBudget,
       running_distance_ceiling_m: Number.isFinite(runDistance) ? Math.floor(runDistance * factor) : null,
       taper_event_policy_id: taper ? policy?.event_policy_id ?? null : null,
       running_factor: factor, strength: pool } };
@@ -244,13 +276,29 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
       progression_family: progressionFamilyFor(family), progression, duration_s: seconds, distance_m: distance,
       quality_work_s: qualitySeconds,
       ...(qualitySeconds !== null ? { completed_prescription_structure: timedStructure(prior), structure_work_scale: structureScale } : {}),
-      target_inputs: observedTargetInputs(pairs, family), dose_basis: { policy_id: POLICY, authority: recentExposure ? 'OBSERVED_RECENT_SINGLE_EXPOSURE_CAP' : 'OBSERVED_WEEKLY_RUNNING',
-        observed_weekly_duration_s: recentExposure ? null : observedSeconds,
+      target_inputs: observedTargetInputs(pairs, family), dose_basis: { policy_id: POLICY, authority: recentExposure ? 'OBSERVED_RECENT_SINGLE_EXPOSURE_CAP' : lowerBoundSeed ? 'OBSERVED_LOWER_BOUND_FORWARD_CAP' : 'OBSERVED_WEEKLY_RUNNING',
+        ...(lowerBoundSeed ? { confidence: 'LOW', coverage_state: 'UNKNOWN', forward_duration_cap_s: observedSeconds } : {}),
+        observed_weekly_duration_s: recentExposure || lowerBoundSeed ? null : observedSeconds,
         ...(recentExposure ? { observed_recent_exposure_duration_s: recentExposure.duration_s } : {}), source_evidence_ids: prior ? [prior.observation.evidence_id].filter(Boolean) : recentExposure ? recentExposure.evidence_ids : [...new Set(observedRuns.flatMap(a => a.evidence_ids))],
         taper_factor: factor,
         ...(prior && Number.isFinite(prior.observation.observed_duration_s) && Number.isFinite(prior.observation.observed_work_duration_s) ? { observed_session_duration_s: prior.observation.observed_duration_s,
           observed_work_duration_s: prior.observation.observed_work_duration_s } : {}) }, reason_codes: objective.reason_codes });
     remainingSeconds -= seconds; if (distance !== null) remainingMeters -= distance; runCount++;
+  }
+  // Retain a sub-floor remainder inside an already meaningful easy exposure,
+  // rather than losing useful aerobic dose solely to equal slot division.
+  // This is still unplaced selection, bounded by observed individual duration.
+  for (const entry of [...entries].reverse().filter(e => ['easy_run', 'recovery_run'].includes(e.workout_family))) {
+    if (remainingSeconds >= floorFor(entry.workout_family, state)) continue;
+    const individualCap = Math.min(typicalObservedRun, state.adaptive_foundation.max_session_minutes === null
+      ? Infinity : state.adaptive_foundation.max_session_minutes * 60);
+    const extra = Math.max(0, Math.min(remainingSeconds, individualCap - entry.duration_s));
+    if (!extra) continue;
+    const meters = remainingMeters === null ? null : extra === remainingSeconds ? remainingMeters
+      : Math.min(remainingMeters, Math.floor(extra * runDistance / observedSeconds));
+    entry.duration_s += extra;
+    if (meters !== null) { entry.distance_m += meters; remainingMeters -= meters; }
+    remainingSeconds -= extra;
   }
   const strengthObjective = objectives.find(o => o.candidate_families.some(isStrength));
   if (strengthObjective && !blocked && capacity.lift > 0) {
@@ -264,6 +312,7 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
         workout_family: family, progression_family: progressionFamilyFor(family),
         progression: weekly.progression.find(p => p.family === progressionFamilyFor(family)), exercises,
         dose_basis: { policy_id: POLICY, authority: pool.basis, source_evidence_ids: pool.evidence_ids,
+          confidence: pool.confidence, individual_exercise_completion_verified: false,
           observed_week: pool.week ?? null, withheld_sets: partition.withheld_sets }, reason_codes: strengthObjective.reason_codes });
     });
     if (!partition.parts.length) defer(strengthObjective, 'MEANINGFUL_DOSE_REQUIRED');

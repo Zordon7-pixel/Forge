@@ -2169,7 +2169,7 @@ function confidenceAwareMileageBaseline(rows, runLoadInput, options = {}) {
   };
 }
 
-async function buildConcurrentContext(userId, profile, target, tx = null) {
+async function buildConcurrentContext(userId, profile, target, tx = null, observationInstant = null) {
   const all = tx?.all || dbAll;
   const get = tx?.get || dbGet;
   const planningDateISO = /^\d{4}-\d{2}-\d{2}$/.test(String(target.todayISO || '')) ? target.todayISO : getTodayISO();
@@ -2286,7 +2286,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   };
   let observedSnapshot;
   const runLoadInput = canonicalizeRunLoadInput({ ...loadInputOptions, runs: rawRuns,
-    captureSnapshot: snapshot => { observedSnapshot = snapshot; },
+    captureSnapshot: snapshot => { observedSnapshot = snapshot; }, snapshotPlanningInstant: observationInstant,
     snapshotEvidence: { lifts: legacyLifts, checkIns: evidenceCheckIns.slice(0, 64) } });
   const planningRuns = runLoadInput.canonical_run_rows;
   const performanceLoadInput = canonicalizeRunLoadInput({
@@ -2456,6 +2456,7 @@ function getPlanTargetOptions(target = null) {
   };
 }
 
+const adaptivePlanningInstants = new WeakMap();
 function acceptedPlanningClock(body = {}) {
   const clock = acceptPlanningClock({
     planning_date_local: body.planning_date_local || getTodayISO(),
@@ -2465,6 +2466,7 @@ function acceptedPlanningClock(body = {}) {
   if (!clock.valid) {
     throw candidateError(400, clock.reason, 'Use the current phone date and a valid timezone offset.');
   }
+  adaptivePlanningInstants.set(clock, new Date().toISOString());
   return clock;
 }
 
@@ -2820,7 +2822,7 @@ async function loadCandidateInputState(userId, request, clock, tx) {
   const resolved = races.length
     ? targetFromOwnedRaces(profile, races, request.target, clock.planningDateLocal)
     : targetWithoutOwnedRace(profile, request.target, clock.planningDateLocal);
-  const context = await buildConcurrentContext(userId, profile, resolved.target, tx);
+  const context = await buildConcurrentContext(userId, profile, resolved.target, tx, adaptivePlanningInstants.get(clock) || null);
   const active = await getActivePlanForUser(userId, tx, {
     includeFuture: true,
     planningDateLocal: clock.planningDateLocal,
@@ -6310,24 +6312,26 @@ function emitPlanReleaseTelemetry({
   }
 }
 
+function adaptiveAcceptedInput(userId, state) {
+  if (!state.active) return { accepted: null, acceptedReason: null };
+  try {
+    return { accepted: authenticatedGoalExpansionSessionSet({ userId, state,
+      activeAppliedPlan: goalBackwardActiveAppliedPlan(state, parsePlan(state.active.row)),
+      activeSource: state.activeCanonicalCarryForwardSource }).sessionSet, acceptedReason: null };
+  } catch (error) { return { accepted: null, acceptedReason: adaptiveShadow.reason(error) }; }
+}
+
 function prepareAdaptiveCandidateInput(userId, initial) {
   let prepared = null;
   let adaptiveReason = null;
   try {
-    const source = adaptiveObservedInputs.get(initial.context);
-    let accepted = null;
-    let acceptedReason = null;
-    if (initial.active) {
-      try { accepted = authenticatedGoalExpansionSessionSet({ userId, state: initial,
-        activeAppliedPlan: goalBackwardActiveAppliedPlan(initial, parsePlan(initial.active.row)),
-        activeSource: initial.activeCanonicalCarryForwardSource }).sessionSet;
-      } catch (error) { acceptedReason = adaptiveShadow.reason(error); }
-    }
-    prepared = adaptiveShadow.prepare({ userId, state: initial, source, accepted, acceptedReason,
+    prepared = adaptiveShadow.prepare({ userId, state: initial,
+      source: adaptiveObservedInputs.get(initial.context), ...adaptiveAcceptedInput(userId, initial),
       goals: goalBackwardGoalsForState(userId, initial), trainingAgeClass: goalBackwardTrainingAge(initial.context) });
   } catch (error) { adaptiveReason = adaptiveShadow.reason(error); }
-  // The foundation and the legacy builder consume this same captured input.
-  adaptiveShadow.freeze(initial);
+  // Only the server-built planning DTO is shared with the legacy builder. Raw
+  // accepted DB payloads remain outside this trusted freeze boundary in ALL modes.
+  adaptiveShadow.freeze(initial.context);
   return { prepared, adaptiveReason };
 }
 
@@ -6511,7 +6515,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     const current = await loadCandidateInputState(userId, request, clock, tx);
     if (current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash
       || canonicalHash(current.planningConstraints) !== canonicalHash(initial.planningConstraints)
-      || (prepared && !adaptiveShadow.sameObserved(prepared, current, adaptiveObservedInputs.get(current.context)))) {
+      || (prepared && !adaptiveShadow.sameObserved(prepared, current, adaptiveObservedInputs.get(current.context), adaptiveAcceptedInput(userId, current)))) {
       if (goalBackwardMode === 'shadow') adaptiveShadow.diagnose(goalBackwardDependencies.adaptiveDiagnosticSink, 'STALE_INPUT');
       throw candidateError(409, 'CANDIDATE_STALE', 'Training data changed while the preview was being built. Preview again.');
     }
