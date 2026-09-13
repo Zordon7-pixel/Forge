@@ -32,12 +32,13 @@ function diagnose(sink, code) {
   return payload;
 }
 // Generation-only subjective evidence. Never called by live adaptation or apply.
-async function loadGenerationSource({ tx, userId, planningDateISO, observationInstant }) {
+async function loadGenerationSource({ tx, userId, planningDateISO, observationInstant, timezone }) {
   try {
     const checkIns = await tx.all(`SELECT id, checkin_date, feeling, legs, drive, sleep_hours, time_available, life_flags, created_at
       FROM daily_checkins WHERE user_id=? AND checkin_date>=? AND checkin_date<=?
       ORDER BY checkin_date ASC, id ASC LIMIT 65`, [userId, addDays(planningDateISO, -55), planningDateISO]);
-    return { checkIns: checkIns.slice(0, 64), sourceFailed: checkIns.length > 64, observationInstant };
+    const measured = await require('./adaptiveCoachingSources').loadMeasuredSources({ tx, userId, planningDateISO, observationInstant, timezone });
+    return { checkIns: checkIns.slice(0, 64), measured, sourceFailed: checkIns.length > 64 || measured.sourceFailed, observationInstant };
   } catch {
     console.error('[plans/generate] readiness evidence lookup failed');
     return { checkIns: [], sourceFailed: true, observationInstant };
@@ -137,7 +138,7 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
       }
     }
   }
-  return freeze({ foundation, availability, blockedReason, observed_binding: observedBinding(state, source, { accepted, acceptedReason }),
+  return freeze({ foundation, availability, blockedReason, source_support: require('./adaptiveCoachingSources').sourceSupport(foundation), observed_binding: observedBinding(state, source, { accepted, acceptedReason }),
     binding: { input_hash: state.inputHash, planning_input_revision: state.planningInputRevision,
       lock_revision: constraints.lock_revision, edit_revision: constraints.edit_revision,
       constraint_fingerprint: constraints.constraint_fingerprint },
@@ -153,7 +154,7 @@ function artifactsFor({ userId, candidateId, currentCandidateHash, prepared, res
         observed_binding: prepared.observed_binding, legacy_candidate_hash: currentCandidateHash,
         athlete_state_hash: prepared.foundation.athlete_state.athlete_state_hash,
         evidence_snapshot_hash: prepared.foundation.artifacts[0].content_hash, window_policy: prepared.window_policy },
-      comparison, rest_days: result.rest_days, strength_dose_receipt: result.strength_dose_receipt,
+      comparison, source_support: prepared.source_support, rest_days: result.rest_days, strength_dose_receipt: result.strength_dose_receipt,
       event_execution_deferred: result.event_execution_deferred } : input.payload_json;
     artifacts.push(buildPipelineArtifact({ id: `adaptive-${canonicalHash({ userId, candidateId, kind: input.artifact_kind }).slice(0, 32)}`,
       userId, kind: input.artifact_kind, decisionId: result.decision.decision_id,

@@ -865,6 +865,7 @@ function buildEvidenceSnapshot({
   timezone,
   runs = [],
   lifts = [],
+  physicalSources = null,
   checkIns = [],
   painReports = [],
   illnessReports = [],
@@ -975,6 +976,7 @@ function buildEvidenceSnapshot({
     provider_coverage_intervals: coverage,
     modality_eligibility: modalityEligibility(coverage),
     activity_summary: { value_state: activityValueState, value: activityValue, canonical_unit: 'm' },
+    ...(physicalSources ? { physical_sources: physicalSources } : {}),
     source_row_counts: {
       runs: runRecords.length,
       lifts: Array.isArray(lifts) ? lifts.length : 0,
@@ -1046,7 +1048,8 @@ function canonicalizeRunLoadInput({
   // the legacy load/candidate hash contract or issuing another database read.
   if (typeof captureSnapshot === 'function') captureSnapshot(snapshotPlanningInstant === null ? snapshot
     : buildEvidenceSnapshot({ athleteId, planningInstant: snapshotPlanningInstant, timezone, runs,
-      providerCoverage, corrections, lifts: snapshotEvidence?.lifts || [], checkIns: snapshotEvidence?.checkIns || [] }));
+      providerCoverage, corrections, lifts: snapshotEvidence?.measured?.lifts || snapshotEvidence?.lifts || [],
+      physicalSources: snapshotEvidence?.measured?.receipt || null, checkIns: snapshotEvidence?.checkIns || [] }));
   const localPlanningDate = planningDateLocal || snapshot.planning_date_local;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(localPlanningDate || ''))) {
     throw new Error('canonicalizeRunLoadInput requires a valid planning local date');

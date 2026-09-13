@@ -216,7 +216,9 @@ async function main() {
   assert.deepEqual(db.prepare('SELECT * FROM user_plans WHERE user_id=?').all(OWNER), liveBefore);
   const historical = require('./helpers/adaptiveAcceptedFixture').acceptedFixture(db, OWNER, off.id);
   db.prepare('UPDATE runs SET avg_heart_rate=?,workout_metrics_json=? WHERE id=? AND user_id=?')
-    .run(148, JSON.stringify({ hr_sample_coverage_pct: 96 }), 'linked-actual', OWNER);
+    .run(148, JSON.stringify({ hr_sample_coverage_pct: 96, observed_work_duration_s: 9999,
+      work_segments: [{ step_role: 'WORK', observed_duration_s: 9999, observed_distance_m: 9999 }],
+      observed_station_doses: [{ load_kg: 999 }] }), 'linked-actual', OWNER);
   const acceptedBefore = db.prepare('SELECT * FROM user_plans WHERE user_id=?').all(OWNER);
   await plans.previewPlanForUser(OWNER, request, options('shadow'));
   const pairs = lastPrepared.foundation.athlete_state.adaptive_foundation.completion_pairs;
@@ -228,6 +230,31 @@ async function main() {
   assert.equal(pairs[0].observation.observed_avg_heart_rate_bpm, 148);
   assert.equal(pairs[0].observation.heart_rate_resolution.quality_state, 'COMPLETE');
   assert.deepEqual(db.prepare('SELECT * FROM user_plans WHERE user_id=?').all(OWNER), acceptedBefore);
+  // The actual route's trusted carry-source gate must reject opaque source
+  // objects without evaluating accessors, Proxy traps or coercion hooks.
+  const originalGet = tx.get;
+  let hostileTouches = 0;
+  const touch = () => { hostileTouches++; throw new Error('hostile source evaluated'); };
+  const hostile = [{ artifact_payload_json: new Proxy({}, { get: touch, ownKeys: touch, getOwnPropertyDescriptor: touch, getPrototypeOf: touch }) },
+    Object.defineProperty({}, 'artifact_payload_json', { enumerable: true, get: touch }),
+    { artifact_payload_json: { toJSON: touch, toString: touch, [Symbol.toPrimitive]: touch } }];
+  for (const rejectedSource of hostile) {
+    tx.get = async (sql, params) => sql.includes('SELECT canonical.id AS artifact_id') ? rejectedSource : originalGet(sql, params);
+    const rejectedReads = totalRows('planning_pipeline_artifacts');
+    const rejectedPreview = await plans.previewPlanForUser(OWNER, request, options('shadow'));
+    assert.ok(rejectedPreview.plan);
+    assert.equal(diagnostics.at(-1).reason_code, 'ACCEPTED_SOURCE_UNAVAILABLE');
+    assert.equal(totalRows('planning_pipeline_artifacts'), rejectedReads);
+  }
+  tx.get = originalGet;
+  assert.equal(hostileTouches, 0);
+  // Persisted malformed accepted JSON is also rejected through real SQL.
+  db.prepare('UPDATE planning_pipeline_artifacts SET payload_json=? WHERE id=? AND user_id=?')
+    .run('{}', historical.artifact.id, OWNER);
+  await plans.previewPlanForUser(OWNER, request, options('shadow'));
+  assert.equal(diagnostics.at(-1).reason_code, 'ACCEPTED_SOURCE_UNAVAILABLE');
+  db.prepare('UPDATE planning_pipeline_artifacts SET payload_json=? WHERE id=? AND user_id=?')
+    .run(JSON.stringify(historical.artifact.payload_json), historical.artifact.id, OWNER);
   db.prepare('UPDATE runs SET planned_session_json=? WHERE id=? AND user_id=?').run(
     JSON.stringify({ matchSource: 'explicit_owned_session', content_hash: 'f'.repeat(64) }), 'linked-actual', OWNER);
   await plans.previewPlanForUser(OWNER, request, options('shadow'));

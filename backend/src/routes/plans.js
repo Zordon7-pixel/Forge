@@ -2281,7 +2281,8 @@ async function buildConcurrentContext(userId, profile, target, tx = null, adapti
     ...(adaptiveGenerationSource ? {
       captureSnapshot: snapshot => { observedSnapshot = snapshot; },
       snapshotPlanningInstant: adaptiveGenerationSource.observationInstant,
-      snapshotEvidence: { lifts: legacyLifts, checkIns: adaptiveGenerationSource.checkIns },
+      snapshotEvidence: { lifts: legacyLifts, checkIns: adaptiveGenerationSource.checkIns,
+        measured: adaptiveGenerationSource.measured },
     } : {}),
   });
   const planningRuns = runLoadInput.canonical_run_rows;
@@ -2822,7 +2823,8 @@ async function loadCandidateInputState(userId, request, clock, tx, { adaptiveGen
   // Apply and legacy off/preview/on never acquire subjective planning inputs.
   const adaptiveGenerationSource = adaptiveGeneration
     ? await adaptiveShadow.loadGenerationSource({ tx, userId, planningDateISO: clock.planningDateLocal,
-      observationInstant: adaptivePlanningInstants.get(clock) || null }) : null;
+      observationInstant: adaptivePlanningInstants.get(clock) || null,
+      timezone: isIanaTimezone(profile.timezone) ? profile.timezone : 'UTC' }) : null;
   const context = await buildConcurrentContext(userId, profile, resolved.target, tx, adaptiveGenerationSource);
   const active = await getActivePlanForUser(userId, tx, {
     includeFuture: true,
@@ -6327,7 +6329,9 @@ function prepareAdaptiveCandidateInput(userId, initial) {
   let adaptiveReason = null;
   try {
     prepared = adaptiveShadow.prepare({ userId, state: initial,
-      source: adaptiveObservedInputs.get(initial.context), ...adaptiveAcceptedInput(userId, initial),
+      source: adaptiveObservedInputs.get(initial.context),
+      ...(adaptiveObservedInputs.get(initial.context)?.sourceFailed
+        ? { accepted: null, acceptedReason: 'SOURCE_UNAVAILABLE' } : adaptiveAcceptedInput(userId, initial)),
       goals: goalBackwardGoalsForState(userId, initial), trainingAgeClass: goalBackwardTrainingAge(initial.context) });
   } catch (error) { adaptiveReason = adaptiveShadow.reason(error); }
   // Only the server-built planning DTO is shared with the legacy builder. Raw
