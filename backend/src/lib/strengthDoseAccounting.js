@@ -60,12 +60,16 @@ function strengthPrescribedDose(session, familyVector) {
   if (session.strength_distribution && !require('./distributedStrength').validateDistributedSession(session, null)) return fallback;
   const expectedRegion = session.workout_family === 'strength_upper' ? 'upper'
     : session.workout_family === 'strength_lower' ? 'lower' : null;
-  if (!expectedRegion) return fallback;
+  if (!expectedRegion && session.workout_family !== 'strength_full_body') return fallback;
   let equivalentSets = 0;
+  const regionalSets = { upper: 0, lower: 0 };
   for (const step of steps) {
+    if (session.dose_basis?.policy_id === 'adaptive-observed-dose-v1'
+      && step.type === 'mobility' && Number.isSafeInteger(step.target?.duration_s)
+      && step.target.duration_s > 0) continue;
     const target = step?.target;
     const reference = EXERCISES_BY_ID[step?.exercise_id];
-    if (step?.type !== 'strength_exercise' || step.step_role !== 'WORK' || !reference || reference.region !== expectedRegion
+    if (step?.type !== 'strength_exercise' || step.step_role !== 'WORK' || !reference || (expectedRegion && reference.region !== expectedRegion)
       || !Number.isInteger(target?.sets) || target.sets < 1
       || !Number.isInteger(target.repetitions) || target.repetitions < 1
       || !Number.isFinite(target.rest_s) || target.rest_s <= 0
@@ -74,13 +78,20 @@ function strengthPrescribedDose(session, familyVector) {
       || (target.load_kg !== undefined && (!Number.isFinite(target.load_kg) || target.load_kg < 0))) return fallback;
     // Absolute kg is not comparable across exercises/athletes without a measured
     // capacity denominator. Effort is explicit; kg changes cannot lower stress.
-    equivalentSets += target.sets * Math.max(1, target.repetitions / reference.repetitions)
+    const dose = target.sets * Math.max(1, target.repetitions / reference.repetitions)
       * Math.max(1, target.rpe_range.maximum / REFERENCE.maximumRpe);
+    equivalentSets += dose;
+    regionalSets[reference.region] += dose;
   }
+  if (!equivalentSets) return fallback;
   const factor = equivalentSets / REFERENCE.sets;
+  const fullBodyVector = !expectedRegion ? ['upper', 'lower'].reduce((sum, region) => {
+    const vector = require('./goalBackwardLoad').resolveStressVector(`strength_${region}`);
+    return sum.map((v, i) => v + vector[i] * regionalSets[region] / REFERENCE.sets);
+  }, Array(8).fill(0)) : null;
   return { valid: true, version: VERSION, reference_id: REFERENCE.id, state: 'KNOWN_PRESCRIPTION',
     equivalent_working_sets: equivalentSets,
-    vector: familyVector.map((value) => Math.ceil(value * factor * 1000000) / 1000000) };
+    vector: fullBodyVector || familyVector.map((value) => Math.ceil(value * factor * 1000000) / 1000000) };
 }
 
 function sourceStrengthDose(session, siblings = []) {
