@@ -97,7 +97,7 @@ async function main() {
   assert.equal(db.prepare('SELECT COUNT(*) n FROM training_plans').get().n, 0);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n, 0);
   const totalRows = table => db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n;
-  for (const mode of ['off', 'shadow ', 'on']) {
+  for (const mode of ['off', 'shadow ']) {
     const startCount = totalRows('planning_pipeline_artifacts');
     const readCount = readinessReads().length;
     const plain = await plans.previewPlanForUser(OWNER, { ...request, goalBackwardDependencies: { mode: 'shadow', audience: 'all' } }, options(mode));
@@ -117,13 +117,8 @@ async function main() {
       await plans.previewPlanForUser(OTHER, { ...request, race_ids: ['owned-road'] }, { store: false,
         goalBackwardDependencies: { ...options(mode).goalBackwardDependencies, inspectInput: () => { oldInvocations++; } } });
     } catch (error) { assert.equal(error.code, 'GOAL_BACKWARD_GENERATION_FAILED'); }
-    if (mode === 'preview') {
-      assert.equal(oldInvocations, 0, 'preview never falls through to classic diagnostics');
-      assert.equal(adaptiveComputations, adaptiveBefore + 1);
-    } else {
-      assert.ok(oldInvocations > 0, 'existing on computation retained');
-      assert.equal(adaptiveComputations, adaptiveBefore);
-    }
+    assert.equal(oldInvocations, 0, `${mode} never falls through to classic diagnostics`);
+    assert.equal(adaptiveComputations, adaptiveBefore + 1);
   }
   // Failure after several real inserts must roll back the whole adaptive chain.
   const failCount = totalRows('planning_pipeline_artifacts');

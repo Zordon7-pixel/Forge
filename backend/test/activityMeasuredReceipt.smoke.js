@@ -297,9 +297,9 @@ async function main() {
   let n=0; hooks.beforeTransaction=()=>{ if(++n===2) db.prepare('UPDATE activity_measured_receipts SET created_at=? WHERE user_id=? AND revision=1').run('2026-09-14T11:00:00Z',a.owner); };
   await assert.rejects(plans.previewPlanForUser(a.owner,a.req,options('shadow')),e=>e.code==='CANDIDATE_STALE'); hooks.beforeTransaction=null;
   const before = db.prepare('SELECT COUNT(*) n FROM activity_measured_receipts').get().n;
-  hooks.before=(method,sql)=>{if(method==='all'&&sql.includes('FROM activity_measured_receipts'))throw Error('non-SHADOW acquired measurements');};
-  for (const mode of ['off','on']) await plans.previewPlanForUser(b.owner,b.req,options(mode));
-  await assert.rejects(plans.previewPlanForUser(b.owner,b.req,options('preview')),e=>e.code==='GOAL_BACKWARD_GENERATION_FAILED');
+  hooks.before=(method,sql)=>{if(method==='all'&&sql.includes('FROM activity_measured_receipts'))throw Error('synthetic measurement source failure');};
+  await plans.previewPlanForUser(b.owner,b.req,options('off'));
+  for (const mode of ['preview','on']) await assert.rejects(plans.previewPlanForUser(b.owner,b.req,options(mode)),e=>e.code==='GOAL_BACKWARD_GENERATION_FAILED');
   hooks.before=null;
   assert.equal(db.prepare('SELECT COUNT(*) n FROM activity_measured_receipts').get().n,before);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n,1);
