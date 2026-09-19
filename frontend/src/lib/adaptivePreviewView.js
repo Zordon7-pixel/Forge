@@ -22,9 +22,14 @@ export function adaptivePreviewSessions(preview, now = Date.now()) {
   const binding = preview?.apply_bindings
   const identity = manifest?.identity
   const expires = Date.parse(preview?.candidate?.expires_at)
-  if (manifest?.status !== 'preview' || manifest.feature_mode !== 'preview'
+  const mode = manifest?.feature_mode
+  const capabilityMatches = mode === 'preview'
+    ? manifest.surface_capability === 'PREVIEW_ONLY' && manifest.apply_disabled === true
+    : mode === 'on' && manifest.surface_capability === 'EXECUTABLE' && manifest.apply_disabled === false
+  if (manifest?.status !== 'preview' || !capabilityMatches
     || manifest.authoritative_engine !== 'adaptive-joint-solver-v1'
-    || manifest.surface_capability !== 'PREVIEW_ONLY' || manifest.apply_disabled !== true
+    || (binding?.feature_mode != null && binding.feature_mode !== mode)
+    || (preview?.feature_mode != null && preview.feature_mode !== mode)
     || !['supported', 'stretch', 'unvalidated', 'at_risk'].includes(plan?.plan_data?.overall_feasibility)
     || !binding || binding.candidate_id !== preview.candidate_id
     || hash(binding.candidate_hash) !== hash(preview.candidate_hash)

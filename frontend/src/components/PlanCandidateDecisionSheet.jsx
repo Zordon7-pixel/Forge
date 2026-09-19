@@ -5,6 +5,7 @@ import { activateModalDialog } from '../lib/modalDialog'
 import {
   registerPlanCandidateReviewer,
   isAdaptivePreview,
+  isAdaptiveCandidate,
 } from '../lib/planCandidateReview'
 import { candidateFeasibilityCanApply } from '../lib/planCandidateFeasibility'
 
@@ -100,10 +101,15 @@ export default function PlanCandidateDecisionSheet() {
   const feasibility = String(plan?.overall_feasibility || '').toLowerCase()
   const reasons = Array.isArray(plan?.reasons) ? plan.reasons.slice(0, 3) : []
   const reviewOnly = isAdaptivePreview(preview)
-  const sessions = reviewOnly ? adaptivePreviewSessions(preview) : []
+  const adaptive = isAdaptiveCandidate(preview)
+  const sessions = adaptive || reviewOnly ? adaptivePreviewSessions(preview) : []
   const copy = reviewOnly ? { eyebrow: 'Preview only', title: 'Your adaptive training preview',
-    summary: 'Your current plan stays unchanged. Review this seven-day training preview; it is not a full race program.' } : decisionCopy(feasibility, Array.isArray(plan?.reasons) ? plan.reasons : [])
+    summary: 'Your current plan stays unchanged. Review this seven-day training preview; it is not a full race program.' }
+    : adaptive ? { eyebrow: 'Review before applying', title: 'Your adaptive training plan',
+      summary: 'Review this seven-day plan, not a full race program. Applying replaces your active calendar with these sessions. Your current plan stays unchanged until you approve.' }
+      : decisionCopy(feasibility, Array.isArray(plan?.reasons) ? plan.reasons : [])
   const canApply = candidateFeasibilityCanApply(plan) && !reviewOnly
+    && (!adaptive || sessions.length > 0)
     && !(plan.programReconciliation || []).some(week => !week.valid || week.entries?.some(entry => entry.outcome === 'UNSATISFIABLE'))
   const candidateChoice = ['adjust_goal', 'completion_first'].includes(preview?.choice)
     ? preview.choice : 'train_for_target'
@@ -168,7 +174,7 @@ export default function PlanCandidateDecisionSheet() {
             ))}
           </section>
         )}
-        {reviewOnly && (
+        {(adaptive || reviewOnly) && (
           <section className="mt-4 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <h3 className="text-sm font-black">Seven-day candidate</h3>
             {sessions.length ? <>
@@ -189,7 +195,7 @@ export default function PlanCandidateDecisionSheet() {
               {reasons.map((reason) => (
                 <li key={reason} className="flex gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
                   <Check size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
-                  <span>{reviewOnly ? previewLabel(reason) : String(reason).replaceAll('_', ' ')}</span>
+                  <span>{adaptive || reviewOnly ? previewLabel(reason) : String(reason).replaceAll('_', ' ')}</span>
                 </li>
               ))}
             </ul>

@@ -1,4 +1,4 @@
-// Preview adaptation only. The Phase 1 solver remains the prescription authority.
+// Preview and ON adaptation. The Phase 1 solver remains the prescription authority.
 const { canonicalHash } = require('./racePlanPolicy');
 const { buildCanonicalPlanFromSessionSet } = require('./planSchema');
 const { validateCanonicalSessionSet } = require('./canonicalWorkout');
@@ -7,7 +7,9 @@ const { assertPipelineLinks } = require('./goalBackwardContracts');
 const hash = value => `sha256:${canonicalHash(value)}`;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 
-function build({ prepared, result, planMode }) {
+function build({ prepared, result, planMode, featureMode = 'preview' }) {
+  if (!['preview', 'on'].includes(featureMode)) fail('INVALID_FEATURE_MODE');
+  const purpose = featureMode === 'on' ? 'Adaptive coaching plan' : 'Adaptive coaching preview';
   const selected = result?.selected_candidate;
   const set = selected?.canonical_session_set;
   if (!prepared?.foundation) fail('EVIDENCE_MISSING');
@@ -34,10 +36,10 @@ function build({ prepared, result, planMode }) {
     plan: { ...plan, planMode: planMode || (selected.sessions.some(session => session.kind === 'lift') ? 'hybrid_maintain' : 'run_only'),
       engineVersion: 'adaptive-joint-solver-v1', goal_backward_engine_version: 'adaptive-joint-solver-v1',
       goal_backward_policy_versions: decision.policy_versions,
-      purpose: 'Adaptive coaching preview', overall_feasibility: feasibility, reasons,
+      purpose, overall_feasibility: feasibility, reasons,
       goal_gap: decision.goal_gap, weekly_objectives: decision.weekly_objectives,
       weeks: plan.weeks.map(week => ({ ...week, phase: decision.phase,
-        purpose: 'Adaptive coaching preview', weekly_objectives: decision.weekly_objectives })),
+        purpose, weekly_objectives: decision.weekly_objectives })),
     },
     decision: { ...decision, ...prepared.binding,
       evidence_used: [{ evidence_id: prepared.observed_binding, purpose: 'CAPTURED_OBSERVATION_BINDING' }] },
@@ -46,13 +48,18 @@ function build({ prepared, result, planMode }) {
   };
 }
 
-function artifacts({ userId, candidateId, prepared, result, preview, buildSurface }) {
+function artifacts({ userId, candidateId, prepared, result, preview, buildSurface, featureMode = 'preview' }) {
+  if (!['preview', 'on'].includes(featureMode)) fail('INVALID_FEATURE_MODE');
   if (result.artifacts.length !== 6) fail('CANDIDATE_NOT_SELECTED');
   const rows = [];
   for (const source of result.artifacts) {
     const payload = { ...source.payload_json, plan_generation_candidate_ref: hash(candidateId) };
+    if (featureMode === 'on' && source.artifact_kind === 'canonical_session_set') Object.assign(payload, {
+      selected_candidate_id: preview.selected.canonical_session_set.candidate_id,
+      selected_candidate_hash: preview.selected.candidate_hash,
+    });
     if (source.artifact_kind === 'candidate_week') Object.assign(payload, {
-      authoritative_engine: 'adaptive-joint-solver-v1', feature_mode: 'preview',
+      authoritative_engine: 'adaptive-joint-solver-v1', feature_mode: featureMode,
       observed_binding: prepared.observed_binding, source_support: prepared.source_support,
       rest_days: result.rest_days, strength_dose_receipt: result.strength_dose_receipt,
     });
@@ -62,8 +69,10 @@ function artifacts({ userId, candidateId, prepared, result, preview, buildSurfac
   }
   const bindings = { ...lifecycle.buildGoalBackwardShadowBindings({ decision: preview.decision,
     decisionArtifact: rows[2], selectedCandidate: preview.selected, currentCandidateHash: preview.candidateHash }),
-    feature_mode: 'preview', selected_candidate_hash: preview.candidateHash };
-  const surface = buildSurface({ featureMode: 'preview', decision: result.decision,
+    feature_mode: featureMode, selected_candidate_hash: preview.candidateHash };
+  if (featureMode === 'on') bindings.material_change_json.candidate_prescription_hash
+    = require('./goalBackwardValidators').canonicalPrescriptionHash(preview.plan);
+  const surface = buildSurface({ featureMode, decision: result.decision,
     selectedCandidate: preview.selected, canonicalSessionSet: preview.selected.canonical_session_set,
     plan: preview.plan, planGenerationCandidateRef: hash(candidateId),
     currentCandidateHash: preview.candidateHash, goalRevisions: bindings.goal_revisions_json,
@@ -72,7 +81,7 @@ function artifacts({ userId, candidateId, prepared, result, preview, buildSurfac
   // Review does not grant accepted-session/export authority. Canonical sessions
   // retain their exact identity; the envelope closes execution at the surface.
   Object.assign(surface, { status: 'preview', authoritative_engine: 'adaptive-joint-solver-v1',
-    surface_capability: 'PREVIEW_ONLY', apply_disabled: true });
+    surface_capability: featureMode === 'on' ? 'EXECUTABLE' : 'PREVIEW_ONLY', apply_disabled: featureMode !== 'on' });
   rows.push(lifecycle.buildPipelineArtifact({ userId, kind: 'surface_manifest',
     decisionId: result.decision.decision_id, parentArtifactId: rows.at(-1).id,
     planGenerationCandidateId: candidateId, payload: surface, createdAt: result.artifacts[0].created_at }));
@@ -96,7 +105,7 @@ async function persist({ tx, row, bundle }) {
   await tx.run(`INSERT INTO plan_generation_candidates (${fields.join(',')}) VALUES (${fields.map(() => '?').join(',')})`, values);
   await lifecycle.persistPipelineArtifacts({ tx, artifacts: bundle.artifacts, requireCompleteLinks: true });
   const read = await tx.get('SELECT * FROM plan_generation_candidates WHERE id=? AND user_id=?', [row.id, row.user_id]);
-  lifecycle.validateStoredGoalBackwardCandidateBindings(read, { allowedModes: ['preview'] });
+  lifecycle.validateStoredGoalBackwardCandidateBindings(read, { allowedModes: ['preview', 'on'] });
   if (!read || fields.some((field, index) => field.endsWith('_json')
     ? hash(typeof read[field] === 'string' ? JSON.parse(read[field]) : read[field]) !== hash(stored[field])
     : (read[field] instanceof Date ? read[field].toISOString() : read[field]) !== values[index])) fail('READBACK_INVALID');

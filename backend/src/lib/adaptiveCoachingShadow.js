@@ -99,7 +99,7 @@ function completionPairs(source, accepted, state, userId) {
     } };
   })];
 }
-function prepare({ userId, state, source, accepted, acceptedReason = null, goals, trainingAgeClass }) {
+function prepare({ userId, state, source, accepted, acceptedReason = null, goals, trainingAgeClass, priorPlanRevision = null }) {
   if (!source?.snapshot || source.sourceFailed) fail('SOURCE_UNAVAILABLE');
   const snapshot = source.snapshot;
   if (source.load.load_input_state === 'STALE') fail('SOURCE_STALE');
@@ -110,7 +110,7 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
   let blockedReason = acceptedReason || (state.active && !accepted ? 'ACCEPTED_SOURCE_UNAVAILABLE' : null);
   const constraints = state.planningConstraints;
   const availableDays = [...new Set([...(state.target.trainingDays || []), ...(state.target.liftEligibleWeekdays || [])])];
-  const foundation = buildAdaptiveCoachingFoundation({ snapshot, context: state.context, goals,
+  const foundation = buildAdaptiveCoachingFoundation({ snapshot, context: state.context, goals, priorPlanRevision,
     races: state.races.map(r => ({ race_id: String(r.id), athlete_id: userId })),
     completionPairs: completionPairs(source, accepted, state, userId),
     stateOptions: { trainingAgeClass, availableDays,
