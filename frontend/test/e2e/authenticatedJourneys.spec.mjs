@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { adaptivePreviewPublicFixture, adaptivePreviewNow } from '../fixtures/adaptivePreviewPublic.mjs'
 import {
   createQaToken,
   goalBackwardV24PlanFixture,
@@ -3295,5 +3296,59 @@ test('a PostgreSQL JSONB-ordered accepted surface renders the Weekly Run Brief o
     path: testInfo.outputPath('jsonb-surface-weekly-brief.png'),
     fullPage: true,
   })
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+// Committed synthetic solver output in the exact public response shape.
+test('adaptive candidate seven-day review closes without applying', async ({ page }, testInfo) => {
+  const fs = await import('node:fs')
+  const payload = structuredClone(adaptivePreviewPublicFixture)
+  const runtimeErrors = collectRuntimeErrors(page)
+  await page.clock.install({ time: new Date(adaptivePreviewNow) })
+  const active = activePlanWithTodaySessions([plannedRun])
+  active.plan.plan_data.schedulePreferences = { runDaysPerWeek: 3, trainingDays: ['Tue', 'Thu', 'Sat'] }
+  const apiState = await installAuthenticatedApi(page, { responses: new Map([
+    ['GET /api/plans/my', active],
+    ['POST /api/plans/generate', payload],
+    ['POST /api/plans/generate-for-races', payload],
+  ]) })
+  await page.goto('/plan')
+  await page.getByRole('button', { name: 'Manage plan', exact: true }).click()
+  await page.getByRole('button', { name: 'Edit days', exact: true }).click()
+  await page.getByRole('button', { name: 'Sun', exact: true }).click()
+  await page.getByLabel('Runs each week').selectOption('4')
+  await page.getByRole('button', { name: 'Rebuild remaining calendar', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Your adaptive training preview' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Aerobic run', { exact: true })).toBeVisible()
+  await expect(dialog.locator('article')).toHaveCount(7)
+  await expect(dialog.getByRole('button', { name: /apply|start|export|garmin/i })).toHaveCount(0)
+  expect(await dialog.innerText()).not.toContain('_')
+  const geometry = await dialog.evaluate(node => {
+    const r = node.getBoundingClientRect()
+    return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom,
+      clientWidth: node.clientWidth, scrollWidth: node.scrollWidth, viewport: { width: innerWidth, height: innerHeight } }
+  })
+  expect(geometry.x).toBeGreaterThanOrEqual(0)
+  expect(geometry.y).toBeGreaterThanOrEqual(0)
+  expect(geometry.right).toBeLessThanOrEqual(geometry.viewport.width)
+  expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewport.height)
+  expect(Math.abs(geometry.x + geometry.width / 2 - geometry.viewport.width / 2)).toBeLessThanOrEqual(1)
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth)
+  const prefix = testInfo.outputPath('p2-ui')
+  await dialog.evaluate(node => { node.scrollTop = 0 })
+  await page.screenshot({ path: `${prefix}.png` })
+  await dialog.getByRole('button', { name: 'Keep current plan', exact: true }).last().scrollIntoViewIfNeeded()
+  await page.screenshot({ path: `${prefix}-actions.png` })
+  await dialog.getByRole('button', { name: 'Keep current plan', exact: true }).last().tap()
+  await expect(dialog).toHaveCount(0)
+  await page.getByRole('button', { name: 'Rebuild remaining calendar', exact: true }).click()
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Review race target', exact: true }).tap()
+  await expect(dialog).toHaveCount(0)
+  await expect(page).toHaveURL(/\/races$/)
+  expect(apiState.requests.filter(r => r.method === 'POST' && r.pathname?.endsWith('/apply'))).toHaveLength(0)
+  fs.writeFileSync(`${prefix}.json`, JSON.stringify({ tier: 'Local Playwright Chromium mobile emulation; no physical device',
+    project: testInfo.project.name, geometry, candidateHash: payload.candidate_hash, payload, closedByTap: true }, null, 2))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })

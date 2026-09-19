@@ -3000,6 +3000,8 @@ function buildDeterministicCandidate(context, options) {
 
 function publicCandidatePayload(candidate) {
   const plan = candidate.plan;
+  const adaptivePreview = plan?.engineVersion === 'adaptive-joint-solver-v1'
+    && candidate.surfaceManifest?.feature_mode === 'preview';
   return {
     candidate: {
       candidate_hash: candidate.candidateHash,
@@ -3013,7 +3015,7 @@ function publicCandidatePayload(candidate) {
     candidate_hash: candidate.candidateHash,
     candidate_id: candidate.id,
     effective_from: candidate.effectiveFrom,
-    generation_source: 'race_plan_candidate_engine',
+    generation_source: adaptivePreview ? 'adaptive-joint-solver-v1' : 'race_plan_candidate_engine',
     choice: candidate.choice || 'train_for_target',
     replaces_active_plan: Boolean(candidate.replacesActivePlan),
     plan: {
@@ -3023,7 +3025,7 @@ function publicCandidatePayload(candidate) {
       plan_json: plan,
       preview: true,
     },
-    requires_apply: true,
+    requires_apply: !adaptivePreview,
     ...(candidate.applyBindings ? { apply_bindings: candidate.applyBindings } : {}),
     ...(candidate.surfaceManifest ? { surface_manifest: candidate.surfaceManifest } : {}),
   };
@@ -6343,13 +6345,75 @@ function prepareAdaptiveCandidateInput(userId, initial) {
   return { prepared, adaptiveReason };
 }
 
+async function previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
+  generationOptions, store, goalBackwardDependencies }) {
+  const previewAdapter = require('../lib/adaptiveCoachingPreview');
+  try {
+    if (!prepared) throw Object.assign(new Error('EVIDENCE_MISSING'), { code: 'EVIDENCE_MISSING' });
+    const result = adaptiveShadow.compute(prepared);
+    const preview = previewAdapter.build({ prepared, result, planMode: initial.target.planMode });
+    const plan = assertPersistablePlan(preview.plan);
+    const candidateId = uuidv4();
+    const expiresAt = new Date(Date.now() + RACE_PLAN_POLICY_V1.candidate.ttlHours * 3600000).toISOString();
+    const bundle = previewAdapter.artifacts({ userId, candidateId, prepared, result, preview,
+      buildSurface: buildCanonicalSurfaceManifest });
+    const row = { id: candidateId, user_id: userId, status: 'preview',
+      training_plan_id: initial.activePlan?.trainingPlanId || null,
+      user_plan_id: initial.activePlan?.userPlanId || null,
+      active_plan_version: initial.activePlan?.planVersion ?? null,
+      planning_input_revision: initial.planningInputRevision, planning_date_local: clock.planningDateLocal,
+      timezone_offset_minutes: clock.timezoneOffsetMinutes, input_hash: initial.inputHash,
+      candidate_hash: preview.candidateHash, engine_version: plan.engineVersion,
+      policy_version: RACE_PLAN_POLICY_V1.version, invariant_version: RACE_PLAN_POLICY_V1.invariantVersion,
+      planning_snapshot_json: initial.snapshot, candidate_plan_json: plan,
+      generation_trace_json: buildCandidateTrace(initial, { plan, validation: preview.selected.validation }), expires_at: expiresAt };
+    await withUserMutation(userId, async tx => {
+      const current = await loadCandidateInputState(userId, request, clock, tx, generationOptions);
+      if (resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies) !== 'preview'
+        || current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash
+        || canonicalHash(current.planningConstraints) !== canonicalHash(initial.planningConstraints)
+        || !adaptiveShadow.sameObserved(prepared, current, adaptiveObservedInputs.get(current.context), adaptiveAcceptedInput(userId, current))) {
+        throw candidateError(409, 'CANDIDATE_STALE', 'Training data changed while the preview was being built. Preview again.');
+      }
+      if (store) await previewAdapter.persist({ tx, row, bundle });
+    });
+    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',
+      outcome: 'candidate_selected', candidateSelected: true, surfaceCapability: 'PREVIEW_ONLY',
+      sink: goalBackwardDependencies.telemetrySink });
+    return { id: candidateId, candidateHash: preview.candidateHash, plan,
+      effectiveFrom: candidateEffectiveFrom(initial.active, clock.planningDateLocal, { immediate: true }),
+      expiresAt, meta: initial.meta, planningDateLocal: clock.planningDateLocal, races: initial.races,
+      replacesActivePlan: Boolean(initial.active), choice: request.choice,
+      surfaceManifest: bundle.surface,
+      ...(store ? { applyBindings: buildGoalBackwardApplyEnvelope({ ...row, ...bundle.bindings }) } : {
+        diagnostics: { active_plan: initial.activePlan,
+          active_plan_data: initial.removalPlanSnapshot || (initial.active ? parsePlan(initial.active.row) : null),
+          snapshot: initial.snapshot, trace: row.generation_trace_json },
+      }),
+    };
+  } catch (error) {
+    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',
+      outcome: 'candidate_rejected', candidateSelected: false, surfaceCapability: 'BLOCKED',
+      failReasonCodes: error.code === 'EVIDENCE_MISSING' ? ['EVIDENCE_MISSING'] : ['CANDIDATE_NOT_SELECTED'],
+      sink: goalBackwardDependencies.telemetrySink });
+    if (typeof goalBackwardDependencies.inspectFailure === 'function') goalBackwardDependencies.inspectFailure(error);
+    if (['CANDIDATE_STALE', 'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED'].includes(error.code)) throw error;
+    throw goalBackwardGenerationFailed(error.code || adaptiveReason);
+  }
+}
+
 async function previewPlanForUser(userId, body = {}, { store = true, goalBackwardDependencies = {} } = {}) {
   const clock = acceptedPlanningClock(body);
   const request = normalizeCandidateRequest(body);
-  const generationOptions = { adaptiveGeneration: resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies,
-    { allowSyntheticShadow: true }) === 'shadow' };
+  const adaptiveMode = resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies,
+    { allowSyntheticShadow: true });
+  const generationOptions = { adaptiveGeneration: ['shadow', 'preview'].includes(adaptiveMode) };
   const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx, generationOptions));
   let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial);
+  if (adaptiveMode === 'preview') {
+    return previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
+      generationOptions, store, goalBackwardDependencies });
+  }
   const built = buildDeterministicCandidate(initial.context, {
     planningDateLocal: clock.planningDateLocal,
     timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
@@ -6927,6 +6991,9 @@ async function previewRaceRemovalForUser(userId, raceId, body = {}) {
   );
   return {
     ...publicCandidatePayload(candidate),
+    // Removal uses this flag to distinguish a linked-plan operation from direct deletion.
+    // Keep its existing apply gate even when the candidate itself is review-only.
+    requires_apply: true,
     impact: 'active_plan_rebuild',
     removal: { race_id: raceId, remaining_race_ids: state.impact.remainingRaceIds },
   };
@@ -9935,6 +10002,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router.clearActivePlanForUser = clearActivePlanForUser;
 
 router._test = {
+  publicCandidatePayload,
   recordActivityMeasurement,
   buildAdaptationInputs,
   buildCurrentAdaptationProposal,

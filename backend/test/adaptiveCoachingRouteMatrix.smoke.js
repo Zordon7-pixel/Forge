@@ -128,7 +128,7 @@ async function main() {
     hooks.before = null;
   }
   const sourceReadCount = () => calls.filter(c => /LIMIT (65|257)/.test(c.sql) && !c.sql.includes('daily_checkins')).length;
-  for (const mode of ['off','preview','on']) {
+  for (const mode of ['off','on']) {
     const count = sourceReadCount(); await plans.previewPlanForUser(id, req, options(mode)); assert.equal(sourceReadCount(), count);
   }
 

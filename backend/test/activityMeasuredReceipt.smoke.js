@@ -9,9 +9,9 @@ const RealDate = Date, DATE = '2026-09-14', NOW = `${DATE}T12:00:00Z`;
 global.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return RealDate.parse(NOW); } };
 const shadow = require('../src/lib/adaptiveCoachingShadow');
 const realPrepare = shadow.prepare, realCompute = shadow.compute;
-let prepared, result;
+let prepared, result, computations = 0;
 shadow.prepare = a => { prepared = realPrepare(a); return prepared; };
-shadow.compute = p => { result = realCompute(p); return result; };
+shadow.compute = p => { computations++; result = realCompute(p); return result; };
 const plans = require('../src/routes/plans')._test;
 const receipts = require('../src/lib/activityMeasuredReceipt');
 const { addDays, canonicalHash } = require('../src/lib/racePlanPolicy');
@@ -102,6 +102,83 @@ function assertRouteStructure(name, run, lift, phase, applicable = true) {
       seconds:s.derived_totals.duration_s,work_seconds:s.derived_totals.work_duration_s,meters:s.derived_totals.distance_m,sets:s.derived_totals.sets})),
     rest:result.rest_days,strength:result.strength_dose_receipt,deferred:result.deferred_objectives}));
 }
+async function previewWitnesses(f) {
+  const { targetRef } = require('../src/lib/betaPlanRollout');
+  const telemetry = [], cohortRefs = [targetRef(f.owner)];
+  const opts = (mode, refs = cohortRefs) => ({ goalBackwardDependencies: {
+    mode, audience: 'cohort', cohortRefs: refs, telemetrySink: row => telemetry.push(row),
+  } });
+  const artifacts = id => db.prepare('SELECT * FROM planning_pipeline_artifacts WHERE plan_generation_candidate_id=? AND user_id=?').all(id,f.owner)
+    .map(row => ({ ...row, payload_json: JSON.parse(row.payload_json) }));
+  const count = () => db.prepare('SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE user_id=?').get(f.owner).n;
+  const assignments = db.prepare('SELECT * FROM user_plans WHERE user_id=?').all(f.owner);
+  const buildRequest = {...f.req,target:{...f.req.target,strengthGoal:'build'}};
+  const buildPreview = await plans.previewPlanForUser(f.owner,buildRequest,{...opts('preview'),store:false});
+  assert.equal(buildPreview.plan.planMode,'hybrid_build','resolved build intent is preserved by the route');
+  const before = { compute: computations, persist: count() };
+  const off = await plans.previewPlanForUser(f.owner,f.req,opts('off'));
+  const offCounts = { compute_count:computations-before.compute,persist_count:count()-before.persist };
+  const denied = await plans.previewPlanForUser(f.owner,{...f.req,feature_mode:'preview',v24_surface_enabled:true},opts('preview',[]));
+  assert.equal(computations,before.compute); assert.equal(count(),before.persist);
+  assert.equal(off.candidateHash,denied.candidateHash); assert.deepEqual(off.plan,denied.plan);
+  const deniedCounts = { compute_count:computations-before.compute-offCounts.compute_count,persist_count:count()-before.persist-offCounts.persist_count };
+  const controlStart = computations;
+  const control = await plans.previewPlanForUser(f.owner,f.req,opts('shadow'));
+  const controlArtifacts = artifacts(control.id), controlResult = result;
+  assert.equal(computations-controlStart,1); assert.equal(controlArtifacts.length,6);
+  assert.equal(control.candidateHash,off.candidateHash); assert.deepEqual(control.plan,off.plan);
+  assert.equal(control.surfaceManifest,undefined);
+  const controlComputeCount = computations-controlStart;
+  const exposed = await plans.previewPlanForUser(f.owner,f.req,opts('preview'));
+  const selected = result, input = prepared, links = artifacts(exposed.id);
+  assert.equal(input.source_support.source_limited,false);
+  assert.equal(exposed.plan.overall_feasibility,'unvalidated');
+  assert.ok(selected.decision.goal_gap.every(gap=>gap.demonstrated_fitness.pace_s_per_km===null && gap.training_pace_authority===false));
+  assert.ok(selected.selected_candidate.sessions.flatMap(s=>s.steps).every(step=>!step.target?.pace_range_s_per_km));
+  assert.equal(links.length,7); require('../src/lib/goalBackwardContracts').assertPipelineLinks(links);
+  assert.equal(exposed.surfaceManifest.identity.candidate_hash,selected.selected_candidate.candidate_hash);
+  assert.deepEqual(exposed.surfaceManifest.sessions,selected.selected_candidate.sessions);
+  const canonicalPlan = require('../src/lib/planSchema').buildCanonicalPlanFromSessionSet(selected.selected_candidate.canonical_session_set);
+  assert.equal(exposed.plan.canonical_session_set_hash,selected.selected_candidate.canonical_session_set.content_hash);
+  assert.deepEqual(exposed.plan.weeks.flatMap(w=>w.days),canonicalPlan.weeks.flatMap(w=>w.days));
+  assert.ok(['hybrid_build','hybrid_maintain'].includes(exposed.plan.planMode));
+  const applied = await plans.applyPlanCandidate(f.owner,exposed.id,{choice:'train_for_target',candidate_hash:exposed.candidateHash,planning_date_local:DATE});
+  assert.equal(applied.code,'GOAL_BACKWARD_PREVIEW_APPLY_DISABLED');
+  const stored = db.prepare('SELECT * FROM plan_generation_candidates WHERE id=? AND user_id=?').get(exposed.id,f.owner);
+  assert.deepEqual(JSON.parse(stored.candidate_plan_json),exposed.plan);
+  const beforeFailure = { candidates:db.prepare('SELECT COUNT(*) n FROM plan_generation_candidates').get().n,artifacts:count() };
+  const telemetryStart = telemetry.length;
+  // Remove the physical receipt, retaining accepted prescription and recorded totals:
+  // prescribed quality work must not become measured quality work.
+  const savedReceipts = db.prepare('SELECT * FROM activity_measured_receipts WHERE user_id=?').all(f.owner);
+  db.prepare('DELETE FROM activity_measured_receipts WHERE user_id=?').run(f.owner);
+  let failure;
+  try { await plans.previewPlanForUser(f.owner,f.req,opts('preview')); assert.fail('required evidence must block'); }
+  catch(error) { assert.equal(error.code,'GOAL_BACKWARD_GENERATION_FAILED'); failure={code:error.code,details:error.details}; }
+  const failedResult = result, failedInput = prepared;
+  assert.equal(failedInput.source_support.source_limited,true);
+  assert.equal(count(),beforeFailure.artifacts);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM plan_generation_candidates').get().n,beforeFailure.candidates);
+  for (const row of savedReceipts) db.prepare(`INSERT INTO activity_measured_receipts (${Object.keys(row).join(',')}) VALUES (${Object.keys(row).map(()=>'?').join(',')})`).run(...Object.values(row));
+  assert.deepEqual(db.prepare('SELECT * FROM user_plans WHERE user_id=?').all(f.owner),assignments);
+  assert.ok(telemetry.slice(telemetryStart).some(row=>JSON.stringify(row).includes('BLOCKED')));
+  const witnesses = {
+    A: { resolved_mode:'preview',audience:'cohort',authorized_cohort_ref:targetRef(f.owner),
+      athlete_state:input.foundation.athlete_state,goal_gap:selected.decision.goal_gap,phase:selected.decision.phase,
+      weekly_objectives:selected.decision.weekly_objectives,selected_candidate_hash:selected.selected_candidate.candidate_hash,
+      authoritative_engine:exposed.surfaceManifest.authoritative_engine,feature_mode:exposed.surfaceManifest.feature_mode,
+      v24_surface_enabled:exposed.surfaceManifest.v24_surface_enabled,source_support:input.source_support,
+      sessions:selected.selected_candidate.sessions,rest_days:selected.rest_days,response:exposed,persisted_row:stored,artifact_links:links,apply_result:applied },
+    B: { off:{candidate_hash:off.candidateHash,...offCounts,authoritative_engine:'concurrent',v24_surface_enabled:false},
+      cohort_denied:{candidate_hash:denied.candidateHash,...deniedCounts,authoritative_engine:'concurrent',v24_surface_enabled:false},
+      shadow:{candidate_hash:control.candidateHash,compute_count:controlComputeCount,persist_count:controlArtifacts.length,
+        selected_candidate_hash:controlResult.selected_candidate.candidate_hash,authoritative_engine:'current',v24_surface_enabled:false,artifact_links:controlArtifacts} },
+    C: {failure,internal_feasibility:failedResult.status,internal_applicable:failedResult.applicable,preview_applicable:false,source_support:failedInput.source_support,
+      goal_gap:failedResult.decision.goal_gap,telemetry:telemetry.slice(telemetryStart),new_candidate_rows:0,new_artifacts:0,
+      accepted_surface_manifest:failedResult.accepted_surface_manifest,export_authority:false}
+  };
+  return witnesses;
+}
 async function main() {
   // Exercise the actual additive SQLite migration twice, without PG functions.
   const migration = require('../src/db/migrate').ensureActivityMeasuredReceipts;
@@ -142,6 +219,7 @@ async function main() {
       families:result.selected_candidate?.sessions.map(s=>[s.workout_family,s.derived_totals.sets,s.derived_totals.duration_s]),
       strength:result.strength_dose_receipt,source_support:prepared.source_support}));
   }
+  const witnesses = await previewWitnesses(a);
   const input = a.bodies[0];
   for (const bad of [{...input,expected_revision:0},{...input,expected_revision:1,session_hash:'f'.repeat(64)},
     {...input,expected_revision:1,plan_revision:2},{...input,expected_revision:1,session_revision:2},
@@ -220,10 +298,11 @@ async function main() {
   await assert.rejects(plans.previewPlanForUser(a.owner,a.req,options('shadow')),e=>e.code==='CANDIDATE_STALE'); hooks.beforeTransaction=null;
   const before = db.prepare('SELECT COUNT(*) n FROM activity_measured_receipts').get().n;
   hooks.before=(method,sql)=>{if(method==='all'&&sql.includes('FROM activity_measured_receipts'))throw Error('non-SHADOW acquired measurements');};
-  for (const mode of ['off','preview','on']) await plans.previewPlanForUser(b.owner,b.req,options(mode));
+  for (const mode of ['off','on']) await plans.previewPlanForUser(b.owner,b.req,options(mode));
+  await assert.rejects(plans.previewPlanForUser(b.owner,b.req,options('preview')),e=>e.code==='GOAL_BACKWARD_GENERATION_FAILED');
   hooks.before=null;
   assert.equal(db.prepare('SELECT COUNT(*) n FROM activity_measured_receipts').get().n,before);
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n,0);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE artifact_kind='surface_manifest'").get().n,1);
   // Distinct recent activities remain bounded; revisions do not consume activity capacity.
   db.exec('SAVEPOINT receipt_overflow');
   for(let i=0;i<513;i++) db.prepare(`INSERT INTO activity_measured_receipts(id,user_id,activity_kind,activity_id,plan_id,session_id,revision,payload_json,content_hash,created_at)
@@ -396,6 +475,7 @@ async function main() {
   const history=await receipts.load({tx,userId:b.owner,observationInstant:NOW});
   assert.equal(history.chain_receipts.find(r=>r.activity_id===b.bodies[0].activity_id).revisions,70);
   assert.ok(history.usable.some(r=>r.row.revision===70));
+  if (process.env.FORGE_P2_WITNESS_PATH) fs.writeFileSync(process.env.FORGE_P2_WITNESS_PATH,JSON.stringify(witnesses,null,2)+'\n');
   console.log('ok - recorder/authenticated source, SQL migration, measured routes, revision correction, stale snapshot, owner/hash/revision/interval/hostile boundaries');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>{global.Date=RealDate;shadow.prepare=realPrepare;shadow.compute=realCompute;db.close();});
