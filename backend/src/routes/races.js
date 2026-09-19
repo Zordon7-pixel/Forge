@@ -733,27 +733,31 @@ router.post('/:id/course/gpx', auth, gpxUploadLimiter, receiveGpx, async (req, r
   }
 });
 
-router.post('/:id/removal-preview', auth, async (req, res) => {
-  try {
-    const planningClock = plansRouter._test.withRequestPlanningClock(req, {
-      planning_date_local: req.body?.planning_date_local,
-      timezone_offset_minutes: req.body?.timezone_offset_minutes,
-      ...(req.body?.planning_timezone !== undefined ? { planning_timezone: req.body.planning_timezone } : {}),
-    });
-    const preview = await plansRouter._test.previewRaceRemovalForUser(req.user.id,
-      String(req.params.id || ''),
-      planningClock,
-    );
-    return res.status(preview.requires_apply ? 201 : 200).json(preview);
-  } catch (err) {
-    const status = Number(err?.status) || 500;
-    console.error('[races/removal-preview] failed:', err.message);
-    return res.status(status).json({
-      error: status >= 500 ? 'Unable to preview race removal.' : err.message,
-      code: err.code || 'RACE_REMOVAL_PREVIEW_FAILED',
-    });
-  }
-});
+function buildRaceRemovalPreviewHandler(previewRaceRemovalForUser = plansRouter._test.previewRaceRemovalForUser) {
+  return async (req, res) => {
+    try {
+      const planningClock = plansRouter._test.withRequestPlanningClock(req, {
+        planning_date_local: req.body?.planning_date_local,
+        timezone_offset_minutes: req.body?.timezone_offset_minutes,
+        ...(req.body?.planning_timezone !== undefined ? { planning_timezone: req.body.planning_timezone } : {}),
+      });
+      const preview = await previewRaceRemovalForUser(req.user.id,
+        String(req.params.id || ''),
+        planningClock,
+      );
+      return res.status(preview.requires_apply ? 201 : 200).json(preview);
+    } catch (err) {
+      const status = Number(err?.status) || 500;
+      console.error('[races/removal-preview] failed:', err.message);
+      return res.status(status).json({
+        error: status >= 500 ? 'Unable to preview race removal.' : err.message,
+        code: err.code || 'RACE_REMOVAL_PREVIEW_FAILED',
+      });
+    }
+  };
+}
+
+router.post('/:id/removal-preview', auth, buildRaceRemovalPreviewHandler());
 
 // Race ownership actions must not be blocked by the premium gate protecting
 // generic plan generation. This endpoint can only apply a stored candidate
@@ -943,6 +947,7 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 router._test = {
+  buildRaceRemovalPreviewHandler,
   PLAN_RESET_CONFIRMATION,
   normalizeRaceEvent,
   readRaceEventLifecycle,

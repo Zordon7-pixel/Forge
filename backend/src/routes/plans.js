@@ -6420,6 +6420,24 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     return previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
       generationOptions, store, goalBackwardDependencies, featureMode: adaptiveMode });
   }
+  return previewClassicCandidateFromState({ userId, request, clock, initial, prepared, adaptiveReason,
+    generationOptions, store, goalBackwardDependencies });
+}
+
+// Retained classic constructor/persistence path. Production reaches it only after
+// the adaptive routing gate above; tests can prepare classic candidates directly
+// to exercise their diagnostics and the real apply guards under ON bindings.
+async function previewClassicPlanForUserForTest(userId, body = {}, { store = true, goalBackwardDependencies = {} } = {}) {
+  const clock = acceptedPlanningClock(body);
+  const request = normalizeCandidateRequest(body);
+  const generationOptions = { adaptiveGeneration: false };
+  const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx, generationOptions));
+  return previewClassicCandidateFromState({ userId, request, clock, initial,
+    prepared: null, adaptiveReason: null, generationOptions, store, goalBackwardDependencies });
+}
+
+async function previewClassicCandidateFromState({ userId, request, clock, initial, prepared, adaptiveReason,
+  generationOptions, store, goalBackwardDependencies }) {
   const built = buildDeterministicCandidate(initial.context, {
     planningDateLocal: clock.planningDateLocal,
     timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
@@ -6975,6 +6993,10 @@ function raceRemovalCandidateRequest(raceId, remainingRaceIds, body = {}) {
 }
 
 async function previewRaceRemovalForUser(userId, raceId, body = {}) {
+  return previewRaceRemovalWithCandidateBuilder(userId, raceId, body, previewPlanForUser);
+}
+
+async function previewRaceRemovalWithCandidateBuilder(userId, raceId, body, previewCandidate) {
   const state = await withUserMutation(userId, async (tx) => {
     const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, userId]);
     if (!race) throw candidateError(404, 'RACE_NOT_FOUND', 'Race not found.');
@@ -6991,7 +7013,7 @@ async function previewRaceRemovalForUser(userId, raceId, body = {}) {
       race: { id: state.race.id, name: state.race.race_name },
     };
   }
-  const candidate = await previewPlanForUser(
+  const candidate = await previewCandidate(
     userId,
     raceRemovalCandidateRequest(raceId, state.impact.remainingRaceIds, body),
   );
@@ -10031,21 +10053,25 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
   }
 });
 
-router.post('/generate-for-races', auth, requirePremium('Race Programs'), async (req, res) => {
-  try {
-    if (!Array.isArray(req.body?.race_ids) || req.body.race_ids.length < 1) {
-      throw candidateError(400, 'RACES_REQUIRED', 'Choose one or two races.');
+function buildGenerateForRacesHandler(previewCandidate = previewPlanForUser) {
+  return async (req, res) => {
+    try {
+      if (!Array.isArray(req.body?.race_ids) || req.body.race_ids.length < 1) {
+        throw candidateError(400, 'RACES_REQUIRED', 'Choose one or two races.');
+      }
+      const candidate = await previewCandidate(req.user.id, withRequestPlanningClock(req, req.body));
+      return res.status(201).json({
+        ...publicCandidatePayload(candidate),
+        races: candidate.races.map((race) => ({ id: race.id, name: race.race_name, date: race.race_date })),
+        weeks: candidate.plan.weeks.length,
+      });
+    } catch (err) {
+      return sendCandidateError(res, err, 'generate-for-races');
     }
-    const candidate = await previewPlanForUser(req.user.id, withRequestPlanningClock(req, req.body));
-    return res.status(201).json({
-      ...publicCandidatePayload(candidate),
-      races: candidate.races.map((race) => ({ id: race.id, name: race.race_name, date: race.race_date })),
-      weeks: candidate.plan.weeks.length,
-    });
-  } catch (err) {
-    return sendCandidateError(res, err, 'generate-for-races');
-  }
-});
+  };
+}
+
+router.post('/generate-for-races', auth, requirePremium('Race Programs'), buildGenerateForRacesHandler());
 
 router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
@@ -10066,6 +10092,10 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router.clearActivePlanForUser = clearActivePlanForUser;
 
 router._test = {
+  previewClassicPlanForUserForTest,
+  previewClassicRaceRemovalForUserForTest: (userId, raceId, body = {}) =>
+    previewRaceRemovalWithCandidateBuilder(userId, raceId, body, previewClassicPlanForUserForTest),
+  buildGenerateForRacesHandler,
   publicCandidatePayload,
   recordActivityMeasurement,
   buildAdaptationInputs,
