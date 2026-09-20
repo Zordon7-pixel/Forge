@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { installAuthenticatedApi, qaLocalDateISO, qaResponse } from './support/mockApi.mjs'
+import { injectPlannerRenderFailure } from './support/plannerRenderFixture.mjs'
 import { deriveTravelTrainingChoices } from '../../src/lib/travelTraining.js'
 
 const run = { id: 'near-me-run', kind: 'run', type: 'easy', distance_miles: 4, completed: false,
@@ -92,13 +93,29 @@ test('availability and request failures expose local retry and preserve manual l
 test('planner render exceptions stay inside the local boundary', async ({ page }) => {
   // A synthetic module throwing on render tests the boundary, independently of
   // provider validation. No application code or global boundary is replaced.
-  await page.route('**/assets/RoutePlanner-*.js', route => route.fulfill({ contentType: 'text/javascript', body: 'export default function Planner(){if(!window.syntheticPlannerReady) throw new Error("Synthetic planner render failure"); return "Synthetic planner recovered"}' }))
+  const boundaryErrors = []
+  page.on('console', message => {
+    if (message.type() === 'error' && message.text().startsWith('[RoutePlanner] preview failed:')) {
+      boundaryErrors.push(message.text())
+    }
+  })
+  await page.route('**/assets/RoutePlanner-*.js', async route => {
+    const response = await route.fetch()
+    expect(response.ok()).toBe(true)
+    await route.fulfill({ response, body: injectPlannerRenderFailure(await response.text()) })
+  })
   await openRun(page)
   await expect(page.getByRole('alert')).toContainText('route planner could not open')
   await expect(page.getByRole('button', { name: 'Retry route planner' })).toBeVisible()
+  await expect.poll(() => boundaryErrors.length).toBeGreaterThan(0)
+  expect(boundaryErrors.every(error => error.includes('Synthetic planner render failure'))).toBe(true)
+  const failureCount = boundaryErrors.length
+  await expect(page.getByText(/Startup Error/)).toHaveCount(0)
   await page.evaluate(() => { window.syntheticPlannerReady = true })
   await page.getByRole('button', { name: 'Retry route planner' }).click()
   await expect(page.getByText('Synthetic planner recovered')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Retry route planner' })).toHaveCount(0)
+  expect(boundaryErrors).toHaveLength(failureCount)
   await expect(page.getByRole('button', { name: 'Start Scheduled Run' })).toBeVisible()
   await page.getByRole('button', { name: 'Manual', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Save Run', exact: true })).toBeVisible()
