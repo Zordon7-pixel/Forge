@@ -31,7 +31,10 @@ function capacity(value, max, name) {
  */
 function buildAdaptiveCoachingFoundation({ snapshot, context = {}, stateOptions = {}, goals = [], races = [],
   completionPairs = [], weeklyMileageHistory = [], readinessTrend = null, feasibilityByGoal = {},
-  phaseEvidence = {} } = {}) {
+  phaseEvidence = {}, priorPlanRevision = null } = {}) {
+  if (priorPlanRevision !== null && (!Number.isSafeInteger(priorPlanRevision) || priorPlanRevision < 0)) {
+    throw new Error('Invalid prior plan revision');
+  }
   if (!snapshot?.created_at || !snapshot?.planning_date_local || !snapshot?.evidence_snapshot_id) {
     throw new Error('An existing timestamped EvidenceSnapshot is required');
   }
@@ -97,7 +100,8 @@ function buildAdaptiveCoachingFoundation({ snapshot, context = {}, stateOptions 
     weeklyMileageHistory, readinessTrend, phase: phaseDecision.phase });
   const weeklyObjectives = buildWeeklyObjectives({ athleteState, goalGaps, phaseDecision, progression });
   const selection = buildSessionSelectionContracts({ athleteState, weeklyObjectives });
-  const content = { version: 'adaptive-foundation-v1', athlete_id: snapshot.athlete_id,
+  const content = { version: 'adaptive-foundation-v1',
+    ...(priorPlanRevision === null ? {} : { plan_revision: priorPlanRevision }), athlete_id: snapshot.athlete_id,
     athlete_state_hash: athleteState.athlete_state_hash, athlete_state_revision: athleteState.athlete_state_revision,
     evidence_snapshot_id: snapshot.evidence_snapshot_id, planning_date_local: snapshot.planning_date_local,
     phase: phaseDecision.phase, phase_reason_codes: phaseDecision.reason_codes,

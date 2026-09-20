@@ -2100,7 +2100,10 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(unknownActiveRemovalDose.required_running_m, null);
     assert.ok(unknownActiveRemovalDose.reason_codes.includes('REQUIRED_RUNNING_DOSE_INVALID'));
     assert.ok(unknownActiveRemovalDose.reason_codes.includes('REMOVAL_ACTIVE_PLAN_RUNNING_DISTANCE_MALFORMED'));
-    const preview = routeHandler(plansRouter, '/generate-for-races', 'post');
+    // Construct retained classic candidates through the explicit internal seam.
+    // The shared HTTP adapters and all apply/read/reconcile/delete handlers remain real.
+    const productionPreview = routeHandler(plansRouter, '/generate-for-races', 'post');
+    const preview = plansRouter._test.buildGenerateForRacesHandler(plansRouter._test.previewClassicPlanForUserForTest);
     const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
     const reject = routeHandler(plansRouter, '/candidates/:candidateId/reject', 'post');
     const readMyPlan = routeHandler(plansRouter, '/my', 'get');
@@ -2110,7 +2113,8 @@ async function checkHyroxCandidateImmediateAdoption() {
     ));
     assert.equal(surfaceReconcileLayer.route.stack.length, 2,
       'surface reconciliation is registered behind authentication and one real handler');
-    const previewRaceRemoval = routeHandler(racesRouter, '/:id/removal-preview', 'post');
+    const previewRaceRemoval = racesRouter._test.buildRaceRemovalPreviewHandler(
+      plansRouter._test.previewClassicRaceRemovalForUserForTest);
     const applyRaceRemoval = routeHandler(racesRouter, '/:id/removal-apply', 'post');
     const resetRaceRemoval = routeHandler(racesRouter, '/:id/removal-reset', 'post');
     const deleteRace = routeHandler(racesRouter, '/:id', 'delete');
@@ -2133,7 +2137,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     const surfaceRequestBase = { ...requestBase, query: {} };
     const eligibilityTelemetry = [];
     const currentCandidateCountBeforeIneligible = candidates.size;
-    const ineligibleGoalBackward = await plansRouter._test.previewPlanForUser(ownerId, {
+    const ineligibleGoalBackward = await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
       ...requestClock,
       race_ids: [],
       target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
@@ -2147,7 +2151,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       },
     });
     assert.equal(ineligibleGoalBackward.plan.goal_backward_engine_version, undefined,
-      'a zero-goal request safely remains on the current engine');
+      'the retained classic constructor handles zero goals without v2.4 artifacts');
     assert.equal(candidates.size, currentCandidateCountBeforeIneligible,
       'a read-only zero-goal compatibility probe persists no candidate');
     assert.equal(eligibilityTelemetry.length, 1, 'an authorized but ineligible v2.4 request is auditable');
@@ -2158,22 +2162,30 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(eligibilityTelemetry[0].mode, 'on');
     assert.equal(eligibilityTelemetry[0].outcome, 'candidate_rejected');
     assert.equal(eligibilityTelemetry[0].surface_capability, 'BLOCKED');
-    // Classic construction assertions below remain on the unchanged ON path.
-    // Adaptive PREVIEW requires physical source acquisition; this legacy mock
-    // has no authenticated adaptive foundation and must never fall back to it.
+    // Production PREVIEW and ON require physical adaptive sources. The classic
+    // fixture must fail closed there, even though the test seam can build it.
+    for (const mode of ['preview', 'on']) {
+      await assert.rejects(() => plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock, race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+      }, { goalBackwardDependencies: { mode, cohortRefs: [goalBackwardTargetRef(ownerId)],
+        telemetrySink: entry => eligibilityTelemetry.push(entry) } }),
+      error => error.code === 'GOAL_BACKWARD_GENERATION_FAILED');
+      assert.equal(candidates.size, currentCandidateCountBeforeIneligible);
+      assert.equal(eligibilityTelemetry.at(-1).surface_capability, 'BLOCKED');
+    }
     await assert.rejects(() => plansRouter._test.previewPlanForUser(ownerId, {
-      ...requestClock, race_ids: ['hyrox', 'army'],
-      target: { trainingDays: ['Tue','Thu','Sat','Sun'], runDaysPerWeek: 4, liftingEnabled: false },
-    }, { goalBackwardDependencies: { mode: 'preview', cohortRefs: [goalBackwardTargetRef(ownerId)],
-      telemetrySink: entry => eligibilityTelemetry.push(entry) } }),
-    error => error.code === 'GOAL_BACKWARD_GENERATION_FAILED');
-    assert.equal(candidates.size,currentCandidateCountBeforeIneligible);
-    assert.equal(eligibilityTelemetry.at(-1).surface_capability,'BLOCKED');
+      ...requestClock, race_ids: [],
+      target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+    }, { store: false, goalBackwardDependencies: {
+      mode: 'on', cohortRefs: [goalBackwardTargetRef(ownerId)],
+    } }), error => error.code === 'GOAL_BACKWARD_GENERATION_FAILED',
+    'authorized ON zero-goal generation must not fall back to the classic seam');
     const candidateCountBeforeForcedFailure = candidates.size;
     const artifactCountBeforeForcedFailure = planningArtifacts.size;
     const activePlanBeforeForcedFailure = currentAssignment().id;
     await assert.rejects(
-      () => plansRouter._test.previewPlanForUser(ownerId, {
+      () => plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...requestClock,
         race_ids: ['hyrox', 'army'],
         target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
@@ -2195,7 +2207,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     const candidateCountBeforeArtifactFailure = candidates.size;
     const artifactCountBeforeArtifactFailure = planningArtifacts.size;
     await assert.rejects(
-      () => plansRouter._test.previewPlanForUser(ownerId, {
+      () => plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...requestClock,
         race_ids: ['hyrox', 'army'],
         target: {
@@ -2220,7 +2232,7 @@ async function checkHyroxCandidateImmediateAdoption() {
 
     profile.training_age_class = 'BEGINNER';
     let beginnerResult = null;
-    await plansRouter._test.previewPlanForUser(ownerId, {
+    await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...requestClock,
         race_ids: ['hyrox', 'army'],
         target: {
@@ -2257,7 +2269,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     let moderateResult = null;
     let moderateError = null;
     try {
-      await plansRouter._test.previewPlanForUser(ownerId, {
+      await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...requestClock,
         race_ids: ['hyrox', 'army'],
         target: {
@@ -2294,7 +2306,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       let sweepResult = null;
       let sweepError = null;
       try {
-        await plansRouter._test.previewPlanForUser(ownerId, {
+        await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
           ...requestClock,
           race_ids: ['hyrox', 'army'],
           target: {
@@ -2338,7 +2350,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     let missingProjectionEvidenceResult = null;
     let missingProjectionEvidenceError = null;
     try {
-      await plansRouter._test.previewPlanForUser(ownerId, {
+      await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...requestClock,
         race_ids: ['hyrox', 'army'],
         target: {
@@ -2395,7 +2407,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     let remainingArmyProductionShape = null;
     let remainingArmyProductionShapeError = null;
     try {
-      await plansRouter._test.previewPlanForUser(ownerId, {
+      await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...productionShapeClock,
         race_ids: ['hyrox', 'army'],
         target: {
@@ -2413,7 +2425,7 @@ async function checkHyroxCandidateImmediateAdoption() {
           inspectDecision: (result) => { threeDayProductionShape = result; },
         },
       });
-      await plansRouter._test.previewPlanForUser(ownerId, {
+      await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...productionShapeClock,
         race_ids: ['army'],
         target: {
@@ -2488,7 +2500,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     let authorizedPreview = null;
     let authorizedError = null;
     try {
-      authorizedPreview = await plansRouter._test.previewPlanForUser(ownerId, {
+      authorizedPreview = await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...requestClock,
         race_ids: ['hyrox', 'army'],
         target: {
@@ -2657,7 +2669,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       'the skeleton and canonical running-only durations remain consistent');
 
     let onResult = null;
-    await plansRouter._test.previewPlanForUser(ownerId, {
+    await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
       ...requestClock,
       race_ids: ['hyrox', 'army'],
       target: {
@@ -2740,6 +2752,21 @@ async function checkHyroxCandidateImmediateAdoption() {
 
     process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'on';
     process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE = 'all';
+    const productionCounts = { candidates: candidates.size, artifacts: planningArtifacts.size,
+      active: currentAssignment().id };
+    const productionOn = await invoke(productionPreview, {
+      ...requestBase,
+      body: { ...requestClock, race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+        adaptiveGeneration: false, previewCandidate: 'previewClassicPlanForUserForTest',
+        goalBackwardDependencies: { mode: 'off' } },
+    });
+    assert.equal(productionOn.statusCode, 409);
+    assert.equal(productionOn.payload.code, 'GOAL_BACKWARD_GENERATION_FAILED',
+      'the registered ON handler cannot select the classic seam through request fields');
+    assert.deepEqual({ candidates: candidates.size, artifacts: planningArtifacts.size,
+      active: currentAssignment().id }, productionCounts,
+    'failed production adaptive generation writes no classic fallback');
     const malformedFeasibilityResults = [];
     for (const malformed of [
       {
@@ -4183,7 +4210,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     let roadInspection = null;
     let roadInspectionError = null;
     try {
-      await plansRouter._test.previewPlanForUser(ownerId, {
+      await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...roadClock,
         race_ids: ['yonkers', 'army'],
         target: {
@@ -5006,7 +5033,7 @@ async function checkHyroxCandidateImmediateAdoption() {
       legacyRoadPlanRow.plan_json = legacyRoadPlanRow.plan_data;
 
       let legacyInspection = null;
-      const legacyReadOnly = await plansRouter._test.previewPlanForUser(ownerId, {
+      const legacyReadOnly = await plansRouter._test.previewClassicPlanForUserForTest(ownerId, {
         ...roadClock,
         operation: 'remove_race',
         remove_race_id: 'yonkers',
@@ -5093,7 +5120,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         };
         let malformedLegacyError = null;
         try {
-          await plansRouter._test.previewRaceRemovalForUser(ownerId, 'yonkers', { ...roadClock });
+          await plansRouter._test.previewClassicRaceRemovalForUserForTest(ownerId, 'yonkers', { ...roadClock });
         } catch (error) {
           malformedLegacyError = error;
         }
@@ -5157,7 +5184,7 @@ async function checkHyroxCandidateImmediateAdoption() {
         assignments: userPlans.size,
         raceOwned: raceRows.has('unrelated'),
       };
-      const unrelatedRemoval = await plansRouter._test.previewRaceRemovalForUser(
+      const unrelatedRemoval = await plansRouter._test.previewClassicRaceRemovalForUserForTest(
         ownerId, 'unrelated', { ...roadClock },
       );
       assert.deepEqual(unrelatedRemoval, {

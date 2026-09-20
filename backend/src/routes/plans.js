@@ -3000,8 +3000,8 @@ function buildDeterministicCandidate(context, options) {
 
 function publicCandidatePayload(candidate) {
   const plan = candidate.plan;
-  const adaptivePreview = plan?.engineVersion === 'adaptive-joint-solver-v1'
-    && candidate.surfaceManifest?.feature_mode === 'preview';
+  const adaptiveCandidate = plan?.engineVersion === 'adaptive-joint-solver-v1';
+  const adaptivePreview = adaptiveCandidate && candidate.surfaceManifest?.feature_mode === 'preview';
   return {
     candidate: {
       candidate_hash: candidate.candidateHash,
@@ -3015,7 +3015,7 @@ function publicCandidatePayload(candidate) {
     candidate_hash: candidate.candidateHash,
     candidate_id: candidate.id,
     effective_from: candidate.effectiveFrom,
-    generation_source: adaptivePreview ? 'adaptive-joint-solver-v1' : 'race_plan_candidate_engine',
+    generation_source: adaptiveCandidate ? 'adaptive-joint-solver-v1' : 'race_plan_candidate_engine',
     choice: candidate.choice || 'train_for_target',
     replaces_active_plan: Boolean(candidate.replacesActivePlan),
     plan: {
@@ -3504,6 +3504,11 @@ function authenticatedGoalExpansionSessionSet({
   const failedIdentityCheck = identityChecks.find(([, valid]) => !valid)?.[0];
   if (failedIdentityCheck) invalidGoalExpansionCarrySource(failedIdentityCheck);
   const reconstructed = planSchema.buildCanonicalPlanFromSessionSet(sessionSet);
+  if (plan.engineVersion === 'adaptive-joint-solver-v1' && reconstructed) {
+    reconstructed.weeks = reconstructed.weeks.map(week => ({ ...week,
+      phase: plan.weeks.find(item => item.week === week.week)?.phase,
+      purpose: plan.purpose, weekly_objectives: plan.weekly_objectives }));
+  }
   const materializedProgram = sessionSet.program_storage_version
     && require('../lib/planCandidateLifecycle').validatedCompleteProgramPlan(plan);
   const sourceSessions = new Map(sessionSet.sessions.map(session => [session.session_id, session]));
@@ -6329,11 +6334,12 @@ function adaptiveAcceptedInput(userId, state) {
   } catch (error) { return { accepted: null, acceptedReason: adaptiveShadow.reason(error) }; }
 }
 
-function prepareAdaptiveCandidateInput(userId, initial) {
+function prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision = false } = {}) {
   let prepared = null;
   let adaptiveReason = null;
   try {
     prepared = adaptiveShadow.prepare({ userId, state: initial,
+      priorPlanRevision: bindPlanRevision ? (initial.activePlan?.planVersion ?? 0) : null,
       source: adaptiveObservedInputs.get(initial.context),
       ...(adaptiveObservedInputs.get(initial.context)?.sourceFailed
         ? { accepted: null, acceptedReason: 'SOURCE_UNAVAILABLE' } : adaptiveAcceptedInput(userId, initial)),
@@ -6346,17 +6352,17 @@ function prepareAdaptiveCandidateInput(userId, initial) {
 }
 
 async function previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
-  generationOptions, store, goalBackwardDependencies }) {
+  generationOptions, store, goalBackwardDependencies, featureMode }) {
   const previewAdapter = require('../lib/adaptiveCoachingPreview');
   try {
     if (!prepared) throw Object.assign(new Error('EVIDENCE_MISSING'), { code: 'EVIDENCE_MISSING' });
     const result = adaptiveShadow.compute(prepared);
-    const preview = previewAdapter.build({ prepared, result, planMode: initial.target.planMode });
+    const preview = previewAdapter.build({ prepared, result, planMode: initial.target.planMode, featureMode });
     const plan = assertPersistablePlan(preview.plan);
     const candidateId = uuidv4();
     const expiresAt = new Date(Date.now() + RACE_PLAN_POLICY_V1.candidate.ttlHours * 3600000).toISOString();
     const bundle = previewAdapter.artifacts({ userId, candidateId, prepared, result, preview,
-      buildSurface: buildCanonicalSurfaceManifest });
+      buildSurface: buildCanonicalSurfaceManifest, featureMode });
     const row = { id: candidateId, user_id: userId, status: 'preview',
       training_plan_id: initial.activePlan?.trainingPlanId || null,
       user_plan_id: initial.activePlan?.userPlanId || null,
@@ -6369,7 +6375,7 @@ async function previewAdaptivePlanForUser({ userId, request, clock, initial, pre
       generation_trace_json: buildCandidateTrace(initial, { plan, validation: preview.selected.validation }), expires_at: expiresAt };
     await withUserMutation(userId, async tx => {
       const current = await loadCandidateInputState(userId, request, clock, tx, generationOptions);
-      if (resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies) !== 'preview'
+      if (resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies) !== featureMode
         || current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash
         || canonicalHash(current.planningConstraints) !== canonicalHash(initial.planningConstraints)
         || !adaptiveShadow.sameObserved(prepared, current, adaptiveObservedInputs.get(current.context), adaptiveAcceptedInput(userId, current))) {
@@ -6377,8 +6383,8 @@ async function previewAdaptivePlanForUser({ userId, request, clock, initial, pre
       }
       if (store) await previewAdapter.persist({ tx, row, bundle });
     });
-    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',
-      outcome: 'candidate_selected', candidateSelected: true, surfaceCapability: 'PREVIEW_ONLY',
+    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: featureMode,
+      outcome: 'candidate_selected', candidateSelected: true, surfaceCapability: bundle.surface.surface_capability,
       sink: goalBackwardDependencies.telemetrySink });
     return { id: candidateId, candidateHash: preview.candidateHash, plan,
       effectiveFrom: candidateEffectiveFrom(initial.active, clock.planningDateLocal, { immediate: true }),
@@ -6392,7 +6398,7 @@ async function previewAdaptivePlanForUser({ userId, request, clock, initial, pre
       }),
     };
   } catch (error) {
-    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: 'preview',
+    emitPlanReleaseTelemetry({ userId, eventType: 'candidate_comparison', mode: featureMode,
       outcome: 'candidate_rejected', candidateSelected: false, surfaceCapability: 'BLOCKED',
       failReasonCodes: error.code === 'EVIDENCE_MISSING' ? ['EVIDENCE_MISSING'] : ['CANDIDATE_NOT_SELECTED'],
       sink: goalBackwardDependencies.telemetrySink });
@@ -6407,13 +6413,31 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
   const request = normalizeCandidateRequest(body);
   const adaptiveMode = resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies,
     { allowSyntheticShadow: true });
-  const generationOptions = { adaptiveGeneration: ['shadow', 'preview'].includes(adaptiveMode) };
+  const generationOptions = { adaptiveGeneration: ['shadow', 'preview', 'on'].includes(adaptiveMode) };
   const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx, generationOptions));
-  let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial);
-  if (adaptiveMode === 'preview') {
+  let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision: adaptiveMode === 'on' });
+  if (['preview', 'on'].includes(adaptiveMode)) {
     return previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
-      generationOptions, store, goalBackwardDependencies });
+      generationOptions, store, goalBackwardDependencies, featureMode: adaptiveMode });
   }
+  return previewClassicCandidateFromState({ userId, request, clock, initial, prepared, adaptiveReason,
+    generationOptions, store, goalBackwardDependencies });
+}
+
+// Retained classic constructor/persistence path. Production reaches it only after
+// the adaptive routing gate above; tests can prepare classic candidates directly
+// to exercise their diagnostics and the real apply guards under ON bindings.
+async function previewClassicPlanForUserForTest(userId, body = {}, { store = true, goalBackwardDependencies = {} } = {}) {
+  const clock = acceptedPlanningClock(body);
+  const request = normalizeCandidateRequest(body);
+  const generationOptions = { adaptiveGeneration: false };
+  const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx, generationOptions));
+  return previewClassicCandidateFromState({ userId, request, clock, initial,
+    prepared: null, adaptiveReason: null, generationOptions, store, goalBackwardDependencies });
+}
+
+async function previewClassicCandidateFromState({ userId, request, clock, initial, prepared, adaptiveReason,
+  generationOptions, store, goalBackwardDependencies }) {
   const built = buildDeterministicCandidate(initial.context, {
     planningDateLocal: clock.planningDateLocal,
     timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
@@ -6912,7 +6936,7 @@ function candidateFeasibilityCanApply(plan = {}) {
   const feasibility = String(plan.overall_feasibility || '').toLowerCase();
   if (feasibility === 'supported' || feasibility === 'stretch') return true;
   if (['unvalidated', 'at_risk'].includes(feasibility)
-    && plan.goal_backward_engine_version === 'goal-backward-coaching-v2.4'
+    && ['goal-backward-coaching-v2.4', 'adaptive-joint-solver-v1'].includes(plan.goal_backward_engine_version)
     && plan.canonical_workout_schema_version === 1
     && isCanonicalHash(plan.canonical_session_set_hash)) return true;
   if (feasibility !== 'not_applicable') return false;
@@ -6969,6 +6993,10 @@ function raceRemovalCandidateRequest(raceId, remainingRaceIds, body = {}) {
 }
 
 async function previewRaceRemovalForUser(userId, raceId, body = {}) {
+  return previewRaceRemovalWithCandidateBuilder(userId, raceId, body, previewPlanForUser);
+}
+
+async function previewRaceRemovalWithCandidateBuilder(userId, raceId, body, previewCandidate) {
   const state = await withUserMutation(userId, async (tx) => {
     const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, userId]);
     if (!race) throw candidateError(404, 'RACE_NOT_FOUND', 'Race not found.');
@@ -6985,7 +7013,7 @@ async function previewRaceRemovalForUser(userId, raceId, body = {}) {
       race: { id: state.race.id, name: state.race.race_name },
     };
   }
-  const candidate = await previewPlanForUser(
+  const candidate = await previewCandidate(
     userId,
     raceRemovalCandidateRequest(raceId, state.impact.remainingRaceIds, body),
   );
@@ -7128,8 +7156,47 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       timezoneOffsetMinutes: Number(row.timezone_offset_minutes),
       planningTimezone: storedSnapshot.planning_timezone,
     };
-    const current = await loadCandidateInputState(userId, request, clock, tx);
-    if (enforceV24Bindings) {
+    const adaptiveOn = enforceV24Bindings && row.feature_mode === 'on'
+      && row.engine_version === 'adaptive-joint-solver-v1';
+    let adaptiveArtifacts = null;
+    if (adaptiveOn) {
+      try {
+        adaptiveArtifacts = assertPipelineLinks((await tx.all(
+          'SELECT * FROM planning_pipeline_artifacts WHERE plan_generation_candidate_id=? AND user_id=?',
+          [row.id, userId],
+        )).map(artifact => ({ ...artifact, payload_json: parseCandidateJson(artifact.payload_json, null),
+          schema_version: Number(artifact.schema_version), revision: Number(artifact.revision),
+          created_at: new Date(artifact.created_at).toISOString() })));
+        if (adaptiveArtifacts.length !== 7) throw new Error('Incomplete adaptive artifacts');
+        const evidence = adaptiveArtifacts.find(artifact => artifact.artifact_kind === 'evidence_snapshot');
+        adaptivePlanningInstants.set(clock, evidence.created_at);
+      } catch (_error) {
+        return staleApplyResult('DECISION_ARTIFACT_CHANGED');
+      }
+    }
+    const current = await loadCandidateInputState(userId, request, clock, tx, { adaptiveGeneration: adaptiveOn });
+    let adaptiveBundle = null;
+    if (adaptiveOn) {
+      try {
+        const adapter = require('../lib/adaptiveCoachingPreview');
+        const { prepared } = prepareAdaptiveCandidateInput(userId, current, { bindPlanRevision: true });
+        const result = adaptiveShadow.compute(prepared);
+        const preview = adapter.build({ prepared, result, planMode: current.target.planMode, featureMode: 'on' });
+        adaptiveBundle = adapter.artifacts({ userId, candidateId: row.id, prepared, result, preview,
+          buildSurface: buildCanonicalSurfaceManifest, featureMode: 'on' });
+        const freshness = validateGoalBackwardApplyEnvelope(expectedApplyEnvelope,
+          buildGoalBackwardApplyEnvelope({ ...row, ...adaptiveBundle.bindings,
+            planning_input_revision: current.planningInputRevision }));
+        if (!freshness.valid) return staleApplyResult(freshness.code);
+        if (preview.candidateHash !== row.candidate_hash || prefixedHash(preview.plan) !== prefixedHash(storedPlan)
+          || adaptiveBundle.artifacts.some(expected => {
+            const actual = adaptiveArtifacts.find(artifact => artifact.id === expected.id);
+            return !actual || prefixedHash(actual) !== prefixedHash(expected);
+          })) return staleApplyResult('CANDIDATE_DETERMINISM_MISMATCH');
+      } catch (_error) {
+        return staleApplyResult('CANDIDATE_DETERMINISM_MISMATCH');
+      }
+    } else if (enforceV24Bindings) {
       const currentEnvelope = currentGoalBackwardApplyEnvelope(expectedApplyEnvelope, userId, current);
       const freshness = validateGoalBackwardApplyEnvelope(expectedApplyEnvelope, currentEnvelope);
       if (!freshness.valid) return staleApplyResult(freshness.code);
@@ -7140,47 +7207,49 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       return planningInputUnchanged({ status: 409, error: 'Training inputs changed. Preview again.', code: 'CANDIDATE_STALE' });
     }
 
-    prepareAdaptiveCandidateInput(userId, current);
-    const fresh = buildDeterministicCandidate(current.context, {
-      planningDateLocal: clock.planningDateLocal,
-      timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
-    });
-    if (!fresh.validation.valid) {
-      return planningInputUnchanged({ status: 409, error: 'Candidate no longer passes validation.', code: 'CANDIDATE_INVALID' });
-    }
-    const currentSemanticErrors = enforceV24Bindings
-      ? []
-      : storedPlan?.planMode === 'hyrox_build'
-        ? hyroxPlan.validateHyroxPlan(storedPlan).errors
-        : semanticCandidateErrors(storedPlan, current.context, clock.planningDateLocal);
-    let deterministicMismatch = currentSemanticErrors.length > 0;
-    if (enforceV24Bindings) {
-      let currentGoalBackward = null;
-      try {
-        currentGoalBackward = await computeGoalBackwardShadowDiagnosticsAsync({
-          userId,
-          state: current,
-          built: fresh,
-          planningDateLocal: clock.planningDateLocal,
-        }, constraints.goalBackwardDependencies || {});
-      } catch (_error) {
-        deterministicMismatch = true;
+    if (!adaptiveOn) {
+      prepareAdaptiveCandidateInput(userId, current);
+      const fresh = buildDeterministicCandidate(current.context, {
+        planningDateLocal: clock.planningDateLocal,
+        timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
+      });
+      if (!fresh.validation.valid) {
+        return planningInputUnchanged({ status: 409, error: 'Candidate no longer passes validation.', code: 'CANDIDATE_INVALID' });
       }
-      const currentApplicablePlan = applicableGoalBackwardPlan(fresh.plan, currentGoalBackward);
-      const currentSelectedHash = prefixedGoalBackwardCandidateHash(
-        currentGoalBackward?.selected_candidate?.candidate_hash,
-      );
-      deterministicMismatch = deterministicMismatch
-        || !currentApplicablePlan
-        || currentSelectedHash !== row.candidate_hash
-        || prefixedHash(currentApplicablePlan) !== prefixedHash(storedPlan);
-    } else {
-      deterministicMismatch = deterministicMismatch
-        || prefixedHash(storedPlan) !== row.candidate_hash
-        || prefixedHash(fresh.plan) !== row.candidate_hash;
-    }
-    if (deterministicMismatch) {
-      return planningInputUnchanged({ status: 409, error: 'Candidate could not be reproduced safely.', code: 'CANDIDATE_DETERMINISM_MISMATCH' });
+      const currentSemanticErrors = enforceV24Bindings
+        ? []
+        : storedPlan?.planMode === 'hyrox_build'
+          ? hyroxPlan.validateHyroxPlan(storedPlan).errors
+          : semanticCandidateErrors(storedPlan, current.context, clock.planningDateLocal);
+      let deterministicMismatch = currentSemanticErrors.length > 0;
+      if (enforceV24Bindings) {
+        let currentGoalBackward = null;
+        try {
+          currentGoalBackward = await computeGoalBackwardShadowDiagnosticsAsync({
+            userId,
+            state: current,
+            built: fresh,
+            planningDateLocal: clock.planningDateLocal,
+          }, constraints.goalBackwardDependencies || {});
+        } catch (_error) {
+          deterministicMismatch = true;
+        }
+        const currentApplicablePlan = applicableGoalBackwardPlan(fresh.plan, currentGoalBackward);
+        const currentSelectedHash = prefixedGoalBackwardCandidateHash(
+          currentGoalBackward?.selected_candidate?.candidate_hash,
+        );
+        deterministicMismatch = deterministicMismatch
+          || !currentApplicablePlan
+          || currentSelectedHash !== row.candidate_hash
+          || prefixedHash(currentApplicablePlan) !== prefixedHash(storedPlan);
+      } else {
+        deterministicMismatch = deterministicMismatch
+          || prefixedHash(storedPlan) !== row.candidate_hash
+          || prefixedHash(fresh.plan) !== row.candidate_hash;
+      }
+      if (deterministicMismatch) {
+        return planningInputUnchanged({ status: 409, error: 'Candidate could not be reproduced safely.', code: 'CANDIDATE_DETERMINISM_MISMATCH' });
+      }
     }
     const validatedPlan = assertPersistablePlan(storedPlan);
     const active = current.active ? await getActivePlanForMutation(userId, tx, {
@@ -7194,6 +7263,9 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
 
     // Recheck at the write boundary so a midnight cutover rolls back this transaction.
     assertCandidatePlanningDateCurrent(row);
+    if (adaptiveOn && resolvePlanGoalBackwardV24Mode(userId, constraints.goalBackwardDependencies || {}) !== 'on') {
+      return staleApplyResult('GOAL_BACKWARD_MODE_UNAVAILABLE');
+    }
     await pruneExpiredPlanCandidates(tx, userId, { excludeCandidateId: row.id });
     const schedule = validatedPlan.schedulePreferences || {};
     const preferenceColumns = [];
@@ -7281,6 +7353,20 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       [choice, planId, userPlanId, JSON.stringify(payload), row.id, userId]
     );
     if (candidateUpdate.changes === 0) throw new Error('Candidate apply status update failed');
+    if (adaptiveOn) {
+      const source = adaptiveBundle.artifacts.find(artifact => artifact.artifact_kind === 'surface_manifest');
+      const acceptedSurface = { ...source.payload_json, status: 'accepted' };
+      const appliedCandidate = { ...row, status: 'applied', applied_user_plan_id: userPlanId, applied_training_plan_id: planId };
+      const activeRow = { user_plan_id: userPlanId, plan_id: planId, status: 'active',
+        plan_version: replacementLineage.priorVersion + 1, plan_json: serialized };
+      const canonical = adaptiveBundle.artifacts.find(artifact => artifact.artifact_kind === 'canonical_session_set');
+      if (!surfaceManifestMatchesAppliedPlan(acceptedSurface, appliedCandidate, activeRow, canonical.payload_json)) {
+        throw candidateError(409, 'SURFACE_REVISION_MISMATCH', 'The accepted prescription needs review.');
+      }
+      await persistPipelineArtifacts({ tx, artifacts: [buildPipelineArtifact({ userId, kind: 'surface_manifest',
+        decisionId: source.decision_id, parentArtifactId: source.parent_artifact_id,
+        planGenerationCandidateId: row.id, revision: source.revision + 1, payload: acceptedSurface })] });
+    }
     return { status: 200, payload };
   });
 }
@@ -9967,21 +10053,25 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
   }
 });
 
-router.post('/generate-for-races', auth, requirePremium('Race Programs'), async (req, res) => {
-  try {
-    if (!Array.isArray(req.body?.race_ids) || req.body.race_ids.length < 1) {
-      throw candidateError(400, 'RACES_REQUIRED', 'Choose one or two races.');
+function buildGenerateForRacesHandler(previewCandidate = previewPlanForUser) {
+  return async (req, res) => {
+    try {
+      if (!Array.isArray(req.body?.race_ids) || req.body.race_ids.length < 1) {
+        throw candidateError(400, 'RACES_REQUIRED', 'Choose one or two races.');
+      }
+      const candidate = await previewCandidate(req.user.id, withRequestPlanningClock(req, req.body));
+      return res.status(201).json({
+        ...publicCandidatePayload(candidate),
+        races: candidate.races.map((race) => ({ id: race.id, name: race.race_name, date: race.race_date })),
+        weeks: candidate.plan.weeks.length,
+      });
+    } catch (err) {
+      return sendCandidateError(res, err, 'generate-for-races');
     }
-    const candidate = await previewPlanForUser(req.user.id, withRequestPlanningClock(req, req.body));
-    return res.status(201).json({
-      ...publicCandidatePayload(candidate),
-      races: candidate.races.map((race) => ({ id: race.id, name: race.race_name, date: race.race_date })),
-      weeks: candidate.plan.weeks.length,
-    });
-  } catch (err) {
-    return sendCandidateError(res, err, 'generate-for-races');
-  }
-});
+  };
+}
+
+router.post('/generate-for-races', auth, requirePremium('Race Programs'), buildGenerateForRacesHandler());
 
 router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
@@ -10002,6 +10092,10 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router.clearActivePlanForUser = clearActivePlanForUser;
 
 router._test = {
+  previewClassicPlanForUserForTest,
+  previewClassicRaceRemovalForUserForTest: (userId, raceId, body = {}) =>
+    previewRaceRemovalWithCandidateBuilder(userId, raceId, body, previewClassicPlanForUserForTest),
+  buildGenerateForRacesHandler,
   publicCandidatePayload,
   recordActivityMeasurement,
   buildAdaptationInputs,

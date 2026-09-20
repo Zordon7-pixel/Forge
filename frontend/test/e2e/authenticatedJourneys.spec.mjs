@@ -3300,9 +3300,13 @@ test('a PostgreSQL JSONB-ordered accepted surface renders the Weekly Run Brief o
 })
 
 // Committed synthetic solver output in the exact public response shape.
-test('adaptive candidate seven-day review closes without applying', async ({ page }, testInfo) => {
+for (const mode of ['preview', 'on']) test(`adaptive candidate ${mode} seven-day review and approval boundary`, async ({ page }, testInfo) => {
   const fs = await import('node:fs')
   const payload = structuredClone(adaptivePreviewPublicFixture)
+  if (mode === 'on') {
+    payload.requires_apply = true
+    Object.assign(payload.surface_manifest, { feature_mode: 'on', surface_capability: 'EXECUTABLE', apply_disabled: false })
+  }
   const runtimeErrors = collectRuntimeErrors(page)
   await page.clock.install({ time: new Date(adaptivePreviewNow) })
   const active = activePlanWithTodaySessions([plannedRun])
@@ -3311,6 +3315,7 @@ test('adaptive candidate seven-day review closes without applying', async ({ pag
     ['GET /api/plans/my', active],
     ['POST /api/plans/generate', payload],
     ['POST /api/plans/generate-for-races', payload],
+    [`POST /api/plans/candidates/${payload.candidate_id}/apply`, { ok: true, candidate_id: payload.candidate_id }],
   ]) })
   await page.goto('/plan')
   await page.getByRole('button', { name: 'Manage plan', exact: true }).click()
@@ -3318,11 +3323,11 @@ test('adaptive candidate seven-day review closes without applying', async ({ pag
   await page.getByRole('button', { name: 'Sun', exact: true }).click()
   await page.getByLabel('Runs each week').selectOption('4')
   await page.getByRole('button', { name: 'Rebuild remaining calendar', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Your adaptive training preview' })
+  const dialog = page.getByRole('dialog', { name: mode === 'preview' ? 'Your adaptive training preview' : 'Your adaptive training plan' })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText('Aerobic run', { exact: true })).toBeVisible()
   await expect(dialog.locator('article')).toHaveCount(7)
-  await expect(dialog.getByRole('button', { name: /apply|start|export|garmin/i })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: /apply|start|export|garmin/i })).toHaveCount(mode === 'preview' ? 0 : 1)
   expect(await dialog.innerText()).not.toContain('_')
   const geometry = await dialog.evaluate(node => {
     const r = node.getBoundingClientRect()
@@ -3335,7 +3340,7 @@ test('adaptive candidate seven-day review closes without applying', async ({ pag
   expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewport.height)
   expect(Math.abs(geometry.x + geometry.width / 2 - geometry.viewport.width / 2)).toBeLessThanOrEqual(1)
   expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth)
-  const prefix = testInfo.outputPath('p2-ui')
+  const prefix = testInfo.outputPath(`adaptive-${mode}-ui`)
   await dialog.evaluate(node => { node.scrollTop = 0 })
   await page.screenshot({ path: `${prefix}.png` })
   await dialog.getByRole('button', { name: 'Keep current plan', exact: true }).last().scrollIntoViewIfNeeded()
@@ -3344,6 +3349,16 @@ test('adaptive candidate seven-day review closes without applying', async ({ pag
   await expect(dialog).toHaveCount(0)
   await page.getByRole('button', { name: 'Rebuild remaining calendar', exact: true }).click()
   await expect(dialog).toBeVisible()
+  if (mode === 'on') {
+    const applied = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/apply'))
+    await dialog.getByRole('button', { name: 'Apply reviewed plan', exact: true }).tap()
+    const request = await applied
+    expect(request.postDataJSON().candidate_hash).toBe(payload.candidate_hash)
+    await expect(dialog).toHaveCount(0)
+    expect(apiState.requests.filter(r => r.method === 'POST' && r.pathname?.endsWith('/apply'))).toHaveLength(1)
+    assertCleanApiAndRuntime(apiState, runtimeErrors)
+    return
+  }
   await dialog.getByRole('button', { name: 'Review race target', exact: true }).tap()
   await expect(dialog).toHaveCount(0)
   await expect(page).toHaveURL(/\/races$/)

@@ -250,7 +250,45 @@ assert.deepEqual(previewSteps([{ type: 'UNKNOWN_STEP', target: { UNKNOWN_TARGET:
 for (const mode of ['off', 'shadow', 'on']) {
   assert.equal(planCandidateRequiresReview({ candidate: { status: 'preview' },
     surface_manifest: { feature_mode: mode, status: 'preview' },
-    plan: { plan_data: { overall_feasibility: 'supported', engineVersion: 'adaptive-joint-solver-v1' } } }), false)
+    plan: { plan_data: { overall_feasibility: 'supported', engineVersion: 'race_plan_candidate_engine' } } }), false)
 }
+
+// ON still reviews the same bound seven-day prescription before approval.
+const on = structuredClone(payload)
+on.requires_apply = true
+on.feature_mode = 'on'
+on.apply_bindings.feature_mode = 'on'
+Object.assign(on.surface_manifest, { feature_mode: 'on', surface_capability: 'EXECUTABLE', apply_disabled: false })
+assert.equal(adaptivePreviewSessions(on, now).length, 7)
+assert.equal(candidateFeasibilityCanApply(on.plan.plan_data), true)
+assert.equal(planCandidateRequiresReview(on), true)
+for (const mutate of [
+  p => { p.surface_manifest.apply_disabled = true },
+  p => { p.surface_manifest.surface_capability = 'PREVIEW_ONLY' },
+  p => { p.apply_bindings.feature_mode = 'preview' },
+  p => { p.surface_manifest.status = 'accepted' },
+  p => { p.surface_manifest.sessions[0].steps[0].target.duration_s++ },
+]) {
+  const invalid = structuredClone(on)
+  mutate(invalid)
+  assert.equal(adaptivePreviewSessions(invalid, now).length, 0)
+}
+const realNow = Date.now
+Date.now = () => now
+try {
+  for (const decision of ['apply', 'cancel']) {
+    let reviews = 0, applies = 0
+    const stop = registerPlanCandidateReviewer(async value => { reviews++; assert.equal(value, on); return decision })
+    try {
+      if (decision === 'apply') assert.equal(await reviewPlanCandidateBeforeApply(on, () => { applies++; return 'accepted' }), 'accepted')
+      else await assert.rejects(reviewPlanCandidateBeforeApply(on, () => { applies++ }), isPlanCandidateReviewCancelled)
+      assert.equal(reviews, 1)
+      assert.equal(applies, decision === 'apply' ? 1 : 0)
+    } finally { stop() }
+  }
+  let applies = 0
+  await assert.rejects(reviewPlanCandidateBeforeApply({ ...on, surface_manifest: null }, () => { applies++ }), e => e.code === 'ADAPTIVE_CANDIDATE_UNAVAILABLE')
+  assert.equal(applies, 0)
+} finally { Date.now = realNow }
 
 console.log('PLAN CANDIDATE REVIEW SMOKE OK (runtime preview/apply/read-back and unconditional canonical projection covered)')
