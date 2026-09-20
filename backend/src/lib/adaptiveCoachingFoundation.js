@@ -41,7 +41,7 @@ function buildAdaptiveCoachingFoundation({ snapshot, context = {}, stateOptions 
   const target = context.target || {}, profile = context.profile || {};
   const capacities = {
     run: capacity(target.runDaysPerWeek ?? profile.run_days_per_week ?? 0, 7, 'run capacity'),
-    lift: capacity(target.liftDaysPerWeek ?? profile.lift_days_per_week ?? 0, 5, 'lift capacity'),
+    lift: capacity(target.liftDaysPerWeek ?? profile.lift_days_per_week ?? 0, 7, 'lift capacity'),
   };
   const maxMinutes = target.maxSessionMinutes ?? null;
   if (maxMinutes !== null && (typeof maxMinutes !== 'number' || !Number.isFinite(maxMinutes) || maxMinutes < 1 || maxMinutes > 1440)) {

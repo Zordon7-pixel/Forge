@@ -79,6 +79,36 @@ test('weekly objectives precede placement and every selection traces to one', ()
   }
   assert.throws(() => buildSessionSelectionContracts({ athleteState: r.athlete_state }), /precede/);
 });
+test('target and profile capacities retain six/seven in serializable artifacts without forcing selection', () => {
+  for (const origin of ['target', 'profile']) for (const lifts of [6, 7]) {
+    const input = fixture({ runs: 7, lifts });
+    if (origin === 'profile') input.context = { profile: { run_days_per_week: 7, lift_days_per_week: lifts } };
+    const result = buildAdaptiveCoachingFoundation(input);
+    const expected = { run: 7, lift: lifts };
+    assert.deepEqual(result.athlete_state.adaptive_foundation.capacities, expected);
+    assert.deepEqual(result.decision.weekly_objectives.capacities, expected);
+    // Persistence payload round-trip; this pure seam does not write a database.
+    const artifacts = JSON.parse(JSON.stringify(result.artifacts));
+    assert.deepEqual(artifacts[1].payload_json.adaptive_foundation.capacities, expected);
+    assert.deepEqual(artifacts[2].payload_json.weekly_objectives.capacities, expected);
+    artifacts.forEach(a => assert.equal(validatePipelineArtifact(a).valid, true));
+    for (const modality of ['run', 'lift']) {
+      assert.ok(result.decision.session_selection.used_capacity[modality] <= expected[modality]);
+    }
+    assert.ok(result.decision.session_selection.used_capacity.run < 7, 'sparse evidence must not force seven runs');
+  }
+});
+test('both capacity sources reject out-of-range, fractional and non-number values for either modality', () => {
+  for (const origin of ['target', 'profile']) for (const modality of ['run', 'lift']) {
+    for (const value of [8, -1, 6.5, '7', 'invalid', true, {}, [], NaN, Infinity]) {
+      const input = fixture();
+      input.context = origin === 'target'
+        ? { target: { [`${modality}DaysPerWeek`]: value } }
+        : { profile: { [`${modality}_days_per_week`]: value } };
+      assert.throws(() => buildAdaptiveCoachingFoundation(input), new RegExp(`${modality} capacity must be an integer from 0 to 7`));
+    }
+  }
+});
 test('frequency is a ceiling, keys outrank support, stress and meaningful dose bind', () => {
   const r = build({ established: true, runs: 6, lifts: 5 });
   assert.ok(r.decision.session_selection.used_capacity.run < 6);
