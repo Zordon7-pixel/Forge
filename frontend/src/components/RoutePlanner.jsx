@@ -3,6 +3,7 @@ import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-l
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ChevronDown, ChevronUp, LoaderCircle, MapPin, Mountain, Navigation, Route as RouteIcon, Search, Trees } from 'lucide-react'
 import api from '../lib/api'
+import { normalizePlannerRoute, normalizePlannerPlaces, plannerErrorMessage } from '../lib/routePlannerData'
 import { useUnits } from '../context/UnitsContext'
 
 const ELEVATION_OPTIONS = [
@@ -85,10 +86,10 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
       : []
   ), [route])
 
-  if (targetDistanceMiles <= 0) return null
+  if (!Number.isFinite(targetDistanceMiles) || targetDistanceMiles <= 0) return <p role="alert">A valid distance target is needed to plan a route. You can still log your run manually.</p>
 
   const formatElevation = (feet) => {
-    if (!Number.isFinite(Number(feet))) return '--'
+    if (feet == null || !Number.isFinite(Number(feet))) return '--'
     if (units === 'metric') return `${Math.round(Number(feet) * 0.3048).toLocaleString()} m`
     return `${Math.round(Number(feet)).toLocaleString()} ft`
   }
@@ -109,14 +110,14 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
         elevationPreference,
         surface,
       }, { timeout: 30000 })
-      const generated = response.data?.route || null
-      setRoute(generated ? {
+      const generated = normalizePlannerRoute(response.data?.route)
+      setRoute({
         ...generated,
         startLabel: startMode === 'current' ? 'Current iPhone location' : selectedPlace.label,
-      } : null)
+      })
     } catch (err) {
-      console.error('[RoutePlanner] generation failed:', err.message)
-      setError(err?.response?.data?.error || err.message || 'Forged Hybrid could not plan this route.')
+      console.error('[RoutePlanner] generation failed:', err?.message || 'Unknown error')
+      setError(plannerErrorMessage(err, err instanceof Error ? err.message : 'Forged Hybrid could not plan this route. Please try again.'))
     } finally {
       setLoading(false)
     }
@@ -136,12 +137,12 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
     setRoute(null)
     try {
       const response = await api.post('/routes/search-start', { query }, { timeout: 12000 })
-      const places = Array.isArray(response.data?.places) ? response.data.places : []
+      const places = normalizePlannerPlaces(response.data?.places)
       setPlaceResults(places)
       if (!places.length) setError('No matching starting place was found. Try a city and state or a full address.')
     } catch (err) {
-      console.error('[RoutePlanner] place search failed:', err.message)
-      setError(err?.response?.data?.error || err.message || 'Forged Hybrid could not search that place.')
+      console.error('[RoutePlanner] place search failed:', err?.message || 'Unknown error')
+      setError(plannerErrorMessage(err, 'Forged Hybrid could not search that place. Please try again.'))
     } finally {
       setSearching(false)
     }
@@ -375,7 +376,14 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
               <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>{route.notice}</p>
               <button
                 type="button"
-                onClick={() => onStart?.(route, surface)}
+                onClick={async () => {
+                  try {
+                    await onStart?.(route, surface)
+                  } catch (startError) {
+                    console.error('[RoutePlanner] route start failed:', startError?.message || 'Unknown error')
+                    setError('The run could not start. Please try again.')
+                  }
+                }}
                 disabled={typeof onStart !== 'function'}
                 className="pressable w-full mt-3 flex items-center justify-center gap-2 py-3 font-black"
                 style={{ borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)' }}

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, Navigate, useNavigate, useLocation } from 'react-router'
 import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
@@ -21,7 +21,8 @@ import { getAuthenticatedUserId } from '../lib/auth'
 import { normalizeTravelWorkoutOverride } from '../lib/travelTraining'
 import { calendarMonthView, motivationalRunName, normalizePlanSchedule, shiftCalendarMonth } from '../lib/planRunCalendar'
 
-const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
+import RoutePlannerLoader from '../components/RoutePlannerLoader'
+import { canonicalRunStructure } from '../lib/weeklyRunBrief'
 
 function todayISO() {
   const now = new Date()
@@ -177,16 +178,24 @@ function travelWorkoutForDisplay(workout) {
 }
 
 function normalizeSteps(value) {
-  if (Array.isArray(value)) return value.filter(Boolean)
+  let steps = value
   if (typeof value === 'string') {
     try {
-      const parsed = JSON.parse(value)
-      return Array.isArray(parsed) ? parsed.filter(Boolean) : []
+      steps = JSON.parse(value)
     } catch {
-      return value.split(/\n|•/).map((item) => item.trim()).filter(Boolean)
+      steps = value.split(/\n|•/).map((item) => item.trim()).filter(Boolean)
     }
   }
-  return []
+  if (!Array.isArray(steps)) return []
+  return steps.filter(Boolean).flatMap((step) => {
+    if (typeof step === 'string') return [step]
+    // Canonical prescriptions contain step objects, not React text children.
+    // Use the same target/ repeat representation as the weekly run brief.
+    if (step && typeof step === 'object' && typeof step.type === 'string') {
+      return canonicalRunStructure([step])
+    }
+    return ['Workout step unavailable. Review the full workout in Plan.']
+  })
 }
 
 function parseSplits(run) {
@@ -465,6 +474,7 @@ export default function LogRun() {
   const [monthCursor, setMonthCursor] = useState(() => /^\d{4}-\d{2}$/.test(query.get('month') || '') ? query.get('month') : todayISO().slice(0, 7))
   const [showWatchModal, setShowWatchModal] = useState(false)
   const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
+  const [routePlannerAttempt, setRoutePlannerAttempt] = useState(0)
   const [runIntentOpen, setRunIntentOpen] = useState(() => query.get('intent') === 'rest-day')
   const [runIntentLoading, setRunIntentLoading] = useState(false)
   const [runIntentError, setRunIntentError] = useState('')
@@ -566,10 +576,11 @@ export default function LogRun() {
         }
       })
       .catch((err) => {
-        console.error('[LogRun] route planner availability check failed:', err.message)
+        console.error('[LogRun] route planner availability check failed:', err?.message || 'Unknown error')
+        if (active) setRoutePlannerStatus({ available: false, requiresPro: false, error: true })
       })
     return () => { active = false }
-  }, [])
+  }, [routePlannerAttempt])
 
   useEffect(() => {
     if (activeTab !== 'today' || todayWorkout) return
@@ -1239,9 +1250,16 @@ export default function LogRun() {
                   {todayWorkout.source === 'calendar' ? 'Start Scheduled Run' : 'Start Run'}
                 </button>
                 {routePlannerStatus.available && (
-                  <Suspense fallback={<p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>Loading route planner...</p>}>
-                    <RoutePlanner workout={todayWorkout} onStart={startPlannedRoute} initialExpanded={Boolean(location.state?.openRoutePlanner)} />
-                  </Suspense>
+                  <RoutePlannerLoader workout={todayWorkout} onStart={startPlannedRoute} initialExpanded={Boolean(location.state?.openRoutePlanner)} />
+                )}
+                {routePlannerStatus.error && (
+                  <div className="mt-4">
+                    <p role="alert">Route planning is unavailable. Your run can still be started or logged manually.</p>
+                    <button type="button" className="min-h-11 underline" onClick={() => {
+                      setRoutePlannerStatus({ available: false, requiresPro: false })
+                      setRoutePlannerAttempt(value => value + 1)
+                    }}>Retry route availability</button>
+                  </div>
                 )}
                 {routePlannerStatus.requiresPro && (
                   <Link to="/upgrade" className="mt-4 flex items-center justify-between py-3 px-1 text-sm font-black" style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
