@@ -400,7 +400,7 @@ export default function PlanCatalog() {
         <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Create / Manage Plan</p>
         <h1 style={{ color: 'var(--text-primary)', fontSize: 30, fontWeight: 950, margin: 0 }}>Build around your race.</h1>
         <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 8, maxWidth: 560 }}>
-          Find the event, confirm its date, then choose the days you can train. Forged Hybrid builds the run and optional lift calendar through race day.
+          Request a calendar for your race. If the current planner cannot cover the full period or verify required training data, it will explain why and keep your active plan.
         </p>
       </header>
 

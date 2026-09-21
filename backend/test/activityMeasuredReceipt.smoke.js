@@ -219,7 +219,11 @@ async function main() {
       families:result.selected_candidate?.sessions.map(s=>[s.workout_family,s.derived_totals.sets,s.derived_totals.duration_s]),
       strength:result.strength_dose_receipt,source_support:prepared.source_support}));
   }
-  const witnesses = await previewWitnesses(a);
+  // Explicit later-race preview now rejects instead of silently substituting a week.
+  await assert.rejects(plans.previewPlanForUser(a.owner,a.req,options('preview')),
+    e => e.details?.reason_code === 'RACE_CALENDAR_HORIZON_UNSUPPORTED');
+  // Keep the source/authentication and seven-artifact positive on its actual weekly scope.
+  const witnesses = await previewWitnesses({...a,req:{...a.req,race_ids:[]}});
   const input = a.bodies[0];
   for (const bad of [{...input,expected_revision:0},{...input,expected_revision:1,session_hash:'f'.repeat(64)},
     {...input,expected_revision:1,plan_revision:2},{...input,expected_revision:1,session_revision:2},

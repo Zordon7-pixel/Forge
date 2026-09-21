@@ -9,7 +9,14 @@ const fail = (code, generationFailure = null) => { throw Object.assign(new Error
 
 // Closed public explanations only: never expose captured evidence or solver payloads.
 const GENERATION_FAILURES = Object.freeze({
-  CANONICAL_STRENGTH_LINK_ABSENT: 'The current planner needs completed strength work linked to an accepted workout before it can build this lifting schedule. Link or complete a planned strength workout, then preview again; alternatively, request a run-only plan.',
+  SOURCE_UNAVAILABLE: 'Required training data could not be loaded. The planner cannot verify a plan from the available data. Try previewing again.',
+  SOURCE_STALE: 'Required training data is out of date. Refresh your training data and preview again.',
+  SOURCE_CORRUPT: 'Required training data could not be verified. The planner cannot safely use these records to build a plan.',
+  ACCEPTED_SOURCE_UNAVAILABLE: 'The accepted workout source could not be verified. Recorded totals alone cannot replace its canonical workout identity.',
+  OCCUPANCY_UNAVAILABLE: 'The planner could not verify existing calendar occupancy. This is a data verification limitation, not a finding that your schedule conflicts.',
+  REQUIRED_EXPOSURE_UNPLACEABLE: 'The current planner could not place its required workouts within the selected dates and recovery rules. This does not establish that every possible schedule is unsafe.',
+
+  CANONICAL_STRENGTH_LINK_ABSENT: 'The planner cannot verify completed strength work linked to an accepted canonical workout. Recorded lifting totals or equipment selection alone do not satisfy this requirement. First-time strength-plan setup is not currently supported on this path.',
   MEASURED_RUN_WORK_SOURCE_ABSENT: 'The current planner needs measured work segments linked to completed key runs before it can prescribe the required race work. Sync those completed workouts and preview again.',
   MEASURED_STATION_SOURCE_ABSENT: 'Measured station work is missing for this HYROX schedule. Sync the required station measurements and preview again.',
   COMPLETE_TIMED_OWNED_HYROX_MATERIAL_ABSENT: 'The planner cannot construct this HYROX event workout from the available event measurements. Review the event details and sync completed event-specific workouts.',
@@ -28,7 +35,7 @@ function generationFailure(prepared, result) {
   return reason ? { reason_code: reason, message: GENERATION_FAILURES[reason] } : null;
 }
 function publicGenerationFailure(error) {
-  const code = error?.generationFailure?.reason_code;
+  const code = error?.generationFailure?.reason_code || error?.code;
   return Object.hasOwn(GENERATION_FAILURES, code)
     ? { reason_code: code, message: GENERATION_FAILURES[code] } : null;
 }

@@ -292,3 +292,21 @@ try {
 } finally { Date.now = realNow }
 
 console.log('PLAN CANDIDATE REVIEW SMOKE OK (runtime preview/apply/read-back and unconditional canonical projection covered)')
+
+// A failed race preview never opens review or reaches apply. Response is mocked here.
+{
+  const originalPost = api.post
+  const calls = []
+  const error = Object.assign(new Error('planner limitation'), { response: { status: 409, data: {
+    code: 'GOAL_BACKWARD_GENERATION_FAILED', details: { reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED' },
+    error: 'The current adaptive planner builds seven days. Your active plan was not changed.',
+  } } })
+  api.post = async url => { calls.push(url); throw error }
+  try {
+    await assert.rejects(previewAndApplyPlan('/plans/generate-for-race/army', { target: { runDaysPerWeek: 4, liftDaysPerWeek: 4 } }), e => e === error)
+    assert.deepEqual(calls, ['/plans/generate-for-race/army'])
+  } finally { api.post = originalPost }
+  assert.match(read('frontend/src/pages/PlanCatalog.jsx'), /cannot cover the full period or verify required training data/)
+  assert.match(read('frontend/src/pages/PlanCatalog.jsx'), /Your race was saved, but your training plan was not changed/)
+  assert.match(sheet, /seven.day/i)
+}
