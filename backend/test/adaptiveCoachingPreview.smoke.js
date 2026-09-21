@@ -91,6 +91,13 @@ async function main() {
   assert.equal(response.candidateHash, off.candidateHash);
   assert.ok(db.prepare('SELECT COUNT(*) n FROM planning_pipeline_artifacts WHERE plan_generation_candidate_id=?').get(response.id).n >= 5);
   const adapter = require('../src/lib/adaptiveCoachingPreview');
+  const strengthFailure = adapter.publicGenerationFailure({code:'CANONICAL_STRENGTH_LINK_ABSENT'});
+  assert.match(strengthFailure.message,/First-time strength-plan setup is not currently supported/);
+  assert.doesNotMatch(strengthFailure.message,/Link or complete|run-only/);
+  assert.equal(adapter.publicGenerationFailure({code:'private exception'}),null);
+  for(const code of ['SOURCE_UNAVAILABLE','SOURCE_STALE','SOURCE_CORRUPT','ACCEPTED_SOURCE_UNAVAILABLE','OCCUPANCY_UNAVAILABLE','REQUIRED_EXPOSURE_UNPLACEABLE']) {
+    assert.equal(adapter.publicGenerationFailure({code}).reason_code,code);
+  }
   assert.equal(adapter.build({prepared,result,planMode:'hybrid_build'}).plan.planMode,'hybrid_build');
   assert.ok(!['VALID','VALID_WITH_TRADEOFFS'].includes(exposed.plan.overall_feasibility));
   const counts = () => ['plan_generation_candidates','planning_pipeline_artifacts','user_plans']
@@ -154,7 +161,7 @@ async function main() {
     if (method === 'all' && sql.includes('FROM daily_checkins')) throw new Error('synthetic missing evidence');
   };
   await assert.rejects(plans.previewPlanForUser(OWNER, request, options('preview')),
-    e => e.code === 'GOAL_BACKWARD_GENERATION_FAILED');
+    e => e.code === 'GOAL_BACKWARD_GENERATION_FAILED' && e.details.reason_code === 'SOURCE_UNAVAILABLE');
   hooks.before = null;
   assert.equal(computations, computationsBeforeMissing, 'missing foundation never invokes compute');
   assert.equal(db.prepare("SELECT COUNT(*) n FROM plan_generation_candidates WHERE feature_mode='preview'").get().n, 2);

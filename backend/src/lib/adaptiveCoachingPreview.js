@@ -5,7 +5,40 @@ const { validateCanonicalSessionSet } = require('./canonicalWorkout');
 const lifecycle = require('./planCandidateLifecycle');
 const { assertPipelineLinks } = require('./goalBackwardContracts');
 const hash = value => `sha256:${canonicalHash(value)}`;
-const fail = code => { throw Object.assign(new Error(code), { code }); };
+const fail = (code, generationFailure = null) => { throw Object.assign(new Error(code), { code, generationFailure }); };
+
+// Closed public explanations only: never expose captured evidence or solver payloads.
+const GENERATION_FAILURES = Object.freeze({
+  SOURCE_UNAVAILABLE: 'Required training data could not be loaded. The planner cannot verify a plan from the available data. Try previewing again.',
+  SOURCE_STALE: 'Required training data is out of date. Refresh your training data and preview again.',
+  SOURCE_CORRUPT: 'Required training data could not be verified. The planner cannot safely use these records to build a plan.',
+  ACCEPTED_SOURCE_UNAVAILABLE: 'The accepted workout source could not be verified. Recorded totals alone cannot replace its canonical workout identity.',
+  OCCUPANCY_UNAVAILABLE: 'The planner could not verify existing calendar occupancy. This is a data verification limitation, not a finding that your schedule conflicts.',
+  REQUIRED_EXPOSURE_UNPLACEABLE: 'The current planner could not place its required workouts within the selected dates and recovery rules. This does not establish that every possible schedule is unsafe.',
+
+  CANONICAL_STRENGTH_LINK_ABSENT: 'The planner cannot verify completed strength work linked to an accepted canonical workout. Recorded lifting totals or equipment selection alone do not satisfy this requirement. First-time strength-plan setup is not currently supported on this path.',
+  MEASURED_RUN_WORK_SOURCE_ABSENT: 'The current planner needs measured work segments linked to completed key runs before it can prescribe the required race work. Sync those completed workouts and preview again.',
+  MEASURED_STATION_SOURCE_ABSENT: 'Measured station work is missing for this HYROX schedule. Sync the required station measurements and preview again.',
+  COMPLETE_TIMED_OWNED_HYROX_MATERIAL_ABSENT: 'The planner cannot construct this HYROX event workout from the available event measurements. Review the event details and sync completed event-specific workouts.',
+  INJURY_SCOPE: 'The current safety restriction prevents the required training sessions. Review your injury and recovery settings before requesting another training plan.',
+  MEANINGFUL_DOSE_REQUIRED: 'The available training dose or session time cannot support all required workouts at their minimum useful duration. Review your session time and recent workout records, or request fewer sessions.',
+  OBSERVED_FAMILY_DOSE_UNAVAILABLE: 'Recent completed workouts do not establish the dose for the required race-specific sessions. Sync the relevant completed workouts and preview again.',
+  EVENT_EXECUTION_MATERIAL_REQUIRED: 'The planner cannot construct the race workout from the available event and workout evidence. Review the event details and sync recent completed runs.',
+  CANDIDATE_SEARCH_NODE_BUDGET_EXHAUSTED: 'The planner reached its schedule search limit. This does not establish that your schedule is unsafe. Try different eligible weekdays and preview again.',
+});
+function generationFailure(prepared, result) {
+  const missing = prepared?.source_support?.limits?.filter(limit => limit.required && limit.status !== 'SUPPORTED') || [];
+  const reasons = missing.length ? missing.map(limit => limit.reason_code)
+    : (result?.deferred_objectives || []).filter(item => ['PRIMARY_KEY', 'ASSESSMENT'].includes(item.role))
+      .flatMap(item => item.reason_codes || []);
+  const reason = reasons.find(code => Object.hasOwn(GENERATION_FAILURES, code));
+  return reason ? { reason_code: reason, message: GENERATION_FAILURES[reason] } : null;
+}
+function publicGenerationFailure(error) {
+  const code = error?.generationFailure?.reason_code || error?.code;
+  return Object.hasOwn(GENERATION_FAILURES, code)
+    ? { reason_code: code, message: GENERATION_FAILURES[code] } : null;
+}
 
 function build({ prepared, result, planMode, featureMode = 'preview' }) {
   if (!['preview', 'on'].includes(featureMode)) fail('INVALID_FEATURE_MODE');
@@ -14,12 +47,12 @@ function build({ prepared, result, planMode, featureMode = 'preview' }) {
   const set = selected?.canonical_session_set;
   if (!prepared?.foundation) fail('EVIDENCE_MISSING');
   if (!prepared.source_support || prepared.source_support.source_limited || prepared.source_support.limits?.some(limit =>
-    limit.required && limit.status !== 'SUPPORTED')) fail('EVIDENCE_MISSING');
+    limit.required && limit.status !== 'SUPPORTED')) fail('EVIDENCE_MISSING', generationFailure(prepared, result));
   if (result?.applicable !== true || !['VALID', 'VALID_WITH_TRADEOFFS'].includes(result.status)
     || !selected?.validation?.valid || !selected.canonical_sessions_materialized
     || !set || !validateCanonicalSessionSet(set).valid
     || set.candidate_hash !== selected.candidate_hash || set.decision_hash !== result.decision.decision_hash
-    || canonicalHash(set.sessions) !== canonicalHash(selected.sessions)) fail('CANDIDATE_NOT_SELECTED');
+    || canonicalHash(set.sessions) !== canonicalHash(selected.sessions)) fail('CANDIDATE_NOT_SELECTED', generationFailure(prepared, result));
   const plan = buildCanonicalPlanFromSessionSet(set);
   const decision = result.decision;
   // A valid schedule does not establish the athlete's race target. Keep the
@@ -121,4 +154,4 @@ async function persist({ tx, row, bundle }) {
   });
   assertPipelineLinks(ordered);
 }
-module.exports = { build, artifacts, persist };
+module.exports = { publicGenerationFailure, build, artifacts, persist };

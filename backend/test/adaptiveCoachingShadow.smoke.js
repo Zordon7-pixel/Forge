@@ -19,7 +19,9 @@ shadow.prepare = args => { lastPrepared = null; lastPreparedContext = args.state
 shadow.compute = prepared => { adaptiveComputations++; assert.equal(prepared, lastPrepared); return realCompute(prepared); };
 const engine = require('../src/lib/racePlanCandidateEngine');
 const realLegacy = engine.buildRacePlanCandidate;
+let legacyComputations = 0;
 engine.buildRacePlanCandidate = (context, options) => {
+  legacyComputations++;
   assert.equal(context, lastPreparedContext, 'foundation precedes legacy generation on the same input');
   assert.equal(Object.isFrozen(context), true);
   if (lastPrepared) assert.equal(Object.isFrozen(lastPrepared.foundation.athlete_state), true);
@@ -113,12 +115,34 @@ async function main() {
   for (const mode of ['preview', 'on']) {
     let oldInvocations = 0;
     const adaptiveBefore = adaptiveComputations;
+    const legacyBefore = legacyComputations;
+    const callsBefore = calls.length;
+    const changesBefore = db.prepare('SELECT total_changes() n').get().n;
+    // Explicit long races fail before compute, even with candidate storage enabled.
+    await assert.rejects(plans.previewPlanForUser(OTHER, { ...request, race_ids: ['owned-road'] }, {
+      goalBackwardDependencies: { ...options(mode).goalBackwardDependencies, inspectInput: () => { oldInvocations++; } } }), error => {
+      assert.equal(error.code, 'GOAL_BACKWARD_GENERATION_FAILED');
+      assert.deepEqual(error.details, { reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED',
+        planning_date_local: DATE, requested_end_date: '2026-10-18', supported_end_date: addDays(DATE, 6) });
+      return true;
+    });
+    assert.equal(adaptiveComputations, adaptiveBefore, `${mode} rejects the long race before adaptive compute`);
+    assert.equal(legacyComputations, legacyBefore, `${mode} rejects the long race without classic compute`);
+    assert.equal(oldInvocations, 0, `${mode} rejects the long race without classic diagnostics`);
+    assert.equal(db.prepare('SELECT total_changes() n').get().n, changesBefore, `${mode} long race writes no rows`);
+    assert.deepEqual(calls.slice(callsBefore).filter(c => /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(c.sql)), [],
+      `${mode} long race attempts no writes or pruning`);
+    // A separate ordinary weekly request must still use the real adaptive engine.
     try {
-      await plans.previewPlanForUser(OTHER, { ...request, race_ids: ['owned-road'] }, { store: false,
+      await plans.previewPlanForUser(OTHER, { ...request, race_ids: [] }, { store: false,
         goalBackwardDependencies: { ...options(mode).goalBackwardDependencies, inspectInput: () => { oldInvocations++; } } });
-    } catch (error) { assert.equal(error.code, 'GOAL_BACKWARD_GENERATION_FAILED'); }
+    } catch (error) {
+      assert.equal(error.code, 'GOAL_BACKWARD_GENERATION_FAILED');
+      assert.notEqual(error.details?.reason_code, 'RACE_CALENDAR_HORIZON_UNSUPPORTED');
+    }
     assert.equal(oldInvocations, 0, `${mode} never falls through to classic diagnostics`);
-    assert.equal(adaptiveComputations, adaptiveBefore + 1);
+    assert.equal(legacyComputations, legacyBefore, `${mode} never falls through to classic compute`);
+    assert.equal(adaptiveComputations, adaptiveBefore + 1, `${mode} weekly request computes adaptively exactly once`);
   }
   // Failure after several real inserts must roll back the whole adaptive chain.
   const failCount = totalRows('planning_pipeline_artifacts');

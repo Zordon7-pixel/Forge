@@ -1,3 +1,5 @@
+import { fork } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
 import { adaptivePreviewPublicFixture, adaptivePreviewNow } from '../fixtures/adaptivePreviewPublic.mjs'
 import {
@@ -3366,4 +3368,83 @@ for (const mode of ['preview', 'on']) test(`adaptive candidate ${mode} seven-day
   fs.writeFileSync(`${prefix}.json`, JSON.stringify({ tier: 'Local Playwright Chromium mobile emulation; no physical device',
     project: testInfo.project.name, geometry, candidateHash: payload.candidate_hash, payload, closedByTap: true }, null, 2))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+// Race-goal rollback claims must stay within one sentence; active-plan copy is truthful.
+const falseRaceGoalRollback = /\brace goal\b[^.!?\r\n]*\b(?:not changed|unchanged|rolled back)\b/i
+
+test('race-goal rollback regex permits truthful active-plan copy and rejects false claims', () => {
+  for (const boundary of ['. ', '! ', '? ', '\n']) {
+    expect(`This is not a finding that your race goal is impossible${boundary}Your active plan was not changed.`).not.toMatch(falseRaceGoalRollback)
+  }
+  for (const copy of ['Your race goal was not changed.', 'Your race goal remains unchanged.', 'Your race goal was rolled back.', 'YOUR RACE GOAL was saved, then rolled back.']) {
+    expect(copy).toMatch(falseRaceGoalRollback)
+  }
+})
+
+// One variant uses a mocked rendering response. The other forwards generation
+// to the mounted real SQLite handler; account/setup responses remain mocked.
+for (const transport of ['mocked response', 'real local SQLite HTTP']) test(`Army calendar explains unsupported horizon with four runs and four lifts from seven lift days (${transport})`, async ({ page }) => {
+  test.setTimeout(120_000)
+  let fixtureProcess, fixtureUrl
+  if(transport === 'real local SQLite HTTP') {
+    fixtureProcess = fork(fileURLToPath(new URL('../../../backend/test/raceAvailability.smoke.js', import.meta.url)), ['--serve'], { stdio: ['ignore','pipe','pipe','ipc'] })
+    fixtureUrl = await new Promise((resolve,reject) => {
+      let diagnostics = ''
+      fixtureProcess.stderr.on('data', chunk => { diagnostics += chunk.toString() })
+      fixtureProcess.once('message', message => resolve(message.url))
+      fixtureProcess.once('error', reject)
+      fixtureProcess.once('exit', code => reject(new Error(`Local fixture exited ${code}: ${diagnostics}`)))
+    })
+  }
+  try {
+    await setQaBrowserClock(page, '2026-09-20')
+    const army = { id: 'army', race_name: 'Army 10-Miler', race_date: '2026-10-11', event_local_date: '2026-10-11',
+      event_kind: 'run_race', status: 'upcoming', distance_miles: 10, goal_time_seconds: 5400 }
+    const message = 'The current adaptive planner builds seven days, through 2026-09-26, and cannot yet build your complete calendar through 2026-10-11. This is a planner limitation, not a finding that four runs and four lifts are unsafe or that your race goal is impossible. Your active plan was not changed.'
+    const state = await installAuthenticatedApi(page, { responses: new Map([
+      ['GET /api/races', { races: [army] }],
+      ['POST /api/plans/generate-for-race/army', async ({ body }) => {
+        expect(body.target).toMatchObject({ runDaysPerWeek: 4, liftDaysPerWeek: 4, trainingDays: ['Tue','Thu','Sat','Sun'],
+          liftEligibleWeekdays: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], strengthGoal: 'maintain' })
+        if(fixtureUrl) {
+          const response = await page.request.post(fixtureUrl, {data:{...body,race_ids:['army']}})
+          expect(response.status()).toBe(409)
+          const payload = await response.json()
+          expect(payload.details.reason_code).toBe('RACE_CALENDAR_HORIZON_UNSUPPORTED')
+          return qaResponse(payload, response.status())
+        }
+        return qaResponse({ error: message, code: 'GOAL_BACKWARD_GENERATION_FAILED', details: {
+          reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED', planning_date_local: '2026-09-20',
+          requested_end_date: '2026-10-11', supported_end_date: '2026-09-26',
+        } }, 409)
+      }],
+    ]) })
+    await page.goto('/plan-catalog')
+    await expect(page.getByText(/If the current planner cannot cover the full period/)).toBeVisible()
+    await page.getByLabel('Use a saved race').selectOption('army')
+    await page.getByRole('button', { name: /Maintain strength/ }).click()
+    for(const day of ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']) {
+      const run = page.getByRole('button', { name: day, exact: true })
+      if((await run.getAttribute('aria-pressed') === 'true') !== ['Tue','Thu','Sat','Sun'].includes(day)) await run.click()
+      const lift = page.getByRole('button', { name: `Lift ${day}`, exact: true })
+      if(await lift.getAttribute('aria-pressed') !== 'true') await lift.click()
+    }
+    await page.getByLabel('How many days do you want to run?').selectOption('4')
+    await page.getByLabel('Lift days each week').selectOption('4')
+    await page.getByRole('button', { name: 'Build Race Calendar', exact: true }).click()
+    await expect(page.getByText(/Your race was saved, but your training plan was not changed/)).toBeVisible()
+    await expect(page.getByText(/cannot yet build your complete calendar through 2026-10-11/)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Apply reviewed plan', exact: true })).toHaveCount(0)
+    expect(requestsFor(state, 'POST', '/api/plans/generate-for-race/army')).toHaveLength(1)
+    expect(state.requests.filter(r=>r.method==='POST' && /\/apply$/.test(r.pathname || r.path || r.url || ''))).toHaveLength(0)
+    await expect(page.getByText(/Your active plan was not changed\./)).toBeVisible()
+    await expect(page.getByText(falseRaceGoalRollback)).toHaveCount(0)
+  } finally {
+    if(fixtureProcess?.connected) {
+      const stopped = new Promise(resolve => fixtureProcess.once('exit', resolve))
+      fixtureProcess.send('stop')
+      await stopped
+    }
+  }
 })
