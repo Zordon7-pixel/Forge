@@ -168,7 +168,7 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
     evidence_ids: event.dose_basis.source_evidence_ids });
   const taperQuality = taper && pairs.find(p => ['threshold_run', 'interval_run'].includes(p.prescribed_session.workout_family));
   if (taperQuality && ['READY', 'NORMAL'].includes(state.recovery_state) && ['NORMAL', 'MONITOR'].includes(state.safety_action)) {
-    objectives.push({ objective_id: `objective-taper-touch-${state.athlete_state_hash.slice(0, 24)}`,
+    objectives.push({ objective_id: `objective-taper-touch-${base.calendar_window?.start_date || state.athlete_state_hash.slice(0, 24)}`,
       requirement_id: 'retain_observed_intensity', role: 'SUPPORTING', priority_score: 800,
       candidate_families: [taperQuality.prescribed_session.workout_family],
       goal_ids: base.goal_gap.map(g => g.goal_id), reason_codes: ['TAPER_VOLUME_REDUCTION'],

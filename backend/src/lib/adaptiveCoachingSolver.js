@@ -36,7 +36,7 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
   if (!f?.athlete_state?.adaptive_foundation || f.decision?.athlete_state_hash !== f.athlete_state.athlete_state_hash
     || f.artifacts?.length !== 3 || !Object.isFrozen(f)) throw new Error('Use buildAdaptiveCoachingFoundation output');
   const state = f.athlete_state, selection = buildAdaptiveSessionSelection(f, domain);
-  const constraints = { ...normalizeSolverConstraints(state, availability), planning_instant: f.artifacts[0].created_at };
+  const constraints = { ...normalizeSolverConstraints(state, availability, f.decision.calendar_window), planning_instant: f.artifacts[0].created_at };
   if (selection.entries.length > LIMITS.sessions) throw new Error('Adaptive selection exceeds bounded session limit');
   const maxNodes = search.max_nodes ?? LIMITS.nodes;
   if (!Number.isSafeInteger(maxNodes) || maxNodes < 1 || maxNodes > LIMITS.nodes || Object.keys(search).some(k => k !== 'max_nodes')) throw new Error('Invalid bounded search options');
@@ -178,7 +178,7 @@ function buildAdaptiveCoachingCandidate({ foundation, foundationInput, availabil
   for (const branch of frontier.sort(compare).slice(0, LIMITS.candidates)) {
     const placed = branch.placed.map(p => p.skeleton), all = [...constraints.occupied_sessions, ...branch.placed.map(p => p.session)];
     const restMaterial = [], rests = [];
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < constraints.day_count; i++) {
       const date = addDays(constraints.start_date, i);
       if (all.some(s => s.scheduled_local_date === date && s.workout_family !== 'rest')) continue;
       const id = `adaptive-rest-${date}`;

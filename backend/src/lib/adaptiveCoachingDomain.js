@@ -8,7 +8,7 @@ function ownedEventEntries(foundation, material = []) {
   if (!Array.isArray(material) || material.length > 7) throw new Error('At most seven canonical event prescriptions are supported');
   const state = foundation.athlete_state;
   const goals = foundation.decision.goal_gap.map(g => g.goal).filter(g => g.planning_eligible
-    && g.event_local_date >= state.planning_date_local && g.event_local_date <= addDays(state.planning_date_local, 6));
+    && g.event_local_date >= (foundation.decision.calendar_window?.start_date || state.planning_date_local) && g.event_local_date <= (foundation.decision.calendar_window?.end_date || addDays(state.planning_date_local, 6)));
   const ids = new Set(foundation.artifacts[0].payload_json.evidence.map(e => e.evidence_id));
   const entries = material.map(session => {
     const goal = goals.find(g => g.goal_id === session?.event_identity?.goal_id);
@@ -55,7 +55,7 @@ function buildOwnedEventMaterial(foundation) {
   const pace = paces[Math.floor(paces.length / 2)];
   return foundation.decision.goal_gap.map(g => g.goal).filter(g => g.planning_eligible && g.race_id
     && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(g.event_kind) && g.distance_miles > 0
-    && g.event_local_date >= state.planning_date_local && g.event_local_date <= addDays(state.planning_date_local, 6)).map(goal => {
+    && g.event_local_date >= (foundation.decision.calendar_window?.start_date || state.planning_date_local) && g.event_local_date <= (foundation.decision.calendar_window?.end_date || addDays(state.planning_date_local, 6))).map(goal => {
     const distance = Math.round(goal.distance_miles * 1609.344), seconds = Math.ceil(distance * pace) + 600;
     const entry = { selection_id: `owned-event-${canonicalHash(goal).slice(0, 24)}`, workout_family: 'race',
       objective_ids: ['owned-event-source'], progression_family: null, duration_s: seconds, distance_m: distance,

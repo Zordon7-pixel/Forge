@@ -124,12 +124,16 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
       weeks: source.load.recent_normal_weeks.filter(w => w.activity_count > 0).map(w => ({ week_id: w.week_start_local,
         distance_m: w.distance_m, duration_s: w.duration_s, coverage: snapshot.provider_coverage_intervals,
         partial_days: !w.eligible })) } });
-  const start = snapshot.planning_date_local, end = addDays(start, 6);
+  const start = snapshot.planning_date_local;
+  const requested = state.request?.operation === 'remove_race' ? [] : (state.request?.race_ids || []);
+  const calendarWindow = require('./adaptiveCoachingCalendar').resolveWindow(start,
+    state.races.filter(r => requested.includes(String(r.id))).map(r => r.event_local_date || r.race_date));
+  const end = calendarWindow.end_date;
   const occupied = (accepted?.sessions || []).filter(s => s.workout_family !== 'rest'
     && s.scheduled_local_date >= addDays(start, -6) && s.scheduled_local_date <= addDays(end, 6));
-  if (occupied.length > 28 || occupied.some(s => !s.scheduled_start_at || !(s.derived_totals?.duration_s > 0))) blockedReason = 'OCCUPANCY_UNAVAILABLE';
+  if (occupied.length > Math.max(28, (calendarWindow.day_count + 12) * 2) || occupied.some(s => !s.scheduled_start_at || !(s.derived_totals?.duration_s > 0))) blockedReason = 'OCCUPANCY_UNAVAILABLE';
   const availability = { run: [], lift: [], occupied_sessions: occupied };
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < calendarWindow.day_count; i++) {
     const date = addDays(start, i), a = midnight(date, snapshot.timezone), b = midnight(addDays(date, 1), snapshot.timezone);
     // Bounded within-day alternatives are internal placements, not appointments.
     // Elapsed-time offsets keep both DST transitions valid; every interval stays
@@ -144,14 +148,18 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
       }
     }
   }
-  return freeze({ foundation, availability, blockedReason, source_support: require('./adaptiveCoachingSources').sourceSupport(foundation), observed_binding: observedBinding(state, source, { accepted, acceptedReason }),
+  return freeze({ foundation, availability, calendarWindow, blockedReason, source_support: require('./adaptiveCoachingSources').sourceSupport(foundation), observed_binding: observedBinding(state, source, { accepted, acceptedReason }),
     binding: { input_hash: state.inputHash, planning_input_revision: state.planningInputRevision,
       lock_revision: constraints.lock_revision, edit_revision: constraints.edit_revision,
       constraint_fingerprint: constraints.constraint_fingerprint },
     window_policy: 'phone-instant-date-capacity-two-placements-v2' });
 }
-function compute(prepared) { if (prepared.blockedReason) fail(prepared.blockedReason); return buildAdaptiveCoachingCandidate({ foundation: prepared.foundation, availability: prepared.availability,
-  domain: { event_material: require('./adaptiveCoachingDomain').buildOwnedEventMaterial(prepared.foundation) } }); }
+function compute(prepared) { if (prepared.blockedReason) fail(prepared.blockedReason);
+  if (prepared.calendarWindow?.day_count > 7) return require('./adaptiveCoachingCalendar').buildProgram({ foundation: prepared.foundation, availability: prepared.availability, calendarWindow: prepared.calendarWindow });
+  const foundation = prepared.calendarWindow?.day_count < 7
+    ? require('./adaptiveCoachingCalendar').project(prepared.foundation, prepared.calendarWindow) : prepared.foundation;
+  return buildAdaptiveCoachingCandidate({ foundation, availability: prepared.availability,
+    domain: { event_material: require('./adaptiveCoachingDomain').buildOwnedEventMaterial(foundation) } }); }
 function artifactsFor({ userId, candidateId, currentCandidateHash, prepared, result, comparison }) {
   const artifacts = [];
   for (const input of result.artifacts) {
