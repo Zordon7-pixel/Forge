@@ -6404,6 +6404,9 @@ async function previewAdaptivePlanForUser({ userId, request, clock, initial, pre
       sink: goalBackwardDependencies.telemetrySink });
     if (typeof goalBackwardDependencies.inspectFailure === 'function') goalBackwardDependencies.inspectFailure(error);
     if (['CANDIDATE_STALE', 'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED'].includes(error.code)) throw error;
+    const failure = previewAdapter.publicGenerationFailure(error);
+    if (failure) throw candidateError(409, 'GOAL_BACKWARD_GENERATION_FAILED',
+      `${failure.message} Your active plan was not changed.`, { reason_code: failure.reason_code });
     throw goalBackwardGenerationFailed(error.code || adaptiveReason);
   }
 }
