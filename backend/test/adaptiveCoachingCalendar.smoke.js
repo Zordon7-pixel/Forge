@@ -14,7 +14,8 @@ async function positiveRoute(athlete) {
   for (const offset of [1, 3, 5, 6]) f.db.prepare("INSERT INTO runs(id,user_id,date,type,distance_miles,duration_seconds,created_at) VALUES (?,?,?,'easy',6,3600,?)")
     .run(`supported-easy-${offset}`, athlete.owner, addDays(f.DATE, -offset), `${addDays(f.DATE, -offset)}T14:00:00Z`);
   f.db.prepare("INSERT INTO race_events(id,user_id,race_name,race_date,event_local_date,event_timezone,distance_miles,goal_time_seconds,event_kind) VALUES ('compressed-road',?,'Synthetic supported road','2026-10-11','2026-10-11','America/New_York',3.1,1800,'run_race')").run(athlete.owner);
-  const shortRequest = { ...athlete.req, race_ids: ['compressed-road'], target: { ...athlete.req.target, runDaysPerWeek: 3, liftDaysPerWeek: 0, liftingEnabled: false } };
+  const shortRequest = { ...athlete.req, resolvedMode: 'shadow', mode: 'off',
+    FORGE_GOAL_BACKWARD_V24_MODE: 'off', goalBackwardDependencies: { mode: 'off' }, race_ids: ['compressed-road'], target: { ...athlete.req.target, runDaysPerWeek: 3, liftDaysPerWeek: 0, liftingEnabled: false } };
   const review = await f.plans.previewPlanForUser(athlete.owner, shortRequest, f.options('preview'));
   assert.equal(review.plan.candidate_window_end_local, '2026-10-11');
   assert.equal(review.surfaceManifest.apply_disabled, true);
@@ -30,8 +31,11 @@ async function positiveRoute(athlete) {
   assert.equal(new Set(full.surfaceManifest.sessions.map(s => s.scheduled_local_date)).size, 22);
   assert.equal(full.surfaceManifest.sessions.filter(s => s.workout_family === 'race' && s.event_identity?.race_id === 'compressed-road' && s.scheduled_local_date === '2026-10-11').length, 1);
   const applied = await f.plans.applyPlanCandidate(athlete.owner, full.id,
-    { ...full.applyBindings, candidate_hash: full.candidateHash, choice: 'train_for_target', planning_date_local: f.DATE }, f.options('on'));
+    { ...full.applyBindings, candidate_hash: full.candidateHash, choice: 'train_for_target', planning_date_local: f.DATE,
+      resolvedMode: 'shadow', mode: 'off', FORGE_GOAL_BACKWARD_V24_MODE: 'off' }, f.options('on'));
   assert.equal(applied.status, 200, JSON.stringify(applied));
+  assert.deepEqual(f.observed().prepared.calendarWindow,
+    { start_date: f.DATE, end_date: '2026-10-11', day_count: 22 }, 'ON apply reproduces the expanded window despite payload mode spoofing');
   const active = await f.tx.get("SELECT up.*,up.id AS user_plan_id,tp.plan_json FROM user_plans up JOIN training_plans tp ON tp.id=up.plan_id WHERE up.user_id=? AND up.status='active'", [athlete.owner]);
   const manifest = await f.plans.canonicalSurfaceManifestForActive(athlete.owner, active, f.tx.get);
   assert.equal(manifest.status, 'accepted');

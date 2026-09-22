@@ -99,7 +99,7 @@ function completionPairs(source, accepted, state, userId) {
     } };
   })];
 }
-function prepare({ userId, state, source, accepted, acceptedReason = null, goals, trainingAgeClass, priorPlanRevision = null }) {
+function prepare({ userId, state, source, accepted, acceptedReason = null, goals, trainingAgeClass, priorPlanRevision = null, resolvedMode = 'off' }) {
   if (!source?.snapshot || source.sourceFailed) fail('SOURCE_UNAVAILABLE');
   const snapshot = source.snapshot;
   if (source.load.load_input_state === 'STALE') fail('SOURCE_STALE');
@@ -125,7 +125,10 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
         distance_m: w.distance_m, duration_s: w.duration_s, coverage: snapshot.provider_coverage_intervals,
         partial_days: !w.eligible })) } });
   const start = snapshot.planning_date_local;
-  const requested = state.request?.operation === 'remove_race' ? [] : (state.request?.race_ids || []);
+  // Only the route's server-resolved mode authorizes race-calendar expansion.
+  // SHADOW keeps its weekly comparison even when the owned race is distant.
+  const requested = ['preview', 'on'].includes(resolvedMode) && state.request?.operation !== 'remove_race'
+    ? (state.request?.race_ids || []) : [];
   const calendarWindow = require('./adaptiveCoachingCalendar').resolveWindow(start,
     state.races.filter(r => requested.includes(String(r.id))).map(r => r.event_local_date || r.race_date));
   const end = calendarWindow.end_date;

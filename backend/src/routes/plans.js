@@ -6336,11 +6336,11 @@ function adaptiveAcceptedInput(userId, state) {
   } catch (error) { return { accepted: null, acceptedReason: adaptiveShadow.reason(error) }; }
 }
 
-function prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision = false } = {}) {
+function prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision = false, resolvedMode = 'off' } = {}) {
   let prepared = null;
   let adaptiveReason = null;
   try {
-    prepared = adaptiveShadow.prepare({ userId, state: initial,
+    prepared = adaptiveShadow.prepare({ userId, state: initial, resolvedMode,
       priorPlanRevision: bindPlanRevision ? (initial.activePlan?.planVersion ?? 0) : null,
       source: adaptiveObservedInputs.get(initial.context),
       ...(adaptiveObservedInputs.get(initial.context)?.sourceFailed
@@ -6458,7 +6458,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     const failure = adaptiveRaceHorizonFailure({ request, races: initial.races, planningDateLocal: clock.planningDateLocal });
     if (failure) throw failure;
   }
-  let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision: adaptiveMode === 'on' });
+  let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision: adaptiveMode === 'on', resolvedMode: adaptiveMode });
   if (['preview', 'on'].includes(adaptiveMode)) {
     return previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
       generationOptions, store, goalBackwardDependencies, featureMode: adaptiveMode });
@@ -7235,7 +7235,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     if (adaptiveOn) {
       try {
         const adapter = require('../lib/adaptiveCoachingPreview');
-        const { prepared } = prepareAdaptiveCandidateInput(userId, current, { bindPlanRevision: true });
+        const { prepared } = prepareAdaptiveCandidateInput(userId, current, { bindPlanRevision: true, resolvedMode: 'on' });
         const result = adaptiveShadow.compute(prepared);
         const preview = adapter.build({ prepared, result, planMode: current.target.planMode, featureMode: 'on' });
         assertAdaptiveRequestedRaces(request, current.races, preview);
