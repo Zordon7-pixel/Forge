@@ -23,6 +23,11 @@ async function positiveRoute(athlete) {
   const full = await f.plans.previewPlanForUser(athlete.owner, shortRequest, { goalBackwardDependencies: { ...f.options('on').goalBackwardDependencies, inspectFailure: e => console.error('positive route diagnostic', e.code, e.message, e.details, f.observed().result?.failed_calendar_window) } });
   assert.equal(full.plan.candidate_window_end_local, '2026-10-11');
   assert.equal(full.plan.calendar_windows.length, 4);
+  assert.deepEqual(full.plan.calendar_windows.map(w => [w.start_date, w.end_date]), [
+    ['2026-09-20', '2026-09-20'], ['2026-09-21', '2026-09-27'],
+    ['2026-09-28', '2026-10-04'], ['2026-10-05', '2026-10-11'],
+  ], 'initial Sunday partial week does not truncate the supported calendar');
+  assert.equal(new Set(full.surfaceManifest.sessions.map(s => s.scheduled_local_date)).size, 22);
   assert.equal(full.surfaceManifest.sessions.filter(s => s.workout_family === 'race' && s.event_identity?.race_id === 'compressed-road' && s.scheduled_local_date === '2026-10-11').length, 1);
   const applied = await f.plans.applyPlanCandidate(athlete.owner, full.id,
     { ...full.applyBindings, candidate_hash: full.candidateHash, choice: 'train_for_target', planning_date_local: f.DATE }, f.options('on'));
@@ -50,6 +55,11 @@ async function main() {
   assert.equal(validateCanonicalSessionSet(result.selected_candidate.canonical_session_set).valid, true);
   assert.deepEqual(result.decision.calendar_windows.map(w => w.phase), ['FOUNDATION', 'FOUNDATION', 'TAPER_RACE_WEEK']);
   assert.equal(canonicalHash(foundation), evidenceBefore);
+  const storedState = result.artifacts.find(a => a.artifact_kind === 'athlete_state').payload_json;
+  assert.deepEqual(storedState.recent_normal_running, foundation.athlete_state.recent_normal_running);
+  for (const field of ['median_distance_m', 'median_duration_s', 'lower_bound_m', 'upper_bound_m']) {
+    assert.equal(storedState.recent_normal_running[field], null, `${field} remains unknown after composition`);
+  }
   const sessions = result.selected_candidate.sessions;
   assert.equal(new Set(sessions.map(s => s.scheduled_local_date)).size, 21);
   assert.equal(sessions.filter(s => s.workout_family === 'race').length, 1);
@@ -83,6 +93,47 @@ async function main() {
     rolling_policy: { ...result.decision.calendar_windows[0].weekly_objectives, capacities: { run: 0, lift: 0 } } },
   { start_date: last.start_date, end_date: last.end_date });
   assert.ok(validateAdaptivePlacement([], constraint, foundation.athlete_state, last.weekly_objectives).violations.some(v => v.code === 'FREQUENCY_IS_CAPACITY'));
+  // Re-date real canonical prescriptions only as planned boundary occupancy;
+  // these adversarial schedules never enter observed training evidence.
+  const canonical = require('../src/lib/canonicalWorkout');
+  const move = (source, date, hour = '06') => {
+    const next = JSON.parse(JSON.stringify(source));
+    next.session_id = `boundary-${date}-${hour}`;
+    next.scheduled_local_date = date;
+    next.scheduled_start_at = `${date}T${hour}:00:00Z`;
+    next.content_hash = canonical.canonicalWorkoutHash(next);
+    assert.equal(canonical.validateCanonicalSession(next).valid, true);
+    return next;
+  };
+  const easy = sessions.find(s => s.kind === 'run' && s.workout_family !== 'race');
+  const race = sessions.find(s => s.workout_family === 'race');
+  const monday = '2026-09-28';
+  const weeklyPolicy = result.decision.calendar_windows[0].weekly_objectives;
+  const boundaryPool = { run: availability.run.filter(w => w.start_at.slice(0, 10) >= monday), lift: [] };
+  const boundaryConstraints = (prior, policy = weeklyPolicy) => normalizeSolverConstraints(foundation.athlete_state,
+    { ...boundaryPool, planned_sessions: prior, rolling_policy: policy }, { start_date: monday, end_date: '2026-10-04' });
+  const codes = (current, prior, policy = weeklyPolicy) => validateAdaptivePlacement(current,
+    boundaryConstraints(prior, policy), foundation.athlete_state, weeklyPolicy).violations.map(v => v.code);
+  const mondayEasy = move(easy, monday);
+  const dosePolicy = { ...weeklyPolicy, dose_policy: { ...weeklyPolicy.dose_policy,
+    running_duration_ceiling_s: easy.derived_totals.duration_s, running_distance_ceiling_m: null } };
+  assert.ok(!codes([mondayEasy], [], dosePolicy).includes('OBSERVED_RUNNING_DOSE_EXCEEDED'));
+  assert.ok(codes([mondayEasy], [move(easy, '2026-09-27')], dosePolicy).includes('OBSERVED_RUNNING_DOSE_EXCEEDED'));
+  const sixDays = Array.from({ length: 6 }, (_, i) => move(easy, addDays(monday, i - 6)));
+  assert.ok(!codes([mondayEasy], sixDays.slice(1)).includes('REQUIRED_RECOVERY_DAY'));
+  assert.ok(codes([mondayEasy], sixDays).includes('REQUIRED_RECOVERY_DAY'));
+  const mondayRace = move(race, monday, '17');
+  assert.ok(!codes([mondayRace], [move(race, '2026-09-25')]).includes('ADAPTIVE_RECOVERY_HOURS'));
+  assert.ok(codes([mondayRace], [move(race, '2026-09-27')]).includes('ADAPTIVE_RECOVERY_HOURS'));
+  // Canonical graph totals are numeric prescription arithmetic, not observed or
+  // projected performance. Null totals fail closed; composition cannot accept them.
+  const unknownTotal = JSON.parse(JSON.stringify(result.selected_candidate.canonical_session_set));
+  unknownTotal.sessions[0].derived_totals.duration_s = null;
+  unknownTotal.sessions[0].content_hash = canonical.canonicalWorkoutHash(unknownTotal.sessions[0]);
+  assert.ok(canonical.validateCanonicalSession(unknownTotal.sessions[0]).violations.some(v => v.code === 'DERIVED_TOTAL_MISMATCH'));
+  assert.equal(canonical.validateCanonicalSessionSet(unknownTotal).valid, false);
+  assert.equal(canonicalHash(foundation), evidenceBefore, 'boundary schedules never become observations');
+  console.log('cross-week dose, rest and elapsed spacing negatives with passing controls; null canonical totals reject');
   console.log('generated 21-day calendar', result.selected_candidate.candidate_hash, 'phases FOUNDATION/FOUNDATION/TAPER_RACE_WEEK; exact road race 2026-10-04');
 
   const athlete = await f.armyFixture();
@@ -105,13 +156,18 @@ async function main() {
   }
   const before = f.snapshot();
   f.db.prepare("UPDATE race_events SET race_date='2026-11-01',event_local_date='2026-11-01' WHERE id='army' AND user_id=?").run(athlete.owner);
-  const beyondBefore = f.snapshot();
-  for (const mode of ['preview', 'on']) await assert.rejects(f.plans.previewPlanForUser(athlete.owner, athlete.req, f.options(mode)), e => {
-    assert.deepEqual(e.details, { reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED', planning_date_local: f.DATE,
-      requested_end_date: '2026-11-01', supported_end_date: '2026-10-31' });
-    return true;
-  });
-  assert.deepEqual(f.snapshot(), beyondBefore);
+  const beyondBefore = f.snapshot(), computeBeyond = shadow.compute;
+  let beyondComputations = 0;
+  shadow.compute = p => { beyondComputations++; return computeBeyond(p); };
+  try {
+    for (const mode of ['preview', 'on']) await assert.rejects(f.plans.previewPlanForUser(athlete.owner, athlete.req, f.options(mode)), e => {
+      assert.deepEqual(e.details, { reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED', planning_date_local: f.DATE,
+        requested_end_date: '2026-11-01', supported_end_date: '2026-10-31' });
+      return true;
+    });
+    assert.deepEqual(f.snapshot(), beyondBefore);
+    assert.equal(beyondComputations, 0, 'beyond +42 days rejects before adaptive compute');
+  } finally { shadow.compute = computeBeyond; }
   f.db.prepare("UPDATE race_events SET race_date='2026-09-26',event_local_date='2026-09-26' WHERE id='army' AND user_id=?").run(athlete.owner);
   const boundaryBefore = f.snapshot();
   await assert.rejects(f.plans.previewPlanForUser(athlete.owner, athlete.req, f.options('on')), e => {

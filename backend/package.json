@@ -7,7 +7,7 @@
     "dev": "node src/app.js",
     "check:active-plans": "node scripts/repair-active-plan-assignments.js",
     "check:account-data": "node scripts/check-account-data-coverage.js",
-    "test:smoke": "node scripts/run-smoke-suite.js"
+    "test:smoke": "node scripts/run-smoke-suite.js && node test/adaptiveCoachingCalendar.smoke.js --route-positive"
   },
   "dependencies": {
     "bad-words": "^3.0.4",
