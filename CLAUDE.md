@@ -452,6 +452,21 @@ historical browsing, new delayed-apply behavior or PostgreSQL isolation proof.
 The authenticated context gate covers midnight selection, corrupt/foreign/
 cleared/cyclic/deep paths and concurrent lifecycle changes without read writes.
 
+### 2026-09-23 — Metric stream truth containment (patched; not deployed)
+
+Slice 2b0 rejects malformed/null stream points before numeric conversion while
+preserving legitimate zero. Version 2 stores per-metric DECLARED/UNVERIFIED or
+UNKNOWN origin; old global source labels remain legacy-only, never certified.
+Enrichment replaces points and origin together and preserves other metrics.
+The physical-claim replay lookup now selects retained streams before merging.
+Run detail presents declared/unknown metric sources instead of assuming Apple
+Watch. No identity/revision policy, schema, native provider or training authority
+change. See `METRIC-STREAM-TRUTH-CONTRACT.md`; gates are
+`metricStreamTruth.smoke.js` and `metricStreamImportRoutes.smoke.js` plus affected
+import, execution, context, canonical/FIT and frontend regressions. Interval
+alignment/coverage and target-success evaluation remain missing. No backfill,
+production access, reviewer approval or deployment is implied.
+
 ### 2026-09-23 — Actual shoe persistence (patched; not deployed)
 
 `routes/runs.js` now validates optional `shoe_id` as an owned physical pair

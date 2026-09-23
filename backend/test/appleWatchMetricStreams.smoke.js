@@ -46,7 +46,8 @@ assert.match(runsRoute, /withoutWorkoutMetricStreams/);
 assert.match(runsRoute, /runs\.map\(\(run\)[\s\S]*withoutWorkoutMetricStreams\(run\)[\s\S]*activity_kind:\s*activityKind\(run\)/, 'history summaries omit large streams while adding canonical activity identity');
 assert.match(runsRoute, /router\.get\('\/:id'[\s\S]*SELECT \* FROM runs WHERE id=\? AND user_id=\?/, 'owner-scoped detail still returns metric streams');
 assert.match(schema, /workout_metric_streams_json TEXT DEFAULT '\{\}'/);
-assert.match(recap, /Apple Watch timelines/);
+assert.match(recap, /Recorded metric timelines/);
+assert.doesNotMatch(recap, /Apple Watch timelines/, 'unknown or mixed sources are not presented as Apple Watch');
 assert.match(recap, /data-metric-trace/);
 
 console.log('Apple Watch metric streams smoke passed');

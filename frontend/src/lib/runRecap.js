@@ -36,18 +36,56 @@ const METRIC_STREAM_LIMITS = Object.freeze({
 export function parseWorkoutMetricStreams(value) {
   const parsed = parseJson(value, {})
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-  const normalized = { version: 1, source: String(parsed.source || '').slice(0, 40) }
+  const metricSources = {}
+  const normalized = { version: 2, source: 'unknown', metric_sources: metricSources }
+  const number = value => typeof value === 'number' ? Number.isFinite(value) ? value : null
+    : typeof value === 'string' && value.length <= 32 && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)
+      && Number.isFinite(Number(value)) ? Number(value) : null
   for (const [key, [minimum, maximum]] of Object.entries(METRIC_STREAM_LIMITS)) {
     if (!Array.isArray(parsed[key])) continue
     const points = parsed[key].flatMap((point) => {
-      const time = finiteNumber(Array.isArray(point) ? point[0] : point?.t ?? point?.time)
-      const metric = finiteNumber(Array.isArray(point) ? point[1] : point?.v ?? point?.value)
-      if (time === null || metric === null || time < 0 || time > 172800 || metric < minimum || metric > maximum) return []
-      return [{ t: time, v: metric }]
-    }).sort((left, right) => left.t - right.t).slice(0, 600)
-    if (points.length) normalized[key] = points
+      const pair = Array.isArray(point) ? point.length === 2 ? point : []
+        : point && typeof point === 'object' ? [Object.hasOwn(point, 't') ? point.t : point.time,
+          Object.hasOwn(point, 'v') ? point.v : point.value] : []
+      const time = number(pair[0]), metric = number(pair[1])
+      if (time === null || metric === null || time < 0 || time > (key === 'post_workout_heart_rate_bpm' ? 300 : 172800) || metric < minimum || metric > maximum) return []
+      return [{ t: Math.round(time * 10) / 10 || 0, v: Math.round(metric * 100) / 100 || 0 }]
+    }).sort((left, right) => left.t - right.t)
+    const deduped = []
+    for (const point of points) {
+      if (deduped.length && deduped.at(-1).t === point.t) deduped[deduped.length - 1] = point
+      else deduped.push(point)
+    }
+    if (deduped.length) {
+      normalized[key] = deduped.length <= 600 ? deduped
+        : Array.from({ length: 600 }, (_, i) => deduped[Math.round(i * (deduped.length - 1) / 599)])
+      const meta = parsed.version === 2 ? parsed.metric_sources?.[key] : null
+      const declared = meta?.basis === 'DECLARED' ? streamDeclaredSource(meta.declared_source) : null
+      const legacy = parsed.version !== 2 ? streamDeclaredSource(parsed.source)
+        : meta?.basis === 'LEGACY_GLOBAL_ONLY' ? streamDeclaredSource(meta.legacy_global_source) : null
+      metricSources[key] = { declared_source: declared, verification_status: 'UNVERIFIED',
+        basis: declared ? 'DECLARED' : legacy ? 'LEGACY_GLOBAL_ONLY' : 'UNKNOWN',
+        ...(legacy ? { legacy_global_source: legacy } : {}) }
+    }
   }
+  const sources = new Set(Object.values(metricSources).map(meta => meta.declared_source || 'unknown'))
+  if (!sources.size) return {}
+  normalized.source = sources.size === 1 ? [...sources][0] : 'mixed'
   return normalized
+}
+
+function streamDeclaredSource(value) {
+  if (typeof value !== 'string') return null
+  const source = value.trim()
+  return /^[A-Za-z0-9][A-Za-z0-9._:/ -]{0,39}$/.test(source) && !['unknown', 'mixed'].includes(source.toLowerCase()) ? source : null
+}
+
+export function workoutMetricSourceLabel(streams, key) {
+  const meta = streams?.metric_sources?.[key]
+  return meta?.basis === 'DECLARED' && streamDeclaredSource(meta.declared_source)
+    ? `Declared source: ${meta.declared_source} (unverified)`
+    : meta?.basis === 'LEGACY_GLOBAL_ONLY' ? 'Metric source unknown · legacy stream label is unverified'
+      : 'Metric source unknown'
 }
 
 export function elevationStreamFromRoute(value, units = 'imperial') {

@@ -7,7 +7,7 @@ import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { runProvenanceFromRecord, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
-import { buildRunComparison, elevationStreamFromRoute, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseWorkoutMetricStreams, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'
+import { buildRunComparison, elevationStreamFromRoute, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseWorkoutMetricStreams, parseZoneTimeline, resolveRunHeartRateZone, workoutMetricSourceLabel } from '../lib/runRecap'
 import { providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import ActivityShareStudio from './ActivityShareStudio'
 import RunPlanImpact from './RunPlanImpact'
@@ -78,7 +78,7 @@ function traceTimeLabel(seconds) {
     : `${minutes}:${String(remainder).padStart(2, '0')}`
 }
 
-function MetricTraceCard({ label, points = [], average = null, minimum = null, maximum = null, formatValue, color = '#22D3EE', headline = null }) {
+function MetricTraceCard({ label, points = [], average = null, minimum = null, maximum = null, formatValue, color = '#22D3EE', headline = null, sourceLabel = null }) {
   const valid = points.filter((point) => Number.isFinite(Number(point?.t)) && Number.isFinite(Number(point?.v)))
   if (valid.length < 2) return null
   const values = valid.map((point) => Number(point.v))
@@ -112,6 +112,7 @@ function MetricTraceCard({ label, points = [], average = null, minimum = null, m
         <polyline points={polyline} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
       <div className="mt-1 flex justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}><span>{traceTimeLabel(minTime)}</span><span>{traceTimeLabel(maxTime)}</span></div>
+      {sourceLabel && <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>{sourceLabel}</p>}
     </div>
   )
 }
@@ -483,6 +484,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             <MetricTraceCard
               label="Heart rate"
               points={metricStreams.heart_rate_bpm}
+              sourceLabel={workoutMetricSourceLabel(metricStreams, 'heart_rate_bpm')}
               average={hr}
               minimum={minHr}
               maximum={maxHr}
@@ -497,6 +499,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             <MetricTraceCard
               label="Post-workout heart rate"
               points={metricStreams.post_workout_heart_rate_bpm}
+              sourceLabel={workoutMetricSourceLabel(metricStreams, 'post_workout_heart_rate_bpm')}
               headline={workoutMetrics.post_workout_heart_rate_drop_bpm != null ? `Down ${Math.round(Number(workoutMetrics.post_workout_heart_rate_drop_bpm))} bpm` : 'Three-minute recovery'}
               formatValue={(value) => `${Math.round(value)} bpm`}
               color="#FB7185"
@@ -562,6 +565,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             <MetricTraceCard
               label="Pace"
               points={paceTrace}
+              sourceLabel={workoutMetricSourceLabel(metricStreams, 'running_speed_mps')}
               average={run.distance_miles && run.duration_seconds ? run.duration_seconds / run.distance_miles : null}
               minimum={minimumPace}
               maximum={maximumPace}
@@ -651,12 +655,13 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
 
         {panelIs('summary') && dynamicMetricCards.length > 0 && (
           <div className="mb-5 space-y-3">
-            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Apple Watch timelines</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Recorded metric timelines</p>
             {dynamicMetricCards.map((metric) => (
               <MetricTraceCard
                 key={metric.key}
                 label={metric.label}
                 points={metricStreams[metric.key]}
+                sourceLabel={workoutMetricSourceLabel(metricStreams, metric.key)}
                 average={metric.average}
                 minimum={metric.minimum}
                 maximum={metric.maximum}

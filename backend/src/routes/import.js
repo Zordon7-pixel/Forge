@@ -474,7 +474,7 @@ function normalizeRow(raw = {}) {
   });
   const workoutMetrics = normalizeWorkoutMetrics({ ...raw, metric_source: source });
   const workoutMetricStreams = normalizeWorkoutMetricStreams(
-    raw.workoutMetricStreams || raw.workout_metric_streams || raw.metricStreams || {}
+    raw.workoutMetricStreams || raw.workout_metric_streams || raw.metricStreams || {}, { inputKind: 'incoming' }
   );
   if (distanceEvidence.miles !== null) {
     workoutMetrics.metrics.distance_source = distanceEvidence.source;
@@ -1064,7 +1064,7 @@ async function findRunById(db, userId, runId) {
             elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
             training_effect_anaerobic, recovery_time_hours, temperature_f,
             calories, calories_burned, calories_watch, shoe_id, plan_session_id,
-            planned_session_json, workout_metrics_json, ai_feedback, ai_feedback_requested_at
+            planned_session_json, workout_metrics_json, workout_metric_streams_json, ai_feedback, ai_feedback_requested_at
      FROM runs
      WHERE id=? AND user_id=?
      LIMIT 1
