@@ -88,7 +88,7 @@ function metric(value, unit) {
     value: valid ? value : null, unit, truth_class: 'OBSERVED' };
 }
 function fail(code) { const e = Error(code); e.code = code; throw e; }
-function accepted({ ownerId, active, candidate, artifacts, sessionId }) {
+function accepted({ ownerId, active, candidate, artifacts, sessionId, effectiveAssignmentRead = null }) {
   if (!active) fail('NO_ACCEPTED_PLAN');
   if (active.user_id !== ownerId || active.training_owner_id !== ownerId || candidate?.user_id !== ownerId) fail('ACCEPTED_CHAIN_UNAVAILABLE');
   const plan = json(active.plan_data || active.plan_json);
@@ -109,7 +109,8 @@ function accepted({ ownerId, active, candidate, artifacts, sessionId }) {
   const set = byKind.canonical_session_set.payload_json, manifest = byKind.surface_manifest.payload_json;
   const { plan_generation_candidate_ref, selected_candidate_id, selected_candidate_hash, ...canonicalSet } = set;
   if (set.sessions?.length > LIMITS.sessions || !validateCanonicalSessionSet(canonicalSet).valid) fail('CANONICAL_SET_INVALID');
-  if (surfaceManifestAppliedPlanDiagnostic(manifest, candidate, active, set).status_code !== 'ACCEPTED') fail('ACCEPTED_CHAIN_STALE');
+  if (surfaceManifestAppliedPlanDiagnostic(manifest, candidate, active, set, undefined,
+    { effectiveAssignmentRead }).status_code !== 'ACCEPTED') fail('ACCEPTED_CHAIN_STALE');
   // Metadata agreement alone must not authorize a tampered embedded plan.
   const planSessions = (plan.weeks || []).flatMap(w => (w.days || []).flatMap(d => d.sessions || []));
   if (planSessions.length !== set.sessions.length || set.sessions.some(s => {
@@ -118,7 +119,7 @@ function accepted({ ownerId, active, candidate, artifacts, sessionId }) {
   })) fail('ACCEPTED_CHAIN_STALE');
   const session = set.sessions.find(s => s.session_id === sessionId);
   if (!session) fail('SESSION_UNAVAILABLE');
-  return { plan, set, manifest, session, byKind, artifacts: normalized };
+  return { plan, set, manifest, session, byKind, artifacts: normalized, effectiveAssignmentRead };
 }
 const outcomeSchema = { ...fields('outcome dose_outcome scorable observed_at linked_session_id observed_to_prescribed_ratio measured_receipt_id measured_receipt_revision'), source_evidence_ids: 'list', reason_codes: 'list' };
 const progressionSchema = { ...fields('family action allowed_variable current_level current_level_basis next_level_ceiling max_change_fraction previous_success'),
@@ -201,6 +202,12 @@ function compose({ ownerId, chain, candidate, profile, runs = [], corrections = 
   const content = {
     schema_version: VERSION, composition_version: VERSION, status: 'PARTIAL', executable_authority: false,
     accepted_identity: project(chain.manifest.identity, { ...fields('plan_id plan_revision decision_id decision_hash candidate_id candidate_revision candidate_hash canonical_session_set_hash athlete_state_revision safety_state_hash') }),
+    ...(chain.effectiveAssignmentRead ? { effective_assignment_read: {
+      version: chain.effectiveAssignmentRead.version, local_date: chain.effectiveAssignmentRead.local_date,
+      timezone: chain.effectiveAssignmentRead.timezone,
+      selected_assignment_status: 'SUPERSEDED', reason_codes: ['ACCEPTED_PREDECESSOR_CURRENTLY_EFFECTIVE'],
+      path_hash: canonicalHash(chain.effectiveAssignmentRead), depth: chain.effectiveAssignmentRead.path.length,
+    } } : {}),
     artifact_receipts: chain.artifacts.map(a => project(a, fields('id artifact_kind revision content_hash schema_version policy_version created_at'))).sort((a, b) => a.artifact_kind.localeCompare(b.artifact_kind)),
     time: { timezone, observation_date_local: observationDate, planning_date_local: dateOnly(decision.planning_date_local), evidence_as_of: evidenceTime },
     athlete: { status: 'PARTIAL', truth_class: 'INFERENCE_AT_PLANNING_TIME',

@@ -438,9 +438,19 @@ recommendation. Unknown interval/gear/recovery contracts remain explicit.
 Existing pure surface validation is shared without invoking current-plan
 images/telemetry. Measured-receipt read scoping is optional and does not change
 existing unscoped behavior. See `COACHING-CONTEXT-READ-CONTRACT.md` for exact
-limits, future-assignment limitation, optimistic consistency and synthetic
+limits, effective-assignment acceptance, optimistic consistency and synthetic
 JSON witness. Gate: `node backend/test/coachingContext.smoke.js`; no release
 approval, production change or phone verification is implied.
+
+Slice 6b adds a bounded effective-predecessor read proof for persisted future
+assignments. It validates owner/lineage/date/revision/unique-path/status checks,
+then the unchanged accepted candidate/canonical/artifact bindings. Stored
+SUPERSEDED status is retained; the shared surface predicate stays ACTIVE-only
+unless given the independently revalidated internal effective-read path. The
+whole visited path enters optimistic rereads. This is not a lifecycle write,
+historical browsing, new delayed-apply behavior or PostgreSQL isolation proof.
+The authenticated context gate covers midnight selection, corrupt/foreign/
+cleared/cyclic/deep paths and concurrent lifecycle changes without read writes.
 
 ### 2026-09-23 — Actual shoe persistence (patched; not deployed)
 

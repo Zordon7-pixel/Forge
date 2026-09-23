@@ -1,4 +1,4 @@
-# Coaching Context read contract — local slice 6a
+# Coaching Context read contract — local slices 6a / 6b
 
 Status: implemented locally, not independently release-reviewed or deployed.
 This is a bounded composition of existing records, not the complete Adaptive
@@ -25,11 +25,27 @@ adaptation. `executable_authority` is always false. Unknown session returns
 explicit unavailable reason and no prescription. This only restricts this
 read; it never changes or blocks plan creation, training or Garmin export.
 
-Future-effective active assignments are explicitly unavailable in this slice.
-The existing assignment resolver follows a superseded predecessor for that
-case; its accepted-surface contract still requires ACTIVE status. This reader
-does not relabel that predecessor or silently choose the future program.
-An effective-predecessor read contract is a follow-up, not fabricated support.
+For a future-effective active root, the reader follows only its bounded owned
+`supersedes_user_plan_id` path to the first currently effective predecessor.
+Every visited assignment and training plan must belong to the authenticated
+owner. A predecessor path requires nonempty identical lineage IDs, unique
+assignment/plan IDs, strict decreasing valid effective dates and positive
+decreasing plan revisions. Root stays ACTIVE; every followed row must actually
+be SUPERSEDED, never CLEARED. Missing/invalid dates or links, cycles, ambiguous
+roots and depth overflow fail closed. Explicit invalid effective dates never
+fall back; absent dates may use the persisted started-at date per lifecycle.
+Selection uses the authenticated profile timezone, not a request date.
+
+`effective-assignment-read-v1` is an internal proof of that complete path,
+independently revalidated by the pure surface predicate's explicit opt-in.
+Default plan consumers retain their original ACTIVE-only acceptance. Candidate,
+surface and canonical binding checks are unchanged; the selected predecessor
+still needs its APPLIED candidate and exact accepted artifact chain. No stored
+status is relabeled. The response adds `effective_assignment_read` only for this
+case: local date/timezone, path hash/depth, true SUPERSEDED status and reason.
+On/after the successor effective date, only successor sessions are readable.
+This is compatibility for persisted future-effective lineage, not historical
+browsing or a change to the current immediate-apply plan writer.
 
 ## Composed sections
 
@@ -72,7 +88,8 @@ whole-user rows, raw provider blobs or unrelated health history are emitted.
 Text is data, never agent instructions. No external sharing is performed.
 
 At most 2 active assignments/candidates/surface heads are read to detect
-ambiguity, then six parent lookups. Canonical sessions cap at 280. Observed
+ambiguity, at most 16 assignment rows (including the active root), then six
+artifact parent lookups. Canonical sessions cap at 280. Observed
 runs cap at 512 (57-day window plus explicit requested-session links),
 corrections at 1000, and workout-session lifts at 256 in the context date
 window. Scoped measured receipts permit one physical activity and 64 immutable
@@ -101,7 +118,8 @@ zone. IANA timezone and local-date semantics are included.
 
 `content_hash` hashes the entire projected content except itself and the
 volatile `as_of` envelope. Revisions, acceptance, observed data, correction
-and gear identity changes affect the hash. Input row ordering does not.
+and gear identity changes affect the hash. The effective-predecessor path and
+selection date/timezone are hashed when applicable. Input row ordering does not.
 The observation local date remains hashed because it changes window meaning.
 
 ## Witness and tests
@@ -119,6 +137,12 @@ tampered chains, history ancestry, repeated hashes, null/zero/invalid metrics,
 repeat projection, no same-date guesses, corrections/raw-vs-effective totals,
 actual-shoe authority/foreign denial/outage, bounded reads/output, aware/naive
 timestamps, measured receipt correction/replay/corruption and read-time races.
+The effective-assignment matrix uses independently accepted predecessor and
+successor fixtures, New York/Tokyo midnight boundaries, requested-session
+isolation, owner/lineage/date/status/revision/cycle/depth rejection, strict
+default and invalid opt-in proofs, tampered acceptance and concurrent lifecycle
+changes. Full visited assignment payloads and path metadata enter the existing
+optimistic reread fingerprint; no PostgreSQL isolation proof is claimed.
 Image/weather helpers and external/provider/AI/gear fetches fail the test if
 invoked. No account/production calls occur. Relevant canonical/FIT, surface,
 diagnostic, execution-truth, reconciliation, measured-recorder, actual-shoe
@@ -130,7 +154,7 @@ Trusted interval-by-interval target comparison; structured stimulus/dominant
 purpose/modification rules; live evidence-backed next-session decisions;
 recovery-pattern learning; broader isolated lift-log context and actual muscle
 distribution; full canonical shoe requirement/matcher/receipt/history/travel;
-catalog discovery/currentness; effective-predecessor acceptance; frontend UI;
+catalog discovery/currentness; frontend UI;
 and PostgreSQL concurrency/integration verification remain unimplemented here.
 No physiological thresholds, schema migration, feature flag, rollout, merge,
 deployment or phone acceptance is included.

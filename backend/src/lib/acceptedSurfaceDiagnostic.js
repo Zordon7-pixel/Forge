@@ -6,7 +6,54 @@ const exactPositivePlanRevision = value => typeof value === 'number' && Number.i
 function parseJsonValue(raw, fallback) { try { return typeof raw === 'string' ? JSON.parse(raw) : raw ?? fallback; } catch { return fallback; } }
 function parseCanonicalPlan(row) { return parseJsonValue(row?.plan_data || row?.plan_json, null); }
 
-function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRow = null, canonicalSessionSet = null, parsePlan = parseCanonicalPlan) {
+const EFFECTIVE_READ_VERSION = 'effective-assignment-read-v1';
+const MAX_ASSIGNMENT_READ_DEPTH = 16;
+function strictDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const time = Date.parse(`${value}T12:00:00Z`);
+  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value ? value : null;
+}
+function effectiveReadDate(row) {
+  // An invalid explicit effective date cannot fall back to another field.
+  if (row?.effective_from != null) return strictDate(row.effective_from);
+  const started = row?.started_at;
+  if (strictDate(started)) return started;
+  // Legacy started_at may be a timestamp. Its persisted date is the lifecycle
+  // fallback, not an inferred instant or a conversion of naive time to UTC.
+  return typeof started === 'string' && /^\d{4}-\d\d-\d\d[T ](?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3])(?::?[0-5]\d)?)?$/.test(started)
+    ? strictDate(started.slice(0, 10)) : null;
+}
+const assignmentReadFields = ['user_plan_id', 'user_id', 'training_owner_id', 'plan_id', 'status', 'plan_version',
+  'lineage_id', 'supersedes_user_plan_id', 'effective_from', 'started_at'];
+function assignmentReadIdentity(row) {
+  return Object.fromEntries(assignmentReadFields.map(key => [key, row?.[key] ?? null]));
+}
+// This is an internal read proof, never client authority. Validate the entire
+// owner-bound path again at acceptance, not merely a caller-provided boolean.
+function validEffectiveAssignmentRead(binding, row, ownerId) {
+  const identity = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 200;
+  if (!identity(ownerId) || binding?.version !== EFFECTIVE_READ_VERSION || !strictDate(binding.local_date)
+    || !Array.isArray(binding.path) || binding.path.length < 2 || binding.path.length > MAX_ASSIGNMENT_READ_DEPTH) return false;
+  if (typeof binding.timezone !== 'string' || binding.timezone.length > 128) return false;
+  try { new Intl.DateTimeFormat('en-CA', { timeZone: binding.timezone }); } catch { return false; }
+  const ids = new Set(), plans = new Set(), path = binding.path;
+  const lineage = path[0]?.lineage_id;
+  if (!identity(lineage)) return false;
+  for (let i = 0; i < path.length; i++) {
+    const current = path[i], date = effectiveReadDate(current), next = path[i + 1];
+    if (!current || !identity(current.user_plan_id) || !identity(current.plan_id) || current.user_id !== ownerId || current.training_owner_id !== ownerId
+      || ids.has(current.user_plan_id) || plans.has(current.plan_id) || current.lineage_id !== lineage
+      || current.status !== (i === 0 ? 'active' : 'superseded') || !date
+      || exactPositivePlanRevision(current.plan_version) === null) return false;
+    ids.add(current.user_plan_id); plans.add(current.plan_id);
+    if (next && (date <= binding.local_date || current.supersedes_user_plan_id !== next.user_plan_id
+      || !effectiveReadDate(next) || date <= effectiveReadDate(next) || current.plan_version <= next.plan_version)) return false;
+    if (!next && (date > binding.local_date || ids.has(current.supersedes_user_plan_id))) return false;
+  }
+  return canonicalHash(assignmentReadIdentity(row)) === canonicalHash(assignmentReadIdentity(path.at(-1)));
+}
+
+function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRow = null, canonicalSessionSet = null, parsePlan = parseCanonicalPlan, { effectiveAssignmentRead = null } = {}) {
   const identity = manifest?.identity;
   const hashIdentity = (value) => String(value || '').replace(/^sha256:/, '');
   const diagnosticHash = (value) => {
@@ -40,6 +87,7 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
   );
   const candidateStatus = closedStatus(candidate.status, ['preview', 'applied', 'rejected', 'superseded']);
   const assignmentStatus = closedStatus(activeRow?.status, ['active', 'superseded', 'cleared']);
+  const assignmentPredicate = effectiveAssignmentRead ? 'ASSIGNMENT_EFFECTIVE_READ_BOUND' : 'ASSIGNMENT_STATUS_ACTIVE';
   const assignmentLinked = Boolean(candidate.applied_user_plan_id && activeRow?.user_plan_id)
     && String(candidate.applied_user_plan_id) === String(activeRow.user_plan_id);
   const appliedPlanLinked = Boolean(candidate.applied_training_plan_id && activeRow?.plan_id)
@@ -64,7 +112,8 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
       || candidateRefMatches(canonicalSessionSet?.plan_generation_candidate_ref)],
     ['ASSIGNMENT_PRESENT', Boolean(activeRow && typeof activeRow === 'object' && !Array.isArray(activeRow))],
     ['CANDIDATE_STATUS_APPLIED', candidateStatus === 'APPLIED'],
-    ['ASSIGNMENT_STATUS_ACTIVE', assignmentStatus === 'ACTIVE'],
+    [assignmentPredicate, effectiveAssignmentRead
+      ? validEffectiveAssignmentRead(effectiveAssignmentRead, activeRow, candidate.user_id) : assignmentStatus === 'ACTIVE'],
     ['ASSIGNMENT_LINK_MATCH', assignmentLinked],
     ['APPLIED_PLAN_LINK_MATCH', appliedPlanLinked],
     ['SURFACE_SCHEMA_MATCH', manifest?.schema_version === 'goal_backward_surface_manifest_v1'],
@@ -173,7 +222,7 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
         'PLAN_FEASIBILITY_STATUS_MATCH', 'PLAN_FEASIBILITY_REASONS_MATCH', 'PLAN_WEEKS_MATCH'
       ),
       assignment: predicateGroup(
-        'ASSIGNMENT_PRESENT', 'ASSIGNMENT_STATUS_ACTIVE', 'ASSIGNMENT_LINK_MATCH',
+        'ASSIGNMENT_PRESENT', assignmentPredicate, 'ASSIGNMENT_LINK_MATCH',
         'APPLIED_PLAN_LINK_MATCH', 'ASSIGNMENT_REVISION_MATCH'
       ),
       session_set: predicateGroup(
@@ -221,5 +270,5 @@ function surfaceManifestAppliedPlanDiagnostic(manifest, candidate = {}, activeRo
   };
 }
 
-module.exports = { surfaceManifestAppliedPlanDiagnostic };
-
+module.exports = { surfaceManifestAppliedPlanDiagnostic, effectiveReadDate, assignmentReadIdentity,
+  validEffectiveAssignmentRead, EFFECTIVE_READ_VERSION, MAX_ASSIGNMENT_READ_DEPTH };

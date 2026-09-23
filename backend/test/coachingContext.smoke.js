@@ -24,7 +24,8 @@ const dbPath = require.resolve('../src/db');
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: fixture.exports };
 process.env.JWT_SECRET = 'synthetic-coaching-context-only';
 const RealDate = Date, NOW = '2026-09-23T12:00:00.000Z';
-global.Date = class extends RealDate { constructor(...args) { super(...(args.length ? args : [NOW])); } static now() { return RealDate.parse(NOW); } };
+let clockNow = NOW;
+global.Date = class extends RealDate { constructor(...args) { super(...(args.length ? args : [clockNow])); } static now() { return RealDate.parse(clockNow); } };
 const { buildC4Fixture } = require('./racePlanDiagnostics.smoke');
 const { canonicalHash } = require('../src/lib/racePlanPolicy');
 const { materializeCanonicalSessionSet, validateCanonicalSessionSet } = require('../src/lib/canonicalWorkout');
@@ -35,8 +36,13 @@ const { buildCanonicalSurfaceManifest } = require('../src/routes/plans')._test;
 const contract = require('../src/lib/coachingContext');
 const owner = randomUUID(), foreign = randomUUID();
 for (const id of [owner, foreign]) db.prepare("INSERT INTO users(id,name,email,password_hash,timezone,planning_input_revision) VALUES (?,'Synthetic',?,'','UTC',4)").run(id, `${id}@example.invalid`);
-function makeChain() {
-  const f = buildC4Fixture(), payloads = Object.fromEntries(f.artifacts.map(a => [a.artifact_kind, a.payload_json]));
+function makeChain(suffix = '') {
+  const base = buildC4Fixture();
+  const f = suffix ? JSON.parse(JSON.stringify(base).replaceAll(base.decisionId, `${base.decisionId}${suffix}`)) : base;
+  f.candidateRow.id += suffix;
+  f.artifacts.forEach(a => { a.id += suffix; });
+  const planId = `plan-c4${suffix}`, assignmentId = `assignment${suffix}`, revision = suffix ? 10 : 9;
+  const payloads = Object.fromEntries(f.artifacts.map(a => [a.artifact_kind, a.payload_json]));
   const planning = payloads.planning_decision;
   const decision = { decision_id: f.decisionId, decision_hash: planning.decision_hash, phase: 'DEVELOPMENT', active_goals: [] };
   const definitions = [['long_aerobic','2026-09-21',5160],['recovery_run','2026-09-22',1800],['threshold_run','2026-09-23',3000],
@@ -52,13 +58,13 @@ function makeChain() {
     target: {}, provenance: [], children: [ { ...source.steps[1], order: 1 }, { ...source.steps[2], order: 2 } ] },
   { ...source.steps[4], order: 3 }];
   const set = materializeCanonicalSessionSet({ decision, candidate: { candidate_id: planning.selected_candidate_id,
-    candidate_material: materials, sessions: definitions.map(([family,date], i) => ({ session_id: `session-${i}`, candidate_material_id: materials[i].material_id,
+    candidate_material: materials, sessions: definitions.map(([family,date], i) => ({ session_id: `session-${i}${suffix}`, candidate_material_id: materials[i].material_id,
       workout_family: family, role: i === 2 ? 'PRIMARY_KEY' : 'SUPPORTING', scheduled_local_date: date,
-      ...(i === 2 ? { scheduled_start_at: `${date}T08:00:00Z` } : {}) })) }, plan_id: 'plan-c4', plan_revision: 9,
+      ...(i === 2 ? { scheduled_start_at: `${date}T08:00:00Z` } : {}) })) }, plan_id: planId, plan_revision: revision,
     planning_instant: '2026-09-20T12:00:00Z', timezone: 'UTC' });
   assert.equal(validateCanonicalSessionSet(set).valid, true);
   const plan = { ...buildCanonicalPlanFromSessionSet(set), purpose: 'Supported synthetic training.', overall_feasibility: 'supported', reasons: [] };
-  const candidate = { ...f.candidateRow, user_id: owner, status: 'applied', applied_user_plan_id: 'assignment', applied_training_plan_id: 'plan-c4',
+  const candidate = { ...f.candidateRow, user_id: owner, status: 'applied', applied_user_plan_id: assignmentId, applied_training_plan_id: planId,
     selected_candidate_hash: set.candidate_hash, candidate_hash: `sha256:${set.candidate_hash}` };
   planning.selected_candidate_hash = set.candidate_hash;
   planning.planning_date_local = '2026-09-20';
@@ -81,11 +87,11 @@ function makeChain() {
   const artifacts = f.artifacts.map((a, i) => {
     const next = buildPipelineArtifact({ id: a.id, userId: owner, kind: a.artifact_kind, decisionId: f.decisionId,
       parentArtifactId: parent, planGenerationCandidateId: i >= 3 ? candidate.id : null,
-      payload: payloads[a.artifact_kind], createdAt: '2026-09-20T12:00:00.000Z' }); parent = next.id; return next;
+      payload: payloads[a.artifact_kind], revision: suffix ? 2 : 1, createdAt: '2026-09-20T12:00:00.000Z' }); parent = next.id; return next;
   });
   const decisionArtifact = artifacts.find(a => a.artifact_kind === 'planning_decision');
   candidate.material_change_json.apply_bindings.decision_artifact = { artifact_id: decisionArtifact.id, revision: decisionArtifact.revision, content_hash: decisionArtifact.content_hash };
-  const active = { user_plan_id: 'assignment', user_id: owner, training_owner_id: owner, plan_id: set.plan_id, plan_version: 9,
+  const active = { user_plan_id: assignmentId, user_id: owner, training_owner_id: owner, plan_id: set.plan_id, plan_version: revision,
     status: 'active', plan_data: JSON.stringify(plan) };
   return { ...f, candidate, active, artifacts, set, plan };
 }
@@ -235,6 +241,133 @@ async function main() {
   db.prepare("UPDATE user_plans SET effective_from='2026-09-24' WHERE id='assignment'").run();
   assert.equal((await get()).data.reason_codes[0], 'FUTURE_ASSIGNMENT_CONTEXT_UNAVAILABLE');
   db.prepare("UPDATE user_plans SET effective_from='2026-09-20' WHERE id='assignment'").run();
+  // Actual persisted accepted chains for both the superseded predecessor and
+  // future active successor. No test relabels the predecessor ACTIVE to pass.
+  db.exec('SAVEPOINT effective_assignment_cases');
+  const successor = makeChain('-successor');
+  insert('training_plans', { id: successor.active.plan_id, user_id: owner, name: 'Synthetic successor', plan_data: successor.active.plan_data });
+  db.prepare("UPDATE user_plans SET status='superseded',lineage_id='lineage-1' WHERE id='assignment'").run();
+  insert('user_plans', { id: successor.active.user_plan_id, user_id: owner, plan_id: successor.active.plan_id,
+    status: 'active', plan_version: 10, lineage_id: 'lineage-1', supersedes_user_plan_id: 'assignment',
+    effective_from: '2026-09-24', started_at: '2026-09-24' });
+  insert('plan_generation_candidates', { ...successor.candidate, input_hash: 'synthetic-successor', invariant_version: 'synthetic',
+    planning_snapshot_json: '{}', candidate_plan_json: '{}', generation_trace_json: '{}', expires_at: '2026-10-01' });
+  for (const artifact of successor.artifacts) insert('planning_pipeline_artifacts', artifact);
+  const readUnchanged = async (...args) => { const beforeRead = snapshot(); const result = await get(...args);
+    assert.equal(snapshot(), beforeRead, 'effective assignment reads never mutate'); return result; };
+  const predecessorRead = await readUnchanged();
+  assert.equal(predecessorRead.status, 200, JSON.stringify(predecessorRead.data));
+  assert.equal(predecessorRead.data.effective_assignment_read.selected_assignment_status, 'SUPERSEDED');
+  assert.equal(predecessorRead.data.effective_assignment_read.depth, 2);
+  assert.equal(predecessorRead.data.accepted_identity.plan_id, f.set.plan_id);
+  assert.equal((await readUnchanged()).data.content_hash, predecessorRead.data.content_hash);
+  assert.equal((await readUnchanged(successor.set.sessions[1].session_id)).status, 404, 'future sessions cannot leak');
+  const predicates = require('../src/lib/acceptedSurfaceDiagnostic');
+  const predecessorRow = { ...f.active, status: 'superseded', lineage_id: 'lineage-1',
+    effective_from: '2026-09-20', started_at: '2026-09-20', supersedes_user_plan_id: null };
+  const rootRow = { ...successor.active, lineage_id: 'lineage-1', effective_from: '2026-09-24',
+    started_at: '2026-09-24', supersedes_user_plan_id: 'assignment' };
+  const readBinding = { version: predicates.EFFECTIVE_READ_VERSION, local_date: '2026-09-23', timezone: 'UTC',
+    path: [rootRow, predecessorRow].map(predicates.assignmentReadIdentity) };
+  const manifest = f.artifacts.find(a => a.artifact_kind === 'surface_manifest').payload_json;
+  const canonical = f.artifacts.find(a => a.artifact_kind === 'canonical_session_set').payload_json;
+  const strict = predicates.surfaceManifestAppliedPlanDiagnostic(manifest, f.candidate, predecessorRow, canonical);
+  assert.equal(strict.first_failed_predicate, 'ASSIGNMENT_STATUS_ACTIVE', 'shared default stays strictly ACTIVE');
+  const optIn = binding => predicates.surfaceManifestAppliedPlanDiagnostic(manifest, f.candidate, predecessorRow, canonical, undefined,
+    { effectiveAssignmentRead: binding });
+  assert.equal(optIn(readBinding).status_code, 'ACCEPTED');
+  assert.equal(optIn(readBinding).statuses.assignment, 'SUPERSEDED');
+  for (const invalid of [{ ...readBinding, path: [predecessorRow] }, { ...readBinding, local_date: '2026-09-24' },
+    { ...readBinding, path: [{ ...rootRow, user_id: foreign }, predecessorRow] },
+    { ...readBinding, path: [rootRow, { ...predecessorRow, plan_id: 'unrelated' }] },
+    { ...readBinding, path: [rootRow, { ...predecessorRow, status: 'active' }] }]) {
+    assert.equal(optIn(invalid).status_code, 'BLOCKED', 'opt-in cannot bypass proof');
+  }
+  // The same real instant selects differently on opposite sides of midnight.
+  for (const [timezone, instant, expected] of [
+    ['America/New_York', '2026-09-24T03:59:59Z', 'plan-c4'],
+    ['America/New_York', '2026-09-24T04:00:00Z', 'plan-c4-successor'],
+    ['America/New_York', '2026-09-25T04:00:00Z', 'plan-c4-successor'],
+    ['Asia/Tokyo', '2026-09-23T14:59:59Z', 'plan-c4'],
+    ['Asia/Tokyo', '2026-09-23T15:00:00Z', 'plan-c4-successor'],
+  ]) {
+    clockNow = instant; db.prepare('UPDATE users SET timezone=? WHERE id=?').run(timezone, owner);
+    const expectedSession = expected === 'plan-c4' ? f.set.sessions[1].session_id : successor.set.sessions[1].session_id;
+    const boundary = await readUnchanged(expectedSession);
+    assert.equal(boundary.status, 200, JSON.stringify(boundary.data));
+    assert.equal(boundary.data.accepted_identity.plan_id, expected);
+    assert.equal((await readUnchanged(expected === 'plan-c4' ? successor.set.sessions[1].session_id : f.set.sessions[1].session_id)).status, 404);
+  }
+  clockNow = NOW; db.prepare("UPDATE users SET timezone='UTC' WHERE id=?").run(owner);
+  const invalidCases = [
+    ['missing predecessor', "UPDATE user_plans SET supersedes_user_plan_id='missing' WHERE id='assignment-successor'", [], 'ASSIGNMENT_LINEAGE_UNAVAILABLE'],
+    ['foreign predecessor', "UPDATE user_plans SET user_id=? WHERE id='assignment'", [foreign], 'ASSIGNMENT_LINEAGE_UNAVAILABLE'],
+    ['foreign training owner', "UPDATE training_plans SET user_id=? WHERE id='plan-c4'", [foreign], 'ASSIGNMENT_LINEAGE_UNAVAILABLE'],
+    ['foreign root training owner', "UPDATE training_plans SET user_id=? WHERE id='plan-c4-successor'", [foreign], 'ASSIGNMENT_LINEAGE_UNAVAILABLE'],
+    ['cleared predecessor', "UPDATE user_plans SET status='cleared' WHERE id='assignment'", [], 'ASSIGNMENT_LINEAGE_INVALID'],
+    ['unrelated predecessor', "UPDATE user_plans SET lineage_id='unrelated' WHERE id='assignment'", [], 'ASSIGNMENT_LINEAGE_INVALID'],
+    ['missing lineage', "UPDATE user_plans SET lineage_id=NULL WHERE id='assignment'", [], 'ASSIGNMENT_LINEAGE_INVALID'],
+    ['missing both dates', "UPDATE user_plans SET effective_from=NULL,started_at=NULL WHERE id='assignment'", [], 'ASSIGNMENT_DATE_INVALID'],
+    ['nonincreasing version', "UPDATE user_plans SET plan_version=9 WHERE id='assignment-successor'", [], 'ASSIGNMENT_LINEAGE_INVALID'],
+    ['invalid date', "UPDATE user_plans SET effective_from='2026-02-30' WHERE id='assignment'", [], 'ASSIGNMENT_DATE_INVALID'],
+    ['malformed explicit date', "UPDATE user_plans SET effective_from='tomorrow' WHERE id='assignment-successor'", [], 'ASSIGNMENT_DATE_INVALID'],
+    ['cycle', "UPDATE user_plans SET supersedes_user_plan_id='assignment-successor' WHERE id='assignment'", [], 'ASSIGNMENT_LINEAGE_INVALID'],
+    ['tampered accepted hash', "UPDATE planning_pipeline_artifacts SET content_hash=? WHERE id=?", ['0'.repeat(64), f.artifacts[1].id], 'CONTEXT_READ_UNAVAILABLE'],
+    ['stale accepted revision', "UPDATE user_plans SET plan_version=8 WHERE id='assignment'", [], 'ACCEPTED_CHAIN_STALE'],
+    ['candidate no longer accepted', "UPDATE plan_generation_candidates SET status='superseded' WHERE id=?", [f.candidate.id], 'ACCEPTED_CHAIN_UNAVAILABLE'],
+    ['ambiguous root', "UPDATE user_plans SET status='active' WHERE id='assignment'", [], 'ASSIGNMENT_AMBIGUOUS'],
+  ];
+  for (const [name, sql, params, reason] of invalidCases) {
+    db.exec('SAVEPOINT invalid_case'); db.prepare(sql).run(...params);
+    assert.equal((await readUnchanged()).data.reason_codes[0], reason, name);
+    db.exec('ROLLBACK TO invalid_case; RELEASE invalid_case');
+  }
+  db.exec('SAVEPOINT legacy_date_fallback');
+  db.prepare("UPDATE user_plans SET effective_from=NULL,started_at='2026-09-20 12:00:00' WHERE id='assignment'").run();
+  assert.equal((await readUnchanged()).status, 200, 'absent effective date uses persisted started-at date, not inferred timezone');
+  db.exec('ROLLBACK TO legacy_date_fallback; RELEASE legacy_date_fallback');
+  // Multi-hop valid path and reversed dates; irrelevant historical rows cannot
+  // replace a missing linked predecessor. Max depth includes the active root.
+  db.exec('SAVEPOINT deep_lineage');
+  for (let i = 1; i <= 16; i++) {
+    insert('training_plans', { id: `future-plan-${i}`, user_id: owner, name: 'Synthetic', plan_data: '{}' });
+    insert('user_plans', { id: `future-assignment-${i}`, user_id: owner, plan_id: `future-plan-${i}`,
+      status: 'superseded', plan_version: 10 + i, lineage_id: 'lineage-1', effective_from: `2026-10-${String(i).padStart(2, '0')}`,
+      supersedes_user_plan_id: i === 1 ? 'assignment-successor' : `future-assignment-${i - 1}` });
+  }
+  db.prepare("UPDATE user_plans SET status='superseded' WHERE id='assignment-successor'").run();
+  db.prepare("UPDATE user_plans SET status='active' WHERE id='future-assignment-1'").run();
+  assert.equal((await readUnchanged()).data.effective_assignment_read.depth, 3);
+  db.prepare("UPDATE user_plans SET effective_from='2026-09-23' WHERE id='future-assignment-1'").run();
+  assert.equal((await readUnchanged()).data.status, 'UNAVAILABLE', 'effective root never falls through to old accepted data');
+  db.prepare("UPDATE user_plans SET effective_from='2026-09-25' WHERE id='assignment-successor'").run();
+  db.prepare("UPDATE user_plans SET effective_from='2026-09-24' WHERE id='future-assignment-1'").run();
+  assert.equal((await readUnchanged()).data.reason_codes[0], 'ASSIGNMENT_LINEAGE_INVALID', 'reversed date order');
+  db.prepare("UPDATE user_plans SET effective_from='2026-09-24' WHERE id='assignment-successor'").run();
+  db.prepare("UPDATE user_plans SET effective_from='2026-10-01' WHERE id='future-assignment-1'").run();
+  db.prepare("UPDATE user_plans SET supersedes_user_plan_id='future-assignment-1' WHERE id='future-assignment-1'").run();
+  assert.equal((await readUnchanged()).data.reason_codes[0], 'ASSIGNMENT_LINEAGE_INVALID', 'future cycle terminates before depth limit');
+  db.prepare("UPDATE user_plans SET supersedes_user_plan_id='assignment-successor' WHERE id='future-assignment-1'").run();
+  db.prepare("UPDATE user_plans SET status='superseded' WHERE id='future-assignment-1'").run();
+  db.prepare("UPDATE user_plans SET status='active' WHERE id='future-assignment-14'").run();
+  assert.equal((await readUnchanged()).data.effective_assignment_read.depth, 16, 'exact maximum depth remains readable');
+  db.prepare("UPDATE user_plans SET status='superseded' WHERE id='future-assignment-14'").run();
+  db.prepare("UPDATE user_plans SET status='active' WHERE id='future-assignment-16'").run();
+  assert.equal((await readUnchanged()).data.reason_codes[0], 'ASSIGNMENT_LINEAGE_BOUNDS');
+  db.exec('ROLLBACK TO deep_lineage; RELEASE deep_lineage');
+  for (const sql of ["UPDATE user_plans SET effective_from='2026-09-23' WHERE id='assignment-successor'",
+    "UPDATE user_plans SET effective_from='2026-09-25' WHERE id='assignment-successor'",
+    "UPDATE user_plans SET status='cleared' WHERE id='assignment-successor'",
+    "UPDATE user_plans SET lineage_id='changed' WHERE id='assignment-successor'"]) {
+    db.exec('SAVEPOINT concurrent_lineage'); let changed = false;
+    hooks.after = (_method, readSql, result) => {
+      if (!changed && readSql.includes('FROM workout_sessions')) { changed = true; db.prepare(sql).run(); }
+      return result;
+    };
+    assert.equal((await get()).data.status, 'UNAVAILABLE', 'concurrent lifecycle mutation invalidates read');
+    hooks.after = null; db.exec('ROLLBACK TO concurrent_lineage; RELEASE concurrent_lineage');
+  }
+  db.exec('ROLLBACK TO effective_assignment_cases; RELEASE effective_assignment_cases');
   const oldState = { ...f.artifacts.find(a => a.artifact_kind === 'athlete_state'), id: 'unused-state-history', revision: 2 };
   insert('planning_pipeline_artifacts', oldState);
   assert.equal((await get()).status, 200, 'unreferenced history cannot replace the accepted parent chain');

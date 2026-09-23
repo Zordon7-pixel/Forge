@@ -3,21 +3,41 @@ const auth = require('../middleware/auth');
 const { dbGet, dbAll } = require('../db');
 const { canonicalHash, addDays } = require('../lib/racePlanPolicy');
 const contract = require('../lib/coachingContext');
+const { effectiveReadDate, assignmentReadIdentity, validEffectiveAssignmentRead, EFFECTIVE_READ_VERSION,
+  MAX_ASSIGNMENT_READ_DEPTH } = require('../lib/acceptedSurfaceDiagnostic');
 const { LIMITS, VERSION } = contract;
 const reject = code => { const e = Error(code); e.code = code; throw e; };
 const bounded = (column, maximum = LIMITS.payloadBytes) => `CASE WHEN octet_length(${column}::text) <= ${maximum} THEN ${column} ELSE NULL END AS ${column.split('.').at(-1)}`;
-async function readChain(owner) {
+async function readChain(owner, today, timezone) {
   // A second active assignment is ambiguous, not permission to choose a winner.
-  const rows = await dbAll(`SELECT up.id AS user_plan_id, up.user_id, up.plan_id, up.status,
-      up.plan_version, up.effective_from, up.started_at, up.supersedes_user_plan_id,
+  const columnsAssignment = `up.id AS user_plan_id, up.user_id, up.plan_id, up.status,
+      up.plan_version, up.lineage_id, up.effective_from, up.started_at, up.supersedes_user_plan_id,
       tp.user_id AS training_owner_id, ${bounded('tp.plan_data')}, ${bounded('tp.plan_json')},
-      CASE WHEN octet_length(tp.plan_data::text)>${LIMITS.payloadBytes} OR octet_length(tp.plan_json::text)>${LIMITS.payloadBytes} THEN 1 ELSE 0 END AS plan_oversized
-    FROM user_plans up JOIN training_plans tp ON tp.id=up.plan_id AND tp.user_id=?
+      CASE WHEN octet_length(tp.plan_data::text)>${LIMITS.payloadBytes} OR octet_length(tp.plan_json::text)>${LIMITS.payloadBytes} THEN 1 ELSE 0 END AS plan_oversized`;
+  const assignmentJoin = 'FROM user_plans up LEFT JOIN training_plans tp ON tp.id=up.plan_id AND tp.user_id=?';
+  const rows = await dbAll(`SELECT ${columnsAssignment} ${assignmentJoin}
     WHERE up.user_id=? AND up.status='active' ORDER BY up.created_at DESC, up.id DESC LIMIT 2`, [owner, owner]);
   if (rows.length > 1) reject('ASSIGNMENT_AMBIGUOUS');
-  const active = rows[0];
+  let active = rows[0];
   if (!active) return { active: null, candidate: null, artifacts: [] };
-  if (active.plan_oversized) reject('CONTEXT_BOUNDS');
+  const lineage = [], visited = new Set();
+  while (active) {
+    if (lineage.length >= MAX_ASSIGNMENT_READ_DEPTH) reject('ASSIGNMENT_LINEAGE_BOUNDS');
+    if (visited.has(active.user_plan_id)) reject('ASSIGNMENT_LINEAGE_INVALID');
+    visited.add(active.user_plan_id); lineage.push(active);
+    if (active.user_id !== owner || active.training_owner_id !== owner) reject('ASSIGNMENT_LINEAGE_UNAVAILABLE');
+    if (active.plan_oversized) reject('CONTEXT_BOUNDS');
+    const date = effectiveReadDate(active);
+    if (!date) reject('ASSIGNMENT_DATE_INVALID');
+    if (date <= today) break;
+    if (!active.supersedes_user_plan_id) reject('FUTURE_ASSIGNMENT_CONTEXT_UNAVAILABLE');
+    active = await dbGet(`SELECT ${columnsAssignment} ${assignmentJoin}
+      WHERE up.user_id=? AND up.id=? LIMIT 1`, [owner, owner, active.supersedes_user_plan_id]);
+    if (!active) reject('ASSIGNMENT_LINEAGE_UNAVAILABLE');
+  }
+  const effectiveAssignmentRead = lineage.length > 1 ? { version: EFFECTIVE_READ_VERSION,
+    local_date: today, timezone, path: lineage.map(assignmentReadIdentity) } : null;
+  if (effectiveAssignmentRead && !validEffectiveAssignmentRead(effectiveAssignmentRead, active, owner)) reject('ASSIGNMENT_LINEAGE_INVALID');
   const candidates = await dbAll(`SELECT id,user_id,status,decision_id,candidate_hash,selected_candidate_hash,
       training_plan_id,user_plan_id,active_plan_version,planning_input_revision,planning_date_local,timezone_offset_minutes,
       engine_version,policy_version,candidate_revision,athlete_state_revision,safety_state_hash,
@@ -45,7 +65,7 @@ async function readChain(owner) {
     seen.add(head.id); artifacts.push(head);
   }
   if (head.parent_artifact_id || artifacts.length !== 7) reject('ACCEPTED_CHAIN_UNAVAILABLE');
-  return { active, candidate, artifacts };
+  return { active, candidate, artifacts, lineage, effectiveAssignmentRead };
 }
 async function readSources(owner, chain, today, asOf) {
   const sessionId = chain.session.session_id;
@@ -92,25 +112,20 @@ router.get('/context/:sessionId', auth, async (req, res) => {
   try {
     const asOf = new Date().toISOString();
     const profile = await dbGet('SELECT id,timezone,planning_input_revision FROM users WHERE id=?', [owner]);
-    const raw = await readChain(owner);
+    const timezone = profile?.timezone || 'UTC';
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(asOf));
+    const raw = await readChain(owner, today, timezone);
     if (!raw.active) {
       const legacy = await dbGet('SELECT id FROM training_plans WHERE user_id=? LIMIT 1', [owner]);
       reject(legacy ? 'LEGACY_PLAN_NOT_CANONICAL' : 'NO_ACCEPTED_PLAN');
     }
-    const timezone = profile?.timezone || 'UTC';
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(asOf));
-    const effective = contract.dateOnly(raw.active.effective_from) || contract.dateOnly(String(raw.active.started_at || '').slice(0, 10));
-    // Do not reinterpret a superseded predecessor as an active accepted surface.
-    // Existing lifecycle follows that predecessor, but its accepted surface
-    // requires a distinct effective-assignment contract before this read can.
-    if (effective && effective > today) reject('FUTURE_ASSIGNMENT_CONTEXT_UNAVAILABLE');
     const chain = contract.accepted({ ownerId: owner, ...raw, sessionId });
     const sources = await readSources(owner, chain, today, asOf);
     const result = contract.compose({ ownerId: owner, chain, candidate: raw.candidate, profile, ...sources, asOf });
     // Optimistic read consistency: no locks/writes, but do not combine an old
     // acceptance with a changed assignment/artifact or physiological revision.
     const afterSources = await readSources(owner, chain, today, asOf);
-    const after = await readChain(owner);
+    const after = await readChain(owner, today, timezone);
     const revision = await dbGet('SELECT id,timezone,planning_input_revision FROM users WHERE id=?', [owner]);
     if (canonicalHash(raw) !== canonicalHash(after) || canonicalHash(profile) !== canonicalHash(revision)
       || canonicalHash(sources) !== canonicalHash(afterSources)) reject('CONTEXT_CHANGED_DURING_READ');
@@ -118,6 +133,7 @@ router.get('/context/:sessionId', auth, async (req, res) => {
   } catch (error) {
     const known = new Set(['NO_ACCEPTED_PLAN', 'LEGACY_PLAN_NOT_CANONICAL', 'ACCEPTED_CHAIN_UNAVAILABLE', 'ACCEPTED_CHAIN_STALE',
       'CANONICAL_SET_INVALID', 'SESSION_UNAVAILABLE', 'ASSIGNMENT_AMBIGUOUS', 'FUTURE_ASSIGNMENT_CONTEXT_UNAVAILABLE',
+      'ASSIGNMENT_LINEAGE_INVALID', 'ASSIGNMENT_LINEAGE_UNAVAILABLE', 'ASSIGNMENT_LINEAGE_BOUNDS', 'ASSIGNMENT_DATE_INVALID',
       'CONTEXT_BOUNDS', 'CONTEXT_RESPONSE_BOUNDS', 'CONTEXT_CHANGED_DURING_READ', 'CONTEXT_OWNER_MISMATCH']);
     const reason = known.has(error.code) ? error.code : 'CONTEXT_READ_UNAVAILABLE';
     return res.status(error.code === 'SESSION_UNAVAILABLE' ? 404 : 409).json({ schema_version: VERSION,
