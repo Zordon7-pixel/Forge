@@ -49,6 +49,25 @@ const { buildAttributedCorrection } = require('../lib/goalBackwardEvidence');
 
 const RUN_FEEDBACK_CLAIM_STALE_MS = 10 * 60 * 1000;
 
+async function resolveActualShoe(tx, userId, shoeId) {
+  if (shoeId === undefined || shoeId === null) return null;
+  // A physical pair, never a catalog model or an inferred recommendation.
+  if (typeof shoeId !== 'string' || !uuidValidate(shoeId)) {
+    const error = new Error('shoe_id must be a shoe ID or null');
+    error.status = 400;
+    throw error;
+  }
+  // Retired pairs remain valid for logging/correcting historical actual use.
+  // Keep deletion from racing validation and the run write in PostgreSQL.
+  const shoe = await tx.get('SELECT id FROM gear_shoes WHERE id=? AND user_id=? FOR KEY SHARE', [shoeId, userId]);
+  if (!shoe) {
+    const error = new Error('Shoe not found');
+    error.status = 400;
+    throw error;
+  }
+  return shoe.id;
+}
+
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -714,7 +733,7 @@ router.post('/', auth, async (req, res) => {
       vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
       watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
-      target_zone, plan_session_id, planned_session, activity_start_at, activity_end_at,
+      target_zone, plan_session_id, planned_session, activity_start_at, activity_end_at, shoe_id,
       id: clientRunId
     } = req.body;
     if (!date || !type) return res.status(400).json({ error: 'date and type required' });
@@ -788,6 +807,7 @@ router.post('/', auth, async (req, res) => {
     const writeResult = await withPlanningInputMutation(req.user.id, async (tx) => {
       const replay = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
       if (replay) return planningInputUnchanged({ inserted: false, run: replay, userProfile: null, prResult: null });
+      const actualShoeId = await resolveActualShoe(tx, req.user.id, shoe_id);
       // The client may select an ID, not supply its own completion authority.
       // Resolve the exact owned prescription again under the owner mutation lock.
       if (normalizePlanSessionId(plan_session_id) && !planMatchExplicitlyDisabled) {
@@ -810,8 +830,8 @@ router.post('/', auth, async (req, res) => {
         detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
         watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
         plan_session_id, planned_session_json, health_source, health_source_workout_id,
-        health_start_at, health_end_at, workout_metrics_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        health_start_at, health_end_at, workout_metrics_json, shoe_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (id) DO NOTHING`, [
         id, req.user.id, date, type, resolvedDistanceMiles, duration_seconds || 0, perceived_effort ?? null, notes || null,
         resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(normalizedRouteCoords), watch_mode || null,
@@ -821,7 +841,7 @@ router.post('/', auth, async (req, res) => {
         detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
         watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1,
         resolvedPlanSessionId, JSON.stringify(storedPlannedSession || {}), recordingHealthSource, recordingSourceId,
-        resolvedActivityStart, resolvedActivityEnd, JSON.stringify(recordingMetrics)
+        resolvedActivityStart, resolvedActivityEnd, JSON.stringify(recordingMetrics), actualShoeId
       ]);
       if (insertResult.changes === 0) {
         const existingRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
@@ -910,21 +930,24 @@ router.post('/', auth, async (req, res) => {
     });
 
   } catch (err) {
-    if (err.status === 409) return res.status(409).json({ error: err.message });
+    if (err.status === 400 || err.status === 409) return res.status(err.status).json({ error: err.message });
     console.error('[runs/create] failed:', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to save run' });
   }
 });
 
 async function updateRunHandler(req, res) {
-  if (getGoalBackwardV24Mode() !== 'off') {
+  const bodyKeys = Object.keys(req.body || {});
+  const shoeOnly = bodyKeys.length === 1 && bodyKeys[0] === 'shoe_id';
+  if (getGoalBackwardV24Mode() !== 'off' && !shoeOnly) {
     return res.status(409).json({
       error: 'Observed run evidence is immutable while Goal-Backward v2.4 is enabled.',
       code: 'EVIDENCE_IMMUTABLE',
     });
   }
   try {
-    const { date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed, pain_level, post_energy } = req.body;
+    const { date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed, pain_level, post_energy, shoe_id } = req.body;
+    const hasShoe = Object.prototype.hasOwnProperty.call(req.body, 'shoe_id');
     const validPainLevels = ['none', 'mild', 'moderate', 'severe'];
     const validEnergyLevels = ['low', 'medium', 'high'];
 
@@ -941,6 +964,15 @@ async function updateRunHandler(req, res) {
         const notFound = new Error('Run not found');
         notFound.status = 404;
         throw notFound;
+      }
+
+      const actualShoeId = hasShoe ? await resolveActualShoe(tx, req.user.id, shoe_id) : run.shoe_id;
+      if (shoeOnly) {
+        await tx.run('UPDATE runs SET shoe_id=? WHERE id=? AND user_id=?', [actualShoeId, req.params.id, req.user.id]);
+        const nextRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+        // Gear enrichment is downstream: no physiological revision, PR, dose,
+        // completion receipt, calorie recalculation or plan mutation.
+        return planningInputUnchanged(nextRun);
       }
 
       const userProfile = await tx.get('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
@@ -972,13 +1004,14 @@ async function updateRunHandler(req, res) {
         treadmill_speed = COALESCE(?, treadmill_speed),
         pain_level = COALESCE(?, pain_level),
         post_energy = COALESCE(?, post_energy),
-        calories = ?
+        calories = ?,
+        shoe_id = ?
         WHERE id=? AND user_id=?`, [
         date ?? null, distance_miles ?? null, duration_seconds ?? null,
         notes ?? null, perceived_effort ?? null, type ?? null,
         run_surface ?? null, incline_pct ?? null, treadmill_speed ?? null,
         pain_level ?? null, post_energy ?? null,
-        calories, req.params.id, req.user.id
+        calories, actualShoeId, req.params.id, req.user.id
       ]);
 
       const nextRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
@@ -992,6 +1025,7 @@ async function updateRunHandler(req, res) {
     res.json(withCalculatedEffort(updated));
   } catch (err) {
     if (err.status === 404) return res.status(404).json({ error: 'Run not found' });
+    if (err.status === 400) return res.status(400).json({ error: err.message });
     console.error('[runs/update] failed:', err.message);
     res.status(500).json({ error: 'Update failed' });
   }

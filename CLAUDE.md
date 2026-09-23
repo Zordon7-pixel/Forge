@@ -364,6 +364,26 @@ Read `FORGE.md` for:
 
 ## Dispatch Log
 
+### 2026-09-23 — Actual shoe persistence (patched; not deployed)
+
+`routes/runs.js` now validates optional `shoe_id` as an owned physical pair
+inside the run-write transaction. Omitted create stores unknown; explicit
+null clears; omitted ordinary edits preserve the prior association. Retired
+pairs remain valid for historical actual-use recording. Create replay returns
+the saved run unchanged, including after an explicit shoe correction; it is
+not an alternate edit endpoint. Shoe-only PATCH/PUT is permitted while
+Goal-Backward is enabled because it changes no physiological evidence,
+planning revision, measurement receipt or plan. Mixed/unknown-field edits
+retain the existing `EVIDENCE_IMMUTABLE` gate. No recommendation/provider
+inference is added, and the broader selected/recommended/actual authority
+ledger, catalog operations and deletion-history policy remain later slices.
+
+Gate: `node backend/test/runActualShoe.smoke.js` uses authenticated HTTP routes
+and real disposable in-memory SQLite transactions for ownership, replay,
+clear/preserve, rollback, retired pairs and correction-safe mileage. It does
+not establish PostgreSQL concurrent-lock behavior or production acceptance.
+No migrations, flags, merge, deployment or Bryan-account operations performed.
+
 | Date | Agent | Action | Commit |
 |------|-------|--------|--------|
 | 2026-04-17 | forge-security-fixes (Sonnet 4.6) | Superseded historical note: this commit added social error logging and other audited-clean diffs; the activity-photo ownership fix actually landed later in `2f9340c9` | `9997eeb3` |
