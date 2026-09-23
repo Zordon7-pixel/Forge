@@ -155,8 +155,11 @@ async function main() {
   const result = await get(); assert.equal(result.status, 200, JSON.stringify(result.data));
   const b = result.data;
   const savedWitness = require('./fixtures/coaching-context-witness.json');
-  assert.deepEqual(b, savedWitness, 'documented synthetic witness is the exact route response');
   if (process.env.COACHING_CONTEXT_WITNESS === '1') console.log(`WITNESS:${JSON.stringify(b)}`);
+  assert.deepEqual(b, savedWitness, 'documented synthetic witness is the exact route response');
+  assert.equal(b.session.dominant_purpose.status, 'EXPLICIT_PRESCRIBED_INTENT');
+  assert.equal(b.session.dominant_purpose.primary_purpose, b.session.workout_family);
+  assert.equal(b.session.primary_physiological_stimulus.status, 'MISSING', 'family intent is not a physiological-stimulus claim');
   assert.equal(b.status, 'PARTIAL'); assert.equal(b.executable_authority, false);
   assert.equal(b.session.workout_family, 'recovery_run'); assert.equal('title' in b.session, false);
   assert.ok(b.session.steps.length); assert.ok(b.session.steps[0].provenance.length);
@@ -391,6 +394,10 @@ async function main() {
   named.session.title = 'Race intervals invented title';
   assert.equal(contract.compose({ ...pureInput, chain: named }).session.workout_family, 'recovery_run');
   assert.equal(contract.compose({ ...pureInput, chain: named }).content_hash, pure.content_hash);
+  const legacyIntent = clone(chain); delete legacyIntent.session.workout_semantics;
+  assert.equal(contract.compose({ ...pureInput, chain: legacyIntent }).session.dominant_purpose.status, 'MISSING');
+  const forgedIntent = clone(chain); forgedIntent.session.workout_semantics.source.prescribed_steps_hash = 'forged';
+  assert.equal(contract.compose({ ...pureInput, chain: forgedIntent }).session.dominant_purpose.status, 'MISSING');
   const repeatChain = clone(chain);
   const work = repeatChain.session.steps.find(s => s.type === 'run');
   repeatChain.session.steps = [{ step_id: 'repeat', type: 'repeat', order: 1, repeat_count: 4,

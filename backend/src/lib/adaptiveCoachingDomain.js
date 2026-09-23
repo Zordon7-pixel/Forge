@@ -31,6 +31,8 @@ function ownedEventEntries(foundation, material = []) {
       workout_family: 'race', progression_family: null, duration_s: session.derived_totals.duration_s,
       distance_m: session.derived_totals.distance_m, quality_work_s: null,
       fixed_date: goal.event_local_date, event_identity: clone(session.event_identity), canonical_steps: clone(session.steps),
+      ...(session.workout_semantics ? { workout_semantics: clone(session.workout_semantics),
+        source_intent_binding: { decision_id: session.decision_id, objective_ids: clone(session.objective_ids || []) } } : {}),
       dose_basis: { policy_id: 'adaptive-observed-dose-v1', authority: 'OWNED_EVENT_PRESCRIPTION',
         source_evidence_ids: [...new Set(session.target_provenance.flatMap(p => p.source_evidence_ids))],
         source_prescription_hash: session.content_hash }, reason_codes: ['WEEKLY_OBJECTIVE_REQUIRED'] };

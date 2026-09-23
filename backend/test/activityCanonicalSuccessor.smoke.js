@@ -36,6 +36,18 @@ for (const frequency of [4, 7]) {
   const ids = parent.sessions.filter(session => session.scheduled_local_date === '2026-09-10').map(session => session.session_id);
   assert.equal(ids.length, 2);
   const context = contextFor(parent, '2026-09-10', ids);
+  const intentSource = parent.sessions.find(session => ids.includes(session.session_id) && session.kind === 'run');
+  const annotatedSource = canonical.buildCanonicalSession({ ...intentSource, content_hash: undefined,
+    workout_semantics: require('../src/lib/workoutSemantics').buildWorkoutSemantics(intentSource) });
+  const withheldIntent = successor.reductionRest(annotatedSource, context);
+  assert.equal(withheldIntent.workout_semantics, undefined, 'rest does not carry stale running intent');
+  assert.deepEqual(withheldIntent.activity_reduction.original.workout_semantics, annotatedSource.workout_semantics);
+  const recoveryIntent = successor.reductionRecovery(annotatedSource, context,
+    { duration_s: intentSource.derived_totals.duration_s, training_age_class: 'ESTABLISHED' });
+  assert.equal(recoveryIntent.workout_family, 'recovery_run');
+  assert.equal(recoveryIntent.workout_semantics.primary_purpose, 'recovery_run');
+  assert.equal(canonical.validateCanonicalSession(recoveryIntent).valid, true);
+  assert.deepEqual(recoveryIntent.activity_reduction.original.workout_semantics, annotatedSource.workout_semantics);
   const first = successor.buildActivityCanonicalSuccessor({ parent, context, observationArtifact: observationFor(parent, '2026-09-10'),
     changes: ids.map(id => ({ session_id: id, action: 'rest' })) }).canonical;
   assert.equal(JSON.stringify(parent), originalBytes, 'The accepted predecessor remains immutable');

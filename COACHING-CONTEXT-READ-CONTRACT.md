@@ -19,7 +19,7 @@ cannot replace a parent. The existing pure surface predicate is shared with
 the normal plan route; the image/telemetry-bearing current-plan reader is not
 called. No plan repair, generation, adaptation application or writes occur.
 
-HTTP 200 is a `coaching-context-v1` PARTIAL read, not permission to execute an
+HTTP 200 is a `coaching-context-v2` PARTIAL read, not permission to execute an
 adaptation. `executable_authority` is always false. Unknown session returns
 404; stale/corrupt/foreign/missing/legacy/bounded-out chains return 409 with an
 explicit unavailable reason and no prescription. This only restricts this
@@ -150,8 +150,16 @@ and gear-policy regressions remain release gates.
 
 ## Remaining gaps
 
-Trusted interval-by-interval target comparison; structured stimulus/dominant
-purpose/modification rules; live evidence-backed next-session decisions;
+Slice 3a adds validated explicit prescribed intent for newly materialized
+adaptive running sessions. The versioned source/graph-bound primary family,
+main leaf IDs and declared accessory references are exposed without title
+parsing. Old absent/invalid intent remains MISSING. This is not physiological
+stimulus inference or permission to accept mixed-family work; see
+`CANONICAL-WORKOUT-INTENT.md`. The example fixture now reflects v2 and new-session
+metadata hashes; it is not a rewrite of any persisted accepted plan.
+
+Trusted interval-by-interval target comparison; structured stimulus, general
+mixed-family dominance and modification rules; live evidence-backed next-session decisions;
 recovery-pattern learning; broader isolated lift-log context and actual muscle
 distribution; full canonical shoe requirement/matcher/receipt/history/travel;
 catalog discovery/currentness; frontend UI;

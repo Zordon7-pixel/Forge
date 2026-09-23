@@ -243,6 +243,11 @@ function buildAdaptiveSessionSelection(foundation, domain = {}) {
     }
     if (['threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run'].includes(family)) {
       if (!prior) { defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue; }
+      if (require('./workoutSemantics').requiresLosslessReconstruction(prior.prescribed_session.steps)) {
+        defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE');
+        deferred.at(-1).reason_codes.push('STRUCTURED_ACCESSORY_RECONSTRUCTION_UNSUPPORTED');
+        continue;
+      }
       const priorTotal = prior.prescribed_session.derived_totals.duration_s;
       qualitySeconds = prior.observation.observed_work_duration_s;
       if (!qualitySeconds || !priorTotal) { defer(objective, 'OBSERVED_FAMILY_DOSE_UNAVAILABLE'); continue; }

@@ -28,16 +28,28 @@ function buildAdaptiveWorkoutMaterial(entry, decision, planningInstant) {
     return { target: resolved, provenance: result.provenance };
   };
   const steps = [];
+  const reboundIds = new Map();
   const add = (type, seconds, distance, f, work = false) => steps.push({
     step_id: `${id}-${steps.length + 1}`, type, order: steps.length + 1,
     ...target(f, seconds, distance), ...(work ? { step_role: 'WORK', workout_family: family } : {}),
   });
   if (entry.canonical_steps) {
-    const rebind = (list, prefix) => list.map((step, i) => ({ ...step, step_id: `${prefix}-${i + 1}`,
+    if (entry.workout_semantics && require('./workoutSemantics').validateWorkoutSemantics({
+      workout_family: family, steps: entry.canonical_steps, workout_semantics: entry.workout_semantics,
+      decision_id: entry.source_intent_binding?.decision_id, objective_ids: entry.source_intent_binding?.objective_ids,
+    }).length) throw Object.assign(Error('Copied intent does not match its server source graph'), { code: 'CANONICAL_INTENT_UNAVAILABLE' });
+    const rebind = (list, prefix) => list.map((step, i) => {
+      reboundIds.set(step.step_id, `${prefix}-${i + 1}`);
+      return { ...step, step_id: `${prefix}-${i + 1}`,
       provenance: step.provenance.map(p => ({ ...p, decision_id: decision.decision_id, derived_at: planningInstant })),
-      ...(step.children ? { children: rebind(step.children, `${prefix}-${i + 1}`) } : {}) }));
+      ...(step.children ? { children: rebind(step.children, `${prefix}-${i + 1}`) } : {}) };
+    });
     steps.push(...rebind(entry.canonical_steps, id));
   } else if (entry.completed_prescription_structure) {
+    if (require('./workoutSemantics').requiresLosslessReconstruction(entry.completed_prescription_structure)) {
+      throw Object.assign(Error('Structured accessory reconstruction cannot preserve target/dose authority'),
+        { code: 'STRUCTURED_ACCESSORY_RECONSTRUCTION_UNSUPPORTED' });
+    }
     let allocatedDistance = 0;
     const rebuild = (list, prefix, multiplier = 1) => list.map((step, i) => {
       const stepId = `${prefix}-${i + 1}`;
@@ -102,6 +114,11 @@ function buildAdaptiveWorkoutMaterial(entry, decision, planningInstant) {
     ...(isStrength(family) ? { main: entry.exercises, exercises: entry.exercises } : {}),
     reason_codes: entry.reason_codes,
     adaptive_prescription: { version: 'adaptive-prescription-v1', steps,
+      accessory_declarations: (entry.workout_semantics?.accessories || []).map(a => ({ ...a,
+        step_ids: a.step_ids.map(id => {
+          if (!reboundIds.has(id)) throw Error('Accessory reference cannot be rebound');
+          return reboundIds.get(id);
+        }) })),
       objective_ids: entry.objective_ids, progression_family: entry.progression_family, dose_basis: entry.dose_basis } } };
 }
 module.exports = { buildAdaptiveWorkoutMaterial };

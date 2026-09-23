@@ -96,6 +96,9 @@ function reductionRest(original, context) {
     next.strength_withholding = policy.buildWithholdingLedger(original, [], context);
   }
   delete next.activity_plan_lineage;
+  // This existing authorized transformation withholds the original graph.
+  // Its intent stays in activity_reduction.original, not on the rest successor.
+  delete next.workout_semantics;
   return canonicalRebuild(next);
 }
 
@@ -128,6 +131,7 @@ function reductionRecovery(original, context, { duration_s, training_age_class }
           ...(effort.heart_rate_range_bpm === undefined ? [] : ['bpm'])] }] }],
     activity_reduction: policy.buildSessionReduction(original, context, 'RECOVERY_CONVERSION') };
   delete next.activity_plan_lineage;
+  if (original.workout_semantics) next.workout_semantics = require('./workoutSemantics').buildWorkoutSemantics(next);
   try {
     const session = existingEasy ? canonicalRebuild(next) : running.bindRunningDosePool([next], policy.recoverySource(registry))[0];
     if (!policy.validateSessionReduction(session)

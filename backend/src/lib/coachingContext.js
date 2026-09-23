@@ -5,7 +5,7 @@ const { validateCanonicalSessionSet, canonicalWorkoutHash } = require('./canonic
 const { buildDecisionArtifactDiagnosticBundle } = require('./racePlanDiagnostics');
 const { surfaceManifestAppliedPlanDiagnostic } = require('./acceptedSurfaceDiagnostic');
 const { activityAssessment, runCompletionEvidence } = require('./activityReconciliation');
-const VERSION = 'coaching-context-v1';
+const VERSION = 'coaching-context-v2';
 const LIMITS = Object.freeze({ artifacts: 32, sessions: 280, runs: 512, corrections: 1000,
   lifts: 256, context: 64, payloadBytes: 4 * 1024 * 1024, responseBytes: 256 * 1024 });
 const missing = reason => ({ status: 'MISSING', value: null, reason_codes: [reason] });
@@ -51,13 +51,18 @@ function step(value, depth = 0) {
 }
 const totalsSchema = fields('distance_m duration_s work_distance_m work_duration_s repetitions sets station_distance_m');
 function prescription(s) {
+  const supportedIntent = s.workout_semantics && !require('./workoutSemantics').validateWorkoutSemantics(s).length;
   return { ...project(s, { ...fields('canonical_workout_schema_version stress_taxonomy_version session_id session_revision content_hash plan_id plan_revision decision_id kind workout_family role phase scheduled_local_date scheduled_start_at timezone progression_family executability'),
     goal_ids: 'list', objective_ids: 'list', purpose_reason_codes: 'list', safety_scope: 'list' }),
     truth_class: 'PRESCRIBED', steps: s.steps.map(v => step(v)), derived_totals: project(s.derived_totals, totalsSchema),
     capability: project(s.capability, { classification: true, manual_step_ids: 'list', unsupported_step_ids: 'list' }),
     stress_vector: Array.isArray(s.stress_vector) ? list(s.stress_vector) : null,
     primary_physiological_stimulus: missing('STRUCTURED_STIMULUS_NOT_IMPLEMENTED'),
-    dominant_purpose: missing('DOMINANT_PURPOSE_CONTRACT_NOT_IMPLEMENTED'),
+    dominant_purpose: supportedIntent ? { status: 'EXPLICIT_PRESCRIBED_INTENT',
+      ...project(s.workout_semantics, { version: true, primary_purpose: true, primary_step_ids: 'list',
+        accessories: [{ kind: true, step_ids: 'list', source_ref: true }],
+        source: { authority: true, decision_id: true, objective_ids: 'list', source_evidence_ids: 'list', prescribed_steps_hash: true } }),
+      reason_codes: ['SERVER_STRUCTURED_PRESCRIPTION_INTENT'] } : missing('EXPLICIT_WORKOUT_INTENT_UNAVAILABLE'),
     surface: missing('CANONICAL_SURFACE_CONTRACT_NOT_IMPLEMENTED'),
     fallback_rules: missing('STRUCTURED_MODIFICATION_RULES_NOT_IMPLEMENTED'),
     intensity_authority: { status: 'STEP_TARGET_PROVENANCE', reason_codes: ['NO_TITLE_DERIVED_AUTHORITY'] },

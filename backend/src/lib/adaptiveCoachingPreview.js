@@ -23,6 +23,7 @@ const GENERATION_FAILURES = Object.freeze({
   INJURY_SCOPE: 'The current safety restriction prevents the required training sessions. Review your injury and recovery settings before requesting another training plan.',
   MEANINGFUL_DOSE_REQUIRED: 'The available training dose or session time cannot support all required workouts at their minimum useful duration. Review your session time and recent workout records, or request fewer sessions.',
   OBSERVED_FAMILY_DOSE_UNAVAILABLE: 'Recent completed workouts do not establish the dose for the required race-specific sessions. Sync the relevant completed workouts and preview again.',
+  STRUCTURED_ACCESSORY_RECONSTRUCTION_UNSUPPORTED: 'This workout contains structured accessory or cadence targets that cannot yet be carried forward without changing their prescription.',
   EVENT_EXECUTION_MATERIAL_REQUIRED: 'The planner cannot construct the race workout from the available event and workout evidence. Review the event details and sync recent completed runs.',
   CANDIDATE_SEARCH_NODE_BUDGET_EXHAUSTED: 'The planner reached its schedule search limit. This does not establish that your schedule is unsafe. Try different eligible weekdays and preview again.',
 });

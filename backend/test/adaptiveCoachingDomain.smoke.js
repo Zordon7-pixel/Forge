@@ -84,6 +84,9 @@ test('observed repeat topology and recovery persist without promotion of planned
   interval.order = 1; recovery.order = 2;
   prior.steps = [prior.steps[0], { step_id: 'observed-repeat', type: 'repeat', order: 2, repeat_count: 4,
     target: {}, provenance: [], children: [interval, recovery] }, { ...prior.steps.at(-1), order: 3 }];
+  // This fixture creates a different server prescription, not a valid edit of
+  // an accepted intent/hash. Rebind the new graph explicitly.
+  prior.workout_semantics = require('../src/lib/workoutSemantics').buildWorkoutSemantics(prior);
   pair.prescribed_session = buildCanonicalSession(prior);
   pair.observation.observed_duration_s = pair.prescribed_session.derived_totals.duration_s;
   pair.observation.observed_distance_m = pair.prescribed_session.derived_totals.distance_m;

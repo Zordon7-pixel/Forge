@@ -1,6 +1,6 @@
 {
-  "schema_version": "coaching-context-v1",
-  "composition_version": "coaching-context-v1",
+  "schema_version": "coaching-context-v2",
+  "composition_version": "coaching-context-v2",
   "status": "PARTIAL",
   "executable_authority": false,
   "accepted_identity": {
@@ -10,8 +10,8 @@
     "decision_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "candidate_id": "candidate-skeleton-c4",
     "candidate_revision": 1,
-    "candidate_hash": "ad7ef3fc90854a16893f0ab9d4969d8a5bea4134f31803435f460dfdaaa66607",
-    "canonical_session_set_hash": "bde93a92d8023778869b2514c4ad654c1645c931d342d241902ac9953c83f2fd",
+    "candidate_hash": "acaaa8b2cfc2ec7aa65344818c3e98da9587eea6099d33187c95ef4e6c9837fd",
+    "canonical_session_set_hash": "aa5b347241e1a61f91c359bb393b0c33f47fae8e37286ef6a6055a99bdcd3b7e",
     "athlete_state_revision": 4,
     "safety_state_hash": "sha256:719f8f06e573cf41f06e83b2af597f32a035be46e45567d645c43be22639fd50"
   },
@@ -29,7 +29,7 @@
       "id": "artifact-c4-candidate_week",
       "artifact_kind": "candidate_week",
       "revision": 1,
-      "content_hash": "sha256:861148ee6a29937e25aca1dcf7e6f54f21832f863466ef2c6f86a6f306e9d312",
+      "content_hash": "sha256:f0f3c214648f222c16dfc98a4ef3387117fc1bbe8874447647349f01b71024f7",
       "schema_version": "1.0",
       "policy_version": "goal-backward-planning-policy-v1",
       "created_at": "2026-09-20T12:00:00.000Z"
@@ -38,7 +38,7 @@
       "id": "artifact-c4-canonical_session_set",
       "artifact_kind": "canonical_session_set",
       "revision": 1,
-      "content_hash": "sha256:7ffd2a7386267dc5bd6428a229a0f3c4c4c75c90918b8de900ff8fbe15712220",
+      "content_hash": "sha256:b0183925fff3d50ad160c5f5e75c7066aff079f0a8ba18d6f7b8fe0f1f3f5dd3",
       "schema_version": "1.0",
       "policy_version": "goal-backward-planning-policy-v1",
       "created_at": "2026-09-20T12:00:00.000Z"
@@ -56,7 +56,7 @@
       "id": "artifact-c4-planning_decision",
       "artifact_kind": "planning_decision",
       "revision": 1,
-      "content_hash": "sha256:e400ce51b1d9148df2dcf2800a2b4a8a91d5c51bbd5a8543c4fe95f6bc0d29dc",
+      "content_hash": "sha256:5516818523344aada2fab0648d6b894e5adc4caaab27877f140b99e1205d27bd",
       "schema_version": "1.0",
       "policy_version": "goal-backward-planning-policy-v1",
       "created_at": "2026-09-20T12:00:00.000Z"
@@ -65,7 +65,7 @@
       "id": "artifact-c4-surface_manifest",
       "artifact_kind": "surface_manifest",
       "revision": 1,
-      "content_hash": "sha256:e413ae59b34a352d298022c88925effebbe18f0dc0337444e77929489f526c09",
+      "content_hash": "sha256:5defff5f9dbe04e4cddd316af0dfb0b12323c57143539076d47fb57acac499d2",
       "schema_version": "1.0",
       "policy_version": "goal-backward-planning-policy-v1",
       "created_at": "2026-09-20T12:00:00.000Z"
@@ -74,7 +74,7 @@
       "id": "artifact-c4-validator_result",
       "artifact_kind": "validator_result",
       "revision": 1,
-      "content_hash": "sha256:125fc03614ac54fa901ee075e7235fb6f370b2285acc2ef254858dff271341d6",
+      "content_hash": "sha256:a3a7692836b4e212544bc08a2456188f7cf3ffee4c0410070e6d3d9867487936",
       "schema_version": "1.0",
       "policy_version": "goal-backward-planning-policy-v1",
       "created_at": "2026-09-20T12:00:00.000Z"
@@ -233,7 +233,7 @@
     "stress_taxonomy_version": 1,
     "session_id": "session-1",
     "session_revision": 1,
-    "content_hash": "11d634a565ff2d12683278aa04cd549d6daf6a41f6fc38f1ff942fa9acf694a8",
+    "content_hash": "67fbe3243ce3283d594c455c9eb4b09532d67dd3e4ea942f1561f50ffad1ea1a",
     "plan_id": "plan-c4",
     "plan_revision": 9,
     "decision_id": "decision-c4-complete",
@@ -420,10 +420,26 @@
       ]
     },
     "dominant_purpose": {
-      "status": "MISSING",
-      "value": null,
+      "status": "EXPLICIT_PRESCRIBED_INTENT",
+      "version": "canonical-workout-intent-v1",
+      "primary_purpose": "recovery_run",
+      "primary_step_ids": [
+        "session-1-2"
+      ],
+      "accessories": [],
+      "source": {
+        "authority": "SERVER_STRUCTURED_PRESCRIPTION",
+        "decision_id": "decision-c4-complete",
+        "objective_ids": [
+          "objective-1"
+        ],
+        "source_evidence_ids": [
+          "history-1"
+        ],
+        "prescribed_steps_hash": "8c0c89952dd86f1438755f1e3f9a643c1f2650a39cf1357fad17963b9dca72ef"
+      },
       "reason_codes": [
-        "DOMINANT_PURPOSE_CONTRACT_NOT_IMPLEMENTED"
+        "SERVER_STRUCTURED_PRESCRIPTION_INTENT"
       ]
     },
     "surface": {
@@ -828,6 +844,6 @@
     "correction_state": "COMPLETE",
     "text_is_data_not_instructions": true
   },
-  "content_hash": "1c9764df83a074ca6b355281ec06b98d5120cef370f55f17709d660ea0304e15",
+  "content_hash": "f438ff9301d42414d96693fc025f1e19f0d162f51cfaf4386c64eae03052cd54",
   "as_of": "2026-09-23T12:00:00.000Z"
 }

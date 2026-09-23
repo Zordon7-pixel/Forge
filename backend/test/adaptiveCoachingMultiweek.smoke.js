@@ -37,12 +37,16 @@ function history(week, failing = false) {
       if (i > 1) continue;
       const template = templates.find(p => p.prescribed_session.workout_family === row.family);
       const old = template.prescribed_session;
-      const prescribed = buildCanonicalSession({ ...old, session_id: id, scheduled_local_date: localDate,
+      const prescriptionInput = { ...old, session_id: id, scheduled_local_date: localDate,
         steps: old.steps.map(s => ({ ...s, target: { ...s.target,
           ...(s.step_role === 'WORK' && i === 0 ? { duration_s: row.seconds - 600 } : {}),
           // Distribute this fixture's intended total across all steps. The old
           // repeated full work distance relied on target_met to mask mismatch.
-          distance_m: Math.round(row.distance * s.target.distance_m / old.derived_totals.distance_m) } })) });
+          distance_m: Math.round(row.distance * s.target.distance_m / old.derived_totals.distance_m) } })) };
+      // Fresh synthetic prescription needs fresh graph-bound intent, not the
+      // immutable template's source binding after its targets changed.
+      prescriptionInput.workout_semantics = require('../src/lib/workoutSemantics').buildWorkoutSemantics(prescriptionInput);
+      const prescribed = buildCanonicalSession(prescriptionInput);
       pairs.push({ prescribed_session: prescribed, observation: { linked_session_id: id, evidence_id: id,
         observed_at: `${localDate}T12:00:00Z`, quality_state: 'COMPLETE', completed: !(failed && i === 0),
         target_met: !(failed && i === 0), observed_duration_s: actualSeconds,

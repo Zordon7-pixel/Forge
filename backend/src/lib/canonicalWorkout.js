@@ -312,6 +312,9 @@ function validateStepCollection(steps, path, violations, seenIds) {
     if (step.workout_family !== undefined && !WORKOUT_FAMILY_SET.has(step.workout_family)) {
       violations.push({ code: 'WORKOUT_FAMILY_UNRESOLVED', path: `${stepPath}.workout_family` });
     }
+    if (!require('./workoutSemantics').validateStepRole(step)) {
+      violations.push({ code: 'CANONICAL_SCHEMA_INVALID', path: `${stepPath}.step_role`, reason: 'STEP_ROLE_INVALID' });
+    }
     if (step.type === 'repeat') {
       if (!Number.isSafeInteger(step.repeat_count) || step.repeat_count < 1) {
         violations.push({ code: 'CANONICAL_SCHEMA_INVALID', path: `${stepPath}.repeat_count`, reason: 'REPEAT_COUNT_INVALID' });
@@ -553,6 +556,10 @@ function validateCanonicalSessionUncached(session = {}) {
     if (!validCriteria(session[field])) violations.push({ code: 'CANONICAL_SCHEMA_INVALID', path: field, reason: 'CRITERIA_INVALID' });
   }
   validateStepCollection(session.steps, 'steps', violations, new Set());
+  violations.push(...require('./workoutSemantics').validateWorkoutSemantics(session));
+  if (session.workout_semantics === undefined && flattenSteps(session.steps).some(s => s.step_role === 'ACCESSORY')) {
+    violations.push({ code: 'CANONICAL_SCHEMA_INVALID', path: 'workout_semantics', reason: 'ACCESSORY_INTENT_REQUIRED' });
+  }
   for (const [index, entry] of targetProvenanceFromSteps(session.steps).entries()) {
     if (entry.decision_id !== session.decision_id) {
       violations.push({
@@ -1572,6 +1579,11 @@ function materializeCanonicalSession(input = {}) {
       source_session_id: source.id || source.session_id } : {}),
     ...(family === 'race' && source.event_identity ? { event_identity: clone(source.event_identity) } : {}),
   };
+  if (adaptive) {
+    const semantics = require('./workoutSemantics').buildWorkoutSemantics(canonicalInput,
+      source.adaptive_prescription.accessory_declarations || []);
+    if (semantics) canonicalInput.workout_semantics = semantics;
+  }
   const canonical = family === 'hyrox_partial_simulation' && !adaptive
     ? buildPartialRaceOrderCluster({
       ...clone(source),

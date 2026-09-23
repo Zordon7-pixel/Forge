@@ -452,6 +452,19 @@ historical browsing, new delayed-apply behavior or PostgreSQL isolation proof.
 The authenticated context gate covers midnight selection, corrupt/foreign/
 cleared/cyclic/deep paths and concurrent lifecycle changes without read writes.
 
+### 2026-09-23 — Explicit canonical intent (patched; not deployed)
+
+Slice 3a adds optional `canonical-workout-intent-v1` for server-materialized
+adaptive running graphs, with strict role/leaf/source/objective/hash validation.
+Copied structured cadence accessories retain all targets/load/provenance and
+remapped IDs. Unsupported target-regenerating reconstruction explicitly defers;
+it never discards cadence or excludes accessories from stress. Context v2 exposes
+validated intent; stimulus and unsupported legacy intent remain missing. Existing
+accepted absent-intent hashes, mixed-family rejection and source-bound easy-dose
+topology stay unchanged. See `CANONICAL-WORKOUT-INTENT.md` and
+`backend/test/workoutSemantics.smoke.js`. No new physiological policy, migration,
+provider integration or release approval is implied.
+
 ### 2026-09-23 — Metric stream truth containment (patched; not deployed)
 
 Slice 2b0 rejects malformed/null stream points before numeric conversion while
