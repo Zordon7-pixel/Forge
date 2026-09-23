@@ -13,6 +13,58 @@ import {
   signatureUiDashboardFixture,
 } from './support/mockApi.mjs'
 
+test('shoe containment preserves unknown profiles and honest optional recommendations', async ({ page }, testInfo) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'geolocation', { value: undefined }))
+  const errors = []
+  page.on('pageerror', error => errors.push(error.message))
+  let shoes = []
+  const apiState = await installAuthenticatedApi(page, { responses: [
+    ['GET /api/gear/shoes', () => ({ shoes })],
+    ['GET /api/gear/recommendation', () => ({ shoe: { shoe: null, alternatives: [], confidence: 'LOW',
+      reason_codes: shoes.length ? ['NO_COMPATIBLE_SHOE', 'UNKNOWN_SHOE_METADATA'] : ['NO_ACTIVE_SHOES'],
+      reason: shoes.length ? 'No recommendation: surface information is missing. Training is unchanged.' : 'No active shoes found in your closet.' } })],
+    ['POST /api/gear/shoes', entry => {
+      expect(entry.body).toMatchObject({ category: '', surface: '', intent_tags: [], wet_ok: '' })
+      shoes = [{ id: 'unknown-pair', brand: entry.body.brand, model: entry.body.model, category: null, surface: null,
+        recommended_miles: null, total_miles: 8.5, pct_used: null, intent_tags: [], wet_ok: null }]
+      return qaResponse(shoes[0], 201)
+    }],
+    ['PATCH /api/gear/shoes/unknown-pair', entry => {
+      expect(entry.body).toMatchObject({ category: '', surface: '', recommended_miles: '' })
+      return shoes[0]
+    }],
+  ] })
+  await page.goto('/gear')
+  await expect(page.getByRole('link', { name: 'Add shoes (optional)' })).toBeVisible()
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  const add = page.getByRole('region', { name: 'Add a shoe', exact: true })
+  await add.getByRole('button', { name: 'manual', exact: true }).click()
+  await expect(add.getByRole('combobox').nth(0)).toHaveValue('')
+  await expect(add.getByRole('combobox').nth(1)).toHaveValue('')
+  await add.getByPlaceholder('Brand', { exact: true }).fill('Synthetic')
+  await add.getByPlaceholder('Model and version').fill('Unknown')
+  await add.getByRole('button', { name: 'Add to Closet', exact: true }).click()
+  await expect(page.getByText('8.5 mi tracked · Condition estimate unknown')).toBeVisible()
+  await expect(page.getByText('Unknown surface', { exact: true })).toBeVisible()
+  await expect(page.locator('article').getByText(/NaN|450|0%/)).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Review shoe profiles' })).toBeVisible()
+  await expect(page.getByText('No recommendation: surface information is missing. Training is unchanged.')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Add shoes (optional)' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Edit Synthetic Unknown' }).click()
+  const edit = page.getByRole('region', { name: 'Edit shoe', exact: true })
+  await expect(edit.getByRole('combobox').nth(0)).toHaveValue('')
+  await expect(edit.getByRole('combobox').nth(1)).toHaveValue('')
+  await expect(edit.getByRole('spinbutton')).toHaveValue('')
+  await edit.getByRole('button', { name: 'Save Shoe' }).click()
+  await expect(edit).toHaveCount(0)
+  expect(await page.getByLabel('Run surface').locator('option').allTextContents()).toEqual(['Road', 'Trail', 'Road + trail'])
+  const layout = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, viewport: innerWidth }))
+  expect(layout.width).toBeLessThanOrEqual(layout.viewport)
+  await page.screenshot({ path: testInfo.outputPath('shoe-unknown-profile.png'), fullPage: true })
+  expect(errors).toEqual([])
+  expect(apiState.unexpectedRequests).toEqual([])
+})
+
 test('missed-session modal records exact outcomes without offline or stale false success', async ({ page }, testInfo) => {
   const width = testInfo.project.name.includes('320') ? 320 : 393
   await page.setViewportSize({ width, height: width === 320 ? 568 : 874 })

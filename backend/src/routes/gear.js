@@ -12,27 +12,6 @@ const SHOE_CUSHION = ['max', 'balanced', 'firm'];
 const INTENT_TAGS = ['easy', 'recovery', 'long', 'tempo', 'threshold', 'intervals', 'speed', 'race', 'trail'];
 const RUN_TYPES = new Set(INTENT_TAGS);
 
-const RECOMMENDED_MILES = {
-  vaporfly: 200,
-  alphafly: 200,
-  'adios pro': 225,
-  metaspeed: 225,
-  'endorphin pro': 225,
-  'hyperion elite': 225,
-  'fuelcel sc elite': 225,
-  'carbon x': 250,
-  cloudboom: 225,
-  speedcross: 350,
-  speedgoat: 350,
-  'gel-trabuco': 350,
-  peregrine: 350,
-  'terra kiger': 350,
-  wildhorse: 375,
-  catamount: 350,
-  'sense ride': 350,
-  hierro: 350,
-};
-
 const SHOE_SELECT = `
   SELECT g.*,
     c.model_version AS catalog_model_version,
@@ -89,14 +68,6 @@ function normalizeIntentTags(value) {
   return [...new Set(tags)].slice(0, 6);
 }
 
-function getRecommendedMiles(brand, model) {
-  const name = `${brand} ${model}`.toLowerCase();
-  for (const [keyword, miles] of Object.entries(RECOMMENDED_MILES)) {
-    if (name.includes(keyword)) return miles;
-  }
-  return 450;
-}
-
 function normalizeCatalogRow(row) {
   if (!row) return row;
   return {
@@ -115,6 +86,9 @@ function normalizeShoeRow(row) {
     ...row,
     intent_tags: parseList(row.intent_tags),
     catalog_source_urls: parseList(row.catalog_source_urls),
+    // These mutable fields predate field-level provenance. Do not certify
+    // overrides from catalog identity or invent provenance for old defaults.
+    profile_metadata_basis: 'UNVERIFIED_PROFILE',
   };
 }
 
@@ -127,12 +101,12 @@ async function addMileage(shoes, userId) {
     );
     const totalMiles = Number(Number(row?.total || 0).toFixed(2));
     const recommendedMiles = Number(shoe.recommended_miles || 0);
-    const pct = recommendedMiles > 0 ? Math.round((totalMiles / recommendedMiles) * 100) : 0;
+    const pct = recommendedMiles > 0 ? Math.round((totalMiles / recommendedMiles) * 100) : null;
     return {
       ...shoe,
       total_miles: totalMiles,
       pct_used: pct,
-      miles_remaining: Math.max(0, Number((recommendedMiles - totalMiles).toFixed(2))),
+      miles_remaining: recommendedMiles > 0 ? Math.max(0, Number((recommendedMiles - totalMiles).toFixed(2))) : null,
       alert: pct >= 80 && !shoe.is_retired,
     };
   }));
@@ -176,6 +150,9 @@ router.get('/recommendation', auth, requirePremium('Smart shoe recommendations')
     const requestedType = cleanText(req.query.run_type, 20).toLowerCase();
     const runType = RUN_TYPES.has(requestedType) ? requestedType : 'easy';
     const requestedSurface = cleanText(req.query.surface, 20).toLowerCase();
+    if (req.query.surface !== undefined && !SHOE_SURFACES.includes(requestedSurface)) {
+      return res.status(400).json({ error: 'Invalid workout surface' });
+    }
     const surface = SHOE_SURFACES.includes(requestedSurface) ? requestedSurface : 'road';
     const hasLat = req.query.lat !== undefined && req.query.lat !== '';
     const hasLon = req.query.lon !== undefined && req.query.lon !== '';
@@ -227,19 +204,22 @@ router.post('/shoes', auth, async (req, res) => {
     const brand = catalog ? catalog.brand : cleanText(req.body.brand, 60);
     const model = catalog ? catalog.model : cleanText(req.body.model, 100);
     if (!brand || !model) return res.status(400).json({ error: 'brand and model required' });
+    if (!catalog && ['category', 'surface'].some(key => req.body[key] != null && typeof req.body[key] !== 'string')) {
+      return res.status(400).json({ error: 'Category and surface must be text or unknown' });
+    }
 
-    const category = catalog?.category || cleanText(req.body.category, 30) || 'daily_trainer';
-    const surface = catalog?.surface || cleanText(req.body.surface, 20) || 'road';
+    const category = catalog ? catalog.category : cleanText(req.body.category, 30) || null;
+    const surface = catalog ? catalog.surface : cleanText(req.body.surface, 20) || null;
     const cushion = catalog?.cushioning || cleanText(req.body.cushion, 20) || null;
     const intentTags = catalog ? parseList(catalog.intent_tags) : normalizeIntentTags(req.body.intent_tags);
     const wetOk = catalog ? booleanOrNull(catalog.wet_ok) : booleanOrNull(req.body.wet_ok);
-    if (!SHOE_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Invalid shoe category' });
-    if (!SHOE_SURFACES.includes(surface)) return res.status(400).json({ error: 'Invalid shoe surface' });
+    if (category !== null && !SHOE_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Invalid shoe category' });
+    if (surface !== null && !SHOE_SURFACES.includes(surface)) return res.status(400).json({ error: 'Invalid shoe surface' });
     if (cushion && !SHOE_CUSHION.includes(cushion)) return res.status(400).json({ error: 'Invalid cushioning' });
 
     const recommendedMiles = catalog
       ? Number(catalog.recommended_miles_max)
-      : getRecommendedMiles(brand, model);
+      : null;
     const id = uuidv4();
     await dbRun(
       `INSERT INTO gear_shoes (
@@ -294,11 +274,13 @@ router.patch('/shoes/:id', auth, async (req, res) => {
       if (!allowed.has(key)) continue;
       let value = rawValue;
       if (key === 'category') {
-        value = cleanText(rawValue, 30);
-        if (!SHOE_CATEGORIES.includes(value)) return res.status(400).json({ error: 'Invalid shoe category' });
+        if (rawValue != null && typeof rawValue !== 'string') return res.status(400).json({ error: 'Invalid shoe category' });
+        value = cleanText(rawValue, 30) || null;
+        if (value !== null && !SHOE_CATEGORIES.includes(value)) return res.status(400).json({ error: 'Invalid shoe category' });
       } else if (key === 'surface') {
-        value = cleanText(rawValue, 20);
-        if (!SHOE_SURFACES.includes(value)) return res.status(400).json({ error: 'Invalid shoe surface' });
+        if (rawValue != null && typeof rawValue !== 'string') return res.status(400).json({ error: 'Invalid shoe surface' });
+        value = cleanText(rawValue, 20) || null;
+        if (value !== null && !SHOE_SURFACES.includes(value)) return res.status(400).json({ error: 'Invalid shoe surface' });
       } else if (key === 'cushion') {
         value = cleanText(rawValue, 20) || null;
         if (value && !SHOE_CUSHION.includes(value)) return res.status(400).json({ error: 'Invalid cushioning' });
@@ -307,8 +289,9 @@ router.patch('/shoes/:id', auth, async (req, res) => {
       } else if (key === 'wet_ok') {
         value = booleanOrNull(rawValue);
       } else if (key === 'recommended_miles') {
-        value = Number(rawValue);
-        if (!Number.isInteger(value) || value < 100 || value > 800) {
+        if (rawValue !== null && !['number', 'string'].includes(typeof rawValue)) return res.status(400).json({ error: 'Invalid mileage estimate' });
+        value = rawValue === null || rawValue === '' ? null : Number(rawValue);
+        if (value !== null && (!Number.isInteger(value) || value < 100 || value > 800)) {
           return res.status(400).json({ error: 'Recommended miles must be between 100 and 800' });
         }
       } else if (key === 'is_retired') {

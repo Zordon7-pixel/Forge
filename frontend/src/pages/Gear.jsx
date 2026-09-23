@@ -5,6 +5,7 @@ import LoadingRunner from '../components/LoadingRunner'
 import TodaysPickCard from '../components/TodaysPickCard'
 
 const CATEGORIES = [
+  { value: '', label: 'Unknown' },
   { value: 'daily_trainer', label: 'Daily trainer' },
   { value: 'tempo', label: 'Tempo' },
   { value: 'race', label: 'Race' },
@@ -16,6 +17,7 @@ const SURFACES = [
   { value: 'trail', label: 'Trail' },
   { value: 'both', label: 'Road + trail' },
 ]
+const SHOE_SURFACES = [{ value: '', label: 'Unknown' }, ...SURFACES]
 const INTENTS = [
   { value: 'easy', label: 'Easy' },
   { value: 'recovery', label: 'Recovery' },
@@ -47,7 +49,7 @@ const fieldStyle = {
 }
 
 function categoryLabel(value) {
-  return CATEGORIES.find((category) => category.value === value)?.label || 'Daily trainer'
+  return CATEGORIES.find((category) => category.value === value)?.label || 'Unknown'
 }
 
 function displayDate(value) {
@@ -100,9 +102,9 @@ export default function Gear() {
   const [nickname, setNickname] = useState('')
   const [color, setColor] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
-  const [category, setCategory] = useState('daily_trainer')
-  const [surface, setSurface] = useState('road')
-  const [intentTags, setIntentTags] = useState(['easy', 'long'])
+  const [category, setCategory] = useState('')
+  const [surface, setSurface] = useState('')
+  const [intentTags, setIntentTags] = useState([])
   const [wetOk, setWetOk] = useState('')
   const [cushion, setCushion] = useState('')
   const [adding, setAdding] = useState(false)
@@ -167,9 +169,9 @@ export default function Gear() {
     setNickname('')
     setColor('')
     setPurchaseDate('')
-    setCategory('daily_trainer')
-    setSurface('road')
-    setIntentTags(['easy', 'long'])
+    setCategory('')
+    setSurface('')
+    setIntentTags([])
     setWetOk('')
     setCushion('')
     setFormError('')
@@ -225,12 +227,12 @@ export default function Gear() {
     setEditingShoe(shoe)
     setEditForm({
       nickname: shoe.nickname || '',
-      category: shoe.category || 'daily_trainer',
-      surface: shoe.surface || 'road',
+      category: shoe.category || '',
+      surface: shoe.surface || '',
       intent_tags: Array.isArray(shoe.intent_tags) ? shoe.intent_tags : [],
       wet_ok: shoe.wet_ok === null || shoe.wet_ok === undefined ? '' : String(Number(shoe.wet_ok)),
       cushion: shoe.cushion || '',
-      recommended_miles: String(shoe.recommended_miles || 450),
+      recommended_miles: shoe.recommended_miles == null ? '' : String(shoe.recommended_miles),
     })
     setFormError('')
   }
@@ -329,7 +331,7 @@ export default function Gear() {
             </select>
           </label>
         </div>
-        <TodaysPickCard runType={runType} surface={runSurface} />
+        <TodaysPickCard runType={runType} surface={runSurface} refreshKey={shoes} />
       </section>
 
       {alerts.length > 0 && (
@@ -355,12 +357,12 @@ export default function Gear() {
           <button type="button" onClick={() => setShowAdd(true)} style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 10, padding: '10px 15px', fontWeight: 850 }}>Add a shoe</button>
         </section>
       ) : shoes.map((shoe) => {
-        const limit = Math.max(1, Number(shoe.recommended_miles || 450))
+        const limit = Number(shoe.recommended_miles) > 0 ? Number(shoe.recommended_miles) : null
         const miles = Number(shoe.total_miles || 0)
-        const pct = Math.max(0, Math.min(100, Number(shoe.pct_used || (miles / limit) * 100)))
-        const atEstimate = miles >= limit
-        const inspect = pct >= 80 && !shoe.is_retired
-        const barColor = atEstimate ? 'var(--danger)' : inspect ? 'var(--warning)' : 'var(--success)'
+        const pct = limit === null ? null : Math.max(0, Math.min(100, (miles / limit) * 100))
+        const atEstimate = limit !== null && miles >= limit
+        const inspect = pct !== null && pct >= 80 && !shoe.is_retired
+        const barColor = inspect ? 'var(--warning)' : 'var(--text-muted)'
         const specs = [
           formatSpec(shoe.catalog_drop_mm, ' mm drop'),
           formatSpec(shoe.catalog_weight_g, ' g'),
@@ -369,8 +371,8 @@ export default function Gear() {
         return (
           <article key={shoe.id} style={{ background: 'var(--bg-card)', borderRadius: 8, padding: 15, border: `1px solid ${inspect ? 'rgba(249,115,22,0.45)' : 'var(--border-subtle)'}`, opacity: shoe.is_retired ? 0.68 : 1 }}>
             {inspect && !shoe.is_retired && (
-              <p style={{ fontSize: 12, color: atEstimate ? 'var(--danger)' : 'var(--warning)', fontWeight: 800, margin: '0 0 9px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <AlertTriangle size={14} /> {atEstimate ? 'At mileage estimate - inspect before running' : 'Wear check due soon'}
+              <p style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 800, margin: '0 0 9px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <AlertTriangle size={14} /> {atEstimate ? 'Mileage estimate reached — consider a condition check' : 'Consider a condition check'}
               </p>
             )}
             <div className="flex items-start justify-between gap-3">
@@ -378,22 +380,22 @@ export default function Gear() {
                 <h3 style={{ fontSize: 16, fontWeight: 900, color: 'var(--text-primary)', margin: 0 }}>{shoe.brand} {shoe.model}</h3>
                 {shoe.nickname && <p style={{ fontSize: 12, color: 'var(--accent)', margin: '2px 0 0', fontWeight: 800 }}>{shoe.nickname}</p>}
                 <div className="flex flex-wrap gap-1.5" style={{ marginTop: 7 }}>
-                  {[categoryLabel(shoe.category), shoe.surface || 'road', shoe.cushion].filter(Boolean).map((label) => (
-                    <span key={label} style={{ padding: '3px 7px', borderRadius: 999, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 10, fontWeight: 800, textTransform: 'capitalize' }}>{String(label).replace(/_/g, ' ')}</span>
+                  {[categoryLabel(shoe.category), shoe.surface || 'Unknown surface', shoe.cushion].filter(Boolean).map((label, index) => (
+                    <span key={`${index}-${label}`} style={{ padding: '3px 7px', borderRadius: 999, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 10, fontWeight: 800, textTransform: 'capitalize' }}>{String(label).replace(/_/g, ' ')}</span>
                   ))}
                 </div>
                 {specs.length > 0 && <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: '7px 0 0' }}>{specs.join(' · ')}</p>}
                 {shoe.purchase_date && <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: '4px 0 0' }}>In rotation since {displayDate(shoe.purchase_date)}</p>}
               </div>
-              <p style={{ fontSize: 23, fontWeight: 950, color: barColor, margin: 0, flexShrink: 0 }}>{Math.round(Number(shoe.pct_used || 0))}%</p>
+              {limit !== null && <p style={{ fontSize: 23, fontWeight: 950, color: barColor, margin: 0, flexShrink: 0 }}>{Math.round(miles / limit * 100)}%</p>}
             </div>
             <div style={{ margin: '12px 0 5px' }}>
-              <div style={{ height: 8, background: 'var(--bg-input)', borderRadius: 4, overflow: 'hidden' }}>
+              {pct !== null && <div style={{ height: 8, background: 'var(--bg-input)', borderRadius: 4, overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 4, transition: 'width 0.3s ease' }} />
-              </div>
+              </div>}
               <div className="flex justify-between gap-3" style={{ marginTop: 5 }}>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{miles.toFixed(miles % 1 ? 1 : 0)} of {limit} mi</span>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{shoe.catalog_id ? 'Manufacturer-matched' : 'Manual profile'}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{miles.toFixed(miles % 1 ? 1 : 0)} mi tracked · {limit === null ? 'Condition estimate unknown' : `${limit} mi estimate`}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{shoe.catalog_id ? 'Catalog-linked · profile unverified' : 'Profile unverified'}</span>
               </div>
             </div>
             <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px' }}>
@@ -461,7 +463,7 @@ export default function Gear() {
                   <div><FieldLabel>Model</FieldLabel><input value={model} onChange={(event) => setModel(event.target.value)} maxLength={100} placeholder="Model and version" style={fieldStyle} /></div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     <label><FieldLabel>Category</FieldLabel><select value={category} onChange={(event) => setCategory(event.target.value)} style={fieldStyle}>{CATEGORIES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                    <label><FieldLabel>Surface</FieldLabel><select value={surface} onChange={(event) => setSurface(event.target.value)} style={fieldStyle}>{SURFACES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                    <label><FieldLabel>Surface</FieldLabel><select value={surface} onChange={(event) => setSurface(event.target.value)} style={fieldStyle}>{SHOE_SURFACES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
                   </div>
                   <div>
                     <FieldLabel>Best for</FieldLabel>
@@ -499,7 +501,7 @@ export default function Gear() {
               <div><FieldLabel>Nickname</FieldLabel><input value={editForm.nickname} onChange={(event) => setEditForm({ ...editForm, nickname: event.target.value })} maxLength={60} style={fieldStyle} /></div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <label><FieldLabel>Category</FieldLabel><select value={editForm.category} onChange={(event) => setEditForm({ ...editForm, category: event.target.value })} style={fieldStyle}>{CATEGORIES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                <label><FieldLabel>Surface</FieldLabel><select value={editForm.surface} onChange={(event) => setEditForm({ ...editForm, surface: event.target.value })} style={fieldStyle}>{SURFACES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <label><FieldLabel>Surface</FieldLabel><select value={editForm.surface} onChange={(event) => setEditForm({ ...editForm, surface: event.target.value })} style={fieldStyle}>{SHOE_SURFACES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               </div>
               <div><FieldLabel>Best for</FieldLabel><div className="flex flex-wrap gap-2">{INTENTS.map((intent) => <TagToggle key={intent.value} selected={editForm.intent_tags.includes(intent.value)} onClick={() => toggleEditIntent(intent.value)}>{intent.label}</TagToggle>)}</div></div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>

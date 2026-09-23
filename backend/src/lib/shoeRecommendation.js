@@ -36,10 +36,6 @@ function wearRatio(shoe) {
   return recommended > 0 ? shoeMiles(shoe) / recommended : 0;
 }
 
-function isOverRecommendedMiles(shoe) {
-  return wearRatio(shoe) >= 1;
-}
-
 function parseTags(value) {
   if (Array.isArray(value)) return value.map((tag) => String(tag).toLowerCase());
   if (!value) return [];
@@ -52,19 +48,15 @@ function parseTags(value) {
   }
 }
 
-function formatCategory(category) {
-  return String(category || '').replace(/_/g, ' ');
-}
-
 function shoeSurface(shoe) {
   const surface = String(shoe?.surface || '').toLowerCase();
   if (['road', 'trail', 'both'].includes(surface)) return surface;
-  return shoe?.category === 'trail' ? 'trail' : 'road';
+  return null;
 }
 
 function matchesSurface(shoe, requestedSurface) {
   const surface = shoeSurface(shoe);
-  return surface === 'both' || requestedSurface === 'both' || surface === requestedSurface;
+  return surface !== null && (surface === 'both' || surface === requestedSurface);
 }
 
 function getCategoryPriority(runType) {
@@ -72,8 +64,10 @@ function getCategoryPriority(runType) {
   return RUN_CATEGORY_PRIORITIES[normalized] || RUN_CATEGORY_PRIORITIES.easy;
 }
 
-function scoreCandidate(shoe, { runType, surface, weather, categoryPriority, hasRotation }) {
-  const reasonCodes = [];
+function scoreCandidate(shoe, { runType, surface, weather, categoryPriority }) {
+  // Existing mutable profile fields have no field-level provenance ledger.
+  // A catalog identity never verifies an athlete override or legacy default.
+  const reasonCodes = ['UNVERIFIED_PROFILE'];
   const categoryIndex = categoryPriority.indexOf(shoe.category);
   let score = categoryIndex >= 0 ? 50 - categoryIndex * 8 : 12;
 
@@ -91,17 +85,12 @@ function scoreCandidate(shoe, { runType, surface, weather, categoryPriority, has
   } else if (normalizedSurface === 'both' || surface === 'both') {
     score += 14;
     reasonCodes.push('SURFACE_VERSATILE');
-  } else {
-    score -= 45;
-    reasonCodes.push('WRONG_SURFACE');
   }
 
   if (weather?.isPrecip) {
     if (isTruthyFlag(shoe.wet_ok)) {
-      score += 18;
-      reasonCodes.push('WET_READY');
+      reasonCodes.push('WET_PREFERENCE_RECORDED');
     } else if (shoe.wet_ok === 0 || shoe.wet_ok === false || shoe.wet_ok === '0') {
-      score -= 30;
       reasonCodes.push('WET_LIMITED');
     } else {
       reasonCodes.push('WET_UNKNOWN');
@@ -109,24 +98,25 @@ function scoreCandidate(shoe, { runType, surface, weather, categoryPriority, has
   }
 
   const ratio = wearRatio(shoe);
-  score += Math.max(0, 20 - ratio * 20);
   if (ratio >= 0.8) reasonCodes.push('INSPECT_WEAR');
-  if (hasRotation) reasonCodes.push('ROTATE_LOAD');
 
-  return { shoe, score: Number(score.toFixed(2)), reason_codes: reasonCodes };
+  return { shoe, score, confidence: 'LOW', metadata_basis: 'UNVERIFIED_PROFILE', reason_codes: reasonCodes };
 }
 
 function reasonText(result, runType, surface) {
   const codes = new Set(result.reason_codes);
   const pieces = [];
   if (codes.has('INTENT_MATCH') || codes.has('CATEGORY_MATCH')) {
-    pieces.push(`matches your ${runType} session`);
+    pieces.push(`recorded category or tags match your ${runType} session`);
   }
-  if (codes.has('SURFACE_MATCH')) pieces.push(`built for ${surface}`);
-  if (codes.has('SURFACE_VERSATILE')) pieces.push(`works across ${surface} conditions`);
-  if (codes.has('WET_READY')) pieces.push('has verified wet-condition traction');
+  if (codes.has('SURFACE_MATCH')) pieces.push(`recorded surface matches ${surface}`);
+  if (codes.has('SURFACE_VERSATILE')) pieces.push('profile lists road and trail use');
+  if (codes.has('WET_PREFERENCE_RECORDED')) pieces.push('profile marks wet use positively; traction is not independently verified');
+  if (codes.has('WET_LIMITED')) pieces.push('profile advises avoiding wet use');
+  if (codes.has('WET_UNKNOWN')) pieces.push('wet suitability is unknown');
   if (codes.has('ROTATE_LOAD')) pieces.push('helps spread wear across your rotation');
-  if (codes.has('INSPECT_WEAR')) pieces.push('is nearing its mileage estimate, so inspect comfort and tread');
+  if (codes.has('INSPECT_WEAR')) pieces.push('mileage suggests reviewing comfort and tread, not automatic retirement');
+  pieces.push('profile metadata is unverified');
   return pieces.length
     ? `${pieces[0][0].toUpperCase()}${pieces[0].slice(1)}${pieces.length > 1 ? `; ${pieces.slice(1).join('; ')}` : ''}.`
     : `Best available match for this ${runType} session.`;
@@ -136,7 +126,12 @@ function recommendShoe(shoes, runType = 'easy', weather = {}, requestedSurface =
   const normalizedRunType = String(runType || 'easy').toLowerCase();
   const surface = ['road', 'trail', 'both'].includes(String(requestedSurface).toLowerCase())
     ? String(requestedSurface).toLowerCase()
-    : 'road';
+    : null;
+  if (!surface) return {
+    shoe: null, alternatives: [], confidence: 'LOW', training_unchanged: true, warning: null,
+    reason_codes: ['UNKNOWN_REQUESTED_SURFACE'],
+    reason: 'No recommendation: workout surface is unknown. Training is unchanged.',
+  };
   const activeShoes = (Array.isArray(shoes) ? shoes : []).filter(isActiveShoe);
   if (!activeShoes.length) {
     return {
@@ -145,36 +140,30 @@ function recommendShoe(shoes, runType = 'easy', weather = {}, requestedSurface =
       reason: 'No active shoes found in your closet.',
       reason_codes: ['NO_ACTIVE_SHOES'],
       warning: null,
+      confidence: 'LOW',
+      training_unchanged: true,
     };
   }
 
-  const overMileage = activeShoes.filter(isOverRecommendedMiles);
-  let candidates = activeShoes.filter((shoe) => !isOverRecommendedMiles(shoe));
+  const candidates = activeShoes.filter((shoe) => matchesSurface(shoe, surface));
   const warnings = [];
-  if (overMileage.length) {
-    warnings.push(`${overMileage.length} pair${overMileage.length === 1 ? ' is' : 's are'} at or over the mileage estimate and ${overMileage.length === 1 ? 'was' : 'were'} left out.`);
-  }
   if (!candidates.length) {
+    const unknown = activeShoes.some(shoe => shoeSurface(shoe) === null);
     return {
       shoe: null,
       alternatives: [],
-      reason: 'All active shoes are at or over their mileage estimate. Inspect cushioning, tread, and comfort before the next run.',
-      reason_codes: ['ALL_OVER_MILEAGE'],
-      warning: warnings.join(' '),
+      reason: unknown
+        ? `No recommendation: surface information is missing or does not match ${surface}. You can update your shoe profiles; training is unchanged.`
+        : `No recommendation: no active shoe profile matches ${surface}. Training is unchanged.`,
+      reason_codes: ['NO_COMPATIBLE_SHOE', ...(unknown ? ['UNKNOWN_SHOE_METADATA'] : [])],
+      warning: null,
+      confidence: 'LOW',
+      training_unchanged: true,
     };
   }
 
-  const surfaceMatches = candidates.filter((shoe) => matchesSurface(shoe, surface));
-  if (surfaceMatches.length) {
-    candidates = surfaceMatches;
-  } else {
-    warnings.push(`No ${surface} shoe is available, so this is the closest fallback.`);
-  }
-
   if (weather?.isPrecip) {
-    const wetReady = candidates.filter((shoe) => isTruthyFlag(shoe.wet_ok));
-    if (wetReady.length) candidates = wetReady;
-    else warnings.push('Wet traction is not verified for the available pairs. Use your judgment before heading out.');
+    warnings.push('Wet traction is not independently verified by these profile settings.');
   }
 
   const categoryPriority = [
@@ -187,20 +176,29 @@ function recommendShoe(shoes, runType = 'easy', weather = {}, requestedSurface =
       surface,
       weather,
       categoryPriority,
-      hasRotation: candidates.length > 1,
     }))
-    .sort((a, b) => b.score - a.score || wearRatio(a.shoe) - wearRatio(b.shoe) || String(a.shoe.id).localeCompare(String(b.shoe.id)));
+    .sort((a, b) => b.score - a.score
+      || (weather?.isPrecip ? Number(isTruthyFlag(b.shoe.wet_ok)) - Number(isTruthyFlag(a.shoe.wet_ok)) : 0)
+      || shoeMiles(a.shoe) - shoeMiles(b.shoe) || String(a.shoe.id).localeCompare(String(b.shoe.id)));
 
   const [top, ...rest] = ranked;
+  if (rest.some(result => result.score === top.score
+    && (!weather?.isPrecip || isTruthyFlag(result.shoe.wet_ok) === isTruthyFlag(top.shoe.wet_ok))
+    && shoeMiles(result.shoe) > shoeMiles(top.shoe))) top.reason_codes.push('ROTATE_LOAD');
+  if (top.reason_codes.includes('INSPECT_WEAR')) warnings.push('Mileage estimate is informational: review condition and comfort; mileage alone does not make a shoe unsafe.');
   return {
     shoe: top.shoe,
     alternatives: rest.slice(0, 2).map((result) => ({
       shoe: result.shoe,
       reason_codes: result.reason_codes,
+      confidence: result.confidence,
       reason: reasonText(result, normalizedRunType, surface),
     })),
     reason: reasonText(top, normalizedRunType, surface),
     reason_codes: top.reason_codes,
+    confidence: top.confidence,
+    metadata_basis: top.metadata_basis,
+    training_unchanged: true,
     warning: warnings.length ? warnings.join(' ') : null,
   };
 }

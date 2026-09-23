@@ -364,6 +364,38 @@ Read `FORGE.md` for:
 
 ## Dispatch Log
 
+### 2026-09-23 — Shoe policy containment (patched; not deployed)
+
+The existing Gear recommendation remains a separate optional downstream call,
+not a canonical-workout shoe requirement profile or history-aware matcher.
+Active shoes are never excluded or retired by mileage alone. Workout/profile
+suitability ranks before wet-profile preferences and tracked-mileage tie-breaks;
+condition estimates only inform a review reminder. Known incompatible surfaces
+cannot re-enter primary or alternatives, and mixed road/trail requires a `both`
+profile. Unknown shoe surface yields no fabricated road match. Unsupported
+requested surfaces are rejected by the route or explicitly unknown by the pure
+helper; absence of a recommendation does not change training or Garmin export.
+
+Manual category/surface/condition estimate may be null. POST writes explicit
+unknown instead of triggering old DB defaults; PATCH omission preserves, while
+null/blank clears. No migration/backfill or model-name lifespan guess is used.
+Existing mutable profiles lack field-level provenance, so recommendation reasons
+and confidence stay `UNVERIFIED_PROFILE`/LOW even for catalog-linked overrides.
+Catalog facts remain separate; a wet flag is not independently verified traction.
+No retrospective user/source provenance has been assigned to old rows.
+
+Gear displays unknown metadata/estimates without invented Daily/Road/450-mile
+defaults, retains known tracked mileage, and distinguishes empty closet from
+incompatible/unknown recommendations. Add/edit refreshes that optional card.
+Tests: `shoePolicy.smoke.js`, authenticated SQLite `gearMetadataRoutes.smoke.js`,
+prior `runActualShoe.smoke.js`, updated `shoe-closet-smoke.js`, the standalone
+gear/canonical/Garmin non-mutation witness in `goalBackwardCanonical.smoke.js`,
+and mobile Playwright `shoe containment preserves unknown profiles` at 320px
+and iPhone viewport sizes. This does not prove an integrated shoe-enabled
+planner, PostgreSQL concurrency or real-phone behavior. Full profile/receipt,
+history/feedback, travel, race familiarization and catalog currentness remain
+open. No account access, production changes, migration, merge or deployment.
+
 ### 2026-09-23 — Execution truth containment (patched; not deployed)
 
 Completion classification now distinguishes `UNSCORABLE_INSUFFICIENT_EVIDENCE`

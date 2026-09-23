@@ -562,6 +562,20 @@ async function runCrossSurfaceAcceptance() {
     exportRevision: 2,
   });
 
+  test('GEAR-OPTIONAL-01', 'standalone gear enrichment cannot mutate physiological inputs or Garmin representation', () => {
+    // The current Gear endpoint is downstream and separate; this does not claim
+    // an integrated canonical shoe profile/receipt or shoe-enabled planner.
+    const { recommendShoe } = require('../src/lib/shoeRecommendation');
+    const original = JSON.stringify({ plan, manifest, canonical });
+    for (const closet of [[], [{ id: 'unknown' }], [{ id: 'road', surface: 'road', category: 'daily_trainer', total_miles: 700, recommended_miles: 450 }]]) {
+      const enrichment = { gear: recommendShoe(closet, 'easy', {}, 'road'), canonical };
+      assert.equal(canonicalWorkoutHash(enrichment.canonical), canonicalWorkoutHash(canonical));
+      assert.equal(JSON.stringify({ plan, manifest, canonical }), original);
+      assert.deepEqual(fitModule.buildFitWorkoutRepresentation({ surfaceManifest: manifest,
+        sessionId: canonical.session_id, exportRevision: 2 }), fit);
+    }
+  });
+
   test('CANON-02', 'UI 4.00 miles and FIT metric distance remain within the two-metre tolerance', () => {
     const fitDistanceM = fit.canonical_steps[0].target.distance_m;
     assert.equal(displayed.distanceMiles.toFixed(2), '4.00');

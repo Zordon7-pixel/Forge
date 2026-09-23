@@ -37,7 +37,7 @@ function apparelItemLabel(item) {
   return item.label || item.name || item.item || item.type || ''
 }
 
-export default function TodaysPickCard({ runType = 'easy', surface = 'road' }) {
+export default function TodaysPickCard({ runType = 'easy', surface = 'road', refreshKey }) {
   const [state, setState] = useState({ loading: true, error: false, data: null })
   const [showWhy, setShowWhy] = useState(false)
 
@@ -66,7 +66,7 @@ export default function TodaysPickCard({ runType = 'easy', surface = 'road' }) {
     return () => {
       cancelled = true
     }
-  }, [runType, surface])
+  }, [runType, surface, refreshKey])
 
   const pick = state.data || {}
   const shoe = pick.shoe?.shoe
@@ -76,6 +76,7 @@ export default function TodaysPickCard({ runType = 'easy', surface = 'road' }) {
     [pick.apparel?.items]
   )
   const hasShoePick = Boolean(shoeName)
+  const emptyCloset = pick.shoe?.reason_codes?.includes('NO_ACTIVE_SHOES')
   const notes = pick.apparel?.notes
   const hasApparelNotes = typeof notes === 'string' || (Array.isArray(notes) && notes.length > 0)
   const apparelNotes = Array.isArray(notes) ? notes.join(' ') : notes
@@ -117,8 +118,9 @@ export default function TodaysPickCard({ runType = 'easy', surface = 'road' }) {
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-black" style={{ color: 'var(--text-primary)', margin: 0 }}>Today&apos;s pick</p>
+            <p className="text-xs" style={{ color: 'var(--text-muted)', margin: '4px 0' }}>{pick.shoe?.reason || 'Shoe recommendation unavailable. Training is unchanged.'}</p>
             <Link to="/gear" className="text-xs font-bold" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
-              Add your shoes to get recommendations
+              {emptyCloset ? 'Add shoes (optional)' : 'Review shoe profiles'}
             </Link>
           </div>
         </div>
@@ -179,6 +181,7 @@ export default function TodaysPickCard({ runType = 'easy', surface = 'road' }) {
       {showWhy && (
         <div className="space-y-2 pt-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
           {pick.shoe?.reason && <p className="text-xs" style={{ color: 'var(--text-muted)', margin: 0 }}>{pick.shoe.reason}</p>}
+          {pick.shoe?.confidence && <p className="text-xs" style={{ color: 'var(--text-muted)', margin: 0 }}>Confidence: {pick.shoe.confidence.toLowerCase()}</p>}
           {Array.isArray(pick.shoe?.alternatives) && pick.shoe.alternatives.length > 0 && (
             <div>
               <p className="text-xs font-bold" style={{ color: 'var(--text-primary)', margin: '8px 0 4px' }}>Alternates</p>

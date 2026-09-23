@@ -55,8 +55,8 @@ const wetPick = recommendShoe([
   shoe({ id: 'unknown-wet', wet_ok: null }),
   shoe({ id: 'wet-ready', wet_ok: 1, total_miles: 100 }),
 ], 'easy', { available: true, isPrecip: true }, 'road');
-check(wetPick.shoe?.id === 'wet-ready', 'wet conditions prefer a verified wet-ready shoe');
-check(wetPick.reason_codes.includes('WET_READY'), 'wet pick emits the wet-ready reason code');
+check(wetPick.shoe?.id === 'wet-ready', 'recorded wet preference breaks otherwise equal suitability');
+check(wetPick.reason_codes.includes('WET_PREFERENCE_RECORDED'), 'wet flag is not external verification');
 
 const trailPick = recommendShoe([
   shoe({ id: 'road' }),
@@ -69,8 +69,9 @@ const wearPick = recommendShoe([
   shoe({ id: 'spent', total_miles: 450 }),
   shoe({ id: 'fresh', total_miles: 75 }),
 ], 'easy', {}, 'road');
-check(wearPick.shoe?.id === 'fresh', 'over-mileage shoe is left out when a fresh option exists');
-check(wearPick.warning?.includes('mileage estimate'), 'over-mileage exclusion is visible to the user');
+// Mileage is a tie-break/condition prompt, never an automatic exclusion.
+check(wearPick.shoe?.id === 'fresh', 'lower mileage breaks otherwise equal suitability');
+check(wearPick.alternatives.some(result => result.shoe.id === 'spent'), 'high-mileage active pair remains an alternative');
 
 const retiredPick = recommendShoe([
   shoe({ id: 'retired-racer', category: 'race', intent_tags: ['race'], is_retired: 1 }),
