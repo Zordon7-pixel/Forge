@@ -89,6 +89,8 @@ function run() {
     'EVIDENCE_MISSING',
     'FAILED_SYNC',
     'PARTIAL_SYNC',
+    'COMPLETION_METRICS_UNAVAILABLE',
+    'QUALITY_EXECUTION_UNVERIFIED',
     'EVIDENCE_CONFLICT_UNRESOLVED',
     'MANUAL_CORRECTION_APPLIED',
     'VALID_ZERO_CONFIRMED',
@@ -157,7 +159,7 @@ function run() {
   ];
   assert.deepEqual(REQUIRED_REASON_CODES, expectedReasonCodes);
   assert.equal(new Set(REQUIRED_REASON_CODES).size, REQUIRED_REASON_CODES.length);
-  assert.equal(REQUIRED_REASON_CODES.length, 69);
+  assert.equal(REQUIRED_REASON_CODES.length, 71);
   assert.deepEqual(REQUIRED_REASON_CODES, Object.values(REASON_CODE_FAMILIES).flat());
   assert.equal(REQUIRED_REASON_CODES.includes('NO_IMPACT'), false, 'migration alias is never persisted');
   assert.deepEqual(REASON_CODE_MIGRATION_ALIASES, { NO_IMPACT: 'MODIFY_IMPACT' });

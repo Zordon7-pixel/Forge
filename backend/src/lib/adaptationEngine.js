@@ -17,22 +17,9 @@ const MODERATE_INJURY_VOLUME_MULTIPLIER = 0.75;
 // an under-floor or unquantified run becomes an explicit lower-strain choice.
 const MIN_EFFECTIVE_RECOVERY_RUN_MINUTES = 20;
 const MIN_EFFECTIVE_RECOVERY_RUN_MILES = 1.5;
-const COMPLETION_OUTCOMES = Object.freeze([
-  'UNDER_TARGET',
-  'ON_TARGET',
-  'ABOVE_TARGET',
-  'EXCESSIVE_STRAIN',
-  'INCOMPLETE',
-  'PAIN_LIMITED',
-  'UNSCORABLE_PARTIAL_SYNC',
-]);
+const { COMPLETION_OUTCOMES, UNSCORABLE_OUTCOMES, QUALITY_FAMILIES,
+  finiteNonNegativeMetric: finiteMetric, latestCompletionPairs } = require('./completionOutcomeContract');
 const COMPLETION_OUTCOME_SET = new Set(COMPLETION_OUTCOMES);
-
-function finiteMetric(value) {
-  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
 
 function firstFiniteMetric(source = {}, keys = []) {
   for (const key of keys) {
@@ -56,6 +43,7 @@ function classifyCompletionOutcome(input = {}) {
   const failedSync = quality === 'FAILED_SYNC' || sync === 'FAILED_SYNC';
   const partial = failedSync || ['PARTIAL', 'PARTIAL_SYNC'].includes(quality)
     || ['PARTIAL', 'PARTIAL_SYNC'].includes(sync);
+  const unavailableQuality = !partial && quality !== '' && quality !== 'COMPLETE';
   const pain = observation.pain_limited === true
     || observation.painLimited === true
     || observedValue.pain_limited === true;
@@ -82,22 +70,33 @@ function classifyCompletionOutcome(input = {}) {
   const ratios = [];
   if (observedDistance !== null && prescribedDistance > 0) ratios.push(observedDistance / prescribedDistance);
   if (observedDuration !== null && prescribedDuration > 0) ratios.push(observedDuration / prescribedDuration);
-  const ratio = ratios.length ? ratios.reduce((sum, value) => sum + value, 0) / ratios.length : null;
+  const computedRatio = ratios.length ? ratios.reduce((sum, value) => sum + value, 0) / ratios.length : null;
+  const roundedRatio = computedRatio === null ? null : Math.round(computedRatio * 10000) / 10000;
+  const ratio = computedRatio !== null && Number.isFinite(computedRatio) && Number.isFinite(roundedRatio) ? computedRatio : null;
+  const doseOutcome = partial || unavailableQuality || observation.completion_conflict === true || ratio === null ? null
+    : ratio < 0.9 ? 'UNDER_TARGET' : ratio > 1.1 ? 'ABOVE_TARGET' : 'ON_TARGET';
+  const qualityExecutionUnknown = QUALITY_FAMILIES.has(prescribed.workout_family);
   let outcome;
   if (partial) outcome = 'UNSCORABLE_PARTIAL_SYNC';
   else if (pain) outcome = 'PAIN_LIMITED';
   else if (incomplete) outcome = 'INCOMPLETE';
   else if (excessive) outcome = 'EXCESSIVE_STRAIN';
-  else if (COMPLETION_OUTCOME_SET.has(explicit)) outcome = explicit;
-  else if ((observation.target_met ?? observedValue.target_met) === true) outcome = 'ON_TARGET';
-  else if (ratio !== null && ratio < 0.9) outcome = 'UNDER_TARGET';
-  else if (ratio !== null && ratio > 1.1) outcome = 'ABOVE_TARGET';
-  else outcome = 'ON_TARGET';
+  else if (['PAIN_LIMITED', 'INCOMPLETE', 'EXCESSIVE_STRAIN', 'UNSCORABLE_PARTIAL_SYNC'].includes(explicit)) outcome = explicit;
+  // Client booleans/outcome labels, total duration and manually marked work
+  // offsets do not authenticate interval intensity. Preserve dose separately.
+  else if (observation.completion_conflict === true || qualityExecutionUnknown || doseOutcome === null) outcome = 'UNSCORABLE_INSUFFICIENT_EVIDENCE';
+  else outcome = doseOutcome;
   const reasonCodes = [];
   if (outcome === 'UNSCORABLE_PARTIAL_SYNC') reasonCodes.push(failedSync ? 'FAILED_SYNC' : 'PARTIAL_SYNC');
   if (outcome === 'EXCESSIVE_STRAIN') reasonCodes.push('EXCESSIVE_STRAIN');
   if (outcome === 'PAIN_LIMITED') reasonCodes.push('PAIN_MONITOR');
   if (outcome === 'INCOMPLETE') reasonCodes.push('MISSED_SESSION_SKIP');
+  if (outcome === 'UNSCORABLE_INSUFFICIENT_EVIDENCE') {
+    if (observation.completion_conflict === true || quality === 'CONFLICT') reasonCodes.push('EVIDENCE_CONFLICT_UNRESOLVED');
+    else if (unavailableQuality) reasonCodes.push('EVIDENCE_UNKNOWN');
+    if (ratio === null) reasonCodes.push('COMPLETION_METRICS_UNAVAILABLE');
+    if (qualityExecutionUnknown) reasonCodes.push('QUALITY_EXECUTION_UNVERIFIED');
+  }
   if (outcome === 'ON_TARGET' && String(prescribed.role || '').toUpperCase() === 'PRIMARY_KEY') {
     reasonCodes.push('KEY_SESSION_COMPLETED_ON_TARGET');
   }
@@ -107,15 +106,16 @@ function classifyCompletionOutcome(input = {}) {
   ].filter(Boolean).map(String))].sort();
   return Object.freeze({
     outcome,
-    scorable: outcome !== 'UNSCORABLE_PARTIAL_SYNC',
+    scorable: !UNSCORABLE_OUTCOMES.has(outcome),
+    dose_outcome: outcome === 'UNSCORABLE_PARTIAL_SYNC' || observation.completion_conflict === true ? null : doseOutcome,
     designated_assessment: observation.designated_assessment === true
       || observation.designatedAssessment === true
       || String(prescribed.role || '').toUpperCase() === 'ASSESSMENT',
     linked_session_id: String(prescribed.session_id ?? prescribed.sessionId ?? prescribed.id
       ?? observation.linked_session_id ?? observation.session_id ?? '').trim() || null,
     observed_at: observation.observed_at ?? observation.observedAt ?? null,
-    observed_to_prescribed_ratio: outcome === 'UNSCORABLE_PARTIAL_SYNC' || ratio === null
-      ? null : Math.round(ratio * 10000) / 10000,
+    observed_to_prescribed_ratio: outcome === 'UNSCORABLE_PARTIAL_SYNC' || unavailableQuality || observation.completion_conflict === true || ratio === null
+      ? null : roundedRatio,
     source_evidence_ids: sourceEvidenceIds,
     reason_codes: Object.freeze(reasonCodes),
   });
@@ -124,7 +124,7 @@ function classifyCompletionOutcome(input = {}) {
 function summarizeCompletionOutcomes(outcomes = []) {
   const normalized = (Array.isArray(outcomes) ? outcomes : [])
     .filter((entry) => entry && COMPLETION_OUTCOME_SET.has(entry.outcome));
-  const scorable = normalized.filter((entry) => entry.scorable !== false);
+  const scorable = normalized.filter((entry) => entry.scorable === true && !UNSCORABLE_OUTCOMES.has(entry.outcome));
   const safetySignal = scorable.some((entry) => ['EXCESSIVE_STRAIN', 'PAIN_LIMITED'].includes(entry.outcome));
   const assessmentSignal = scorable.some((entry) => entry.designated_assessment === true);
   const materialEligible = safetySignal || assessmentSignal || scorable.length >= 2;
@@ -162,18 +162,15 @@ function translateCompletionEvidence(input = {}, prescribedSessions = []) {
   const prescribedById = new Map((Array.isArray(prescribedSessions) ? prescribedSessions : []).map((session) => [
     String(session.session_id ?? session.id ?? ''), session,
   ]));
-  const deduplicated = [...new Map(observations.map((observation, index) => {
+  const pairs = observations.map((observation, index) => {
     const evidenceId = String(observation?.evidence_id ?? observation?.evidenceId ?? `unpersisted-${index}`);
     const linkedId = String(observation?.linked_session_id ?? observation?.session_id ?? '');
-    return [`${evidenceId}:${linkedId}`, observation];
-  })).values()];
-  return Object.freeze(deduplicated.map((observation) => {
-    const linkedId = String(observation.linked_session_id ?? observation.session_id ?? '');
-    return classifyCompletionOutcome({
-      observation,
-      prescribedSession: prescribedById.get(linkedId) || {},
-    });
-  }));
+    return { observation, prescribed_session: prescribedById.get(linkedId) || {},
+      resolution_id: linkedId ? `linked:${linkedId}` : `unlinked:${evidenceId}` };
+  });
+  return Object.freeze(latestCompletionPairs(pairs).map(pair => classifyCompletionOutcome({
+    observation: pair.observation, prescribedSession: pair.prescribed_session,
+  })));
 }
 
 function parseISODate(value) {

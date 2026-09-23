@@ -40,7 +40,9 @@ function history(week, failing = false) {
       const prescribed = buildCanonicalSession({ ...old, session_id: id, scheduled_local_date: localDate,
         steps: old.steps.map(s => ({ ...s, target: { ...s.target,
           ...(s.step_role === 'WORK' && i === 0 ? { duration_s: row.seconds - 600 } : {}),
-          distance_m: s.step_role === 'WORK' ? row.distance - 1380 : 690 } })) });
+          // Distribute this fixture's intended total across all steps. The old
+          // repeated full work distance relied on target_met to mask mismatch.
+          distance_m: Math.round(row.distance * s.target.distance_m / old.derived_totals.distance_m) } })) });
       pairs.push({ prescribed_session: prescribed, observation: { linked_session_id: id, evidence_id: id,
         observed_at: `${localDate}T12:00:00Z`, quality_state: 'COMPLETE', completed: !(failed && i === 0),
         target_met: !(failed && i === 0), observed_duration_s: actualSeconds,

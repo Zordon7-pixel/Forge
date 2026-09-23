@@ -289,7 +289,7 @@ async function adaptationUsesPassiveEvidenceOnly() {
     },
     prescribedSession: { session_id: 'passive-quality-run' },
   });
-  assert.equal(classified.outcome, 'ON_TARGET', 'subjective pain and rated effort cannot classify completion');
+  assert.equal(classified.outcome, 'UNSCORABLE_INSUFFICIENT_EVIDENCE', 'subjective pain, rated effort and target_met cannot invent completion');
 
   const translated = adaptation.translateCompletionEvidence({
     completionObservations: [{
@@ -316,8 +316,8 @@ async function adaptationUsesPassiveEvidenceOnly() {
   }, [{ session_id: 'passive-quality-run' }]);
   assert.deepEqual(
     translated.map(({ outcome }) => outcome),
-    ['ON_TARGET', 'ON_TARGET'],
-    'durable run evidence remains usable without translating its subjective fields into strain or pain',
+    ['UNSCORABLE_INSUFFICIENT_EVIDENCE'],
+    'unordered session observations do not manufacture success or translate subjective fields into strain or pain',
   );
 
   const plansSource = fs.readFileSync(require.resolve('../src/routes/plans'), 'utf8');

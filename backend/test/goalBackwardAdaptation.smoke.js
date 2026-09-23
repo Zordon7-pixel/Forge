@@ -86,6 +86,7 @@ function assertCompletionOutcomeContracts() {
     'INCOMPLETE',
     'PAIN_LIMITED',
     'UNSCORABLE_PARTIAL_SYNC',
+    'UNSCORABLE_INSUFFICIENT_EVIDENCE',
   ]);
   const fixtures = [
     [{ observed_duration_s: 1800, prescribed_duration_s: 2400 }, 'UNDER_TARGET'],
@@ -105,7 +106,7 @@ function assertCompletionOutcomeContracts() {
       postRunEnergy: 'low',
       energy: 'low',
       value: { pain_level: 10, perceived_effort: 10, rpe: 10, post_energy: 'low' },
-    }, 'ON_TARGET'],
+    }, 'UNSCORABLE_INSUFFICIENT_EVIDENCE'],
     [{ pain_limited: true, injury_record_id: 'injury-record-explicit' }, 'PAIN_LIMITED'],
     [{ quality_state: 'PARTIAL', sync_state: 'PARTIAL_SYNC', observed_duration_s: 0 }, 'UNSCORABLE_PARTIAL_SYNC'],
   ];
@@ -142,8 +143,8 @@ function assertCompletionOutcomeContracts() {
   }, [{ session_id: 'translated-session', duration_s: 1200 }]);
   assert.deepEqual(
     translated.map((entry) => entry.outcome),
-    ['ON_TARGET', 'ON_TARGET'],
-    'subjective check-in answers are omitted and subjective run fields cannot create pain or strain outcomes',
+    ['UNSCORABLE_INSUFFICIENT_EVIDENCE'],
+    'unordered conflicting observations of one session cannot create success, pain or strain outcomes',
   );
 
   const partial = classifyCompletionOutcome({

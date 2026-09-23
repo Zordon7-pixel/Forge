@@ -7,6 +7,7 @@ const { buildStrengthExercises } = require('./strengthPrescription');
 const { canonicalStrengthExercise, EXERCISES_BY_ID } = require('./strengthDoseAccounting');
 const { validateDistributedSession } = require('./distributedStrength');
 const { classifyCompletionOutcome } = require('./adaptationEngine');
+const { latestCompletionPairs } = require('./completionOutcomeContract');
 
 const { ownedEventEntries, strengthVariants, timedStructure, observedTargetInputs, observedHybridEntry } = require('./adaptiveCoachingDomain');
 
@@ -15,15 +16,21 @@ const isStrength = family => family.startsWith('strength_');
 const isRun = family => ['easy_run', 'recovery_run', 'long_aerobic', 'threshold_run', 'interval_run', 'race_rhythm_run', 'steady_run', 'race'].includes(family);
 const clone = value => JSON.parse(JSON.stringify(value));
 function usablePairs(state) {
-  return state.adaptive_foundation.completion_pairs.filter(pair => {
+  // Correction successors win before usability is checked.
+  return latestCompletionPairs(state.adaptive_foundation.completion_pairs).filter(pair => {
     const s = pair.prescribed_session, o = pair.observation;
     const age = daysBetween(String(o.observed_at || '').slice(0, 10), state.planning_date_local);
+    const outcome = classifyCompletionOutcome({ prescribed_session: s, observation: o });
+    const knownDoseOnly = outcome.outcome === 'UNSCORABLE_INSUFFICIENT_EVIDENCE'
+      && outcome.reason_codes.includes('QUALITY_EXECUTION_UNVERIFIED') && outcome.dose_outcome === 'ON_TARGET';
     return validateCanonicalSession(s).valid && o.linked_session_id === s.session_id
       && o.quality_state === 'COMPLETE' && o.completed === true
-      && classifyCompletionOutcome({ prescribed_session: s, observation: o }).outcome === 'ON_TARGET'
+      // Retain already-supported dose for HOLD/reduction without upgrading
+      // aggregate observations or work offsets into intensity success.
+      && (outcome.outcome === 'ON_TARGET' || knownDoseOnly)
       && age !== null && age >= 0 && age <= 28
       && (!s.strength_distribution || validateDistributedSession(s, null));
-  }).filter((pair, index, all) => all.findIndex(p => p.prescribed_session.session_id === pair.prescribed_session.session_id) === index);
+  });
 }
 function exerciseFromStep(step) {
   const reference = EXERCISES_BY_ID[step.exercise_id], t = step.target;

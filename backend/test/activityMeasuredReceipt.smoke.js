@@ -209,6 +209,19 @@ async function main() {
     assert.equal(pairs.find(p=>p.prescribed_session.kind==='lift').observation.observed_duration_s,4500);
     assert.equal(prepared.foundation.artifacts[0].payload_json.physical_sources.measured_receipts.rows.length,3);
     assert.ok(result.selected_candidate, 'real measured source route produces a validated schedule');
+    const qualityPairs = prepared.foundation.athlete_state.adaptive_foundation.completion_pairs
+      .filter(p => p.prescribed_session.workout_family === 'threshold_run');
+    assert.ok(qualityPairs.length && qualityPairs.every(p => p.observation.observed_work_duration_s > 0),
+      'authenticated manual work offsets remain real measured dose');
+    for (const pair of qualityPairs) {
+      const outcome = require('../src/lib/adaptationEngine').classifyCompletionOutcome(pair);
+      assert.equal(outcome.outcome, 'UNSCORABLE_INSUFFICIENT_EVIDENCE');
+      assert.equal(outcome.scorable, false, 'route-authenticated offsets do not prove interval intensity');
+      assert.equal(outcome.dose_outcome, 'ON_TARGET');
+    }
+    const qualityProgression = result.decision.weekly_objectives.progression.find(p => p.family === 'threshold');
+    assert.notEqual(qualityProgression.action, 'ADVANCE');
+    assert.ok(qualityProgression.observed_outcomes.some(o => o.reason_codes.includes('QUALITY_EXECUTION_UNVERIFIED')));
     assert.equal(result.strength_dose_receipt.pool_authority,'OBSERVED_TOTAL_SET_CAP_FUTURE_DISTRIBUTION');
     assert.equal(result.strength_dose_receipt.pool_sets,24);
     assert.ok(result.selected_candidate.sessions.filter(s=>s.kind==='lift').every(s=>s.derived_totals.sets>=4));

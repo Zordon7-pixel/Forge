@@ -85,7 +85,9 @@ check('L: measured outcomes change family action without calendar advancement', 
   }
   const bad = buildAdaptiveCoachingFoundation(changed);
   const action = f => f.decision.weekly_objectives.progression.find(p => p.family === 'threshold').action;
-  assert.equal(action(good), 'ADVANCE'); assert.equal(action(bad), 'REGRESS');
+  assert.equal(action(good), 'HOLD', 'aggregate quality dose is not verified interval execution');
+  assert.equal(good.decision.weekly_objectives.progression.find(p => p.family === 'threshold').current_level_basis, 'OBSERVED_DOSE_ONLY');
+  assert.equal(action(bad), 'REGRESS');
   assert.equal(good.athlete_state.planning_date_local, bad.athlete_state.planning_date_local);
   assert.notEqual(good.decision.decision_hash, bad.decision.decision_hash);
 });

@@ -168,6 +168,8 @@ const REQUIRED_REASON_CODES = closed([
   'EVIDENCE_MISSING',
   'FAILED_SYNC',
   'PARTIAL_SYNC',
+  'COMPLETION_METRICS_UNAVAILABLE',
+  'QUALITY_EXECUTION_UNVERIFIED',
   'EVIDENCE_CONFLICT_UNRESOLVED',
   'MANUAL_CORRECTION_APPLIED',
   'VALID_ZERO_CONFIRMED',
@@ -251,14 +253,14 @@ const ADAPTIVE_FOUNDATION_REASON_CODES = closed([
 ]);
 
 const REASON_CODE_FAMILIES = Object.freeze({
-  evidence: closed(REQUIRED_REASON_CODES.slice(0, 8)),
-  load: closed(REQUIRED_REASON_CODES.slice(8, 17)),
-  phase: closed(REQUIRED_REASON_CODES.slice(17, 26)),
-  adaptation: closed(REQUIRED_REASON_CODES.slice(26, 33)),
-  safety: closed(REQUIRED_REASON_CODES.slice(33, 44)),
-  target_uncertainty: closed(REQUIRED_REASON_CODES.slice(44, 56)),
-  mutation_constraint: closed(REQUIRED_REASON_CODES.slice(56, 66)),
-  surface_export: closed(REQUIRED_REASON_CODES.slice(66)),
+  evidence: closed(REQUIRED_REASON_CODES.slice(0, 10)),
+  load: closed(REQUIRED_REASON_CODES.slice(10, 19)),
+  phase: closed(REQUIRED_REASON_CODES.slice(19, 28)),
+  adaptation: closed(REQUIRED_REASON_CODES.slice(28, 35)),
+  safety: closed(REQUIRED_REASON_CODES.slice(35, 46)),
+  target_uncertainty: closed(REQUIRED_REASON_CODES.slice(46, 58)),
+  mutation_constraint: closed(REQUIRED_REASON_CODES.slice(58, 68)),
+  surface_export: closed(REQUIRED_REASON_CODES.slice(68)),
 });
 const REASON_CODE_MIGRATION_ALIASES = Object.freeze({ NO_IMPACT: 'MODIFY_IMPACT' });
 const REQUIRED_REASON_CODE_SET = new Set([...REQUIRED_REASON_CODES, ...ADAPTIVE_FOUNDATION_REASON_CODES]);

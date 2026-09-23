@@ -1,6 +1,7 @@
 // Observed family progression only. These are dose bounds for later materialization,
 // never workout prescriptions or a calendar-index progression curve.
 const { classifyCompletionOutcome } = require('./adaptationEngine');
+const { latestCompletionPairs } = require('./completionOutcomeContract');
 const { decideWeeklyRamp } = require('./weeklyRampEngine');
 const { addDays, mondayFor, daysBetween, eventPolicyForGoal, peakLongRunDemand } = require('./racePlanPolicy');
 const { PLANNING_PHASES } = require('./goalBackwardContracts');
@@ -30,17 +31,17 @@ function progressionFamilyFor(workoutFamily) {
 function buildFamilyProgression({ athleteState, completionPairs = [], weeklyMileageHistory = [], readinessTrend = null, phase } = {}) {
   if (!athleteState?.planning_date_local || !PLANNING_PHASES.includes(phase)) throw new Error('Progression requires state and phase');
   const planning = Date.parse(`${athleteState.planning_date_local}T23:59:59.999Z`);
-  const records = completionPairs.map(pair => {
+  const records = latestCompletionPairs(completionPairs).map(pair => {
     const prescribed = pair.prescribed_session || {};
     const observation = pair.observation || {};
     const outcome = classifyCompletionOutcome({ prescribed_session: prescribed, observation });
     const instant = Date.parse(outcome.observed_at || '');
     const linked = prescribed.session_id && observation.linked_session_id === prescribed.session_id;
-    const hasActual = observation.completed === true && (outcome.observed_to_prescribed_ratio !== null
-      || observation.target_met === true);
+    const hasActual = observation.completed === true && outcome.observed_to_prescribed_ratio !== null;
     const usable = linked && observation.quality_state === 'COMPLETE'
       && outcome.source_evidence_ids.length > 0 && Number.isFinite(instant) && instant <= planning
-      && planning - instant <= 28 * 86400000 && outcome.scorable;
+      && planning - instant <= 28 * 86400000 && (outcome.scorable
+        || outcome.outcome === 'UNSCORABLE_INSUFFICIENT_EVIDENCE' && outcome.dose_outcome !== null);
     return { family: progressionFamilyFor(prescribed.workout_family), prescribed, observation,
       outcome, usable, hasActual, instant };
   }).sort((a, b) => a.instant - b.instant || String(a.outcome.linked_session_id).localeCompare(String(b.outcome.linked_session_id)));
@@ -50,9 +51,12 @@ function buildFamilyProgression({ athleteState, completionPairs = [], weeklyMile
   return Object.values(PROGRESSION_FAMILIES).map(policy => {
     // A repeated import of one completed session is one exposure.
     const sourceSeen = new Set();
-    const bySession = new Map(records.filter(r => r.family === policy.family && r.usable)
+    // Resolve corrections before filtering usability: a newer unknown result
+    // must not resurrect an older success for the same session.
+    const bySession = new Map(records.filter(r => r.family === policy.family)
       .map(r => [r.outcome.linked_session_id, r]));
     const distinct = [...bySession.values()].filter(r => {
+      if (!r.usable) return false;
       if (r.outcome.source_evidence_ids.some(id => sourceSeen.has(id))) return false;
       r.outcome.source_evidence_ids.forEach(id => sourceSeen.add(id));
       return true;
@@ -61,11 +65,14 @@ function buildFamilyProgression({ athleteState, completionPairs = [], weeklyMile
     const recent = [...unique.values()].sort((a, b) => a.instant - b.instant);
     const last = recent.at(-1);
     const latestAvailable = records.filter(r => r.family === policy.family).at(-1);
-    const uncertainLatest = latestAvailable && !latestAvailable.usable;
+    const uncertainLatest = latestAvailable && (!latestAvailable.usable || !latestAvailable.outcome.scorable);
     const successful = recent.filter(r => r.hasActual && r.outcome.outcome === 'ON_TARGET');
     const previous = successful.at(-1);
-    const measured = previous?.observation[`observed_${policy.allowed_variable}`]
-      ?? previous?.observation[policy.allowed_variable] ?? null;
+    // Known completed dose may be held without calling quality execution a
+    // success. It never grants ADVANCE or a previous_successful_exposure.
+    const doseBaseline = previous || recent.filter(r => r.hasActual && r.outcome.dose_outcome === 'ON_TARGET').at(-1);
+    const measured = doseBaseline?.observation[`observed_${policy.allowed_variable}`]
+      ?? doseBaseline?.observation[policy.allowed_variable] ?? null;
     const currentLevel = typeof measured === 'number' && Number.isFinite(measured) && measured > 0 ? measured : null;
     const actionSafety = athleteState.safety_action;
     const blocksRunning = ['NO_RUNNING', 'NO_LOWER_BODY'].includes(actionSafety) && !policy.family.startsWith('strength_upper');
@@ -87,13 +94,15 @@ function buildFamilyProgression({ athleteState, completionPairs = [], weeklyMile
       && (!policy.family.startsWith('aerobic') && policy.family !== 'long_run' || ramp.decision === 'ADVANCE')) action = 'ADVANCE';
     return {
       ...policy, action, current_level: currentLevel,
+      current_level_basis: currentLevel === null ? null : previous ? 'SCORABLE_COMPLETION' : 'OBSERVED_DOSE_ONLY',
       previous_successful_exposure: previous ? previous.outcome : null,
       previous_success: previous !== undefined,
       max_change_fraction: action === 'ADVANCE' ? policy.max_increase_fraction : action === 'REGRESS' ? -policy.max_regression_fraction : 0,
       next_level_ceiling: currentLevel === null || action === 'OMIT' ? null
         : Math.floor(currentLevel * (action === 'ADVANCE' ? 1 + policy.max_increase_fraction : action === 'REGRESS' ? 0.9 : 1)),
-      observed_outcomes: recent.map(r => r.outcome),
-      reason_codes: [action === 'ADVANCE' ? 'PROGRESSION_OBSERVED_ADVANCE' : `PROGRESSION_${action}`],
+      observed_outcomes: [...bySession.values()].map(r => r.outcome),
+      reason_codes: [...new Set([action === 'ADVANCE' ? 'PROGRESSION_OBSERVED_ADVANCE' : `PROGRESSION_${action}`,
+        ...(uncertainLatest ? latestAvailable.outcome.reason_codes : [])])],
       running_ramp: ['aerobic_volume', 'long_run'].includes(policy.family) ? ramp : null,
     };
   });

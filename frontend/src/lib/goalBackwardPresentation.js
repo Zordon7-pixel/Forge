@@ -71,6 +71,8 @@ const REASON_CODE_LABELS = Object.freeze({
   EVIDENCE_MISSING: 'Required evidence is missing',
   FAILED_SYNC: 'Training data could not be synced',
   PARTIAL_SYNC: 'Some training data could not be synced',
+  COMPLETION_METRICS_UNAVAILABLE: 'Execution cannot be evaluated from the available measurements',
+  QUALITY_EXECUTION_UNVERIFIED: 'Recorded volume does not yet verify interval target execution',
   EVIDENCE_CONFLICT_UNRESOLVED: 'Conflicting training evidence needs review',
   MANUAL_CORRECTION_APPLIED: 'A manual correction was applied',
   VALID_ZERO_CONFIRMED: 'A valid zero value was confirmed',

@@ -183,7 +183,7 @@ const subjectiveCompletion = classifyCompletionOutcome({
   },
   prescribedSession: { session_id: 'run-1' },
 });
-check(subjectiveCompletion.outcome === 'ON_TARGET', 'subjective effort, pain, and energy cannot classify objective completion');
+check(subjectiveCompletion.outcome === 'UNSCORABLE_INSUFFICIENT_EVIDENCE', 'subjective effort, pain, energy and target_met cannot invent objective completion');
 
 console.log('\n== explicit injury safety coverage ==');
 const injuryProposal = buildAdaptationProposal({

@@ -1,15 +1,8 @@
 const { canonicalHash, canonicalStringify } = require('./racePlanPolicy');
 const { normalizeReasonCode } = require('./goalBackwardContracts');
 
-const COMPLETION_OUTCOME_SET = new Set([
-  'UNDER_TARGET',
-  'ON_TARGET',
-  'ABOVE_TARGET',
-  'EXCESSIVE_STRAIN',
-  'INCOMPLETE',
-  'PAIN_LIMITED',
-  'UNSCORABLE_PARTIAL_SYNC',
-]);
+const { COMPLETION_OUTCOMES, UNSCORABLE_OUTCOMES, DOSE_OUTCOMES, finiteNonNegativeMetric } = require('./completionOutcomeContract');
+const COMPLETION_OUTCOME_SET = new Set(COMPLETION_OUTCOMES);
 
 function normalizePlanningUserId(userId) {
   const normalized = String(userId || '').trim();
@@ -66,6 +59,9 @@ function buildCompletionOutcomeEvidence(outcome, { athleteId, createdAt } = {}) 
   }
   const linkedSessionId = String(outcome.linked_session_id ?? outcome.session_id ?? '').trim() || null;
   const observedAt = outcome.observed_at ? validIsoInstant(outcome.observed_at) : createdAt;
+  const scorable = outcome.scorable === true && !UNSCORABLE_OUTCOMES.has(canonicalOutcome);
+  const ratio = canonicalOutcome === 'UNSCORABLE_PARTIAL_SYNC' ? null
+    : finiteNonNegativeMetric(outcome.observed_to_prescribed_ratio);
   const payload = {
     athlete_id: athleteId,
     revision: 1,
@@ -74,10 +70,10 @@ function buildCompletionOutcomeEvidence(outcome, { athleteId, createdAt } = {}) 
     policy_version: 'goal-backward-planning-policy-v1',
     value: {
       outcome: canonicalOutcome,
-      scorable: outcome.scorable === true,
+      scorable,
       designated_assessment: outcome.designated_assessment === true,
-      observed_to_prescribed_ratio: Number.isFinite(Number(outcome.observed_to_prescribed_ratio))
-        ? Number(outcome.observed_to_prescribed_ratio) : null,
+      observed_to_prescribed_ratio: ratio,
+      dose_outcome: ratio !== null && DOSE_OUTCOMES.has(outcome.dose_outcome) ? outcome.dose_outcome : null,
     },
     canonical_unit: 'ordinal',
     source_system: 'forge',
@@ -86,7 +82,7 @@ function buildCompletionOutcomeEvidence(outcome, { athleteId, createdAt } = {}) 
     recorded_at: createdAt,
     received_at: createdAt,
     derivation_timestamp: createdAt,
-    quality_state: outcome.scorable === true ? 'COMPLETE' : 'PARTIAL',
+    quality_state: scorable ? 'COMPLETE' : 'PARTIAL',
     value_state: 'KNOWN',
     freshness_class: 'FRESH',
     supersedes_evidence_id: null,
@@ -94,7 +90,7 @@ function buildCompletionOutcomeEvidence(outcome, { athleteId, createdAt } = {}) 
     source_evidence_ids: sourceEvidenceIds,
     reason_codes: reasonCodes,
     provenance: {
-      derivation: 'goal_backward_completion_outcome_v1',
+      derivation: 'goal_backward_completion_outcome_v2',
       observation_immutable: true,
     },
   };

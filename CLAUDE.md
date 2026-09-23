@@ -364,6 +364,38 @@ Read `FORGE.md` for:
 
 ## Dispatch Log
 
+### 2026-09-23 — Execution truth containment (patched; not deployed)
+
+Completion classification now distinguishes `UNSCORABLE_INSUFFICIENT_EVIDENCE`
+from physical partial sync, incomplete execution and safety outcomes. Missing,
+invalid or negative measurements remain unknown; zero remains a measured zero.
+Serialization preserves unknown ratios as null. Aggregate observed dose is
+separate from execution success: whole-run totals, client success booleans and
+manually marked work offsets cannot verify quality-session intensity. Quality
+families therefore cannot earn successful progression from these inputs.
+Supported completed dose may retain a HOLD-level exposure without claiming
+intensity success; established pain/recovery/taper constraints still take
+precedence. Existing meaningful easy-dose and measured assessment behavior is
+retained. No new physiological thresholds or plan-generation gate were added.
+
+Correction/replay resolution is shared by progression, selection and adaptation:
+comparable measurement revisions outrank activity timestamps; unresolved ties
+produce explicit completion uncertainty, not array-order-dependent success.
+The original activity/load observations are not rewritten. Registered reason
+codes have customer-facing labels rather than implying that unknown means failed.
+
+`backend/test/executionTruth.smoke.js` covers missing/zero/malformed metrics,
+spoofed success, quality dose-only HOLD, canonical easy/cadence behavior,
+serialization, correction permutations, replay, actual-load preservation and
+safety precedence. `activityMeasuredReceipt.smoke.js` exercises authenticated
+local routes and the real planning pipeline with retained work offsets that do
+not falsely verify intensity. The multiweek fixture now distributes distance
+across steps correctly; its prior repeated full-distance assignment had been
+masked by `target_met`. Full trusted interval target comparisons, interval-level
+provider confidence and a coaching-context bundle remain later work, not
+implemented by this containment slice. No migration, flag, merge, deployment or
+Bryan-account access is included.
+
 ### 2026-09-23 — Actual shoe persistence (patched; not deployed)
 
 `routes/runs.js` now validates optional `shoe_id` as an owned physical pair
