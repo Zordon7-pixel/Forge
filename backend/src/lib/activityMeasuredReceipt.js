@@ -107,12 +107,16 @@ async function record({ tx, userId, input, accepted, now }) {
     VALUES (?,?,?,?,?,?,?,?,?,?)`, [id,userId,b.activity_kind,b.activity_id,b.plan_id,b.session_id,revision,JSON.stringify(payload),canonicalHash(payload),now]);
   return { id, revision, content_hash: canonicalHash(payload) };
 }
-async function load({ tx, userId, observationInstant }) {
+async function load({ tx, userId, observationInstant, sessionScope = null }) {
+  if (sessionScope && (!text(sessionScope.plan_id) || !text(sessionScope.session_id))) fail();
   const since = new Date(Date.parse(observationInstant)-57*86400000).toISOString();
-  const activities = await tx.all(`SELECT activity_kind,activity_id FROM activity_measured_receipts
+  const activities = sessionScope ? await tx.all(`SELECT activity_kind,activity_id FROM activity_measured_receipts
+    WHERE user_id=? AND plan_id=? AND session_id=? GROUP BY activity_kind,activity_id
+    ORDER BY activity_kind,activity_id LIMIT 2`, [userId,sessionScope.plan_id,sessionScope.session_id])
+    : await tx.all(`SELECT activity_kind,activity_id FROM activity_measured_receipts
     WHERE user_id=? GROUP BY activity_kind,activity_id HAVING MAX(created_at)>=?
     ORDER BY activity_kind,activity_id LIMIT 513`, [userId,since]);
-  if (activities.length > 512) throw Object.assign(new Error('Measured source overflow'), { code: 'SOURCE_OVERFLOW' });
+  if (activities.length > (sessionScope ? 1 : 512)) throw Object.assign(new Error('Measured source overflow'), { code: 'SOURCE_OVERFLOW' });
   // Stream and validate the immutable prior chain, retaining latest successors
   // plus a digest of every historical row for the transaction stale reread.
   // This is read-time compaction; no history deletion or data backfill.
@@ -121,9 +125,11 @@ async function load({ tx, userId, observationInstant }) {
   for (const activity of activities) {
     let offset=0, digest=null, tail=[];
     while (true) {
-      const page = await tx.all(`SELECT id,user_id,activity_kind,activity_id,plan_id,session_id,revision,payload_json,content_hash,created_at
+      const payloadSelect = sessionScope ? 'CASE WHEN octet_length(payload_json::text)<=32768 THEN payload_json ELSE NULL END AS payload_json' : 'payload_json';
+      const page = await tx.all(`SELECT id,user_id,activity_kind,activity_id,plan_id,session_id,revision,${payloadSelect},content_hash,created_at
         FROM activity_measured_receipts WHERE user_id=? AND activity_kind=? AND activity_id=?
-        ORDER BY revision LIMIT 256 OFFSET ?`, [userId,activity.activity_kind,activity.activity_id,offset]);
+        ORDER BY revision LIMIT ${sessionScope ? 65 : 256} OFFSET ?`, [userId,activity.activity_kind,activity.activity_id,offset]);
+      if (sessionScope && page.length > 64) throw Object.assign(new Error('Measured source overflow'), { code: 'SOURCE_OVERFLOW' });
       if (!page.length) break;
       for (const row of page) {
         if (row.user_id !== userId) fail();
@@ -144,6 +150,7 @@ async function load({ tx, userId, observationInstant }) {
         tail=[...tail,row].slice(-2);
       }
       offset+=page.length;
+      if (sessionScope) break;
     }
     rows.push(...tail);
     chain_receipts.push({ ...activity, revisions:offset, content_hash:digest });

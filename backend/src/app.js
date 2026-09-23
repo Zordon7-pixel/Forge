@@ -101,6 +101,7 @@ app.use('/api/exercises',   require('./routes/exercises'));
 app.use('/api/plans',       require('./routes/plans'));
 app.use('/api/plan',        require('./routes/plans'));
 app.use('/api/coach',       require('./routes/coach'));
+app.use('/api/coaching',    require('./routes/coachingContext'));
 app.use('/api/diagnostics', require('./routes/diagnostics'));
 app.use('/api/meta',        require('./routes/meta'));
 app.use('/api/feedback',    require('./routes/feedback'));

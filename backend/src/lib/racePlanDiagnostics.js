@@ -594,7 +594,7 @@ function evaluateC4ProductionCompleteness({ normalizedArtifacts, candidateRow, s
   };
 }
 
-function buildDecisionArtifactDiagnosticBundle({ targetUserId, decisionId, artifactRows = [], candidateRow = null }) {
+function buildDecisionArtifactDiagnosticBundle({ targetUserId, decisionId, artifactRows = [], candidateRow = null, includePayloads = true }) {
   const scopedTargetId = String(targetUserId || '').trim();
   const scopedDecisionId = String(decisionId || '').trim();
   if (!scopedTargetId || !scopedDecisionId || scopedDecisionId.length > 200) {
@@ -664,7 +664,7 @@ function buildDecisionArtifactDiagnosticBundle({ targetUserId, decisionId, artif
       revision: normalized.revision,
       content_hash: normalized.content_hash,
       diagnostic_payload_hash: `sha256:${canonicalHash(diagnosticPayload)}`,
-      payload_json: diagnosticPayload,
+      ...(includePayloads ? { payload_json: diagnosticPayload } : {}),
       created_at: normalized.created_at,
     };
   });

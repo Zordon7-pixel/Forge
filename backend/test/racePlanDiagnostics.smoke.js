@@ -826,7 +826,8 @@ async function run() {
   console.log('RACE PLAN DIAGNOSTICS SMOKE OK (68)');
 }
 
-run().catch((error) => {
+if (require.main === module) run().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
+module.exports = { buildC4Fixture };

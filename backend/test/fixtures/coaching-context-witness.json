@@ -1,0 +1,833 @@
+{
+  "schema_version": "coaching-context-v1",
+  "composition_version": "coaching-context-v1",
+  "status": "PARTIAL",
+  "executable_authority": false,
+  "accepted_identity": {
+    "plan_id": "plan-c4",
+    "plan_revision": 9,
+    "decision_id": "decision-c4-complete",
+    "decision_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "candidate_id": "candidate-skeleton-c4",
+    "candidate_revision": 1,
+    "candidate_hash": "ad7ef3fc90854a16893f0ab9d4969d8a5bea4134f31803435f460dfdaaa66607",
+    "canonical_session_set_hash": "bde93a92d8023778869b2514c4ad654c1645c931d342d241902ac9953c83f2fd",
+    "athlete_state_revision": 4,
+    "safety_state_hash": "sha256:719f8f06e573cf41f06e83b2af597f32a035be46e45567d645c43be22639fd50"
+  },
+  "artifact_receipts": [
+    {
+      "id": "artifact-c4-athlete_state",
+      "artifact_kind": "athlete_state",
+      "revision": 1,
+      "content_hash": "sha256:3bd922db149485ee11f67bed7f68c879b27dbfff17514039c63fcbcdada06b1a",
+      "schema_version": "1.0",
+      "policy_version": "goal-backward-planning-policy-v1",
+      "created_at": "2026-09-20T12:00:00.000Z"
+    },
+    {
+      "id": "artifact-c4-candidate_week",
+      "artifact_kind": "candidate_week",
+      "revision": 1,
+      "content_hash": "sha256:861148ee6a29937e25aca1dcf7e6f54f21832f863466ef2c6f86a6f306e9d312",
+      "schema_version": "1.0",
+      "policy_version": "goal-backward-planning-policy-v1",
+      "created_at": "2026-09-20T12:00:00.000Z"
+    },
+    {
+      "id": "artifact-c4-canonical_session_set",
+      "artifact_kind": "canonical_session_set",
+      "revision": 1,
+      "content_hash": "sha256:7ffd2a7386267dc5bd6428a229a0f3c4c4c75c90918b8de900ff8fbe15712220",
+      "schema_version": "1.0",
+      "policy_version": "goal-backward-planning-policy-v1",
+      "created_at": "2026-09-20T12:00:00.000Z"
+    },
+    {
+      "id": "artifact-c4-evidence_snapshot",
+      "artifact_kind": "evidence_snapshot",
+      "revision": 1,
+      "content_hash": "sha256:991cf186b7768f66d1aaffbc5eea124dfa41f32cc54ecfcdc8bafff0748ce0ef",
+      "schema_version": "1.0",
+      "policy_version": "goal-backward-planning-policy-v1",
+      "created_at": "2026-09-20T12:00:00.000Z"
+    },
+    {
+      "id": "artifact-c4-planning_decision",
+      "artifact_kind": "planning_decision",
+      "revision": 1,
+      "content_hash": "sha256:e400ce51b1d9148df2dcf2800a2b4a8a91d5c51bbd5a8543c4fe95f6bc0d29dc",
+      "schema_version": "1.0",
+      "policy_version": "goal-backward-planning-policy-v1",
+      "created_at": "2026-09-20T12:00:00.000Z"
+    },
+    {
+      "id": "artifact-c4-surface_manifest",
+      "artifact_kind": "surface_manifest",
+      "revision": 1,
+      "content_hash": "sha256:e413ae59b34a352d298022c88925effebbe18f0dc0337444e77929489f526c09",
+      "schema_version": "1.0",
+      "policy_version": "goal-backward-planning-policy-v1",
+      "created_at": "2026-09-20T12:00:00.000Z"
+    },
+    {
+      "id": "artifact-c4-validator_result",
+      "artifact_kind": "validator_result",
+      "revision": 1,
+      "content_hash": "sha256:125fc03614ac54fa901ee075e7235fb6f370b2285acc2ef254858dff271341d6",
+      "schema_version": "1.0",
+      "policy_version": "goal-backward-planning-policy-v1",
+      "created_at": "2026-09-20T12:00:00.000Z"
+    }
+  ],
+  "time": {
+    "timezone": "UTC",
+    "observation_date_local": "2026-09-23",
+    "planning_date_local": "2026-09-20",
+    "evidence_as_of": "2026-09-20T12:00:00.000Z"
+  },
+  "athlete": {
+    "status": "PARTIAL",
+    "truth_class": "INFERENCE_AT_PLANNING_TIME",
+    "state": {
+      "athlete_state_id": null,
+      "athlete_state_revision": 4,
+      "athlete_state_hash": null,
+      "planning_date_local": null,
+      "timezone": null,
+      "training_age_class": null,
+      "consistency_state": null,
+      "recovery_state": "NORMAL",
+      "safety_action": null,
+      "confidence": null,
+      "safety_scope": [],
+      "reason_codes": [],
+      "recovery_evidence_ids": [],
+      "recent_normal_running": {
+        "status": "ESTABLISHED",
+        "median_distance_m": 32000,
+        "median_duration_s": null,
+        "confidence": null,
+        "reason_codes": [
+          "RECENT_LOAD_MAINTAIN"
+        ],
+        "evidence_ids": []
+      }
+    },
+    "freshness": "PLANNING_TIME_ONLY",
+    "planning_input_revision": 4,
+    "current_input_revision": 4,
+    "live_state": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "LIVE_STATE_NOT_RECOMPUTED"
+      ]
+    },
+    "training_ranges": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "TRAINING_RANGES_NOT_COMPOSED"
+      ]
+    },
+    "recovery_pattern": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "ATHLETE_RECOVERY_PATTERN_NOT_IMPLEMENTED"
+      ]
+    }
+  },
+  "goal": {
+    "goal_set": {
+      "primary_goal_id": "goal-c4",
+      "goals": [
+        {
+          "goal_id": "goal-c4",
+          "source_revision": 3,
+          "event_revision": null,
+          "event_kind": null,
+          "event_local_date": null,
+          "event_state": "SCHEDULED",
+          "priority": "A",
+          "goal_type": "performance",
+          "target_time_s": null,
+          "distance_miles": null,
+          "reason_codes": [],
+          "evidence_ids": []
+        }
+      ]
+    },
+    "goal_gaps": [],
+    "phase": "DEVELOPMENT",
+    "reason_codes": [
+      "DEVELOPMENT_ENTRY"
+    ]
+  },
+  "week": {
+    "status": "PARTIAL",
+    "weekly_objectives": {
+      "version": "adaptive-weekly-objectives-v1",
+      "weekly_objectives_hash": null,
+      "phase": null,
+      "week_intent": null,
+      "objectives": [
+        {
+          "objective_id": "objective-1",
+          "requirement_id": null,
+          "role": "PRIMARY_KEY",
+          "priority_score": null,
+          "goal_ids": [],
+          "candidate_families": [],
+          "reason_codes": [
+            "WEEKLY_OBJECTIVE_REQUIRED"
+          ],
+          "evidence_ids": []
+        }
+      ],
+      "reason_codes": [],
+      "weekly_stress_budget": [
+        1,
+        2,
+        3
+      ]
+    },
+    "scheduled_sessions": [
+      {
+        "session_id": "session-0",
+        "scheduled_local_date": "2026-09-21",
+        "scheduled_start_at": null,
+        "workout_family": "long_aerobic",
+        "role": "SUPPORTING",
+        "phase": "DEVELOPMENT"
+      },
+      {
+        "session_id": "session-1",
+        "scheduled_local_date": "2026-09-22",
+        "scheduled_start_at": null,
+        "workout_family": "recovery_run",
+        "role": "SUPPORTING",
+        "phase": "DEVELOPMENT"
+      },
+      {
+        "session_id": "session-2",
+        "scheduled_local_date": "2026-09-23",
+        "scheduled_start_at": "2026-09-23T08:00:00Z",
+        "workout_family": "threshold_run",
+        "role": "PRIMARY_KEY",
+        "phase": "DEVELOPMENT"
+      },
+      {
+        "session_id": "session-3",
+        "scheduled_local_date": "2026-09-22",
+        "scheduled_start_at": null,
+        "workout_family": "strength_upper",
+        "role": "SUPPORTING",
+        "phase": "DEVELOPMENT"
+      }
+    ]
+  },
+  "session": {
+    "canonical_workout_schema_version": 1,
+    "stress_taxonomy_version": 1,
+    "session_id": "session-1",
+    "session_revision": 1,
+    "content_hash": "11d634a565ff2d12683278aa04cd549d6daf6a41f6fc38f1ff942fa9acf694a8",
+    "plan_id": "plan-c4",
+    "plan_revision": 9,
+    "decision_id": "decision-c4-complete",
+    "kind": "run",
+    "workout_family": "recovery_run",
+    "role": "SUPPORTING",
+    "phase": "DEVELOPMENT",
+    "scheduled_local_date": "2026-09-22",
+    "scheduled_start_at": null,
+    "timezone": "UTC",
+    "progression_family": null,
+    "executability": "EXECUTABLE",
+    "goal_ids": [],
+    "objective_ids": [
+      "objective-1"
+    ],
+    "purpose_reason_codes": [
+      "DEVELOPMENT_ENTRY"
+    ],
+    "safety_scope": [],
+    "truth_class": "PRESCRIBED",
+    "steps": [
+      {
+        "step_id": "session-1-1",
+        "type": "warmup",
+        "order": 1,
+        "target": {
+          "distance_m": 600,
+          "duration_s": 300,
+          "rpe_range": {
+            "minimum": 2,
+            "maximum": 4
+          }
+        },
+        "provenance": [
+          {
+            "policy_id": "target-policy-v1",
+            "policy_version": 1,
+            "derived_athlete_state_field": "UNKNOWN_PACE_EVIDENCE",
+            "confidence": "INSUFFICIENT",
+            "derived_at": "2026-09-20T12:00:00.000Z",
+            "decision_id": "decision-c4-complete",
+            "source_evidence_ids": [],
+            "canonical_units": [
+              "rpe"
+            ]
+          },
+          {
+            "policy_id": "target-policy-v1",
+            "policy_version": 1,
+            "derived_athlete_state_field": "OBSERVED_COMPLETED_WEEK_STRENGTH",
+            "confidence": "MEDIUM",
+            "derived_at": "2026-09-20T12:00:00.000Z",
+            "decision_id": "decision-c4-complete",
+            "derivation": "canonical-materialization-v1",
+            "source_evidence_ids": [
+              "history-1"
+            ],
+            "canonical_units": [
+              "m",
+              "s"
+            ]
+          }
+        ]
+      },
+      {
+        "step_id": "session-1-2",
+        "type": "run",
+        "order": 2,
+        "workout_family": "recovery_run",
+        "step_role": "WORK",
+        "target": {
+          "distance_m": 2400,
+          "duration_s": 1200,
+          "rpe_range": {
+            "minimum": 1,
+            "maximum": 3
+          }
+        },
+        "provenance": [
+          {
+            "policy_id": "target-policy-v1",
+            "policy_version": 1,
+            "derived_athlete_state_field": "UNKNOWN_PACE_EVIDENCE",
+            "confidence": "INSUFFICIENT",
+            "derived_at": "2026-09-20T12:00:00.000Z",
+            "decision_id": "decision-c4-complete",
+            "source_evidence_ids": [],
+            "canonical_units": [
+              "rpe"
+            ]
+          },
+          {
+            "policy_id": "target-policy-v1",
+            "policy_version": 1,
+            "derived_athlete_state_field": "OBSERVED_COMPLETED_WEEK_STRENGTH",
+            "confidence": "MEDIUM",
+            "derived_at": "2026-09-20T12:00:00.000Z",
+            "decision_id": "decision-c4-complete",
+            "derivation": "canonical-materialization-v1",
+            "source_evidence_ids": [
+              "history-1"
+            ],
+            "canonical_units": [
+              "m",
+              "s"
+            ]
+          }
+        ]
+      },
+      {
+        "step_id": "session-1-3",
+        "type": "cooldown",
+        "order": 3,
+        "target": {
+          "distance_m": 600,
+          "duration_s": 300,
+          "rpe_range": {
+            "minimum": 1,
+            "maximum": 3
+          }
+        },
+        "provenance": [
+          {
+            "policy_id": "target-policy-v1",
+            "policy_version": 1,
+            "derived_athlete_state_field": "UNKNOWN_PACE_EVIDENCE",
+            "confidence": "INSUFFICIENT",
+            "derived_at": "2026-09-20T12:00:00.000Z",
+            "decision_id": "decision-c4-complete",
+            "source_evidence_ids": [],
+            "canonical_units": [
+              "rpe"
+            ]
+          },
+          {
+            "policy_id": "target-policy-v1",
+            "policy_version": 1,
+            "derived_athlete_state_field": "OBSERVED_COMPLETED_WEEK_STRENGTH",
+            "confidence": "MEDIUM",
+            "derived_at": "2026-09-20T12:00:00.000Z",
+            "decision_id": "decision-c4-complete",
+            "derivation": "canonical-materialization-v1",
+            "source_evidence_ids": [
+              "history-1"
+            ],
+            "canonical_units": [
+              "m",
+              "s"
+            ]
+          }
+        ]
+      }
+    ],
+    "derived_totals": {
+      "distance_m": 3600,
+      "duration_s": 1800,
+      "work_distance_m": 2400,
+      "work_duration_s": 1200,
+      "repetitions": 0,
+      "sets": 0,
+      "station_distance_m": 0
+    },
+    "capability": {
+      "classification": "FULLY_STRUCTURED",
+      "manual_step_ids": [],
+      "unsupported_step_ids": []
+    },
+    "stress_vector": [
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "primary_physiological_stimulus": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "STRUCTURED_STIMULUS_NOT_IMPLEMENTED"
+      ]
+    },
+    "dominant_purpose": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "DOMINANT_PURPOSE_CONTRACT_NOT_IMPLEMENTED"
+      ]
+    },
+    "surface": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "CANONICAL_SURFACE_CONTRACT_NOT_IMPLEMENTED"
+      ]
+    },
+    "fallback_rules": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "STRUCTURED_MODIFICATION_RULES_NOT_IMPLEMENTED"
+      ]
+    },
+    "intensity_authority": {
+      "status": "STEP_TARGET_PROVENANCE",
+      "reason_codes": [
+        "NO_TITLE_DERIVED_AUTHORITY"
+      ]
+    }
+  },
+  "actual": {
+    "status": "PARTIAL",
+    "truth_class": "OBSERVED",
+    "link_source": "linked_activity",
+    "completion": {
+      "attempted": true,
+      "outcome": "ABOVE_TARGET",
+      "reason": null,
+      "truth_class": "DERIVED",
+      "status": "AGGREGATE_DOSE_ONLY",
+      "completed": true
+    },
+    "observations": [
+      {
+        "activity_id": "actual-recovery",
+        "local_date": "2026-09-22",
+        "start_at": null,
+        "end_at": null,
+        "source": "UNSPECIFIED_RECORDED_SOURCE",
+        "duration_s": {
+          "state": "KNOWN",
+          "value": 1800,
+          "unit": "s",
+          "truth_class": "OBSERVED"
+        },
+        "distance_m": {
+          "state": "KNOWN",
+          "value": 4828.032,
+          "unit": "m",
+          "truth_class": "OBSERVED"
+        },
+        "average_heart_rate": {
+          "state": "UNKNOWN",
+          "value": null,
+          "unit": "bpm",
+          "truth_class": "OBSERVED"
+        },
+        "max_heart_rate": {
+          "state": "VALID_ZERO",
+          "value": 0,
+          "unit": "bpm",
+          "truth_class": "OBSERVED"
+        },
+        "cadence": {
+          "state": "UNKNOWN",
+          "value": null,
+          "unit": "spm",
+          "truth_class": "OBSERVED"
+        },
+        "average_pace": {
+          "state": "KNOWN",
+          "value": 372.82271534240033,
+          "unit": "s/km",
+          "truth_class": "DERIVED",
+          "basis": "RECORDED_WHOLE_RUN_TOTALS_NOT_INTERVAL_TARGET_EVIDENCE"
+        },
+        "actual_shoe_id": "owned-shoe",
+        "provider_confidence": "UNKNOWN",
+        "metric_authority": "RAW_RECORDED_SOURCE",
+        "interval_evidence": {
+          "status": "MISSING",
+          "value": null,
+          "reason_codes": [
+            "INTERVAL_COMPARISON_NOT_IMPLEMENTED"
+          ]
+        }
+      }
+    ],
+    "measured_receipt": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "MEASURED_RECEIPT_NOT_RECORDED"
+      ]
+    },
+    "correction_provenance": {
+      "effective_authority": "RECONCILED_TOTALS",
+      "source_evidence_ids": [
+        "actual-recovery"
+      ],
+      "effective_correction_evidence_ids": [],
+      "corrections": [],
+      "raw_observations_preserved_not_effective_when_corrected": true
+    },
+    "reconciled_totals": {
+      "duration_s": {
+        "state": "KNOWN",
+        "value": 1800,
+        "unit": "s",
+        "truth_class": "OBSERVED"
+      },
+      "distance_m": {
+        "state": "KNOWN",
+        "value": 4828,
+        "unit": "m",
+        "truth_class": "OBSERVED"
+      }
+    },
+    "interval_comparison": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "INTERVAL_COMPARISON_NOT_IMPLEMENTED"
+      ]
+    },
+    "no_qualified_link_does_not_mean_missed": true
+  },
+  "gear": {
+    "requirement_profile": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "CANONICAL_SHOE_REQUIREMENT_NOT_IMPLEMENTED"
+      ]
+    },
+    "recommendation": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "CANONICAL_SHOE_RECEIPT_NOT_IMPLEMENTED"
+      ]
+    },
+    "selected_shoe": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "PREWORKOUT_SHOE_SELECTION_NOT_PERSISTED"
+      ]
+    },
+    "actual_shoe": {
+      "status": "RECORDED",
+      "value": {
+        "id": "owned-shoe",
+        "brand": "Synthetic",
+        "model": "Pair",
+        "nickname": null,
+        "is_retired": 0
+      },
+      "lookup_status": "AVAILABLE",
+      "authority": "OWNED_RUN_SHOE_ASSOCIATION"
+    },
+    "athlete_history": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "STRUCTURED_SHOE_HISTORY_NOT_IMPLEMENTED"
+      ]
+    },
+    "travel": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "TRAVEL_AVAILABILITY_NOT_IMPLEMENTED"
+      ]
+    }
+  },
+  "context": {
+    "start_date_local": "2026-09-19",
+    "end_date_local": "2026-09-25",
+    "anchor_at": null,
+    "exact_72_hour_window": false,
+    "date_only_boundary_uncertain": true,
+    "sessions": [
+      {
+        "truth_class": "OBSERVED",
+        "activity_id": "activity-9686401a6385a28873daac88",
+        "kind": "run",
+        "duration_s": {
+          "state": "KNOWN",
+          "value": 5160,
+          "unit": "s",
+          "truth_class": "OBSERVED"
+        },
+        "distance_m": {
+          "state": "KNOWN",
+          "value": 12070,
+          "unit": "m",
+          "truth_class": "OBSERVED"
+        },
+        "stress_vector": null,
+        "at": "2026-09-21T08:00:00.000Z",
+        "local_date": "2026-09-21",
+        "temporal_precision": "LOCAL_DATE_WINDOW",
+        "relation": "BOUNDARY_UNCERTAIN"
+      },
+      {
+        "truth_class": "PRESCRIBED",
+        "session_id": "session-0",
+        "workout_family": "long_aerobic",
+        "role": "SUPPORTING",
+        "kind": "run",
+        "stress_vector": [
+          3,
+          3,
+          2,
+          0,
+          0,
+          1,
+          2,
+          1
+        ],
+        "at": null,
+        "local_date": "2026-09-21",
+        "temporal_precision": "LOCAL_DATE_WINDOW",
+        "relation": "BOUNDARY_UNCERTAIN"
+      },
+      {
+        "truth_class": "OBSERVED",
+        "activity_id": "observed-lift",
+        "kind": "lift",
+        "duration_s": {
+          "state": "KNOWN",
+          "value": 2700,
+          "unit": "s",
+          "truth_class": "OBSERVED"
+        },
+        "workout_family": null,
+        "stress_vector": null,
+        "strength_distribution": {
+          "status": "MISSING",
+          "value": null,
+          "reason_codes": [
+            "ACTUAL_STRENGTH_DISTRIBUTION_UNAVAILABLE"
+          ]
+        },
+        "at": "2026-09-22T10:00:00.000Z",
+        "local_date": "2026-09-22",
+        "temporal_precision": "LOCAL_DATE_WINDOW",
+        "relation": "BOUNDARY_UNCERTAIN"
+      },
+      {
+        "truth_class": "OBSERVED",
+        "activity_id": "activity-054544098f99ea1ba19e3dc3",
+        "kind": "run",
+        "duration_s": {
+          "state": "KNOWN",
+          "value": 1800,
+          "unit": "s",
+          "truth_class": "OBSERVED"
+        },
+        "distance_m": {
+          "state": "KNOWN",
+          "value": 4828,
+          "unit": "m",
+          "truth_class": "OBSERVED"
+        },
+        "stress_vector": null,
+        "at": null,
+        "local_date": "2026-09-22",
+        "temporal_precision": "LOCAL_DATE_WINDOW",
+        "relation": "BOUNDARY_UNCERTAIN"
+      },
+      {
+        "truth_class": "PRESCRIBED",
+        "session_id": "session-3",
+        "workout_family": "strength_upper",
+        "role": "SUPPORTING",
+        "kind": "lift",
+        "stress_vector": [
+          1,
+          0,
+          0,
+          3,
+          2,
+          2,
+          1,
+          0
+        ],
+        "at": null,
+        "local_date": "2026-09-22",
+        "temporal_precision": "LOCAL_DATE_WINDOW",
+        "relation": "BOUNDARY_UNCERTAIN"
+      },
+      {
+        "truth_class": "PRESCRIBED",
+        "session_id": "session-2",
+        "workout_family": "threshold_run",
+        "role": "PRIMARY_KEY",
+        "kind": "run",
+        "stress_vector": [
+          3,
+          3,
+          2,
+          0,
+          0,
+          3,
+          3,
+          1
+        ],
+        "at": "2026-09-23T08:00:00.000Z",
+        "local_date": "2026-09-23",
+        "temporal_precision": "LOCAL_DATE_WINDOW",
+        "relation": "BOUNDARY_UNCERTAIN"
+      },
+      {
+        "truth_class": "OBSERVED",
+        "activity_id": "activity-5e2272f888c728611673a326",
+        "kind": "run",
+        "duration_s": {
+          "state": "KNOWN",
+          "value": 1800,
+          "unit": "s",
+          "truth_class": "OBSERVED"
+        },
+        "distance_m": {
+          "state": "KNOWN",
+          "value": 4828,
+          "unit": "m",
+          "truth_class": "OBSERVED"
+        },
+        "stress_vector": null,
+        "at": null,
+        "local_date": "2026-09-23",
+        "temporal_precision": "LOCAL_DATE_WINDOW",
+        "relation": "BOUNDARY_UNCERTAIN"
+      }
+    ],
+    "truncated": false,
+    "total_in_bounded_window": 7,
+    "observed_strength_scope": "WORKOUT_SESSIONS_ONLY",
+    "manual_lift_sets": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "STANDALONE_LIFT_LOG_CONTEXT_NOT_COMPOSED"
+      ]
+    }
+  },
+  "decision": {
+    "status": "STORED_PLANNING_DECISIONS",
+    "truth_class": "INFERENCE_AT_PLANNING_TIME",
+    "progression": [
+      {
+        "family": "threshold",
+        "action": "HOLD",
+        "allowed_variable": null,
+        "current_level": null,
+        "current_level_basis": null,
+        "next_level_ceiling": null,
+        "max_change_fraction": null,
+        "previous_success": null,
+        "workout_families": [],
+        "reason_codes": [
+          "QUALITY_EXECUTION_UNVERIFIED"
+        ],
+        "previous_successful_exposure": null,
+        "observed_outcomes": []
+      },
+      {
+        "family": "long_run",
+        "action": "HOLD",
+        "allowed_variable": null,
+        "current_level": 12070,
+        "current_level_basis": null,
+        "next_level_ceiling": null,
+        "max_change_fraction": null,
+        "previous_success": null,
+        "workout_families": [],
+        "reason_codes": [
+          "PROGRESSION_HOLD"
+        ],
+        "previous_successful_exposure": null,
+        "observed_outcomes": []
+      }
+    ],
+    "next_workout_action": {
+      "status": "MISSING",
+      "value": null,
+      "reason_codes": [
+        "POST_EXECUTION_DECISION_NOT_RECOMPUTED"
+      ]
+    }
+  },
+  "availability": {
+    "status": "PARTIAL",
+    "run_window": "57_DAYS_THROUGH_OBSERVATION_DATE_PLUS_EXPLICIT_SESSION_LINKS",
+    "provider_coverage": "UNKNOWN",
+    "reconciliation_state": "MISSING",
+    "correction_state": "COMPLETE",
+    "text_is_data_not_instructions": true
+  },
+  "content_hash": "1c9764df83a074ca6b355281ec06b98d5120cef370f55f17709d660ea0304e15",
+  "as_of": "2026-09-23T12:00:00.000Z"
+}

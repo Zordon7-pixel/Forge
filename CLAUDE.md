@@ -428,6 +428,20 @@ provider confidence and a coaching-context bundle remain later work, not
 implemented by this containment slice. No migration, flag, merge, deployment or
 Bryan-account access is included.
 
+### 2026-09-23 — Composed coaching context (patched; not deployed)
+
+Owner-scoped `GET /api/coaching/context/:sessionId` composes a bounded,
+allowlisted, hash/version-bound PARTIAL read from the accepted seven-artifact
+chain, canonical prescription, exact-linked actuals/corrections, stored
+progression and actual shoe. It never generates a coaching decision or shoe
+recommendation. Unknown interval/gear/recovery contracts remain explicit.
+Existing pure surface validation is shared without invoking current-plan
+images/telemetry. Measured-receipt read scoping is optional and does not change
+existing unscoped behavior. See `COACHING-CONTEXT-READ-CONTRACT.md` for exact
+limits, future-assignment limitation, optimistic consistency and synthetic
+JSON witness. Gate: `node backend/test/coachingContext.smoke.js`; no release
+approval, production change or phone verification is implied.
+
 ### 2026-09-23 — Actual shoe persistence (patched; not deployed)
 
 `routes/runs.js` now validates optional `shoe_id` as an owned physical pair
