@@ -14,6 +14,7 @@ const GENERATION_FAILURES = Object.freeze({
   SOURCE_CORRUPT: 'Required training data could not be verified. The planner cannot safely use these records to build a plan.',
   ACCEPTED_SOURCE_UNAVAILABLE: 'The accepted workout source could not be verified. Recorded totals alone cannot replace its canonical workout identity.',
   OCCUPANCY_UNAVAILABLE: 'The planner could not verify existing calendar occupancy. This is a data verification limitation, not a finding that your schedule conflicts.',
+  CANDIDATE_WINDOW_STALE: 'This preview was built with an older calendar window. Preview again to include your race. Your active plan was not changed.',
   REQUIRED_EXPOSURE_UNPLACEABLE: 'The current planner could not place its required workouts within the selected dates and recovery rules. This does not establish that every possible schedule is unsafe.',
 
   CANONICAL_STRENGTH_LINK_ABSENT: 'The planner cannot verify completed strength work linked to an accepted canonical workout. Recorded lifting totals or equipment selection alone do not satisfy this requirement. First-time strength-plan setup is not currently supported on this path.',
@@ -71,8 +72,14 @@ function build({ prepared, result, planMode, featureMode = 'preview' }) {
       goal_backward_policy_versions: decision.policy_versions,
       purpose, overall_feasibility: feasibility, reasons,
       goal_gap: decision.goal_gap, weekly_objectives: decision.weekly_objectives,
-      weeks: plan.weeks.map(week => ({ ...week, phase: decision.phase,
-        purpose, weekly_objectives: decision.weekly_objectives })),
+      ...(decision.calendar_window ? { candidate_window_start_local: decision.calendar_window.start_date,
+        candidate_window_end_local: decision.calendar_window.end_date,
+        ...(decision.calendar_windows ? { calendar_windows: decision.calendar_windows } : {}) } : {}),
+      weeks: plan.weeks.map(week => {
+        const window = decision.calendar_windows?.find(w => w.start_date >= week.startDate && w.start_date <= require('./racePlanPolicy').addDays(week.startDate, 6));
+        return { ...week, phase: window?.phase || decision.phase,
+          purpose, weekly_objectives: window?.weekly_objectives || decision.weekly_objectives };
+      }),
     },
     decision: { ...decision, ...prepared.binding,
       evidence_used: [{ evidence_id: prepared.observed_binding, purpose: 'CAPTURED_OBSERVATION_BINDING' }] },

@@ -9,8 +9,8 @@ const RealDate = Date, DATE = '2026-09-14', NOW = `${DATE}T12:00:00Z`;
 global.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return RealDate.parse(NOW); } };
 const shadow = require('../src/lib/adaptiveCoachingShadow');
 const realPrepare = shadow.prepare, realCompute = shadow.compute;
-let prepared, result, computations = 0;
-shadow.prepare = a => { prepared = realPrepare(a); return prepared; };
+let prepared, prepareInput, result, computations = 0;
+shadow.prepare = a => { prepareInput = a; prepared = realPrepare(a); return prepared; };
 shadow.compute = p => { computations++; result = realCompute(p); return result; };
 const plans = require('../src/routes/plans')._test;
 const receipts = require('../src/lib/activityMeasuredReceipt');
@@ -199,10 +199,20 @@ async function main() {
     for (const input of f.bodies) await plans.recordActivityMeasurement(f.owner,input);
     const assignmentsBefore = db.prepare('SELECT * FROM user_plans WHERE user_id=?').all(f.owner);
     const off = await plans.previewPlanForUser(f.owner,f.req,options('off'));
-    await plans.previewPlanForUser(f.owner,f.req,options('shadow')).then(r => {
+    const beforeCompute = computations;
+    const spoofed = { ...f.req, mode: 'on', resolvedMode: 'on',
+      FORGE_GOAL_BACKWARD_V24_MODE: 'on', goalBackwardDependencies: { mode: 'on', audience: 'all' } };
+    await plans.previewPlanForUser(f.owner,spoofed,options('shadow')).then(r => {
       assert.deepEqual(r.plan,off.plan); assert.equal(r.candidateHash,off.candidateHash);
     });
     assert.deepEqual(db.prepare('SELECT * FROM user_plans WHERE user_id=?').all(f.owner),assignmentsBefore);
+    assert.equal(computations, beforeCompute + 1, 'distant owned race still performs SHADOW comparison');
+    assert.equal(prepareInput.resolvedMode, 'shadow', 'payload cannot authorize expansion');
+    assert.deepEqual(prepared.calendarWindow, { start_date: DATE, end_date: addDays(DATE, 6), day_count: 7 });
+    // Default and invalid internal modes also retain the weekly preparation contract.
+    for (const resolvedMode of [undefined, 'off', 'shadow', 'ON', ' preview ']) {
+      assert.deepEqual(realPrepare({ ...prepareInput, resolvedMode }).calendarWindow, prepared.calendarWindow);
+    }
     assert.equal(prepared.foundation.athlete_state.adaptive_foundation.completion_pairs.length,3);
     const pairs = prepared.foundation.athlete_state.adaptive_foundation.completion_pairs;
     assert.equal(pairs.find(p=>p.prescribed_session.workout_family==='threshold_run').observation.observed_work_duration_s,1140);
@@ -220,8 +230,13 @@ async function main() {
       strength:result.strength_dose_receipt,source_support:prepared.source_support}));
   }
   // Explicit later-race preview now rejects instead of silently substituting a week.
-  await assert.rejects(plans.previewPlanForUser(a.owner,a.req,options('preview')),
+  for (const mode of ['preview', 'on']) {
+    const beforeCompute = computations;
+    await assert.rejects(plans.previewPlanForUser(a.owner, { ...a.req, mode: 'shadow', resolvedMode: 'shadow',
+      FORGE_GOAL_BACKWARD_V24_MODE: 'off', goalBackwardDependencies: { mode: 'off' } }, options(mode)),
     e => e.details?.reason_code === 'RACE_CALENDAR_HORIZON_UNSUPPORTED');
+    assert.equal(computations, beforeCompute, 'payload cannot bypass the precompute race horizon gate');
+  }
   // Keep the source/authentication and seven-artifact positive on its actual weekly scope.
   const witnesses = await previewWitnesses({...a,req:{...a.req,race_ids:[]}});
   const input = a.bodies[0];

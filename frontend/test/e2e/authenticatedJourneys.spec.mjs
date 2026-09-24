@@ -3382,10 +3382,11 @@ test('race-goal rollback regex permits truthful active-plan copy and rejects fal
   }
 })
 
-// One variant uses a mocked rendering response. The other forwards generation
-// to the mounted real SQLite handler; account/setup responses remain mocked.
-for (const transport of ['mocked response', 'real local SQLite HTTP']) test(`Army calendar explains unsupported horizon with four runs and four lifts from seven lift days (${transport})`, async ({ page }) => {
-  test.setTimeout(120_000)
+// Two variants mock closed failure rendering. The real variant forwards generation
+// to the mounted SQLite handler; account/setup responses remain mocked.
+for (const transport of ['mocked evidence failure', 'mocked beyond-42-day horizon', 'real local SQLite HTTP']) test(`Race calendar explains closed failure with four runs and four lifts from seven lift days (${transport})`, async ({ page }) => {
+  // Real multiweek search also runs the backend fixture regressions before serving.
+  test.setTimeout(transport === 'real local SQLite HTTP' ? 900_000 : 120_000)
   let fixtureProcess, fixtureUrl
   if(transport === 'real local SQLite HTTP') {
     fixtureProcess = fork(fileURLToPath(new URL('../../../backend/test/raceAvailability.smoke.js', import.meta.url)), ['--serve'], { stdio: ['ignore','pipe','pipe','ipc'] })
@@ -3399,24 +3400,29 @@ for (const transport of ['mocked response', 'real local SQLite HTTP']) test(`Arm
   }
   try {
     await setQaBrowserClock(page, '2026-09-20')
-    const army = { id: 'army', race_name: 'Army 10-Miler', race_date: '2026-10-11', event_local_date: '2026-10-11',
+    const beyond = transport === 'mocked beyond-42-day horizon'
+    const raceDate = beyond ? '2026-11-01' : '2026-10-11'
+    const army = { id: 'army', race_name: 'Army 10-Miler', race_date: raceDate, event_local_date: raceDate,
       event_kind: 'run_race', status: 'upcoming', distance_miles: 10, goal_time_seconds: 5400 }
-    const message = 'The current adaptive planner builds seven days, through 2026-09-26, and cannot yet build your complete calendar through 2026-10-11. This is a planner limitation, not a finding that four runs and four lifts are unsafe or that your race goal is impossible. Your active plan was not changed.'
+    // Mocked routes verify copy and no-apply behavior, not browser-generated plans.
+    const message = beyond
+      ? 'The current adaptive planner supports up to 42 local days, through 2026-10-31, and cannot yet build your complete calendar through 2026-11-01. This is a planner limitation, not a finding that four runs and four lifts are unsafe or that your race goal is impossible. Your active plan was not changed.'
+      : 'The available training dose or session time cannot support all required workouts at their minimum useful duration. Review your session time and recent workout records, or request fewer sessions. Your active plan was not changed.'
     const state = await installAuthenticatedApi(page, { responses: new Map([
       ['GET /api/races', { races: [army] }],
       ['POST /api/plans/generate-for-race/army', async ({ body }) => {
         expect(body.target).toMatchObject({ runDaysPerWeek: 4, liftDaysPerWeek: 4, trainingDays: ['Tue','Thu','Sat','Sun'],
           liftEligibleWeekdays: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], strengthGoal: 'maintain' })
         if(fixtureUrl) {
-          const response = await page.request.post(fixtureUrl, {data:{...body,race_ids:['army']}})
+          const response = await page.request.post(fixtureUrl, {data:{...body,race_ids:['army']}, timeout: 300_000})
           expect(response.status()).toBe(409)
           const payload = await response.json()
-          expect(payload.details.reason_code).toBe('RACE_CALENDAR_HORIZON_UNSUPPORTED')
+          expect(payload.details).toEqual({ reason_code: 'MEANINGFUL_DOSE_REQUIRED' })
           return qaResponse(payload, response.status())
         }
         return qaResponse({ error: message, code: 'GOAL_BACKWARD_GENERATION_FAILED', details: {
-          reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED', planning_date_local: '2026-09-20',
-          requested_end_date: '2026-10-11', supported_end_date: '2026-09-26',
+          reason_code: beyond ? 'RACE_CALENDAR_HORIZON_UNSUPPORTED' : 'MEANINGFUL_DOSE_REQUIRED',
+          ...(beyond ? { planning_date_local: '2026-09-20', requested_end_date: raceDate, supported_end_date: '2026-10-31' } : {}),
         } }, 409)
       }],
     ]) })
@@ -3433,8 +3439,9 @@ for (const transport of ['mocked response', 'real local SQLite HTTP']) test(`Arm
     await page.getByLabel('How many days do you want to run?').selectOption('4')
     await page.getByLabel('Lift days each week').selectOption('4')
     await page.getByRole('button', { name: 'Build Race Calendar', exact: true }).click()
-    await expect(page.getByText(/Your race was saved, but your training plan was not changed/)).toBeVisible()
-    await expect(page.getByText(/cannot yet build your complete calendar through 2026-10-11/)).toBeVisible()
+    await expect(page.getByText(/Your race was saved, but your training plan was not changed/)).toBeVisible({ timeout: fixtureUrl ? 300_000 : 5_000 })
+    await expect(page.getByText(beyond ? /supports up to 42 local days, through 2026-10-31/ : /minimum useful duration/)).toBeVisible()
+    if (!beyond) await expect(page.getByText(/planner limitation/)).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Apply reviewed plan', exact: true })).toHaveCount(0)
     expect(requestsFor(state, 'POST', '/api/plans/generate-for-race/army')).toHaveLength(1)
     expect(state.requests.filter(r=>r.method==='POST' && /\/apply$/.test(r.pathname || r.path || r.url || ''))).toHaveLength(0)

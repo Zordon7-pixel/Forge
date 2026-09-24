@@ -3508,7 +3508,8 @@ function authenticatedGoalExpansionSessionSet({
   if (plan.engineVersion === 'adaptive-joint-solver-v1' && reconstructed) {
     reconstructed.weeks = reconstructed.weeks.map(week => ({ ...week,
       phase: plan.weeks.find(item => item.week === week.week)?.phase,
-      purpose: plan.purpose, weekly_objectives: plan.weekly_objectives }));
+      purpose: plan.purpose, weekly_objectives: plan.calendar_windows?.find(window => window.start_date >= week.startDate
+        && window.start_date <= addPolicyDays(week.startDate, 6))?.weekly_objectives || plan.weekly_objectives }));
   }
   const materializedProgram = sessionSet.program_storage_version
     && require('../lib/planCandidateLifecycle').validatedCompleteProgramPlan(plan);
@@ -6335,11 +6336,11 @@ function adaptiveAcceptedInput(userId, state) {
   } catch (error) { return { accepted: null, acceptedReason: adaptiveShadow.reason(error) }; }
 }
 
-function prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision = false } = {}) {
+function prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision = false, resolvedMode = 'off' } = {}) {
   let prepared = null;
   let adaptiveReason = null;
   try {
-    prepared = adaptiveShadow.prepare({ userId, state: initial,
+    prepared = adaptiveShadow.prepare({ userId, state: initial, resolvedMode,
       priorPlanRevision: bindPlanRevision ? (initial.activePlan?.planVersion ?? 0) : null,
       source: adaptiveObservedInputs.get(initial.context),
       ...(adaptiveObservedInputs.get(initial.context)?.sourceFailed
@@ -6352,7 +6353,7 @@ function prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision = fal
   return { prepared, adaptiveReason };
 }
 
-// Explicit race requests must fit the existing seven-local-day capability.
+// Explicit owned race requests must fit the bounded compressed calendar.
 // Race removal has a separate contract and is deliberately not a creation request.
 function adaptiveRaceHorizonFailure({ request, races, planningDateLocal }) {
   if (request.operation === 'remove_race' || !request.race_ids?.length) return null;
@@ -6363,12 +6364,12 @@ function adaptiveRaceHorizonFailure({ request, races, planningDateLocal }) {
     return candidateError(400, 'INVALID_RACE_DATE', 'Race dates must use valid YYYY-MM-DD calendar dates.');
   }
   const requestedEndDate = dates.sort().at(-1);
-  const supportedEndDate = addPolicyDays(planningDateLocal, 6);
+  const supportedEndDate = addPolicyDays(planningDateLocal, require('../lib/adaptiveCoachingCalendar').MAX_DAYS - 1);
   if (!requestedEndDate || requestedEndDate <= supportedEndDate) return null;
   const counts = Number(request.target?.runDaysPerWeek) === 4 && Number(request.target?.liftDaysPerWeek) === 4
     ? 'four runs and four lifts' : 'your requested session counts';
   return candidateError(409, 'GOAL_BACKWARD_GENERATION_FAILED',
-    `The current adaptive planner builds seven days, through ${supportedEndDate}, and cannot yet build your complete calendar through ${requestedEndDate}. This is a planner limitation, not a finding that ${counts} are unsafe or that your race goal is impossible. Your active plan was not changed.`,
+    `The current adaptive planner supports up to 42 inclusive local days, through ${supportedEndDate}, and cannot yet build your complete calendar through ${requestedEndDate}. This is a planner limitation, not a finding that ${counts} are unsafe or that your race goal is impossible. Your active plan was not changed.`,
     { reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED', planning_date_local: planningDateLocal,
       requested_end_date: requestedEndDate, supported_end_date: supportedEndDate });
 }
@@ -6406,7 +6407,8 @@ async function previewAdaptivePlanForUser({ userId, request, clock, initial, pre
       candidate_hash: preview.candidateHash, engine_version: plan.engineVersion,
       policy_version: RACE_PLAN_POLICY_V1.version, invariant_version: RACE_PLAN_POLICY_V1.invariantVersion,
       planning_snapshot_json: initial.snapshot, candidate_plan_json: plan,
-      generation_trace_json: buildCandidateTrace(initial, { plan, validation: preview.selected.validation }), expires_at: expiresAt };
+      generation_trace_json: { ...buildCandidateTrace(initial, { plan, validation: preview.selected.validation }),
+        candidate_window_end_local: prepared.calendarWindow.end_date }, expires_at: expiresAt };
     await withUserMutation(userId, async tx => {
       const current = await loadCandidateInputState(userId, request, clock, tx, generationOptions);
       if (resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies) !== featureMode
@@ -6456,7 +6458,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     const failure = adaptiveRaceHorizonFailure({ request, races: initial.races, planningDateLocal: clock.planningDateLocal });
     if (failure) throw failure;
   }
-  let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision: adaptiveMode === 'on' });
+  let { prepared, adaptiveReason } = prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision: adaptiveMode === 'on', resolvedMode: adaptiveMode });
   if (['preview', 'on'].includes(adaptiveMode)) {
     return previewAdaptivePlanForUser({ userId, request, clock, initial, prepared, adaptiveReason,
       generationOptions, store, goalBackwardDependencies, featureMode: adaptiveMode });
@@ -7219,12 +7221,21 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     if (adaptiveOn) {
       const failure = adaptiveRaceHorizonFailure({ request, races: current.races, planningDateLocal: clock.planningDateLocal });
       if (failure) return planningInputUnchanged({ status: failure.status, code: failure.code, error: failure.message, details: failure.details });
+      const requestedDates = request.operation === 'remove_race' ? [] : current.races
+        .filter(race => request.race_ids?.includes(String(race.id))).map(race => race.event_local_date || race.race_date);
+      const storedDates = (storedPlan.weeks || []).flatMap(week => (week.days || []).map(day => day.date)).sort();
+      if (requestedDates.some(date => date > (storedDates.at(-1) || '')
+        || storedPlan.candidate_window_end_local && date > storedPlan.candidate_window_end_local)) {
+        return planningInputUnchanged({ status: 409, code: 'GOAL_BACKWARD_GENERATION_FAILED',
+          error: 'This preview was built with an older calendar window. Preview again to include your race. Your active plan was not changed.',
+          details: { reason_code: 'CANDIDATE_WINDOW_STALE' } });
+      }
     }
     let adaptiveBundle = null;
     if (adaptiveOn) {
       try {
         const adapter = require('../lib/adaptiveCoachingPreview');
-        const { prepared } = prepareAdaptiveCandidateInput(userId, current, { bindPlanRevision: true });
+        const { prepared } = prepareAdaptiveCandidateInput(userId, current, { bindPlanRevision: true, resolvedMode: 'on' });
         const result = adaptiveShadow.compute(prepared);
         const preview = adapter.build({ prepared, result, planMode: current.target.planMode, featureMode: 'on' });
         assertAdaptiveRequestedRaces(request, current.races, preview);
