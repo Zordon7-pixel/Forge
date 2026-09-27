@@ -7,6 +7,14 @@
 
 ## Sync CI acceptance maintenance — 2026-09-27
 
+The QA workflow runs deterministic/audit/build and complete mobile/SW browser
+suites in independent bounded Linux jobs. Both install locked frontend/backend
+dependencies. The previous combined check name remains a fail-closed aggregate;
+production-shell verification requires both suites and the aggregate to succeed.
+`frontend/test/ciWorkflow.smoke.mjs` guards commands, omissions and gate outcomes.
+Native compilation is byte-for-byte unchanged. This split addresses the observed
+combined-job timeout; it does not establish a new remote CI pass by itself.
+
 `finalBetaTrainingTruth.smoke.js` now checks delegated foreground wiring and
 executes the real `healthAutoSync`/`healthSyncLiveness` suites for cooldown,
 observer bypass, profile/import account fencing and teardown. Stale inline-App

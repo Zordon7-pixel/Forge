@@ -13,7 +13,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deterministic-and-browser-qa:
+  deterministic-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - name: Install dependencies
+        run: |
+          npm --prefix frontend ci
+          npm --prefix backend ci
+      - name: Run deterministic smoke suites
+        run: npm run qa:smoke
+      - name: Verify account-data coverage
+        run: npm --prefix backend run check:account-data
+      - name: Audit production dependencies
+        run: |
+          npm --prefix frontend audit --audit-level=high
+          npm --prefix backend audit --audit-level=high
+      - name: Build frontend
+        run: npm --prefix frontend run build
+
+  browser-qa:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -32,16 +59,6 @@ jobs:
       - name: Install Chromium
         working-directory: frontend
         run: npx playwright install --with-deps chromium
-      - name: Run deterministic smoke suites
-        run: npm run qa:smoke
-      - name: Verify account-data coverage
-        run: npm --prefix backend run check:account-data
-      - name: Audit production dependencies
-        run: |
-          npm --prefix frontend audit --audit-level=high
-          npm --prefix backend audit --audit-level=high
-      - name: Build frontend
-        run: npm --prefix frontend run build
       - name: Run mobile browser journeys
         run: npm run qa:browser
       - name: Upload browser failure artifacts
@@ -54,6 +71,19 @@ jobs:
             frontend/test-results
           if-no-files-found: ignore
           retention-days: 7
+
+  # Keep the previous check identity while requiring both independent jobs.
+  deterministic-and-browser-qa:
+    if: ${{ always() }}
+    needs: [deterministic-qa, browser-qa]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require deterministic and browser success
+        env:
+          DETERMINISTIC_RESULT: ${{ needs.deterministic-qa.result }}
+          BROWSER_RESULT: ${{ needs.browser-qa.result }}
+        run: test "$DETERMINISTIC_RESULT" = success && test "$BROWSER_RESULT" = success
 
   ios-native-compile:
     if: github.event_name != 'schedule'
@@ -92,7 +122,7 @@ jobs:
 
   production-shell-qa:
     if: github.event_name != 'pull_request'
-    needs: deterministic-and-browser-qa
+    needs: [deterministic-qa, browser-qa, deterministic-and-browser-qa]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
