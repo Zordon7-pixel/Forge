@@ -1,9 +1,10 @@
 // Real in-memory SQLite transactions, foreign keys, uniqueness and savepoints.
-// DDL is read from the repository schema; only PostgreSQL syntax is translated.
+// DDL comes from repository schema plus startup columns. Legacy planner fixtures
+// optionally add transient synthetic profile fields; see production opt-out below.
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
-function createDb() {
+function createDb({ syntheticProfileFields = true } = {}) {
   const db = new DatabaseSync(':memory:');
   db.function('pg_column_size', s => Buffer.byteLength(String(s)));
   db.function('char_length', s => String(s).length);
@@ -22,8 +23,10 @@ function createDb() {
       try { db.exec(sql); } catch (e) { if (!e.message.includes('duplicate column')) throw e; }
     }
   }
-  // Fields from the existing startup additive migrations, absent in baseline DDL.
-  for (const [table, columns] of Object.entries({ users: ['timezone TEXT', 'training_age_class TEXT', 'preferred_workout_days TEXT', 'run_eligible_weekdays TEXT', 'lift_eligible_weekdays TEXT'],
+  // Real startup columns absent in baseline DDL. Legacy planner fixtures also
+  // model transient profile inputs as columns; they are NOT production schema.
+  // SQL-contract tests must disable those synthetic-only fields.
+  for (const [table, columns] of Object.entries({ users: [...(syntheticProfileFields ? ['timezone TEXT', 'training_age_class TEXT'] : []), 'preferred_workout_days TEXT', 'run_eligible_weekdays TEXT', 'lift_eligible_weekdays TEXT'],
     watch_sync: ['sync_uuid TEXT'], runs: ['plan_session_id TEXT', 'planned_session_json TEXT'] })) {
     for (const column of columns) { try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`); }
       catch (e) { if (!e.message.includes('duplicate column')) throw e; } }

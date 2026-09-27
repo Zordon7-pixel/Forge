@@ -8,7 +8,40 @@ const { effectiveReadDate, assignmentReadIdentity, validEffectiveAssignmentRead,
 const { LIMITS, VERSION } = contract;
 const reject = code => { const e = Error(code); e.code = code; throw e; };
 const bounded = (column, maximum = LIMITS.payloadBytes) => `CASE WHEN octet_length(${column}::text) <= ${maximum} THEN ${column} ELSE NULL END AS ${column.split('.').at(-1)}`;
-async function readChain(owner, today, timezone) {
+const localDate = (asOf, timezone) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date(asOf));
+function assignmentClock(active, owner, asOf) {
+  if (active.user_id !== owner || active.training_owner_id !== owner) reject('ASSIGNMENT_LINEAGE_UNAVAILABLE');
+  if (active.plan_oversized) reject('CONTEXT_BOUNDS');
+  const plan = contract.json(active.plan_data || active.plan_json);
+  const zones = [];
+  if (plan?.programContract && Object.hasOwn(plan.programContract, 'timezone')) zones.push(plan.programContract.timezone);
+  if (plan?.canonical_workout_schema_version === 1) {
+    if (!Array.isArray(plan.weeks)) reject('ASSIGNMENT_TIMEZONE_INVALID');
+    let count = 0;
+    for (const week of plan.weeks) {
+      if (!Array.isArray(week?.days)) reject('ASSIGNMENT_TIMEZONE_INVALID');
+      for (const day of week.days) {
+        if (!Array.isArray(day?.sessions)) reject('ASSIGNMENT_TIMEZONE_INVALID');
+        for (const session of day.sessions) {
+          if (++count > LIMITS.sessions) reject('CONTEXT_BOUNDS');
+          if (session && Object.hasOwn(session, 'timezone')) zones.push(session.timezone);
+        }
+      }
+    }
+  }
+  // The users table has no timezone column. Persisted plan clocks, not caller
+  // offsets or fictional profile data, govern assignment cutover. Missing legacy
+  // metadata uses UTC; explicit invalid/conflicting metadata never falls back.
+  if (zones.some(zone => {
+    if (typeof zone !== 'string' || !zone || zone.length > 128) return true;
+    try { localDate(asOf, zone); return false; } catch { return true; }
+  }) || new Set(zones).size > 1) reject('ASSIGNMENT_TIMEZONE_INVALID');
+  const timezone = zones[0] || 'UTC';
+  return { timezone, today: localDate(asOf, timezone) };
+}
+async function readChain(owner, asOf) {
   // A second active assignment is ambiguous, not permission to choose a winner.
   const columnsAssignment = `up.id AS user_plan_id, up.user_id, up.plan_id, up.status,
       up.plan_version, up.lineage_id, up.effective_from, up.started_at, up.supersedes_user_plan_id,
@@ -20,6 +53,8 @@ async function readChain(owner, today, timezone) {
   if (rows.length > 1) reject('ASSIGNMENT_AMBIGUOUS');
   let active = rows[0];
   if (!active) return { active: null, candidate: null, artifacts: [] };
+  const clock = assignmentClock(active, owner, asOf);
+  const { timezone, today } = clock;
   const lineage = [], visited = new Set();
   while (active) {
     if (lineage.length >= MAX_ASSIGNMENT_READ_DEPTH) reject('ASSIGNMENT_LINEAGE_BOUNDS');
@@ -65,7 +100,7 @@ async function readChain(owner, today, timezone) {
     seen.add(head.id); artifacts.push(head);
   }
   if (head.parent_artifact_id || artifacts.length !== 7) reject('ACCEPTED_CHAIN_UNAVAILABLE');
-  return { active, candidate, artifacts, lineage, effectiveAssignmentRead };
+  return { active, candidate, artifacts, lineage, effectiveAssignmentRead, clock };
 }
 async function readSources(owner, chain, today, asOf) {
   const sessionId = chain.session.session_id;
@@ -111,29 +146,28 @@ router.get('/context/:sessionId', auth, async (req, res) => {
   }
   try {
     const asOf = new Date().toISOString();
-    const profile = await dbGet('SELECT id,timezone,planning_input_revision FROM users WHERE id=?', [owner]);
-    const timezone = profile?.timezone || 'UTC';
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(asOf));
-    const raw = await readChain(owner, today, timezone);
+    const profile = await dbGet('SELECT id,planning_input_revision FROM users WHERE id=?', [owner]);
+    const raw = await readChain(owner, asOf);
     if (!raw.active) {
       const legacy = await dbGet('SELECT id FROM training_plans WHERE user_id=? LIMIT 1', [owner]);
       reject(legacy ? 'LEGACY_PLAN_NOT_CANONICAL' : 'NO_ACCEPTED_PLAN');
     }
     const chain = contract.accepted({ ownerId: owner, ...raw, sessionId });
+    const today = localDate(asOf, chain.session.timezone);
     const sources = await readSources(owner, chain, today, asOf);
     const result = contract.compose({ ownerId: owner, chain, candidate: raw.candidate, profile, ...sources, asOf });
     // Optimistic read consistency: no locks/writes, but do not combine an old
     // acceptance with a changed assignment/artifact or physiological revision.
     const afterSources = await readSources(owner, chain, today, asOf);
-    const after = await readChain(owner, today, timezone);
-    const revision = await dbGet('SELECT id,timezone,planning_input_revision FROM users WHERE id=?', [owner]);
+    const after = await readChain(owner, asOf);
+    const revision = await dbGet('SELECT id,planning_input_revision FROM users WHERE id=?', [owner]);
     if (canonicalHash(raw) !== canonicalHash(after) || canonicalHash(profile) !== canonicalHash(revision)
       || canonicalHash(sources) !== canonicalHash(afterSources)) reject('CONTEXT_CHANGED_DURING_READ');
     return res.json(result);
   } catch (error) {
     const known = new Set(['NO_ACCEPTED_PLAN', 'LEGACY_PLAN_NOT_CANONICAL', 'ACCEPTED_CHAIN_UNAVAILABLE', 'ACCEPTED_CHAIN_STALE',
       'CANONICAL_SET_INVALID', 'SESSION_UNAVAILABLE', 'ASSIGNMENT_AMBIGUOUS', 'FUTURE_ASSIGNMENT_CONTEXT_UNAVAILABLE',
-      'ASSIGNMENT_LINEAGE_INVALID', 'ASSIGNMENT_LINEAGE_UNAVAILABLE', 'ASSIGNMENT_LINEAGE_BOUNDS', 'ASSIGNMENT_DATE_INVALID',
+      'ASSIGNMENT_LINEAGE_INVALID', 'ASSIGNMENT_LINEAGE_UNAVAILABLE', 'ASSIGNMENT_LINEAGE_BOUNDS', 'ASSIGNMENT_DATE_INVALID', 'ASSIGNMENT_TIMEZONE_INVALID',
       'CONTEXT_BOUNDS', 'CONTEXT_RESPONSE_BOUNDS', 'CONTEXT_CHANGED_DURING_READ', 'CONTEXT_OWNER_MISMATCH']);
     const reason = known.has(error.code) ? error.code : 'CONTEXT_READ_UNAVAILABLE';
     return res.status(error.code === 'SESSION_UNAVAILABLE' ? 404 : 409).json({ schema_version: VERSION,

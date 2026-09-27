@@ -40,7 +40,20 @@ decreasing plan revisions. Root stays ACTIVE; every followed row must actually
 be SUPERSEDED, never CLEARED. Missing/invalid dates or links, cycles, ambiguous
 roots and depth overflow fail closed. Explicit invalid effective dates never
 fall back; absent dates may use the persisted started-at date per lifecycle.
-Selection uses the authenticated profile timezone, not a request date.
+Selection uses the owned active root plan's persisted unambiguous canonical
+session timezone (and its program-contract timezone when present), never a
+caller date/offset or a fictional `users.timezone` column. Explicit invalid or
+conflicting zones fail closed with `ASSIGNMENT_TIMEZONE_INVALID`; only absent
+legacy metadata falls back to UTC. The root plan and derived clock enter the
+optimistic reread; selected-session actual-source date bounds use that canonical
+session's timezone. No stored profile or plan is changed.
+
+Production-column regression: the route test disables legacy fixture-only
+profile fields and audits every SQLite column against `schema.pg.sql`, existing
+startup and migrations before running authenticated no-plan and accepted reads.
+It covers the exact nonexistent-column regression, UTC/non-UTC midnight,
+invalid/conflicting zones and concurrent clock change. This validates column
+compatibility, not PostgreSQL isolation, row types or a live accepted-plan read.
 
 `effective-assignment-read-v1` is an internal proof of that complete path,
 independently revalidated by the pure surface predicate's explicit opt-in.

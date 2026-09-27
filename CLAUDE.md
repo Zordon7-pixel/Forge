@@ -364,6 +364,18 @@ Read `FORGE.md` for:
 
 ## Dispatch Log
 
+### 2026-09-27 — Coaching Context production SQL repair (patched; not deployed)
+
+Disposable live QA exposed `SELECT users.timezone`, a column absent from actual
+PostgreSQL DDL/startup but invented by the legacy SQLite planner fixture. Both
+profile reads now select only real identity/revision columns. Assignment cutover
+uses owned persisted plan timezone; invalid/conflicting clocks fail closed, absent
+legacy metadata uses UTC, and optimistic rereads include the source plan/clock.
+The authenticated context fixture disables fictional profile columns and audits
+all fixture columns against repository schema/bootstrap, with no-plan, positive,
+UTC/non-UTC cutover, corruption and concurrent-change checks. No schema, migration,
+planner policy, provider or production-account operations are part of this repair.
+
 ### 2026-09-27 — Integrated review repairs (local; not deployed)
 
 Calendar composition validates every original canonical session, including its

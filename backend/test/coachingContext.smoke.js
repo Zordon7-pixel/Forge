@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const fixture = require('./helpers/adaptiveShadowDb').createDb();
+const fixture = require('./helpers/adaptiveShadowDb').createDb({ syntheticProfileFields: false });
 const { db, calls, hooks } = fixture;
 db.function('octet_length', s => s == null ? null : Buffer.byteLength(String(s)));
 fixture.exports.runWithUserContext = (_owner, next) => next();
@@ -20,6 +20,30 @@ for (const name of ['shoe_catalog', 'gear_shoes']) {
   db.exec(sql);
 }
 db.exec('ALTER TABLE runs ADD COLUMN shoe_id TEXT');
+// Audit every fixture column against repository PostgreSQL DDL/startup, so an
+// invented test column cannot make invalid production SELECTs pass again.
+const productionColumns = new Map();
+const addColumn = (table, column) => {
+  if (!productionColumns.has(table)) productionColumns.set(table, new Set());
+  productionColumns.get(table).add(column);
+};
+for (const file of ['schema.pg.sql', 'index.js', 'migrate.js']) {
+  const source = fs.readFileSync(path.join(__dirname, '../src/db', file), 'utf8');
+  for (const match of source.matchAll(/CREATE TABLE IF NOT EXISTS (\w+) \(([\s\S]*?)\n\s*\);/g)) {
+    for (const column of match[2].matchAll(/^\s*(\w+)\s+(?:TEXT|REAL|INTEGER|BIGINT|SERIAL|BIGSERIAL|TIMESTAMPTZ|JSONB|NUMERIC|BOOLEAN)\b/gm)) addColumn(match[1], column[1]);
+  }
+  for (const match of source.matchAll(/ALTER TABLE (\w+)([\s\S]*?);/g)) {
+    for (const column of match[2].matchAll(/ADD COLUMN IF NOT EXISTS (\w+)/g)) addColumn(match[1], column[1]);
+  }
+}
+for (const { name } of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()) {
+  for (const { name: column } of db.prepare(`PRAGMA table_info(${name})`).all()) {
+    assert.ok(productionColumns.get(name)?.has(column), `fixture column ${name}.${column} must exist in actual schema/bootstrap`);
+  }
+}
+assert.equal(productionColumns.get('users').has('timezone'), false);
+assert.throws(() => db.prepare('SELECT timezone FROM users'), /no such column/,
+  'the exact deployed failure is visible, not hidden by a synthetic profile field');
 const dbPath = require.resolve('../src/db');
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: fixture.exports };
 process.env.JWT_SECRET = 'synthetic-coaching-context-only';
@@ -35,8 +59,8 @@ const { buildPipelineArtifact } = require('../src/lib/planCandidateLifecycle');
 const { buildCanonicalSurfaceManifest } = require('../src/routes/plans')._test;
 const contract = require('../src/lib/coachingContext');
 const owner = randomUUID(), foreign = randomUUID();
-for (const id of [owner, foreign]) db.prepare("INSERT INTO users(id,name,email,password_hash,timezone,planning_input_revision) VALUES (?,'Synthetic',?,'','UTC',4)").run(id, `${id}@example.invalid`);
-function makeChain(suffix = '') {
+for (const id of [owner, foreign]) db.prepare("INSERT INTO users(id,name,email,password_hash,planning_input_revision) VALUES (?,'Synthetic',?,'',4)").run(id, `${id}@example.invalid`);
+function makeChain(suffix = '', timezone = 'UTC') {
   const base = buildC4Fixture();
   const f = suffix ? JSON.parse(JSON.stringify(base).replaceAll(base.decisionId, `${base.decisionId}${suffix}`)) : base;
   f.candidateRow.id += suffix;
@@ -61,7 +85,7 @@ function makeChain(suffix = '') {
     candidate_material: materials, sessions: definitions.map(([family,date], i) => ({ session_id: `session-${i}${suffix}`, candidate_material_id: materials[i].material_id,
       workout_family: family, role: i === 2 ? 'PRIMARY_KEY' : 'SUPPORTING', scheduled_local_date: date,
       ...(i === 2 ? { scheduled_start_at: `${date}T08:00:00Z` } : {}) })) }, plan_id: planId, plan_revision: revision,
-    planning_instant: '2026-09-20T12:00:00Z', timezone: 'UTC' });
+    planning_instant: '2026-09-20T12:00:00Z', timezone });
   assert.equal(validateCanonicalSessionSet(set).valid, true);
   const plan = { ...buildCanonicalPlanFromSessionSet(set), purpose: 'Supported synthetic training.', overall_feasibility: 'supported', reasons: [] };
   const candidate = { ...f.candidateRow, user_id: owner, status: 'applied', applied_user_plan_id: assignmentId, applied_training_plan_id: planId,
@@ -101,6 +125,12 @@ const insert = (table, row) => {
   const entries = Object.entries(row).filter(([key]) => allowed.has(key));
   db.prepare(`INSERT INTO ${table} (${entries.map(([key]) => key).join(',')}) VALUES (${entries.map(() => '?').join(',')})`)
     .run(...entries.map(([, v]) => v && typeof v === 'object' ? JSON.stringify(v) : v));
+};
+const update = (table, row) => {
+  const allowed = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name));
+  const entries = Object.entries(row).filter(([key]) => key !== 'id' && allowed.has(key));
+  db.prepare(`UPDATE ${table} SET ${entries.map(([key]) => `${key}=?`).join(',')} WHERE id=?`)
+    .run(...entries.map(([, v]) => v && typeof v === 'object' ? JSON.stringify(v) : v), row.id);
 };
 insert('training_plans', { id: 'plan-c4', user_id: owner, name: 'Synthetic', plan_data: f.active.plan_data });
 insert('user_plans', { id: 'assignment', user_id: owner, plan_id: 'plan-c4', status: 'active', plan_version: 9, started_at: '2026-09-20', effective_from: '2026-09-20' });
@@ -149,7 +179,7 @@ async function main() {
   };
   const before = snapshot();
   assert.equal((await get(undefined, null)).status, 401);
-  assert.equal((await get(undefined, foreign)).data.status, 'UNAVAILABLE');
+  assert.deepEqual((await get('synthetic-unassigned', foreign)).data.reason_codes, ['NO_ACCEPTED_PLAN']);
   assert.equal((await get('foreign-session')).status, 404);
   assert.equal((await get(undefined, owner, '?owner_id=foreign')).status, 400);
   const result = await get(); assert.equal(result.status, 200, JSON.stringify(result.data));
@@ -294,14 +324,55 @@ async function main() {
     ['Asia/Tokyo', '2026-09-23T14:59:59Z', 'plan-c4'],
     ['Asia/Tokyo', '2026-09-23T15:00:00Z', 'plan-c4-successor'],
   ]) {
-    clockNow = instant; db.prepare('UPDATE users SET timezone=? WHERE id=?').run(timezone, owner);
+    db.exec('SAVEPOINT persisted_timezone');
+    const zonedSuccessor = makeChain('-successor', timezone);
+    update('training_plans', { id: zonedSuccessor.set.plan_id, plan_data: zonedSuccessor.active.plan_data });
+    update('plan_generation_candidates', zonedSuccessor.candidate);
+    zonedSuccessor.artifacts.forEach(a => update('planning_pipeline_artifacts', a));
+    clockNow = instant;
     const expectedSession = expected === 'plan-c4' ? f.set.sessions[1].session_id : successor.set.sessions[1].session_id;
     const boundary = await readUnchanged(expectedSession);
     assert.equal(boundary.status, 200, JSON.stringify(boundary.data));
     assert.equal(boundary.data.accepted_identity.plan_id, expected);
     assert.equal((await readUnchanged(expected === 'plan-c4' ? successor.set.sessions[1].session_id : f.set.sessions[1].session_id)).status, 404);
+    db.exec('ROLLBACK TO persisted_timezone; RELEASE persisted_timezone');
   }
-  clockNow = NOW; db.prepare("UPDATE users SET timezone='UTC' WHERE id=?").run(owner);
+  clockNow = NOW;
+  for (const edit of [
+    plan => { plan.weeks[0].days[0].sessions[0].timezone = 'Not/AZone'; },
+    plan => { plan.weeks[0].days[0].sessions[0].timezone = null; },
+    plan => { plan.weeks[0].days[0].sessions[0].timezone = ['UTC']; },
+    plan => { plan.weeks[0].days[0].sessions[0].timezone = 'America/New_York'; },
+    plan => { plan.programContract = { timezone: 'America/New_York' }; },
+    plan => { plan.programContract = { timezone: '' }; },
+  ]) {
+    db.exec('SAVEPOINT invalid_timezone');
+    const bad = clone(successor.plan); edit(bad);
+    update('training_plans', { id: successor.set.plan_id, plan_data: bad });
+    assert.equal((await readUnchanged()).data.reason_codes[0], 'ASSIGNMENT_TIMEZONE_INVALID');
+    db.exec('ROLLBACK TO invalid_timezone; RELEASE invalid_timezone');
+  }
+  db.exec('SAVEPOINT absent_legacy_timezone');
+  update('training_plans', { id: successor.set.plan_id, plan_data: { legacy: true } });
+  const absentClock = await readUnchanged();
+  assert.equal(absentClock.status, 200);
+  assert.equal(absentClock.data.effective_assignment_read.timezone, 'UTC');
+  assert.equal(absentClock.data.accepted_identity.plan_id, f.set.plan_id, 'legacy clock fallback does not authorize a legacy prescription');
+  db.exec('ROLLBACK TO absent_legacy_timezone; RELEASE absent_legacy_timezone');
+  db.exec('SAVEPOINT concurrent_timezone');
+  let clockChanged = false;
+  hooks.after = (_method, sql, result) => {
+    if (!clockChanged && sql.includes('FROM workout_sessions')) {
+      clockChanged = true;
+      const changed = clone(successor.plan);
+      for (const week of changed.weeks) for (const day of week.days) for (const session of day.sessions) session.timezone = 'America/New_York';
+      update('training_plans', { id: successor.set.plan_id, plan_data: changed });
+    }
+    return result;
+  };
+  assert.equal((await get()).data.reason_codes[0], 'CONTEXT_CHANGED_DURING_READ');
+  hooks.after = null;
+  db.exec('ROLLBACK TO concurrent_timezone; RELEASE concurrent_timezone');
   const invalidCases = [
     ['missing predecessor', "UPDATE user_plans SET supersedes_user_plan_id='missing' WHERE id='assignment-successor'", [], 'ASSIGNMENT_LINEAGE_UNAVAILABLE'],
     ['foreign predecessor', "UPDATE user_plans SET user_id=? WHERE id='assignment'", [foreign], 'ASSIGNMENT_LINEAGE_UNAVAILABLE'],
@@ -572,6 +643,7 @@ async function main() {
   assert.equal((await get()).data.reason_codes[0], 'CONTEXT_CHANGED_DURING_READ');
   hooks.after = null;
   console.log(JSON.stringify({ test: 'coaching-context', status: 'PASS', authenticated_sqlite: true, writes_during_reads: 0,
+    production_column_audit: true, fictional_profile_timezone: false,
     accepted_session: b.session.session_id, content_hash: b.content_hash, query_count: calls.length, limitations: ['No PostgreSQL isolation proof', 'No rich interval comparator or shoe matcher'] }));
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => { server?.close(); db.close(); global.Date = RealDate; global.fetch = nativeFetch; });
