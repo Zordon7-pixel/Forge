@@ -98,25 +98,32 @@ export function mountForegroundHealthSync({
   }
   const visible = () => { if (documentTarget.visibilityState === 'visible') void sync('resume') }
   documentTarget.addEventListener('visibilitychange', visible)
-  const attach = (request) => {
-    Promise.resolve(request).then((handle) => {
-      if (disposed) handle?.remove?.()
-      else if (handle) handles.push(handle)
-    }).catch(onError)
+  const remove = (handle) => {
+    try { Promise.resolve(handle?.remove?.()).catch(onError) }
+    catch (error) { onError(error) }
   }
-  try {
-    attach(app.addListener('appStateChange', ({ isActive }) => { if (isActive) void sync('resume') }))
-    attach(app.addListener('resume', () => { void sync('resume') }))
-    attach(service.addWorkoutObserverListener(() => { void sync('workout') }))
-  } catch (error) { onError(error) }
+  const attach = (register) => {
+    // Invocation itself can throw before a plugin returns its Promise.
+    try {
+      Promise.resolve(register()).then((handle) => {
+        if (disposed) remove(handle)
+        else if (handle) handles.push(handle)
+      }).catch(onError)
+    } catch (error) { onError(error) }
+  }
+  attach(() => app.addListener('appStateChange', ({ isActive }) => { if (isActive) void sync('resume') }))
+  attach(() => app.addListener('resume', () => { void sync('resume') }))
+  attach(() => service.addWorkoutObserverListener(() => { void sync('workout') }))
   void sync('cold')
   return {
     sync,
     dispose() {
+      if (disposed) return
       disposed = true
       cancel(timer)
-      documentTarget.removeEventListener('visibilitychange', visible)
-      handles.forEach((handle) => handle?.remove?.())
+      try { documentTarget.removeEventListener('visibilitychange', visible) }
+      catch (error) { onError(error) }
+      handles.splice(0).forEach(remove)
     },
   }
 }

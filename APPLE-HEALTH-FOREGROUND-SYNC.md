@@ -13,7 +13,11 @@ are separate. No Swift/native bridge, schema, provider integration or flag chang
 - A marker is acknowledged only after a complete result and only if no newer
   marker replaced it. Partial/error work remains pending with a thirty-second
   retry backoff. Listener disposal removes timers and every asynchronously
-  registered listener independently, including after a sibling registration fails.
+  registered listener independently, including after a sibling registration fails
+  synchronously. Registration invocation and asynchronous settlement are isolated
+  per listener. Cleanup isolates thrown/rejected removals (including late handles),
+  reports each failure, and remains idempotent. An underlying native removal that
+  fails cannot be forced to succeed by JavaScript; disposed callbacks are inert.
 - The shared service operation has a 120-second total deadline. The existing
   15-second pull-refresh deadline still releases the gesture first, without
   claiming sync success. Late valid completion within the operation deadline

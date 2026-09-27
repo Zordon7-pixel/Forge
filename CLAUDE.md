@@ -375,6 +375,13 @@ remain pending/full-history retryable. See `APPLE-HEALTH-FOREGROUND-SYNC.md` and
 `healthSyncLiveness.smoke.mjs`. No Swift, schema, production account or native
 background-delivery claim is part of this local repair.
 
+Independent Hermes review found synchronous plugin registration and cleanup
+failures could skip sibling listeners. Each invocation/removal is now isolated,
+including rejected removal Promises and handles settling after disposal; repeated
+disposal is idempotent. Real-module tests cover all registration failures, late
+cleanup, unhandled-rejection absence and remount teardown. Native removal failures
+remain reported, not silently claimed repaired.
+
 ### 2026-09-27 — Coaching Context production SQL repair (patched; not deployed)
 
 Disposable live QA exposed `SELECT users.timezone`, a column absent from actual

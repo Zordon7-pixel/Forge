@@ -288,6 +288,77 @@ try {
     assert.equal(time.pending, 0)
   }
 
+  // Every registration is attempted even when a sibling throws synchronously.
+  for (const failed of ['appStateChange', 'resume', 'workoutObserved']) {
+    reset()
+    const attempted = [], removed = [], errors = [], callbacks = new Map(), time = clock()
+    let reads = 0
+    const register = (name, callback) => {
+      attempted.push(name)
+      if (name === failed) throw new Error(`register:${name}`)
+      callbacks.set(name, callback)
+      return { remove() { removed.push(name); callbacks.delete(name) } }
+    }
+    const lifecycle = mountForegroundHealthSync({
+      service: { syncNativeData: async () => { reads++; return { complete: true } }, addWorkoutObserverListener: (callback) => register('workoutObserved', callback) },
+      app: { addListener: register }, documentTarget: new EventTarget(), getAccountId: auth.getAuthenticatedUserId,
+      now: time.now, schedule: time.schedule, cancel: time.cancel, onError: (error) => errors.push(error.message),
+    })
+    await flush()
+    assert.deepEqual(attempted, ['appStateChange', 'resume', 'workoutObserved'])
+    assert.deepEqual(errors, [`register:${failed}`])
+    if (failed !== 'workoutObserved') {
+      callbacks.get('workoutObserved')(); await flush()
+      assert.equal(reads, 2, 'observer remains functional after either App registration throws')
+    }
+    lifecycle.dispose(); lifecycle.dispose(); await flush()
+    assert.deepEqual(removed.sort(), attempted.filter((name) => name !== failed).sort())
+    assert.equal(callbacks.size, 0); assert.equal(time.pending, 0)
+  }
+
+  // Cleanup isolates synchronous throws and rejected Promises, including all
+  // handles arriving after disposal. Neither may abort sibling cleanup or leak
+  // an unhandled rejection. A failed native removal cannot be forcibly repaired.
+  for (const late of [false, true]) {
+    reset()
+    const errors = [], unhandled = [], attempted = [], callbacks = new Map(), pending = [], time = clock()
+    const reject = (error) => unhandled.push(error)
+    process.on('unhandledRejection', reject)
+    try {
+      let generation = 0, reads = 0
+      const register = (name, callback) => {
+        const key = `${generation}:${name}`
+        callbacks.set(key, callback)
+        const handle = { remove() {
+          attempted.push(key); callbacks.delete(key)
+          if (name === 'appStateChange') throw new Error(`remove:${key}`)
+          if (name === 'resume') return Promise.reject(new Error(`remove:${key}`))
+        } }
+        if (!late) return handle
+        const request = deferred(); pending.push(() => request.resolve(handle)); return request.promise
+      }
+      const doc = new EventTarget(); doc.visibilityState = 'visible'
+      const mount = () => mountForegroundHealthSync({
+        service: { syncNativeData: async () => { reads++; return { complete: true } }, addWorkoutObserverListener: (callback) => register('workoutObserved', callback) },
+        app: { addListener: register }, documentTarget: doc, getAccountId: auth.getAuthenticatedUserId,
+        now: time.now, schedule: time.schedule, cancel: time.cancel, onError: (error) => errors.push(error.message),
+      })
+      for (generation = 0; generation < 2; generation++) {
+        const lifecycle = mount(); await flush()
+        lifecycle.dispose(); lifecycle.dispose()
+        pending.splice(0).forEach((settle) => settle()); await flush()
+        assert.equal(callbacks.size, 0, 'all removable registrations are cleaned across remount')
+        assert.equal(time.pending, 0)
+        const before = reads; doc.dispatchEvent(new Event('visibilitychange')); await time.advance(300000)
+        assert.equal(reads, before, 'disposed document listener and timers cannot sync')
+      }
+      assert.equal(attempted.length, 6, 'every handle removed exactly once despite sibling failures')
+      assert.equal(new Set(attempted).size, 6)
+      assert.deepEqual(errors.sort(), ['remove:0:appStateChange', 'remove:0:resume', 'remove:1:appStateChange', 'remove:1:resume'].sort())
+      assert.deepEqual(unhandled, [])
+    } finally { process.off('unhandledRejection', reject) }
+  }
+
   // Real foreground lifecycle + real service, fake only clocks/native/API.
   reset()
   {
