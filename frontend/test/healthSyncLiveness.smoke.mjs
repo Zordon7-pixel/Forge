@@ -294,6 +294,29 @@ try {
     f.service.dispose()
   }
 
+  // Clearing the durable checkpoint is part of completion, not a best-effort
+  // side effect. A storage failure must retain replay and cannot report success.
+  reset()
+  {
+    const f = fixture(), remove = localStorage.removeItem
+    localStorage.removeItem = function (key) {
+      if (key === sync.healthAccountKey('forge.health.resyncNeeded', 'owner-a')) throw new Error('synthetic checkpoint clear failure')
+      return remove.call(this, key)
+    }
+    try {
+      const result = await f.service.syncNativeData()
+      assert.equal(result.complete, false)
+      assert.equal(result.imported, 1, 'actual imported work remains visible despite incomplete acknowledgment')
+      assert.equal(sync.isHealthHistoryTransferPending('owner-a'), true)
+      assert.equal(events.at(-1).status, 'partial', 'checkpoint failure never announces completion success')
+    } finally { localStorage.removeItem = remove }
+    const retry = await f.service.syncNativeData()
+    assert.equal(f.historyOptions.at(-1).forceFullSync, true)
+    assert.equal(retry.complete, true); assert.equal(retry.imported, 0); assert.equal(retry.skipped, 1)
+    assert.equal(sync.isHealthHistoryTransferPending('owner-a'), false)
+    f.service.dispose()
+  }
+
   // Listener registration can settle after unmount; each fulfilled handle is removed.
   reset()
   {

@@ -189,6 +189,7 @@ const repoRoot = path.join(__dirname, '..', '..');
 const appSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/App.jsx'), 'utf8');
 const healthServiceSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/services/HealthService.js'), 'utf8');
 check(/if \(!isNativeRuntime\(\)\) return undefined/.test(appSource), 'automatic health sync is native-only');
+check(/<AutoHealthSync\s*\/>/.test(appSource), 'the native sync host remains rendered in the application tree');
 // App delegates lifecycle policy now. Check the production wiring here, then
 // execute the real modules below rather than demanding the obsolete inline body.
 check(/mountForegroundHealthSync\(\{[\s\S]*service: HealthService, app: CapacitorApp, documentTarget: document/.test(appSource)

@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('node:child_process');
 const { computeZones, zoneForHr } = require('../src/lib/hrZones');
 const { analyzeRunHistory } = require('../src/lib/runHistory');
 const { activityKind, isRunActivity, runActivitySql, runListActivityFilter } = require('../src/lib/runActivity');
@@ -105,7 +106,14 @@ check(/call\.getArray\("zoneMinimums"/.test(swift) && /historyOptions\.zoneMinim
 check(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*4/.test(service) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*6/.test(service), 'workout-effort permission upgrade and Apple Watch metric streams trigger a v6 full-history refresh once');
 check(/workoutUpgradeAvailable[\s\S]*workoutHistoryUpgradeRequired/.test(service), 'an old native shell cannot mark the v5 import complete before the corrected plugin arrives');
 check(/let profile\s*=\s*null[\s\S]*profile\s*=\s*data\?\.profile/.test(service), 'native sync keeps the HR profile in scope for its response');
-check(/isHealthHistoryImportComplete\([\s\S]*historyAvailable: history\.available[\s\S]*errors: importResult\.errors[\s\S]*if \(importComplete && workoutUpgradeAvailable\)[\s\S]*const complete = importComplete && upgradeCommitted[\s\S]*if \(complete\)[\s\S]*clearHealthHistoryTransferPending\(\)/.test(service), 'only a successful full-history read without retryable row failures completes the import upgrade');
+check(/isHealthHistoryImportComplete\([\s\S]*historyAvailable: history\.available && this\.pendingHistoryReads\.size === 0[\s\S]*errors: importResult\.errors[\s\S]*if \(importComplete && workoutUpgradeAvailable\)[\s\S]*let complete = importComplete && upgradeCommitted[\s\S]*if \(complete\)[\s\S]*complete = clearHealthHistoryTransferPending\(accountId\)/.test(service), 'history/row/upgrade success and account-scoped checkpoint acknowledgment are all required for completion');
+// Execute the actual service, not just a text pattern: late reads, partial rows,
+// account switches and failed checkpoint clearing must never fabricate success.
+const syncRuntime = spawnSync(process.execPath, [path.join(root, 'frontend/test/healthSyncLiveness.smoke.mjs')], {
+  cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+});
+check(syncRuntime.status === 0 && String(syncRuntime.stdout || '').includes('HEALTH SYNC LIVENESS OK:'), 'real sync runtime preserves completion and account boundaries');
+if (syncRuntime.status !== 0) console.error(syncRuntime.error || syncRuntime.stderr || syncRuntime.stdout);
 check(/actualRuns[^\n]*filter\(isRunningActivity\)/.test(historySource), 'History run totals and charts use running activities only');
 check(/INSERT INTO run_import_tombstones[\s\S]*ON CONFLICT \(user_id, source_key\) DO NOTHING/.test(runsRouteSource), 'deleting a health import records a user-scoped tombstone before removing the run');
 check(/SELECT id FROM run_import_tombstones WHERE user_id=\? AND source_key=\?/.test(importRouteSource), 'future full health syncs honor deleted-run tombstones');

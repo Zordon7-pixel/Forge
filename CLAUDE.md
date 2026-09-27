@@ -11,6 +11,8 @@
 executes the real `healthAutoSync`/`healthSyncLiveness` suites for cooldown,
 observer bypass, profile/import account fencing and teardown. Stale inline-App
 regex assumptions were replaced; production behavior is unchanged.
+The H12 gate likewise requires account-scoped checkpoint acknowledgment and runs
+the real-service suite, including failed-clear/retry without false completion.
 
 ## What This App Is
 
