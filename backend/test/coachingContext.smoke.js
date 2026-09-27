@@ -387,6 +387,30 @@ async function main() {
     runs: db.prepare('SELECT * FROM runs WHERE user_id=? ORDER BY id').all(owner), corrections: [], lifts: [],
     shoes: db.prepare('SELECT * FROM gear_shoes WHERE user_id=?').all(owner), asOf: NOW };
   const pure = contract.compose(pureInput);
+  const calendarChain = clone(chain);
+  const planning = calendarChain.byKind.planning_decision.payload_json;
+  planning.calendar_windows = [
+    { start_date: '2026-09-14', end_date: '2026-09-20', phase: 'FOUNDATION', weekly_objectives: planning.weekly_objectives },
+    { start_date: '2026-09-21', end_date: '2026-09-27', phase: 'TAPER_RACE_WEEK', phase_reason_codes: ['TAPER_VOLUME_REDUCTION'],
+      weekly_objectives: { ...planning.weekly_objectives, objectives: [{ objective_id: 'later-objective' }],
+        progression: [{ family: 'threshold', action: 'HOLD', reason_codes: ['TAPER_VOLUME_REDUCTION'] }] } },
+  ];
+  const calendarRead = contract.compose({ ...pureInput, chain: calendarChain });
+  assert.equal(calendarRead.goal.phase, 'TAPER_RACE_WEEK');
+  assert.equal(calendarRead.week.weekly_objectives.objectives[0].objective_id, 'later-objective');
+  assert.deepEqual(calendarRead.decision.progression[0].reason_codes, ['TAPER_VOLUME_REDUCTION']);
+  assert.equal(calendarRead.week.calendar_window.start_date, '2026-09-21');
+  planning.calendar_windows.reverse();
+  assert.equal(contract.compose({ ...pureInput, chain: calendarChain }).content_hash, calendarRead.content_hash);
+  for (const windows of [[], null, [{ start_date: 'bad', end_date: '2026-09-27' }],
+    [planning.calendar_windows[1]], [planning.calendar_windows[0], planning.calendar_windows[0]]]) {
+    planning.calendar_windows = windows;
+    const unavailable = contract.compose({ ...pureInput, chain: calendarChain });
+    assert.equal(unavailable.week.status, 'MISSING');
+    assert.equal(unavailable.week.weekly_objectives, null);
+    assert.equal(unavailable.goal.phase, null);
+    assert.equal(unavailable.decision.status, 'MISSING', 'no first-week progression fallback');
+  }
   assert.equal(contract.compose({ ...pureInput, runs: [...pureInput.runs].reverse(), asOf: '2026-09-23T12:00:01Z' }).content_hash, pure.content_hash);
   assert.throws(() => contract.compose({ ...pureInput, runs: Array(513).fill(pureInput.runs[0]) }), /CONTEXT_BOUNDS/);
   assert.throws(() => contract.compose({ ...pureInput, shoes: [{ id: 'foreign', user_id: foreign }] }), /OWNER/);

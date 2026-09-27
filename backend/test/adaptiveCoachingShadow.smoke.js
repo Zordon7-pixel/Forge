@@ -118,20 +118,32 @@ async function main() {
     const legacyBefore = legacyComputations;
     const callsBefore = calls.length;
     const changesBefore = db.prepare('SELECT total_changes() n').get().n;
-    // Explicit long races fail before compute, even with candidate storage enabled.
+    // Supported compressed races enter adaptive computation and fail on evidence.
     await assert.rejects(plans.previewPlanForUser(OTHER, { ...request, race_ids: ['owned-road'] }, {
       goalBackwardDependencies: { ...options(mode).goalBackwardDependencies, inspectInput: () => { oldInvocations++; } } }), error => {
       assert.equal(error.code, 'GOAL_BACKWARD_GENERATION_FAILED');
-      assert.deepEqual(error.details, { reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED',
-        planning_date_local: DATE, requested_end_date: '2026-10-18', supported_end_date: addDays(DATE, 6) });
+      assert.deepEqual(error.details, { reason_code: 'REQUIRED_EXPOSURE_UNPLACEABLE' });
       return true;
     });
-    assert.equal(adaptiveComputations, adaptiveBefore, `${mode} rejects the long race before adaptive compute`);
+    assert.equal(adaptiveComputations, adaptiveBefore + 1, `${mode} computes the supported race adaptively`);
     assert.equal(legacyComputations, legacyBefore, `${mode} rejects the long race without classic compute`);
     assert.equal(oldInvocations, 0, `${mode} rejects the long race without classic diagnostics`);
     assert.equal(db.prepare('SELECT total_changes() n').get().n, changesBefore, `${mode} long race writes no rows`);
     assert.deepEqual(calls.slice(callsBefore).filter(c => /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(c.sql)), [],
       `${mode} long race attempts no writes or pruning`);
+    db.prepare('UPDATE race_events SET event_local_date=? WHERE id=? AND user_id=?').run(addDays(DATE, 42), 'owned-road', OTHER);
+    const beyondCalls = calls.length;
+    await assert.rejects(plans.previewPlanForUser(OTHER, { ...request, race_ids: ['owned-road'] }, options(mode)), error => {
+      assert.deepEqual(error.details, { reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED',
+        planning_date_local: DATE, requested_end_date: addDays(DATE, 42), supported_end_date: addDays(DATE, 41) });
+      assert.match(error.message, /42/);
+      assert.match(error.message, /Your active plan was not changed/);
+      return true;
+    });
+    assert.equal(adaptiveComputations, adaptiveBefore + 1, 'beyond maximum rejects before compute');
+    assert.equal(legacyComputations, legacyBefore);
+    assert.deepEqual(calls.slice(beyondCalls).filter(c => /\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(c.sql)), []);
+    db.prepare('UPDATE race_events SET event_local_date=? WHERE id=? AND user_id=?').run('2026-10-18', 'owned-road', OTHER);
     // A separate ordinary weekly request must still use the real adaptive engine.
     try {
       await plans.previewPlanForUser(OTHER, { ...request, race_ids: [] }, { store: false,
@@ -142,7 +154,7 @@ async function main() {
     }
     assert.equal(oldInvocations, 0, `${mode} never falls through to classic diagnostics`);
     assert.equal(legacyComputations, legacyBefore, `${mode} never falls through to classic compute`);
-    assert.equal(adaptiveComputations, adaptiveBefore + 1, `${mode} weekly request computes adaptively exactly once`);
+    assert.equal(adaptiveComputations, adaptiveBefore + 2, `${mode} weekly request computes adaptively exactly once`);
   }
   // Failure after several real inserts must roll back the whole adaptive chain.
   const failCount = totalRows('planning_pipeline_artifacts');

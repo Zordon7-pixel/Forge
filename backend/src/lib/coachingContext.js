@@ -140,7 +140,18 @@ function compose({ ownerId, chain, candidate, profile, runs = [], corrections = 
   const timezone = session.timezone;
   const observationDate = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(asOf));
   const state = byKind.athlete_state.payload_json, decision = byKind.planning_decision.payload_json;
-  const weekly = decision.weekly_objectives;
+  // A composed race calendar has per-window decisions. Never explain a later
+  // session using the first week's objectives, phase or progression ledger.
+  const hasCalendar = Object.hasOwn(decision, 'calendar_windows');
+  const windows = decision.calendar_windows;
+  const validWindows = Array.isArray(windows) && windows.length > 0 && windows.length <= 7
+    && windows.every(w => dateOnly(w?.start_date) && dateOnly(w?.end_date) && w.start_date <= w.end_date)
+    && [...windows].sort((a, b) => a.start_date.localeCompare(b.start_date))
+      .every((w, i, all) => i === 0 || all[i - 1].end_date < w.start_date);
+  const selectedWindow = validWindows ? windows.find(w => session.scheduled_local_date >= w.start_date
+    && session.scheduled_local_date <= w.end_date) : null;
+  const scopedDecision = hasCalendar ? selectedWindow : decision;
+  const weekly = scopedDecision?.weekly_objectives;
   const evidenceTime = instant(byKind.evidence_snapshot.created_at);
   const assessment = activityAssessment({ athleteId: ownerId, runs, corrections, planningDateLocal: observationDate,
     timezone, observationInstant: asOf });
@@ -225,9 +236,13 @@ function compose({ ownerId, chain, candidate, profile, runs = [], corrections = 
       recovery_pattern: missing('ATHLETE_RECOVERY_PATTERN_NOT_IMPLEMENTED') },
     goal: { goal_set: project(decision.goal_set, { primary_goal_id: true, goals: [goalSchema] }),
       goal_gaps: Array.isArray(decision.goal_gap) ? decision.goal_gap.map(g => project(g, gapSchema)) : [],
-      phase: text(decision.phase) || text(decision.phase_decision?.phase), reason_codes: list(decision.phase_reason_codes || decision.phase_decision?.reason_codes) },
+      phase: text(scopedDecision?.phase) || text(scopedDecision?.phase_decision?.phase),
+      reason_codes: scopedDecision ? list(scopedDecision.phase_reason_codes || scopedDecision.phase_decision?.reason_codes)
+        : ['SESSION_CALENDAR_WINDOW_UNAVAILABLE'] },
     week: { status: weekly ? 'PARTIAL' : 'MISSING', weekly_objectives: project(weekly, { ...fields('version weekly_objectives_hash phase week_intent'),
       objectives: [objectiveSchema], reason_codes: 'list', weekly_stress_budget: 'list' }),
+      ...(hasCalendar ? { calendar_window: selectedWindow ? project(selectedWindow, fields('start_date end_date decision_hash candidate_hash'))
+        : missing('SESSION_CALENDAR_WINDOW_UNAVAILABLE') } : {}),
       scheduled_sessions: set.sessions.filter(s => s.scheduled_local_date >= addDays(anchorDate, -((new Date(`${anchorDate}T12:00:00Z`).getUTCDay() + 6) % 7))
         && s.scheduled_local_date <= addDays(anchorDate, 6 - ((new Date(`${anchorDate}T12:00:00Z`).getUTCDay() + 6) % 7)))
         .map(s => project(s, fields('session_id scheduled_local_date scheduled_start_at workout_family role phase'))) },

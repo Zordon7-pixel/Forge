@@ -4,6 +4,12 @@ Status: implemented locally, not independently release-reviewed or deployed.
 This is a bounded composition of existing records, not the complete Adaptive
 Coaching or Shoe Intelligence feature. Overall bundle status remains PARTIAL.
 
+Compressed-calendar integration: when the accepted decision contains
+`calendar_windows`, the requested session's unique valid persisted window
+supplies phase, weekly objectives and stored progression. Missing, malformed
+or overlapping windows remain unknown; the first week is never substituted.
+This is read composition only and does not recalculate training decisions.
+
 ## Endpoint and authority
 
 `GET /api/coaching/context/:sessionId` requires the existing authenticated

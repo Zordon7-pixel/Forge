@@ -2,7 +2,7 @@ const { capacitiesFor } = require('./adaptiveCoachingObjectives');
 const { aggregateWeeklyStress, evaluateStressBudget, validateRollingHardDays } = require('./goalBackwardLoad');
 const { validateGoalBackwardCandidate, validateInterference, validateConstraints, longestRequiredSeparation } = require('./goalBackwardValidators');
 const { validateCanonicalSession } = require('./canonicalWorkout');
-const { addDays, canonicalHash } = require('./racePlanPolicy');
+const { addDays, daysBetween, canonicalHash } = require('./racePlanPolicy');
 const { EXERCISES_BY_ID } = require('./strengthDoseAccounting');
 const localDate = (instant, timezone) => new Intl.DateTimeFormat('en-CA', { timeZone: timezone,
   year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(instant));
@@ -11,33 +11,39 @@ const duration = session => session.derived_totals?.duration_s ?? 0;
 const demanding = session => ['threshold_run', 'interval_run', 'race_rhythm_run', 'long_aerobic', 'race',
   'hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation'].includes(session.workout_family);
 const lowerBody = session => (session.steps || []).some(step => EXERCISES_BY_ID[step.exercise_id]?.region === 'lower');
-function normalizeSolverConstraints(state, input = {}) {
-  const start = state.planning_date_local, end = addDays(start, 6);
+function normalizeSolverConstraints(state, input = {}, window = null) {
+  const start = window?.start_date || state.planning_date_local, end = window?.end_date || addDays(start, 6);
+  const dayCount = daysBetween(start, end) + 1;
+  const maxDays = require('./adaptiveCoachingCalendar').MAX_DAYS;
+  if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > maxDays || start < state.planning_date_local
+    || end > addDays(state.planning_date_local, maxDays - 1)) throw new Error('Invalid bounded planning window');
+  const windowCap = Math.max(28, dayCount * 2); // two internal placements/day; preserve legacy explicit-window capacity
+  const occupancyCap = Math.max(28, (dayCount + 12) * 2);
   const windows = {};
   for (const modality of ['run', 'lift']) {
-    if (!Array.isArray(input[modality]) || input[modality].length > 28) throw new Error('Supply at most 28 explicit time windows per modality');
+    if (!Array.isArray(input[modality]) || input[modality].length > windowCap) throw new Error('Excessive explicit time windows per modality');
     windows[modality] = input[modality].map(window => {
       const a = Date.parse(window.start_at), b = Date.parse(window.end_at);
       if (!Number.isFinite(a) || !Number.isFinite(b) || a >= b || b - a > 86400000
         || !/(Z|[+-]\d\d:\d\d)$/.test(window.start_at) || !/(Z|[+-]\d\d:\d\d)$/.test(window.end_at)) throw new Error('Invalid availability interval');
       const date = localDate(a, state.timezone);
-      if (date < start || date > end || localDate(b - 1, state.timezone) !== date) throw new Error('Availability must lie in the seven-local-day planning window');
+      if (date < start || date > end || localDate(b - 1, state.timezone) !== date) throw new Error('Availability must lie in the bounded local-day planning window');
       if (!state.available_days.includes(date) && !state.available_days.includes(weekday(date))) throw new Error('Availability exceeds athlete state');
       return { date, start_at: new Date(a).toISOString(), end_at: new Date(b).toISOString() };
     }).sort((a, b) => a.start_at.localeCompare(b.start_at));
   }
-  const occupied = input.occupied_sessions || [];
-  if (!Array.isArray(occupied) || occupied.length > 28 || occupied.some(s => !validateCanonicalSession(s).valid
+  const occupied = [...(input.occupied_sessions || []), ...(input.planned_sessions || [])];
+  if (!Array.isArray(occupied) || occupied.length > occupancyCap || occupied.some(s => !validateCanonicalSession(s).valid
     || !s.scheduled_start_at || !Number.isFinite(Date.parse(s.scheduled_start_at)) || duration(s) <= 0
     || localDate(s.scheduled_start_at, state.timezone) !== s.scheduled_local_date
     || s.scheduled_local_date < addDays(start, -6) || s.scheduled_local_date > addDays(end, 6))) throw new Error('Occupied sessions must be complete canonical sessions with exact times within the boundary window');
   const blocked = input.blocked_dates || [];
-  if (!Array.isArray(blocked) || blocked.length > 7 || blocked.some(d => !/^\d{4}-\d{2}-\d{2}$/.test(d) || d < start || d > end)) throw new Error('Invalid blocked dates');
+  if (!Array.isArray(blocked) || blocked.length > dayCount || blocked.some(d => !/^\d{4}-\d{2}-\d{2}$/.test(d) || d < start || d > end)) throw new Error('Invalid blocked dates');
   const locks = [...state.locks, ...(input.locks || [])], edits = [...state.manual_edits, ...(input.manual_edits || [])];
   if (locks.length > 28 || edits.length > 28 || locks.some(l => !['day_lock', 'session_lock'].includes(l.constraint_kind ?? l.kind))
     || edits.some(e => (e.constraint_kind ?? e.kind) !== 'manual_edit')) throw new Error('Unsupported or excessive athlete constraints');
   return { ...windows, occupied_sessions: occupied, blocked_dates: [...new Set(blocked)].sort(), locks, manual_edits: edits,
-    start_date: start, end_date: end, timezone: state.timezone };
+    start_date: start, end_date: end, day_count: dayCount, ...(input.rolling_policy ? { rolling_policy: input.rolling_policy } : {}), timezone: state.timezone };
 }
 function validateAdaptivePlacement(sessions, constraints, state, weeklyObjectives, { complete = false } = {}) {
   const violations = [], all = [...constraints.occupied_sessions, ...sessions];
@@ -100,6 +106,20 @@ function validateAdaptivePlacement(sessions, constraints, state, weeklyObjective
     authorized_ceiling_vector: weeklyObjectives.weekly_stress_budget });
   const occupiedDates = new Set(active.filter(inWindow).map(s => s.scheduled_local_date));
   if (occupiedDates.size === 7) violations.push({ code: 'REQUIRED_RECOVERY_DAY' });
+  if (constraints.rolling_policy) {
+    const policy = constraints.rolling_policy;
+    for (let date = constraints.start_date; date <= constraints.end_date; date = addDays(date, 1)) {
+      const trailing = active.filter(s => s.scheduled_local_date >= addDays(date, -6) && s.scheduled_local_date <= date);
+      for (const modality of ['run', 'lift']) if (trailing.filter(s => capacitiesFor(s.workout_family).includes(modality)).length > policy.capacities[modality]) violations.push({ code: 'FREQUENCY_IS_CAPACITY', modality });
+      const runs = trailing.filter(s => capacitiesFor(s.workout_family).includes('run'));
+      if (runs.reduce((n, s) => n + duration(s), 0) > policy.dose_policy.running_duration_ceiling_s
+        || policy.dose_policy.running_distance_ceiling_m !== null && runs.reduce((n, s) => n + (s.running_distance_m ?? s.derived_totals.distance_m), 0) > policy.dose_policy.running_distance_ceiling_m) violations.push({ code: 'OBSERVED_RUNNING_DOSE_EXCEEDED' });
+      const stress = aggregateWeeklyStress(trailing);
+      const rollingBudget = evaluateStressBudget(stress, { normal_ceiling_vector: policy.weekly_stress_budget, authorized_ceiling_vector: policy.weekly_stress_budget });
+      violations.push(...stress.violations, ...rollingBudget.violations);
+      if (new Set(trailing.map(s => s.scheduled_local_date)).size === 7) violations.push({ code: 'REQUIRED_RECOVERY_DAY' });
+    }
+  }
   if (complete) {
     const locks = validateConstraints(all, { locks: constraints.locks, manual_edits: constraints.manual_edits });
     violations.push(...locks.violations);
@@ -141,7 +161,7 @@ function validateAdaptiveCandidate(candidate, constraints, state, selection) {
   const validation = validateGoalBackwardCandidate(candidate, {
     training_age_class: state.training_age_class, consistency_state: state.consistency_state,
     recovery_state: state.recovery_state, safety_action: state.safety_action,
-    available_local_dates: Array.from({ length: 7 }, (_, i) => addDays(constraints.start_date, i)),
+    available_local_dates: Array.from({ length: constraints.day_count }, (_, i) => addDays(constraints.start_date, i)),
     recent_normal_running_minutes_per_week: state.recent_normal_running.median_duration_s / 60,
     minimum_weekly_demand: selection.weekly_objectives.running_demand,
     event_local_date: selection.weekly_objectives.owned_events?.find(g => g.event_kind?.startsWith('HYROX'))?.event_local_date,

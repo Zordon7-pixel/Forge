@@ -364,6 +364,25 @@ Read `FORGE.md` for:
 
 ## Dispatch Log
 
+### 2026-09-26 — Current-main release integration (local; not deployed)
+
+Non-rewriting integration preserves upstream compressed-calendar PR12 and the
+seven bounded coaching/gear fixes. Calendar composition now refreshes optional
+intent binding after its existing decision-provenance rebind; no step targets,
+dose or stress change. Coaching Context selects the requested session's unique
+persisted calendar window for objectives, phase and progression rather than
+using the first week. Missing/malformed/overlapping windows stay unknown.
+Generation now reuses the existing per-operation immutable validation scope:
+repeated canonical validation/hashing was pushing the integrated real mobile
+preview beyond its unchanged 90-second deadline. A same-fixture diagnostic
+proved the complete planning result and database rows identical with/without
+the scope (about 90s versus 45s). No search, dose, constraint or error policy
+changed; ownership/freshness checks are never cached. A deterministic regression
+covers result equality, separate requests and mutable/tampered graphs.
+Gates include the 42-day/21-day calendar, real 22-day preview/apply accepted
+surface and final-week context witness, synthetic backend/frontend regressions,
+and mobile Gear/calendar tests. Release review and deployment remain separate.
+
 ### 2026-09-23 — Shoe policy containment (patched; not deployed)
 
 The existing Gear recommendation remains a separate optional downstream call,

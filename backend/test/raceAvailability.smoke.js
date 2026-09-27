@@ -23,12 +23,12 @@ async function main() {
  f.db.prepare("INSERT INTO users(id,name,email,password_hash,timezone) VALUES (?,'First setup','first@example.invalid','','America/New_York')").run(firstOwner);
  f.db.prepare("INSERT INTO race_events(id,user_id,race_name,race_date,event_local_date,distance_miles,event_kind) VALUES ('first-army',?,'Army 10-Miler','2026-10-11','2026-10-11',10,'run_race')").run(firstOwner);
  const firstBefore=f.snapshot();
- await assert.rejects(f.plans.previewPlanForUser(firstOwner,{...req,race_ids:['first-army']},f.options('on')),e=>e.details?.reason_code==='RACE_CALENDAR_HORIZON_UNSUPPORTED');
+ await assert.rejects(f.plans.previewPlanForUser(firstOwner,{...req,race_ids:['first-army']},f.options('on')),e=>e.details?.reason_code==='CANONICAL_STRENGTH_LINK_ABSENT');
  assert.deepEqual(f.snapshot(),firstBefore);
- for(const mode of ['on','preview']) await rejected(req,'RACE_CALENDAR_HORIZON_UNSUPPORTED',f.options(mode));
+ for(const mode of ['on','preview']) await rejected(req,process.argv.includes('--complete-coverage')?'REQUIRED_EXPOSURE_UNPLACEABLE':'MEANINGFUL_DOSE_REQUIRED',f.options(mode));
  await assert.rejects(f.plans.previewPlanForUser(owner,{...req,target:{...req.target,runDaysPerWeek:3}},f.options('on')),e=>{
-  assert.equal(e.details.reason_code,'RACE_CALENDAR_HORIZON_UNSUPPORTED');
-  assert.match(e.message,/your requested session counts/);assert.doesNotMatch(e.message,/four runs and four lifts/);return true;
+  assert.equal(e.details.reason_code,process.argv.includes('--complete-coverage')?'REQUIRED_EXPOSURE_UNPLACEABLE':'MEANINGFUL_DOSE_REQUIRED');
+  assert.match(e.message,/Your active plan was not changed/);assert.doesNotMatch(e.message,/four runs and four lifts/);return true;
  });
  const weekly={...req,race_ids:[]};
  if(process.argv.includes('--complete-coverage')) {
@@ -45,7 +45,7 @@ async function main() {
  }
  const receipts=f.db.prepare("SELECT * FROM activity_measured_receipts WHERE user_id=? AND activity_kind='lift'").all(owner);
  f.db.prepare("DELETE FROM activity_measured_receipts WHERE user_id=? AND activity_kind='lift'").run(owner);
- await rejected(req,'RACE_CALENDAR_HORIZON_UNSUPPORTED');
+ await rejected(req,'CANONICAL_STRENGTH_LINK_ABSENT');
  await rejected(weekly,'CANONICAL_STRENGTH_LINK_ABSENT');
  for(const row of receipts) f.db.prepare('INSERT INTO activity_measured_receipts ('+Object.keys(row).join(',')+') VALUES ('+Object.keys(row).map(()=>'?').join(',')+')').run(...Object.values(row));
  await rejected({...weekly,target:{...weekly.target,maxSessionMinutes:5}},'MEANINGFUL_DOSE_REQUIRED');
@@ -60,7 +60,8 @@ async function main() {
  f.db.prepare("UPDATE race_events SET event_local_date='bad' WHERE id='army' AND user_id=?").run(owner);
  await assert.rejects(f.plans.previewPlanForUser(owner,req,f.options('on')),e=>e.code==='INVALID_RACE_DATE');
  f.db.prepare("UPDATE race_events SET event_local_date='2026-09-27' WHERE id='army' AND user_id=?").run(owner);
- await rejected({...req,target:{...req.target,raceDate:'2026-09-20'}},'RACE_CALENDAR_HORIZON_UNSUPPORTED');
+ await rejected({...req,target:{...req.target,raceDate:'2026-09-20'}},'MEANINGFUL_DOSE_REQUIRED');
+ assert.equal(f.observed().prepared.calendarWindow.end_date,'2026-09-27');
  // +6 uses owned local date even when race_date is later; capability alone is not success.
  f.db.prepare("UPDATE race_events SET event_local_date='2026-09-26' WHERE id='army' AND user_id=?").run(owner);
  const beforeBoundary=f.snapshot();
@@ -115,8 +116,8 @@ async function main() {
     const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(req)});
     assert.equal(response.status,409);const body=await response.json();
     assert.equal(body.code,'GOAL_BACKWARD_GENERATION_FAILED');
-    assert.deepEqual(body.details,{reason_code:'RACE_CALENDAR_HORIZON_UNSUPPORTED',planning_date_local:'2026-09-20',requested_end_date:'2026-10-11',supported_end_date:'2026-09-26'});
-    assert.match(body.error,/four runs and four lifts/);assert.doesNotMatch(body.error,falseRaceGoalRollback);
+    assert.deepEqual(body.details,{reason_code:source==='supported'?'MEANINGFUL_DOSE_REQUIRED':'CANONICAL_STRENGTH_LINK_ABSENT'});
+    assert.match(body.error,source==='supported'?/minimum useful duration/:/completed strength work/);assert.doesNotMatch(body.error,falseRaceGoalRollback);
     assert.equal((body.error.match(/Your active plan was not changed\./g)||[]).length,1);
     assert.deepEqual(f.snapshot(),before);
    }

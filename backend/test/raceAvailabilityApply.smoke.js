@@ -138,7 +138,7 @@ async function main() {
  const legacy=JSON.parse(stored);legacy.request.race_ids=['army'];
  db.prepare('UPDATE plan_generation_candidates SET planning_snapshot_json=? WHERE id=? AND user_id=?').run(JSON.stringify(legacy),on.id,f.owner);
  const legacyBefore=snapshot(), computationsBefore=computations;
- assert.equal((await plans.applyPlanCandidate(f.owner,on.id,applyBody,options('on'))).details.reason_code,'RACE_CALENDAR_HORIZON_UNSUPPORTED');
+ assert.equal((await plans.applyPlanCandidate(f.owner,on.id,applyBody,options('on'))).details.reason_code,'CANDIDATE_WINDOW_STALE');
  assert.equal(computations,computationsBefore);assert.deepEqual(snapshot(),legacyBefore);
  assert.equal((await plans.applyPlanCandidate(f.owner,on.id,{...applyBody,athlete_state_revision:99},options('on'))).code,'ATHLETE_STATE_REVISION_CHANGED');
  db.prepare('UPDATE plan_generation_candidates SET planning_snapshot_json=? WHERE id=? AND user_id=?').run(stored,on.id,f.owner);

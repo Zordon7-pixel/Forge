@@ -299,7 +299,7 @@ console.log('PLAN CANDIDATE REVIEW SMOKE OK (runtime preview/apply/read-back and
   const calls = []
   const error = Object.assign(new Error('planner limitation'), { response: { status: 409, data: {
     code: 'GOAL_BACKWARD_GENERATION_FAILED', details: { reason_code: 'RACE_CALENDAR_HORIZON_UNSUPPORTED' },
-    error: 'The current adaptive planner builds seven days. Your active plan was not changed.',
+    error: 'The current adaptive planner supports up to 42 local days. Your active plan was not changed.',
   } } })
   api.post = async url => { calls.push(url); throw error }
   try {
