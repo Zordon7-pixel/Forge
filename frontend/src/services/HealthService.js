@@ -1,5 +1,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import api from '../lib/api'
+import { getAuthenticatedUserId } from '../lib/auth'
+import { getAuthSession, isAuthSessionCurrent, subscribeAuthSession } from '../lib/tokenStore'
 import {
   announceHealthSyncResult,
   clearHealthHistoryTransferPending,
@@ -10,6 +12,7 @@ import {
   isHealthHistoryTransferPending,
   markHealthHistoryTransferPending,
   retryableHealthSyncErrors,
+  healthAccountKey,
 } from '../lib/healthSync'
 
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
@@ -90,18 +93,18 @@ function hasExpandedNativeAuthorization() {
   }
 }
 
-function workoutHistoryUpgradeRequired() {
+function workoutHistoryUpgradeRequired(accountId) {
   try {
-    return Number(localStorage.getItem(WORKOUT_IMPORT_VERSION_KEY) || 0) < REQUIRED_WORKOUT_IMPORT_VERSION
+    return Number(localStorage.getItem(healthAccountKey(WORKOUT_IMPORT_VERSION_KEY, accountId)) || 0) < REQUIRED_WORKOUT_IMPORT_VERSION
   } catch (error) {
     console.error('[HealthService] workout import version could not be read:', error?.message || error)
     return true
   }
 }
 
-function markWorkoutHistoryUpgraded() {
+function markWorkoutHistoryUpgraded(accountId) {
   try {
-    localStorage.setItem(WORKOUT_IMPORT_VERSION_KEY, String(REQUIRED_WORKOUT_IMPORT_VERSION))
+    localStorage.setItem(healthAccountKey(WORKOUT_IMPORT_VERSION_KEY, accountId), String(REQUIRED_WORKOUT_IMPORT_VERSION))
     return true
   } catch (error) {
     console.error('[HealthService] workout import version could not be saved:', error?.message || error)
@@ -109,9 +112,9 @@ function markWorkoutHistoryUpgraded() {
   }
 }
 
-function markAutoHealthSyncAttempted() {
+function markAutoHealthSyncAttempted(accountId) {
   try {
-    localStorage.setItem(AUTO_HEALTH_SYNC_LAST_SYNC_KEY, String(Date.now()))
+    localStorage.setItem(healthAccountKey(AUTO_HEALTH_SYNC_LAST_SYNC_KEY, accountId), String(Date.now()))
   } catch (error) {
     console.error('[HealthService] automatic sync timestamp could not be saved:', error?.message || error)
   }
@@ -125,11 +128,38 @@ function nativeBridgeUnavailableReason(error) {
   return message || 'Unable to reach the Apple Health bridge.'
 }
 
-class HealthService {
-  constructor() {
+export class HealthService {
+  constructor({ apiClient = api, bridge = ForgeHealth, native = isNativeRuntime, coordinatorOptions = {} } = {}) {
+    this.api = apiClient
+    this.bridge = bridge
+    this.native = native
+    this.pendingBridgeCalls = new Set()
+    this.pendingHistoryReads = new Set()
     this.healthKit = null
     this.lastNativeSync = null
-    this.nativeSyncCoordinator = createHealthSyncCoordinator((options) => this.performNativeSync(options))
+    this.nativeSyncCoordinator = createHealthSyncCoordinator((options) => this.performNativeSync(options), {
+      ...coordinatorOptions,
+      getIdentity: () => ({ ...getAuthSession(), accountId: getAuthenticatedUserId() }),
+      isCurrent: (identity) => Boolean(identity?.accountId) && isAuthSessionCurrent(identity) && getAuthenticatedUserId() === identity.accountId,
+    })
+    this.unsubscribeAuth = subscribeAuthSession(() => {
+      this.lastNativeSync = null
+      this.nativeSyncCoordinator.cancel()
+    })
+  }
+
+  dispose() { this.nativeSyncCoordinator.cancel(); this.unsubscribeAuth() }
+
+  async callNative(method, ...args) {
+    // Native HealthKit reads are not cancellable through the shipped bridge.
+    // Permit one recovery slot, then fail promptly rather than accumulating
+    // unbounded native jobs after repeated timeouts. Settlement frees a slot.
+    if (this.pendingBridgeCalls.size >= 2) {
+      throw Object.assign(new Error('Apple Health native reads are still pending. Keep the app open and retry after they finish.'), { code: 'HEALTH_NATIVE_BUSY' })
+    }
+    const call = Promise.resolve().then(() => this.bridge[method](...args))
+    this.pendingBridgeCalls.add(call)
+    try { return await call } finally { this.pendingBridgeCalls.delete(call) }
   }
 
   async loadHealthKit() {
@@ -173,20 +203,22 @@ class HealthService {
     }
   }
 
-  async initialize({ requestPermission = false } = {}) {
+  async initialize({ requestPermission = false, operation } = {}) {
     if (!isIOSDevice()) {
       return { available: false, reason: 'Apple Health is only available on iOS devices.' }
     }
 
-    if (isNativeRuntime()) {
+    if (this.native()) {
       try {
-        const status = await ForgeHealth.isAvailable()
+        const status = await this.callNative('isAvailable')
+        operation?.assertCurrent()
         if (!status?.available) {
           return { available: false, reason: 'Apple Health is not available on this iPhone.' }
         }
 
         if (requestPermission) {
-          const auth = await ForgeHealth.requestAuthorization()
+          const auth = await this.callNative('requestAuthorization')
+          operation?.assertCurrent()
           if (!auth?.authorized) {
             return { available: false, reason: 'Apple Health permission was not granted.' }
           }
@@ -251,9 +283,10 @@ class HealthService {
     return this.getSamples({ ...options, type: 'Workout' })
   }
 
-  async syncToProfile(metrics) {
+  async syncToProfile(metrics, operation) {
     if (!metrics) return null
-    const { data } = await api.post('/health/sync', {
+    operation?.assertCurrent()
+    const { data } = await this.api.post('/health/sync', {
       steps_today: metrics.stepsToday,
       calories_today: metrics.caloriesBurnedToday,
       avg_hr_bpm_last_workout: metrics.avgHeartRateFromLastRun,
@@ -294,7 +327,8 @@ class HealthService {
       running_ground_contact_time_ms: metrics.runningGroundContactTimeMs,
       running_dynamics_recorded_at: metrics.runningDynamicsRecordedAt,
       metrics_schema_version: hasExpandedNativeAuthorization() ? metrics.metricsSchemaVersion : 1,
-    })
+    }, operation ? { signal: operation.signal, forgeAuthSession: operation.identity } : {})
+    operation?.assertCurrent()
     return data
   }
 
@@ -307,24 +341,30 @@ class HealthService {
   }
 
   getRecentNativeSyncResult(maxAgeMs = 30000) {
+    if (!this.lastNativeSync || !isAuthSessionCurrent(this.lastNativeSync.identity)) return null
     const completedAt = Number(this.lastNativeSync?.completedAt || 0)
     if (!completedAt || Date.now() - completedAt > maxAgeMs) return null
     return this.lastNativeSync.result || null
   }
 
-  async performNativeSync({ requestPermission = false, syncOrigin = null } = {}) {
-    const result = await this.getHealthSummary({ requestPermission })
+  async performNativeSync({ requestPermission = false, syncOrigin = null, operation } = {}) {
+    operation.assertCurrent()
+    const accountId = operation.identity.accountId
+    const result = await this.getHealthSummary({ requestPermission, operation })
+    operation.assertCurrent()
     if (!result?.available) {
       throw new Error(result?.reason || 'Apple Health is not available.')
     }
 
-    await this.syncToProfile(result.metrics)
+    await this.syncToProfile(result.metrics, operation)
     const nativeMetricsVersion = Number(result.metrics?.metricsSchemaVersion || 1)
     const workoutUpgradeAvailable = nativeMetricsVersion >= REQUIRED_WORKOUT_IMPORT_VERSION
-    const historyOptions = (isHealthHistoryTransferPending() || (workoutUpgradeAvailable && workoutHistoryUpgradeRequired())) ? { forceFullSync: true } : {}
+    const historyOptions = (isHealthHistoryTransferPending(accountId) || workoutHistoryUpgradeRequired(accountId) || this.pendingHistoryReads.size > 0) ? { forceFullSync: true } : {}
     let profile = null
     try {
-      const { data } = await api.get('/profile/hr-zones')
+      operation.assertCurrent()
+      const { data } = await this.api.get('/profile/hr-zones', { signal: operation.signal, forgeAuthSession: operation.identity })
+      operation.assertCurrent()
       profile = data?.profile || null
       const zones = Array.isArray(data?.zones) ? data.zones : []
       if (Number.isFinite(Number(profile?.maxHr))) historyOptions.maxHR = Number(profile.maxHr)
@@ -332,45 +372,56 @@ class HealthService {
         historyOptions.zoneMinimums = zones.map((zone) => Number(zone.minBpm))
       }
     } catch (error) {
+      operation.assertCurrent()
       console.error('[HealthService] HR zone profile lookup failed:', error?.message || error)
     }
 
     // HealthKit advances its native anchor when history is read. Persist the retry checkpoint first.
-    if (!markHealthHistoryTransferPending()) {
+    operation.assertCurrent()
+    if (!markHealthHistoryTransferPending(accountId)) {
       throw new Error('Unable to checkpoint Apple Health history before syncing. Please try again.')
     }
-    const history = await this.getWorkoutHistory(historyOptions)
+    const read = this.getWorkoutHistory(historyOptions)
+    this.pendingHistoryReads.add(read)
+    let history
+    try { history = await read } finally { this.pendingHistoryReads.delete(read) }
+    operation.assertCurrent()
     const workouts = history.available && history.workouts.length > 0 ? history.workouts : result.workouts
     let importResult = { imported: 0, skipped: 0, errors: [] }
     if (Array.isArray(workouts) && workouts.length > 0) {
       try {
         importResult = await importHealthWorkoutBatches(workouts, async (batch) => {
-          const { data } = await api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS })
+          operation.assertCurrent()
+          const { data } = await this.api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS, signal: operation.signal, forgeAuthSession: operation.identity })
+          operation.assertCurrent()
           return data
         })
       } catch (error) {
-        markHealthHistoryTransferPending()
+        operation.assertCurrent()
+        markHealthHistoryTransferPending(accountId)
         throw error
       }
     }
 
+    operation.assertCurrent()
     const unresolved = retryableHealthSyncErrors(importResult.errors)
     const importComplete = isHealthHistoryImportComplete({
-      historyAvailable: history.available,
+      historyAvailable: history.available && this.pendingHistoryReads.size === 0,
       errors: importResult.errors,
     })
     let upgradeCommitted = true
     if (importComplete && workoutUpgradeAvailable) {
-      upgradeCommitted = markWorkoutHistoryUpgraded()
+      upgradeCommitted = markWorkoutHistoryUpgraded(accountId)
     }
-    const complete = importComplete && upgradeCommitted
+    let complete = importComplete && upgradeCommitted
     if (complete) {
-      clearHealthHistoryTransferPending()
-    } else {
-      markHealthHistoryTransferPending()
+      complete = clearHealthHistoryTransferPending(accountId)
+    }
+    if (!complete) {
+      markHealthHistoryTransferPending(accountId)
     }
 
-    markAutoHealthSyncAttempted()
+    markAutoHealthSyncAttempted(accountId)
 
     const syncResult = {
       ...result,
@@ -384,31 +435,33 @@ class HealthService {
       complete,
       status: complete ? 'complete' : 'partial',
     }
-    this.lastNativeSync = { result: syncResult, completedAt: Date.now() }
-    announceHealthSyncResult(syncResult, { complete, origin: syncOrigin })
+    operation.assertCurrent()
+    this.lastNativeSync = { result: syncResult, completedAt: Date.now(), identity: operation.identity }
+    announceHealthSyncResult(syncResult, { complete, origin: syncOrigin, accountId, assertCurrent: operation.assertCurrent })
     return syncResult
   }
 
   markAutoHealthSyncAttempted() {
-    markAutoHealthSyncAttempted()
+    const accountId = getAuthenticatedUserId()
+    if (accountId) markAutoHealthSyncAttempted(accountId)
   }
 
   addWorkoutObserverListener(callback) {
-    if (!isNativeRuntime() || typeof ForgeHealth.addListener !== 'function') return null
-    return ForgeHealth.addListener('workoutObserved', callback)
+    if (!this.native() || typeof this.bridge.addListener !== 'function') return null
+    return this.bridge.addListener('workoutObserved', callback)
   }
 
   async getWorkoutHistory(options = {}) {
-    if (!isNativeRuntime()) {
+    if (!this.native()) {
       return { available: false, reason: 'Apple Health workout history requires the native iOS app.', workouts: [] }
     }
 
     try {
-      if (typeof ForgeHealth.getWorkoutHistory !== 'function') {
+      if (typeof this.bridge.getWorkoutHistory !== 'function') {
         return { available: false, reason: 'Update TestFlight to sync full Apple Health workout history.', workouts: [] }
       }
 
-      const response = await ForgeHealth.getWorkoutHistory(options)
+      const response = await this.callNative('getWorkoutHistory', options)
       return {
         available: true,
         reason: null,
@@ -439,7 +492,9 @@ class HealthService {
     }
 
     try {
-      const summary = await ForgeHealth.getSummary()
+      options.operation?.assertCurrent()
+      const summary = await this.callNative('getSummary')
+      options.operation?.assertCurrent()
       const metricsSchemaVersion = Number(summary?.metricsSchemaVersion || 1)
       if (options.requestPermission && metricsSchemaVersion >= REQUIRED_HEALTH_AUTH_VERSION) {
         markNativeAuthorized(REQUIRED_HEALTH_AUTH_VERSION)
@@ -502,7 +557,7 @@ class HealthService {
   }
 
   async getHealthSummary(options = {}) {
-    if (isNativeRuntime()) {
+    if (this.native()) {
       return this.getNativeHealthSummary(options)
     }
 

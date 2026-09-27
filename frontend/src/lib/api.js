@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { clearToken, getToken } from './tokenStore.js'
+import { clearToken, getToken, isAuthSessionCurrent } from './tokenStore.js'
 
 export const API_MUTATION_STATE_EVENT = 'forge:api-mutation-state'
 
@@ -43,6 +43,9 @@ export function hasPendingApiMutation() {
 }
 
 api.interceptors.request.use(cfg => {
+  if (cfg.forgeAuthSession && !isAuthSessionCurrent(cfg.forgeAuthSession)) {
+    throw new axios.CanceledError('Account changed before health request dispatch.')
+  }
   const token = getToken()
   if (token) cfg.headers.Authorization = `Bearer ${token}`
   const now = new Date()
@@ -69,7 +72,8 @@ api.interceptors.response.use(
   },
   error => {
     settleMutation(error?.config)
-    if (error?.response?.status === 401 && !isAuthFlow(error.config?.url)) {
+    if (error?.response?.status === 401 && !isAuthFlow(error.config?.url)
+      && (!error.config?.forgeAuthSession || isAuthSessionCurrent(error.config.forgeAuthSession))) {
       clearToken()
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.location.assign('/login')

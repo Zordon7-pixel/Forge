@@ -364,6 +364,17 @@ Read `FORGE.md` for:
 
 ## Dispatch Log
 
+### 2026-09-27 — Foreground Apple sync liveness (patched; not deployed)
+
+Workout events now bypass periodic throttling and coalesce durable account-scoped
+follow-ups. Shared syncs have a bounded deadline, abort signals and login-generation
+guards through native continuations, profile/import requests, checkpoints and
+publication. Scoped API dispatch rejects account replacement and stale401 logout.
+Uncancellable native work is capped with one recovery slot; uncertain anchors
+remain pending/full-history retryable. See `APPLE-HEALTH-FOREGROUND-SYNC.md` and
+`healthSyncLiveness.smoke.mjs`. No Swift, schema, production account or native
+background-delivery claim is part of this local repair.
+
 ### 2026-09-27 — Coaching Context production SQL repair (patched; not deployed)
 
 Disposable live QA exposed `SELECT users.timezone`, a column absent from actual

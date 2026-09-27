@@ -2,7 +2,8 @@ import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
-import { isLoggedIn, getUser } from './lib/auth'
+import { isLoggedIn, getUser, getAuthenticatedUserId } from './lib/auth'
+import { mountForegroundHealthSync, syncConnectedStrava } from './lib/healthForegroundSync'
 import { clearToken, rememberPostAuthRedirect } from './lib/tokenStore'
 import { clearPostRunCheckInDraft } from './lib/postRunCheckInDraft'
 import track from './lib/track'
@@ -71,33 +72,11 @@ const Injury = lazyWithRetry(() => import('./pages/Injury'))
 const WeeklyRecap = lazyWithRetry(() => import('./pages/WeeklyRecap'))
 const Upgrade = lazyWithRetry(() => import('./pages/Upgrade'))
 
-const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
-const AUTO_HEALTH_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
-const AUTO_STRAVA_SYNC_LAST_SYNC_KEY = 'forge_auto_strava_sync_last_sync_at'
-const AUTO_STRAVA_SYNC_MIN_INTERVAL_MS = 15 * 60 * 1000
 
 function isNativeRuntime() {
   return typeof Capacitor !== 'undefined'
     && typeof Capacitor.isNativePlatform === 'function'
     && Capacitor.isNativePlatform()
-}
-
-function shouldAttemptSync() {
-  try {
-    const lastSyncAt = Number(localStorage.getItem(AUTO_HEALTH_SYNC_LAST_SYNC_KEY) || 0)
-    return !lastSyncAt || Date.now() - lastSyncAt >= AUTO_HEALTH_SYNC_MIN_INTERVAL_MS
-  } catch {
-    return true
-  }
-}
-
-function shouldAttemptStravaSync() {
-  try {
-    const lastSyncAt = Number(localStorage.getItem(AUTO_STRAVA_SYNC_LAST_SYNC_KEY) || 0)
-    return !lastSyncAt || Date.now() - lastSyncAt >= AUTO_STRAVA_SYNC_MIN_INTERVAL_MS
-  } catch {
-    return true
-  }
 }
 
 function AppOpenTelemetry() {
@@ -120,87 +99,14 @@ function AppOpenTelemetry() {
   return null
 }
 
-async function syncConnectedStrava() {
-  if (!shouldAttemptStravaSync()) return
-  const status = await api.get('/strava/status')
-  if (status.data?.connected) await api.post('/strava/sync')
-  try {
-    localStorage.setItem(AUTO_STRAVA_SYNC_LAST_SYNC_KEY, String(Date.now()))
-  } catch (error) {
-    console.warn('[AutoHealthSync] Strava sync timestamp save failed:', error?.message || error)
-  }
-}
-
 function AutoHealthSync() {
-  const lastForegroundSyncAtRef = useRef(0)
-  const syncInFlightRef = useRef(false)
-
   useEffect(() => {
     if (!isNativeRuntime()) return undefined
-
-    let cancelled = false
-    const listenerHandles = []
-
-    const sync = async ({ force = false, bypassInterval = false } = {}) => {
-      if (cancelled || syncInFlightRef.current || !isLoggedIn()) return
-
-      const now = Date.now()
-      if (force && now - lastForegroundSyncAtRef.current < AUTO_HEALTH_SYNC_MIN_INTERVAL_MS) return
-      if (!bypassInterval && !shouldAttemptSync()) return
-
-      if (force) lastForegroundSyncAtRef.current = now
-      syncInFlightRef.current = true
-      try {
-        await HealthService.syncNativeData()
-      } catch (error) {
-        console.warn('[AutoHealthSync] sync failed:', error?.message)
-      }
-      try {
-        await syncConnectedStrava()
-      } catch (error) {
-        console.warn('[AutoHealthSync] Strava enrichment failed:', error?.message || error)
-      } finally {
-        syncInFlightRef.current = false
-      }
-    }
-
-    // A cold launch must attempt an incremental sync even if the previous process synced recently.
-    sync({ force: true, bypassInterval: true })
-    const interval = window.setInterval(() => sync(), AUTO_HEALTH_SYNC_MIN_INTERVAL_MS)
-
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') sync({ force: true })
-    }
-    document.addEventListener('visibilitychange', handleVisibility)
-
-    try {
-      const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        if (isActive) sync({ force: true })
-      })
-      const resumeHandle = CapacitorApp.addListener('resume', () => sync({ force: true }))
-      const workoutHandle = HealthService.addWorkoutObserverListener(() => sync({ force: true, bypassInterval: true }))
-
-      Promise.all([appStateHandle, resumeHandle, workoutHandle].filter(Boolean))
-        .then((handles) => {
-          if (cancelled) {
-            handles.forEach((handle) => handle?.remove?.())
-            return
-          }
-          listenerHandles.push(...handles)
-        })
-        .catch((error) => {
-          console.warn('[AutoHealthSync] app listener setup failed:', error?.message)
-        })
-    } catch (error) {
-      console.warn('[AutoHealthSync] app listener setup failed:', error?.message)
-    }
-
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-      document.removeEventListener('visibilitychange', handleVisibility)
-      listenerHandles.forEach((handle) => handle?.remove?.())
-    }
+    const lifecycle = mountForegroundHealthSync({
+      service: HealthService, app: CapacitorApp, documentTarget: document,
+      getAccountId: getAuthenticatedUserId, afterSync: (session) => syncConnectedStrava(api, session),
+    })
+    return () => lifecycle.dispose()
   }, [])
 
   return null

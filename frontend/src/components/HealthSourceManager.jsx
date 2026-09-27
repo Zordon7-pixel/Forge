@@ -3,6 +3,7 @@ import { Activity, HeartPulse, RefreshCw, Watch } from 'lucide-react'
 import api from '../lib/api'
 import { formatFreshness, providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import HealthService from '../services/HealthService'
+import { getAuthenticatedUserId } from '../lib/auth'
 import {
   getLastHealthSyncResult,
   HEALTH_SYNC_RESULT_EVENT,
@@ -26,7 +27,7 @@ function SourcePill({ icon: Icon, label, detail }) {
 export default function HealthSourceManager() {
   const [health, setHealth] = useState(null)
   const [runs, setRuns] = useState([])
-  const [lastSyncResult, setLastSyncResult] = useState(() => getLastHealthSyncResult())
+  const [lastSyncResult, setLastSyncResult] = useState(() => getLastHealthSyncResult(getAuthenticatedUserId()))
   const [syncing, setSyncing] = useState(false)
   const [notice, setNotice] = useState('')
   const isNativeRuntime = typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
@@ -49,7 +50,7 @@ export default function HealthSourceManager() {
   useEffect(() => {
     loadSources()
     const handleSyncResult = (event) => {
-      setLastSyncResult(getLastHealthSyncResult())
+      setLastSyncResult(getLastHealthSyncResult(getAuthenticatedUserId()))
       if (shouldRefreshPageForHealthSyncEvent(event)) loadSources()
     }
     window.addEventListener(HEALTH_SYNC_RESULT_EVENT, handleSyncResult)
@@ -77,7 +78,7 @@ export default function HealthSourceManager() {
     setNotice('')
     try {
       const result = await HealthService.syncNativeData({ requestPermission: true })
-      setLastSyncResult(getLastHealthSyncResult())
+      setLastSyncResult(getLastHealthSyncResult(getAuthenticatedUserId()))
       setNotice(healthSyncNotice(result))
       await loadSources()
     } catch (err) {

@@ -4,6 +4,10 @@ export const HEALTH_SYNC_ORIGIN_PULL_REFRESH = 'pull_to_refresh'
 export const HEALTH_IMPORT_BATCH_SIZE = 10
 export const HEALTH_IMPORT_TIMEOUT_MS = 30000
 export const HEALTH_PULL_REFRESH_DEADLINE_MS = 15000
+// Separate from the gesture deadline: an uncancellable native bridge must not
+// retain the shared operation forever. Late continuations must assertCurrent.
+export const HEALTH_SYNC_OPERATION_DEADLINE_MS = 120000
+export const healthAccountKey = (key, accountId) => accountId ? `${key}:${encodeURIComponent(accountId)}` : key
 
 export class HealthPullRefreshTimeoutError extends Error {
   constructor(deadlineMs = HEALTH_PULL_REFRESH_DEADLINE_MS) {
@@ -18,18 +22,18 @@ const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 const HEALTH_HISTORY_TRANSFER_PENDING_KEY = 'forge.health.resyncNeeded'
 let activeHealthPullRefreshes = 0
 
-export function isHealthHistoryTransferPending() {
+export function isHealthHistoryTransferPending(accountId) {
   try {
-    return localStorage.getItem(HEALTH_HISTORY_TRANSFER_PENDING_KEY) === '1'
+    return localStorage.getItem(healthAccountKey(HEALTH_HISTORY_TRANSFER_PENDING_KEY, accountId)) === '1'
   } catch (error) {
     console.warn('[health-sync] transfer state lookup failed:', error?.message || error)
     return true
   }
 }
 
-export function markHealthHistoryTransferPending() {
+export function markHealthHistoryTransferPending(accountId) {
   try {
-    localStorage.setItem(HEALTH_HISTORY_TRANSFER_PENDING_KEY, '1')
+    localStorage.setItem(healthAccountKey(HEALTH_HISTORY_TRANSFER_PENDING_KEY, accountId), '1')
     return true
   } catch (error) {
     console.error('[health-sync] transfer state save failed:', error?.message || error)
@@ -37,9 +41,9 @@ export function markHealthHistoryTransferPending() {
   }
 }
 
-export function clearHealthHistoryTransferPending() {
+export function clearHealthHistoryTransferPending(accountId) {
   try {
-    localStorage.removeItem(HEALTH_HISTORY_TRANSFER_PENDING_KEY)
+    localStorage.removeItem(healthAccountKey(HEALTH_HISTORY_TRANSFER_PENDING_KEY, accountId))
     return true
   } catch (error) {
     console.error('[health-sync] transfer state cleanup failed:', error?.message || error)
@@ -91,21 +95,36 @@ export function isHealthHistoryImportComplete({ historyAvailable, errors } = {})
   return Boolean(historyAvailable) && retryableHealthSyncErrors(errors).length === 0
 }
 
-export function createHealthSyncCoordinator(performSync) {
+export function createHealthSyncCoordinator(performSync, {
+  deadlineMs = HEALTH_SYNC_OPERATION_DEADLINE_MS,
+  schedule = (fn, ms) => globalThis.setTimeout(fn, ms),
+  cancel = (id) => globalThis.clearTimeout(id),
+  getIdentity = () => null,
+  isCurrent = () => true,
+} = {}) {
   if (typeof performSync !== 'function') throw new Error('Health sync coordinator requires an executor.')
   let activeOperation = null
 
   return {
     async run(options = {}) {
+      const identity = getIdentity()
+      const assertIdentity = () => {
+        if (!isCurrent(identity)) throw Object.assign(new Error('Apple Health sync account changed.'), { code: 'HEALTH_SYNC_CANCELLED' })
+      }
       const requestPermission = Boolean(options.requestPermission)
       const forceFresh = Boolean(options.forceFresh)
+      // A newly observed workout cannot be acknowledged by a read already in
+      // progress, even if that read itself was a manual/forceFresh request.
+      const observedDuringOperation = options.afterActive ? activeOperation : null
 
       while (true) {
+        assertIdentity()
         const sharedOperation = activeOperation
         if (sharedOperation) {
           try {
             const sharedResult = await sharedOperation.promise
-            const needsFreshOperation = forceFresh && !sharedOperation.forceFresh
+            assertIdentity()
+            const needsFreshOperation = (forceFresh && !sharedOperation.forceFresh) || sharedOperation === observedDuringOperation
             const needsPermissionOperation = requestPermission
               && !sharedOperation.requestPermission
               && sharedResult?.authorizationUpgradeRequired
@@ -113,7 +132,7 @@ export function createHealthSyncCoordinator(performSync) {
               return sharedResult
             }
           } catch (error) {
-            const canRetryFresh = forceFresh && !sharedOperation.forceFresh
+            const canRetryFresh = (forceFresh && !sharedOperation.forceFresh) || sharedOperation === observedDuringOperation
             const canRetryWithPermission = requestPermission && !sharedOperation.requestPermission
             if (!canRetryFresh && !canRetryWithPermission) throw error
           }
@@ -125,12 +144,35 @@ export function createHealthSyncCoordinator(performSync) {
           requestPermission,
           promise: null,
         }
-        operation.promise = Promise.resolve().then(() => performSync({ ...options, forceFresh, requestPermission }))
+        const controller = new AbortController()
+        let rejectCancellation
+        const cancelled = new Promise((resolve, reject) => { rejectCancellation = reject })
+        operation.abort = (code = 'HEALTH_SYNC_CANCELLED') => {
+          if (controller.signal.aborted) return
+          const error = Object.assign(new Error(code === 'HEALTH_SYNC_TIMEOUT' ? 'Apple Health sync timed out; retry is available.' : 'Apple Health sync cancelled.'), { code })
+          controller.abort(error)
+          rejectCancellation(error)
+        }
+        const assertCurrent = () => {
+          assertIdentity()
+          if (controller.signal.aborted || activeOperation !== operation) {
+            throw controller.signal.reason || Object.assign(new Error('Apple Health sync superseded.'), { code: 'HEALTH_SYNC_CANCELLED' })
+          }
+        }
         activeOperation = operation
+        const timer = schedule(() => operation.abort('HEALTH_SYNC_TIMEOUT'), deadlineMs)
+        operation.promise = Promise.race([
+          cancelled,
+          Promise.resolve().then(() => {
+            assertCurrent()
+            return performSync({ ...options, forceFresh, requestPermission, operation: { identity, signal: controller.signal, assertCurrent } })
+          }).then((result) => { assertCurrent(); return result }),
+        ])
 
         try {
           return await operation.promise
         } finally {
+          cancel(timer)
           if (activeOperation === operation) activeOperation = null
         }
       }
@@ -138,6 +180,7 @@ export function createHealthSyncCoordinator(performSync) {
     hasActiveOperation() {
       return Boolean(activeOperation)
     },
+    cancel() { activeOperation?.abort() },
   }
 }
 
@@ -218,9 +261,9 @@ export async function runHealthAwarePageRefresh({
   }
 }
 
-export function getLastHealthSyncResult() {
+export function getLastHealthSyncResult(accountId) {
   try {
-    const parsed = JSON.parse(localStorage.getItem(HEALTH_SYNC_RESULT_KEY) || 'null')
+    const parsed = JSON.parse(localStorage.getItem(healthAccountKey(HEALTH_SYNC_RESULT_KEY, accountId)) || 'null')
     return parsed && typeof parsed === 'object' ? parsed : null
   } catch (error) {
     console.warn('[health-sync] result lookup failed:', error?.message || error)
@@ -232,7 +275,8 @@ export function shouldRefreshPageForHealthSyncEvent() {
   return activeHealthPullRefreshes === 0
 }
 
-export function announceHealthSyncResult(result, { complete = true, origin = null } = {}) {
+export function announceHealthSyncResult(result, { complete = true, origin = null, accountId = null, assertCurrent = () => {} } = {}) {
+  assertCurrent()
   const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || result?.total || 0)
   const retryableErrors = retryableHealthSyncErrors(result?.errors)
   const summary = {
@@ -248,14 +292,16 @@ export function announceHealthSyncResult(result, { complete = true, origin = nul
   }
 
   try {
-    localStorage.setItem(HEALTH_SYNC_RESULT_KEY, JSON.stringify(summary))
+    localStorage.setItem(healthAccountKey(HEALTH_SYNC_RESULT_KEY, accountId), JSON.stringify(summary))
   } catch (error) {
     console.warn('[health-sync] result save failed:', error?.message || error)
   }
 
   if (typeof window !== 'undefined') {
+    assertCurrent()
     const detail = { ...summary, metrics: result?.metrics || null, origin }
     window.dispatchEvent(new CustomEvent(HEALTH_SYNC_RESULT_EVENT, { detail }))
+    assertCurrent()
     if (complete) window.dispatchEvent(new CustomEvent(HEALTH_SYNC_COMPLETED_EVENT, { detail }))
   }
 

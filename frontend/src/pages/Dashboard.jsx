@@ -505,7 +505,7 @@ export default function Dashboard() {
         let result = HealthService.getRecentNativeSyncResult()
         if (result) {
           profileAlreadySynced = true
-        } else if (HealthService.hasNativeSyncInFlight()) {
+        } else if (HealthService.native() || HealthService.hasNativeSyncInFlight()) {
           result = await HealthService.syncNativeData()
           profileAlreadySynced = true
         } else {

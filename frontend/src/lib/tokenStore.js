@@ -4,6 +4,33 @@ import { discardRunCompletionHandoff } from './runCompletionHandoff.js'
 const TOKEN_KEY = 'forge_token'
 const POST_AUTH_REDIRECT_KEY = 'forge_post_auth_redirect'
 const POST_AUTH_REDIRECT_TTL_MS = 24 * 60 * 60 * 1000
+let authGeneration = 0
+const authListeners = new Set()
+
+export function getAuthSession() {
+  return { token: getToken(), generation: authGeneration }
+}
+
+export function isAuthSessionCurrent(session) {
+  return Boolean(session?.token) && session.token === getToken() && session.generation === authGeneration
+}
+
+export function subscribeAuthSession(listener) {
+  authListeners.add(listener)
+  return () => authListeners.delete(listener)
+}
+
+function authChanged() {
+  authGeneration += 1
+  for (const listener of authListeners) listener()
+}
+
+// Other same-origin tabs do not call this module's setToken/clearToken.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key === TOKEN_KEY || event.key === null) authChanged()
+  })
+}
 
 function safeInternalPath(value) {
   const path = String(value || '')
@@ -18,6 +45,7 @@ export function getToken() {
 export function setToken(token) {
   const previousToken = localStorage.getItem(TOKEN_KEY)
   localStorage.setItem(TOKEN_KEY, token)
+  if (previousToken !== String(token)) authChanged()
   if (previousToken !== null && previousToken !== String(token)) {
     clearActiveRunSession()
     discardRunCompletionHandoff()
@@ -29,6 +57,7 @@ export function clearToken() {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(POST_AUTH_REDIRECT_KEY)
   } finally {
+    authChanged()
     clearActiveRunSession()
     discardRunCompletionHandoff()
   }
