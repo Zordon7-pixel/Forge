@@ -189,13 +189,28 @@ const repoRoot = path.join(__dirname, '..', '..');
 const appSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/App.jsx'), 'utf8');
 const healthServiceSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/services/HealthService.js'), 'utf8');
 check(/if \(!isNativeRuntime\(\)\) return undefined/.test(appSource), 'automatic health sync is native-only');
-check(/sync\(\{ force: true, bypassInterval: true \}\)[\s\S]*window\.setInterval\(\(\) => sync\(\), AUTO_HEALTH_SYNC_MIN_INTERVAL_MS\)/.test(appSource), 'native cold launch forces one sync and retains the bounded refresh interval');
-check(/visibilityState === 'visible'[\s\S]*sync\(\{ force: true \}\)/.test(appSource), 'returning to the foreground triggers a bounded sync');
-check(/appStateChange[\s\S]*isActive[\s\S]*sync\(\{ force: true \}\)/.test(appSource), 'Capacitor active-state changes trigger sync');
-check(/await this\.syncToProfile\(result\.metrics\)/.test(healthServiceSource), 'native summary metrics are sent to the authenticated profile');
-check(/await this\.getWorkoutHistory\(historyOptions\)/.test(healthServiceSource), 'automatic sync requests workout history');
-check(/importHealthWorkoutBatches\(workouts,[\s\S]*api\.post\('\/import\/health', \{ workouts: batch \}, \{ timeout: HEALTH_IMPORT_TIMEOUT_MS \}\)/.test(healthServiceSource), 'automatic sync batches classified workouts through the idempotent endpoint');
-check(/markAutoHealthSyncAttempted\(\)/.test(healthServiceSource), 'only the completed sync path records the throttle timestamp');
+// App delegates lifecycle policy now. Check the production wiring here, then
+// execute the real modules below rather than demanding the obsolete inline body.
+check(/mountForegroundHealthSync\(\{[\s\S]*service: HealthService, app: CapacitorApp, documentTarget: document/.test(appSource)
+  && /getAccountId: getAuthenticatedUserId/.test(appSource)
+  && /return \(\) => lifecycle\.dispose\(\)/.test(appSource), 'native lifecycle uses the tested service, account identity and cleanup');
+check(healthServiceSource.includes('await this.syncToProfile(result.metrics, operation)'), 'summary persistence retains its operation/account fence');
+check(healthServiceSource.includes('const read = this.getWorkoutHistory(historyOptions)')
+  && healthServiceSource.includes('history = await read'), 'native history remains awaited while tracking late reads');
+check(healthServiceSource.includes("this.api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS, signal: operation.signal, forgeAuthSession: operation.identity })"), 'workout batches retain timeout, cancellation and captured login identity');
+check(healthServiceSource.includes('markAutoHealthSyncAttempted(accountId)'), 'settled sync records an account-scoped throttle timestamp, not a global success claim');
+
+for (const [file, marker, contract] of [
+  ['healthAutoSync.smoke.mjs', 'HEALTH AUTO-SYNC SMOKE OK', 'batching, single-flight, pull settlement and refresh wiring'],
+  ['healthSyncLiveness.smoke.mjs', 'HEALTH SYNC LIVENESS OK:', 'cold/resume cooldown, observed-workout bypass, real profile/import writes, login-generation fencing and teardown'],
+]) {
+  const result = spawnSync(process.execPath, [path.join(repoRoot, 'frontend/test', file)], {
+    cwd: repoRoot, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+  });
+  check(result.status === 0 && String(result.stdout || '').includes(marker), `${file}: ${contract}`);
+  if (result.status !== 0) console.error(result.error || result.stderr || result.stdout);
+  else console.log(`ok - executed ${file}: ${contract}`);
+}
 
 section('goal-backward v2.4 binary acceptance ownership');
 const acceptanceOwners = new Map([

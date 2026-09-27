@@ -91,6 +91,27 @@ try {
   assert.equal(auth.getAuthenticatedUserId(), 'owner-c', 'stale401 cannot clear successor login')
   responseHook = null
 
+  // Successful real-service path: summary and history reach scoped API writes.
+  reset()
+  {
+    const f = fixture({ getSummary: async () => ({ metricsSchemaVersion: 6, stepsToday: 321 }) })
+    const before = calls.length
+    const result = await f.service.syncNativeData()
+    const writes = calls.slice(before)
+    const profile = writes.find(call => call.path === '/health/sync')
+    const imports = writes.filter(call => call.path === '/import/health')
+    assert.equal(result.complete, true); assert.equal(result.imported, 1)
+    assert.equal(profile.data.steps_today, 321, 'native summary reaches real profile persistence')
+    assert.equal(f.historyOptions.length, 1, 'real service requests native history')
+    assert.equal(imports.length, 1); assert.equal(imports[0].data.workouts[0].id, 'physical-1')
+    for (const call of writes) {
+      assert.equal(call.account.accountId, 'owner-a', 'profile, HR lookup and import share captured account')
+      assert.equal(tokens.isAuthSessionCurrent(call.account), true)
+      assert.equal(call.signal.aborted, false, 'live scoped requests retain cancellation signal')
+    }
+    f.service.dispose()
+  }
+
   reset()
   const stravaGate = deferred(), stravaBefore = calls.length
   responseHook = async (config) => { if (config.url === '/strava/status') { await stravaGate.promise; return { connected: true } } }
@@ -375,6 +396,9 @@ try {
     await time.advance(60000); listeners.get('workoutObserved')(); await flush()
     assert.equal(summaries, 2, 'new workout within60s bypasses normal cooldown')
     listeners.get('resume')(); await flush(); assert.equal(summaries, 2)
+    listeners.get('appStateChange')({ isActive: false }); await flush(); assert.equal(summaries, 2)
+    listeners.get('appStateChange')({ isActive: true }); await flush(); assert.equal(summaries, 2, 'Capacitor activation respects cooldown')
+    doc.dispatchEvent(new Event('visibilitychange')); await flush(); assert.equal(summaries, 2, 'visible foreground return respects cooldown')
     await time.advance(300000); assert.equal(summaries, 3, 'periodic cooldown expires using the same persisted/operation clock')
     hold = deferred(); listeners.get('workoutObserved')(); await flush()
     for (let i = 0; i < 8; i++) listeners.get('workoutObserved')()
@@ -395,5 +419,5 @@ try {
     const remount = mount(); await flush(); assert.equal(summaries, before + 1); remount.dispose(); f.service.dispose()
     Date.now = realNow
   }
-  console.log('HEALTH SYNC LIVENESS OK: real service/coordinator/API interceptors; timeout, late anchor, auth generations, partial retry, permission, pull deadline, event burst, teardown; no external calls')
+  console.log('HEALTH SYNC LIVENESS OK: real service/coordinator/API interceptors; profile/import account identity, cooldown, observer bypass, timeout, late anchor, auth generations, partial retry, permission, pull deadline, event burst, teardown; no external calls')
 } finally { await vite.close() }

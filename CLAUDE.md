@@ -5,6 +5,13 @@
 
 ---
 
+## Sync CI acceptance maintenance — 2026-09-27
+
+`finalBetaTrainingTruth.smoke.js` now checks delegated foreground wiring and
+executes the real `healthAutoSync`/`healthSyncLiveness` suites for cooldown,
+observer bypass, profile/import account fencing and teardown. Stale inline-App
+regex assumptions were replaced; production behavior is unchanged.
+
 ## What This App Is
 
 Forge is a coaching app for **hybrid runners/lifters** — people balancing running, strength work, readiness, and recovery. Do not position it as a generic athlete tracker.
