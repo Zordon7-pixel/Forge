@@ -160,6 +160,38 @@ async function main() {
   console.log('cross-week dose, rest and elapsed spacing negatives with passing controls; null canonical totals reject');
   console.log('generated 21-day calendar', result.selected_candidate.candidate_hash, 'phases FOUNDATION/FOUNDATION/TAPER_RACE_WEEK; exact road race 2026-10-04');
 
+  // Adversarial last-window seam: no later occupancy validation can catch this.
+  // Rehash the corrupted source so rejection proves semantic validation, not
+  // merely detection of an outdated enclosing content hash.
+  const solver = require('../src/lib/adaptiveCoachingSolver'), originalSolver = solver.buildAdaptiveCoachingCandidate;
+  for (const tamper of [
+    s => { s.workout_semantics.source.prescribed_steps_hash = 'tampered-original'; },
+    s => { s.workout_semantics.primary_step_ids = ['foreign-primary']; },
+    s => { s.workout_semantics.primary_purpose = s.workout_family === 'easy_run' ? 'interval_run' : 'easy_run'; },
+    s => { s.workout_semantics.source.decision_id = 'foreign-decision'; },
+  ]) {
+    let injected = 0;
+    solver.buildAdaptiveCoachingCandidate = args => {
+      const built = originalSolver(args);
+      if (args.foundation.decision.calendar_window.end_date !== window.end_date) return built;
+      const corrupt = JSON.parse(JSON.stringify(built));
+      const original = corrupt.selected_candidate.sessions.find(s => s.workout_semantics);
+      assert.ok(original);
+      tamper(original); original.content_hash = canonical.canonicalWorkoutHash(original);
+      assert.equal(canonical.validateCanonicalSession(original).valid, false);
+      injected++;
+      return corrupt;
+    };
+    try {
+      assert.throws(() => calendar.buildProgram({ foundation, availability, calendarWindow: window }),
+        /Invalid source canonical session in adaptive calendar composition/);
+      assert.equal(injected, 1, 'only final-window source is corrupted');
+    } finally { solver.buildAdaptiveCoachingCandidate = originalSolver; }
+  }
+  assert.equal(result.selected_candidate.candidate_hash, 'b466c511d822c76d012b47ab9c5eadc5a6da521ce8b83d893588217196b3a17f',
+    'valid calendar physiological/metadata identity is unchanged from reviewed integration');
+  console.log('final-window source hash, primary IDs, purpose and decision binding all reject before rebind');
+
   const athlete = await f.armyFixture();
   if (process.argv.includes('--route-positive')) return positiveRoute(athlete);
   for (const mode of ['preview', 'on']) {

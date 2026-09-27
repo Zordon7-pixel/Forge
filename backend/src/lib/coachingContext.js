@@ -133,6 +133,48 @@ const objectiveSchema = { ...fields('objective_id requirement_id role priority_s
 const goalSchema = { ...fields('goal_id source_revision event_revision event_kind event_local_date event_state priority goal_type target_time_s distance_miles'), ...reasons };
 const gapSchema = { ...fields('goal_id goal_gap_hash days_remaining weeks_remaining derived_target_pace_s_per_km gap_seconds confidence feasibility_status training_pace_authority'),
   goal: goalSchema, target_demand: fields('distance_m duration_s'), demonstrated_fitness: fields('projected_duration_s pace_s_per_km'), ...reasons };
+// Validate only the bounded semantic fields this read model exposes. Unknown
+// extension fields remain unprojected; this is not a second planning validator.
+const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v)
+  && [Object.prototype, null].includes(Object.getPrototypeOf(v));
+const boundedArray = v => Array.isArray(v) && v.length <= 64;
+const identifier = v => typeof v === 'string' && v.length > 0 && v.length <= 512 && v.trim() === v;
+const stringList = v => boundedArray(v) && v.every(identifier);
+const numberFields = new Set('priority_score current_level next_level_ceiling max_change_fraction observed_to_prescribed_ratio measured_receipt_revision'.split(' '));
+const booleanFields = new Set(['previous_success', 'scorable']);
+function semanticShape(value, schema) {
+  if (!plain(value) || !Object.keys(schema).some(k => Object.hasOwn(value, k))) return false;
+  return Object.entries(schema).every(([key, type]) => {
+    if (!Object.hasOwn(value, key)) return true;
+    const item = value[key];
+    if (type === 'list') return stringList(item);
+    if (Array.isArray(type)) return boundedArray(item) && item.every(v => semanticShape(v, type[0]));
+    if (type !== true) return item === null || semanticShape(item, type);
+    return item === null || (numberFields.has(key) ? typeof item === 'number' && Number.isFinite(item)
+      : booleanFields.has(key) ? typeof item === 'boolean' : identifier(item));
+  });
+}
+function readableCalendarWindow(window) {
+  const phases = require('./goalBackwardContracts').PLANNING_PHASES;
+  const roles = require('./goalBackwardContracts').CANONICAL_SESSION_ROLES;
+  const families = require('./adaptiveCoachingProgression').PROGRESSION_FAMILIES;
+  const weekly = window?.weekly_objectives;
+  return plain(window) && phases.includes(window.phase)
+    && (!Object.hasOwn(window, 'phase_reason_codes') || stringList(window.phase_reason_codes))
+    && plain(weekly) && weekly.version === 'adaptive-weekly-objectives-v1'
+    && ['phase', 'week_intent'].every(k => !Object.hasOwn(weekly, k) || weekly[k] === window.phase)
+    && (!Object.hasOwn(weekly, 'weekly_objectives_hash') || typeof weekly.weekly_objectives_hash === 'string'
+      && /^[a-f0-9]{64}$/.test(weekly.weekly_objectives_hash))
+    && (!Object.hasOwn(weekly, 'reason_codes') || stringList(weekly.reason_codes))
+    && (!Object.hasOwn(weekly, 'weekly_stress_budget') || boundedArray(weekly.weekly_stress_budget)
+      && weekly.weekly_stress_budget.every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0))
+    && boundedArray(weekly.objectives) && weekly.objectives.length > 0
+    && weekly.objectives.every(o => semanticShape(o, objectiveSchema) && identifier(o.objective_id)
+      && (!Object.hasOwn(o, 'role') || roles.includes(o.role)))
+    && boundedArray(weekly.progression) && weekly.progression.length > 0
+    && weekly.progression.every(p => semanticShape(p, progressionSchema) && Object.hasOwn(families, p.family)
+      && ['ADVANCE', 'HOLD', 'REGRESS', 'OMIT'].includes(p.action));
+}
 function compose({ ownerId, chain, candidate, profile, runs = [], corrections = [], lifts = [], shoes = [], shoeReadStatus = 'AVAILABLE', measuredReceipts = null, asOf }) {
   const { session, set, byKind } = chain;
   if (runs.length > LIMITS.runs || corrections.length > LIMITS.corrections || lifts.length > LIMITS.lifts) fail('CONTEXT_BOUNDS');
@@ -148,8 +190,9 @@ function compose({ ownerId, chain, candidate, profile, runs = [], corrections = 
     && windows.every(w => dateOnly(w?.start_date) && dateOnly(w?.end_date) && w.start_date <= w.end_date)
     && [...windows].sort((a, b) => a.start_date.localeCompare(b.start_date))
       .every((w, i, all) => i === 0 || all[i - 1].end_date < w.start_date);
-  const selectedWindow = validWindows ? windows.find(w => session.scheduled_local_date >= w.start_date
+  const matchedWindow = validWindows ? windows.find(w => session.scheduled_local_date >= w.start_date
     && session.scheduled_local_date <= w.end_date) : null;
+  const selectedWindow = readableCalendarWindow(matchedWindow) ? matchedWindow : null;
   const scopedDecision = hasCalendar ? selectedWindow : decision;
   const weekly = scopedDecision?.weekly_objectives;
   const evidenceTime = instant(byKind.evidence_snapshot.created_at);
@@ -241,6 +284,7 @@ function compose({ ownerId, chain, candidate, profile, runs = [], corrections = 
         : ['SESSION_CALENDAR_WINDOW_UNAVAILABLE'] },
     week: { status: weekly ? 'PARTIAL' : 'MISSING', weekly_objectives: project(weekly, { ...fields('version weekly_objectives_hash phase week_intent'),
       objectives: [objectiveSchema], reason_codes: 'list', weekly_stress_budget: 'list' }),
+      ...(hasCalendar && !selectedWindow ? { reason_codes: ['SESSION_CALENDAR_WINDOW_UNAVAILABLE'] } : {}),
       ...(hasCalendar ? { calendar_window: selectedWindow ? project(selectedWindow, fields('start_date end_date decision_hash candidate_hash'))
         : missing('SESSION_CALENDAR_WINDOW_UNAVAILABLE') } : {}),
       scheduled_sessions: set.sessions.filter(s => s.scheduled_local_date >= addDays(anchorDate, -((new Date(`${anchorDate}T12:00:00Z`).getUTCDay() + 6) % 7))
@@ -274,6 +318,7 @@ function compose({ ownerId, chain, candidate, profile, runs = [], corrections = 
     context: { ...bounds, sessions: context.slice(0, LIMITS.context), truncated: context.length > LIMITS.context, total_in_bounded_window: context.length,
       observed_strength_scope: 'WORKOUT_SESSIONS_ONLY', manual_lift_sets: missing('STANDALONE_LIFT_LOG_CONTEXT_NOT_COMPOSED') },
     decision: { status: weekly?.progression ? 'STORED_PLANNING_DECISIONS' : 'MISSING', truth_class: 'INFERENCE_AT_PLANNING_TIME',
+      ...(hasCalendar && !selectedWindow ? { reason_codes: ['SESSION_CALENDAR_WINDOW_UNAVAILABLE'] } : {}),
       progression: (weekly?.progression || []).map(p => project(p, progressionSchema)), next_workout_action: missing('POST_EXECUTION_DECISION_NOT_RECOMPUTED') },
     availability: { status: 'PARTIAL', run_window: '57_DAYS_THROUGH_OBSERVATION_DATE_PLUS_EXPLICIT_SESSION_LINKS',
       provider_coverage: 'UNKNOWN', reconciliation_state: text(assessment.load.load_input_state), correction_state: text(assessment.load.correction_input_state),

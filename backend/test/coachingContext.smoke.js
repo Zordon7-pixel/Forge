@@ -402,6 +402,70 @@ async function main() {
   assert.equal(calendarRead.week.calendar_window.start_date, '2026-09-21');
   planning.calendar_windows.reverse();
   assert.equal(contract.compose({ ...pureInput, chain: calendarChain }).content_hash, calendarRead.content_hash);
+  const validCalendarWindows = clone(planning.calendar_windows);
+  // Actual producer shapes, including no successful quality history and a
+  // rest-only objective, stay readable; missing exposure metrics remain null.
+  const generatedState = require('../src/lib/adaptiveCoachingFoundation').buildAdaptiveCoachingFoundation(
+    require('./adaptiveCoachingSolver.smoke').fixture(3, 0, 240)).athlete_state;
+  for (const [phase, safety_action] of [['FOUNDATION', 'NORMAL'], ['TAPER_RACE_WEEK', 'NORMAL'],
+    ['FOUNDATION', 'FULL_REST']]) {
+    const athleteState = { ...generatedState, safety_action };
+    const progression = require('../src/lib/adaptiveCoachingProgression').buildFamilyProgression({ athleteState, phase });
+    const weekly = require('../src/lib/adaptiveCoachingObjectives').buildWeeklyObjectives({ athleteState,
+      goalGaps: [], phaseDecision: { phase, reason_codes: ['WEEKLY_OBJECTIVE_REQUIRED'] }, progression });
+    planning.calendar_windows = clone(validCalendarWindows);
+    Object.assign(planning.calendar_windows[0], { phase, weekly_objectives: weekly });
+    const generatedRead = contract.compose({ ...pureInput, chain: calendarChain });
+    assert.equal(generatedRead.week.status, 'PARTIAL');
+    assert.equal(generatedRead.goal.phase, phase);
+    assert.equal(generatedRead.week.weekly_objectives.weekly_objectives_hash, weekly.weekly_objectives_hash);
+    assert.deepEqual(generatedRead.decision.progression.map(p => [p.family, p.action, p.current_level]),
+      progression.map(p => [p.family, p.action, p.current_level]));
+    assert.ok(generatedRead.decision.progression.every(p => p.previous_successful_exposure === null));
+    if (safety_action === 'FULL_REST') assert.deepEqual(weekly.objectives.map(o => o.role), ['REST']);
+    assert.equal(contract.compose({ ...pureInput, chain: calendarChain }).content_hash, generatedRead.content_hash);
+  }
+  const badWindowEdits = [
+    ...[null, 'corrupt', {}, [], Array(65).fill({})].map(value => w => { w.weekly_objectives = value; }),
+    ...[null, 'corrupt', {}, [], [null], ['corrupt'], [{}], Array(65).fill({ family: 'threshold', action: 'HOLD' })]
+      .map(value => w => { w.weekly_objectives.progression = value; }),
+    ...[null, 'corrupt', {}, [], [null], ['corrupt'], [{}], Array(65).fill({ objective_id: 'x' })]
+      .map(value => w => { w.weekly_objectives.objectives = value; }),
+    ...[null, '', 'UNKNOWN_PHASE', [], {}].map(value => w => { w.phase = value; }),
+    w => { w.phase_reason_codes = [null]; },
+    w => { w.weekly_objectives.phase = 'FOUNDATION'; },
+    w => { w.weekly_objectives.week_intent = {}; },
+    w => { w.weekly_objectives.weekly_objectives_hash = ['a'.repeat(64)]; },
+    w => { w.weekly_objectives.reason_codes = Array(65).fill('REASON'); },
+    w => { w.weekly_objectives.weekly_stress_budget = ['unknown']; },
+    w => { w.weekly_objectives.objectives[0].goal_ids = [{}]; },
+    w => { w.weekly_objectives.objectives[0].role = 'UNKNOWN_ROLE'; },
+    w => { w.weekly_objectives.progression[0].action = 'INVENTED_ACTION'; },
+    w => { w.weekly_objectives.progression[0].family = 'unknown-family'; },
+    w => { w.weekly_objectives.progression[0].current_level = 'corrupt'; },
+    w => { w.weekly_objectives.progression[0].observed_outcomes = [{}]; },
+    w => { w.weekly_objectives.progression[0].previous_successful_exposure = {}; },
+    w => { w.weekly_objectives.progression[0].reason_codes = [[]]; },
+  ];
+  for (const edit of badWindowEdits) {
+    planning.calendar_windows = clone(validCalendarWindows);
+    edit(planning.calendar_windows[0]);
+    const invalid = contract.compose({ ...pureInput, chain: calendarChain });
+    assert.equal(invalid.goal.phase, null);
+    assert.equal(invalid.week.status, 'MISSING');
+    assert.equal(invalid.week.weekly_objectives, null);
+    assert.equal(invalid.decision.status, 'MISSING');
+    assert.deepEqual(invalid.decision.progression, []);
+    for (const section of [invalid.goal, invalid.week, invalid.decision]) {
+      assert.deepEqual(section.reason_codes, ['SESSION_CALENDAR_WINDOW_UNAVAILABLE']);
+    }
+    assert.equal(invalid.week.calendar_window.status, 'MISSING');
+  }
+  planning.calendar_windows = clone(validCalendarWindows);
+  planning.calendar_windows[1].weekly_objectives = 'unselected payload';
+  assert.equal(contract.compose({ ...pureInput, chain: calendarChain }).content_hash, calendarRead.content_hash,
+    'unselected semantics do not replace the uniquely selected window');
+  planning.calendar_windows = clone(validCalendarWindows);
   for (const windows of [[], null, [{ start_date: 'bad', end_date: '2026-09-27' }],
     [planning.calendar_windows[1]], [planning.calendar_windows[0], planning.calendar_windows[0]]]) {
     planning.calendar_windows = windows;

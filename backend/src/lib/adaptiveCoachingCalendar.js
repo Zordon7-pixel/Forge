@@ -78,6 +78,12 @@ function buildProgram({ foundation, availability, calendarWindow, search }) {
   const decisionHash = canonicalHash(content);
   const decision = { ...content, decision_id: `decision-${decisionHash.slice(0, 24)}`, decision_hash: decisionHash };
   const canonical = require('./canonicalWorkout');
+  // Rebinding is not a repair authority. Validate every original graph, hash
+  // and optional intent before rebuilding any provenance, including the last
+  // window which has no subsequent occupancy check to catch invalid input.
+  if (planned.some(session => !canonical.validateCanonicalSession(session).valid)) {
+    throw new Error('Invalid source canonical session in adaptive calendar composition');
+  }
   const planId = `candidate-plan-${decisionHash.slice(0, 24)}`;
   const sessions = planned.map(session => {
     const next = clone(session);

@@ -364,6 +364,18 @@ Read `FORGE.md` for:
 
 ## Dispatch Log
 
+### 2026-09-27 — Integrated review repairs (local; not deployed)
+
+Calendar composition validates every original canonical session, including its
+optional source-bound intent, before rebinding decision provenance. It must not
+repair a corrupt final-window source into a valid composed session. Final-window
+source-hash, primary-step, purpose and decision-binding negatives cover this seam.
+Coaching Context validates the selected persisted window's bounded allowlisted
+phase/objectives/progression shape. Malformed semantic payloads become explicit
+MISSING context, never PARTIAL nulls or another week's explanation. Valid generated
+foundation/taper/rest-only shapes retain their serialized content and physiological
+identity. No planning, dose, cache authority or mobile deadline policy changed.
+
 ### 2026-09-26 — Current-main release integration (local; not deployed)
 
 Non-rewriting integration preserves upstream compressed-calendar PR12 and the
