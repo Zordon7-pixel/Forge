@@ -14,6 +14,14 @@ regex assumptions were replaced; production behavior is unchanged.
 The H12 gate likewise requires account-scoped checkpoint acknowledgment and runs
 the real-service suite, including failed-clear/retry without false completion.
 
+## Manual strength acquisition — 2026-09-27
+
+`STRENGTH-LOG-OBSERVATION.md` documents the versioned USER_RECORDED log projection
+for historical strength sessions. Declared occurrence and database recording time
+remain separate; known sets can coexist with unknown duration. This is not
+canonical adherence, tolerance, complete coverage or progression authority. The
+first-plan strength source gate and all initial-dose policies are unchanged.
+
 ## What This App Is
 
 Forge is a coaching app for **hybrid runners/lifters** — people balancing running, strength work, readiness, and recovery. Do not position it as a generic athlete tracker.

@@ -9,6 +9,7 @@ const { planningInputUnchanged } = require('../lib/planningRevision');
 
 router.post('/strength', auth, async (req, res) => {
   try {
+    require('../lib/strengthLogObservation').validateCompletedLogInput(req.body, new Date().toISOString());
     const { name, exercises, sets, total_volume, exercises_completed, personal_records_hit, completed_at } = req.body;
     const id = uuidv4();
     const started_at = completed_at || new Date().toISOString();
@@ -27,7 +28,7 @@ router.post('/strength', auth, async (req, res) => {
           if (mg && !muscleGroups.includes(mg)) muscleGroups.push(mg);
           await tx.run(
             'INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
-            [uuidv4(), id, req.user.id, s.exercise_name || 'Unknown', mg, s.set_number || 1, s.reps || null, s.weight_lbs || null]
+            [uuidv4(), id, req.user.id, s.exercise_name || 'Unknown', mg, s.set_number || 1, s.reps || null, s.weight_lbs === '' ? null : s.weight_lbs ?? null]
           );
           if (s.exercise_name) exerciseImageNames.push(s.exercise_name);
         }
@@ -53,6 +54,7 @@ router.post('/strength', auth, async (req, res) => {
       session: { id, name, total_volume, exercises_completed, personal_records_hit },
     });
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
     console.error('[workouts/strength] Error:', err.message);
     res.status(500).json({ error: 'Could not save strength workout.' });
   }

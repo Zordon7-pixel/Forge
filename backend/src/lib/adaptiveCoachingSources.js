@@ -2,7 +2,6 @@
 // No arbitrary metrics JSON, guessed prescription link or interval coverage claim.
 const { addDays, canonicalHash } = require('./racePlanPolicy');
 const { canonicalLiftActivities } = require('./activityObservation');
-const { localDate } = require('./adaptiveCoachingValidation');
 const LIMIT = 64, SET_LIMIT = 8192;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const positive = n => typeof n === 'number' && Number.isFinite(n) && n > 0;
@@ -67,20 +66,14 @@ async function loadMeasuredSources({ tx, userId, planningDateISO, observationIns
     });
     const sessions = workouts.map(w => {
       const rows = workoutSets.filter(s => s.session_id === w.id);
-      const keys = rows.map(s => `${s.exercise_name.toLowerCase().trim()}:${s.set_number}`);
-      const date = past(w.started_at) ? localDate(w.started_at, timezone) : null;
-      const valid = date >= since && date <= planningDateISO && past(w.started_at) && past(w.ended_at) && past(w.created_at)
-        && Date.parse(w.ended_at) >= Date.parse(w.started_at) && rows.length > 0
-        && new Set(keys).size === keys.length && rows.every(s => past(s.logged_at)
-          && Date.parse(s.logged_at) >= Date.parse(w.started_at)
-          && Date.parse(s.logged_at) <= Date.parse(w.ended_at)
-          && Number.isSafeInteger(s.set_number) && s.set_number > 0
-          && Number.isSafeInteger(s.reps) && s.reps > 0 && s.reps <= 1000
-          && positive(s.weight_lbs) && s.weight_lbs <= 2000);
+      const observation = require('./strengthLogObservation').projectSessionLog(w, rows,
+        { since, through: planningDateISO, observationInstant, timezone });
+      const valid = observation.known_set_count !== null;
       if (!valid) diagnostics.add('WORKOUT_SET_MEASUREMENT_WITHHELD');
       return { session_id: w.id, measured_set_count: valid ? rows.length : null,
         measurement_state: valid ? 'KNOWN_LOWER_BOUND' : 'PARTIAL',
-        prescription_link_state: 'UNSUPPORTED', individual_exercise_completion_verified: false };
+        prescription_link_state: 'UNSUPPORTED', individual_exercise_completion_verified: false,
+        log_observation: observation };
     });
     // Bind ALL acquired rows, including withheld/future/duplicate records, so an
     // edit or deletion without a planning revision changes the same snapshot.
