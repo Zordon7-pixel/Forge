@@ -255,6 +255,7 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   await Promise.resolve()
   assert.deepEqual(calls, [{
     forceFresh: true,
+    afterActive: true,
     syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
   }], 'authenticated native pull refresh requests exactly one forced HealthKit sync with pull provenance')
   assert.deepEqual(events, ['health-started'], 'page refresh waits while the HealthKit sync is unsettled')
@@ -617,12 +618,12 @@ assert.ok(!pullToRefresh.includes('}, [pulling, pullDistance])'), 'gesture liste
 assert.ok(pullToRefresh.includes("'form'") && pullToRefresh.includes("'[role=\"dialog\"]'"), 'forms and dialogs are excluded from destructive pull gestures')
 assert.ok(pullToRefresh.includes('event.touches.length !== 1') && pullToRefresh.includes('resetGesture()'), 'multi-touch transitions cancel the stored pull gesture')
 assert.ok(pullToRefresh.includes("'Syncing Apple Health'"), 'native refresh exposes clear HealthKit progress')
-assert.ok(pullToRefresh.includes('refreshPage: () => onRefreshCompleteRef.current?.()'), 'pull refresh remounts current data without a duplicate cold-launch HealthKit sync')
+assert.ok(pullToRefresh.includes('if (mounted && isAuthSessionCurrent(session)) onRefreshCompleteRef.current?.()'), 'pull refresh fences completion to the mounted initiating login')
 assert.ok(!pullToRefresh.includes('window.location.reload()'), 'pull refresh does not hard-reload the native shell')
 assert.ok(healthSyncSource.includes('HEALTH_PULL_REFRESH_DEADLINE_MS'), 'pull refresh owns one named gesture deadline')
 assert.ok(healthSyncSource.includes('HealthPullRefreshTimeoutError'), 'pull refresh uses a distinguishable timeout error')
 assert.ok(!/\bhealthSync(?:Notice|FailureMessage)\b/.test(pullToRefresh), 'pull refresh neither imports nor invokes diagnostic Health result copy')
-assert.ok(!pullToRefresh.includes('refreshNotice'), 'pull refresh has no completed-result notice state')
+assert.ok(pullToRefresh.includes('activityRefreshNotice') && pullToRefresh.includes('onSourceSettled'), 'pull refresh exposes source-specific pending/partial/error states and tracks its own late completion')
 assert.ok(!pullToRefresh.includes('showTemporaryNotice'), 'pull refresh has no post-refresh notice helper')
 assert.ok(!pullToRefresh.includes('noticeTimerRef') && !pullToRefresh.includes('5000'), 'pull refresh has no five-second post-refresh timer')
 assert.ok(pullToRefresh.includes('{(showIndicator || refreshing) && ('), 'the fixed pull indicator renders only while actively pulling or refreshing')

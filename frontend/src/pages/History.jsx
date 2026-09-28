@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { subscribeActivityDataChanged } from '../lib/healthSync'
+import { getAuthSession, isAuthSessionCurrent } from '../lib/tokenStore'
 import { ResponsiveContainer, BarChart, LineChart, XAxis, YAxis, Tooltip, Bar, Line } from 'recharts'
 import { useLocation, Link } from 'react-router'
 import { Pencil, Trash2 } from 'lucide-react'
@@ -157,25 +159,35 @@ export default function History() {
   }, [])
 
   useEffect(() => {
-    ;(async () => {
+    let active = true, sequence = 0
+    const session = getAuthSession()
+    const load = async () => {
+      const request = ++sequence
+      const current = () => active && request === sequence && isAuthSessionCurrent(session)
       try {
         const [runsRes, liftsRes, workoutsRes, racesRes, hrZonesRes] = await Promise.all([
-          api.get('/runs'),
+          api.get('/runs', { forgeAuthSession: session }),
           api.get('/lifts'),
           api.get('/workouts').catch(() => ({ data: { sessions: [] } })),
           api.get('/races').catch(() => ({ data: { races: [] } })),
           api.get('/profile/hr-zones').catch(() => ({ data: { zones: [] } })),
         ])
+        if (!current()) return
         setRuns([...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a, b) => getRunDate(b).localeCompare(getRunDate(a))))
         setLifts([...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
         setWorkoutSessions([...(workoutsRes.data?.sessions || [])].sort((a, b) => (b.started_at || '').localeCompare(a.started_at || '')))
         setRaces([...(racesRes.data?.races || [])].sort((a, b) => (b.race_date || '').localeCompare(a.race_date || '')))
         setHrZones(Array.isArray(hrZonesRes.data?.zones) ? hrZonesRes.data.zones : [])
         setHrProfile(hrZonesRes.data?.profile || null)
+      } catch (error) {
+        if (current()) console.warn('[History] activity refresh failed')
       } finally {
-        setLoading(false)
+        if (current()) setLoading(false)
       }
-    })()
+    }
+    void load()
+    const unsubscribe = subscribeActivityDataChanged(load)
+    return () => { active = false; unsubscribe() }
   }, [])
 
 

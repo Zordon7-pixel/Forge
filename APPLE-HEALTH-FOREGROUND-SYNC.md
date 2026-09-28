@@ -47,6 +47,17 @@ are separate. No Swift/native bridge, schema, provider integration or flag chang
   enrichment no longer holds the Apple latch and also uses captured-session
   request/checkpoint fencing.
 
+## September 28 foreground refresh correction
+
+See `ACTIVITY-SYNC-REFRESH.md`. Independent connected Strava acquisition now
+runs even if Apple fails, and explicit refresh bypasses automatic provider
+cooldown. Workout history/import is prioritized after the authorization gate;
+optional summary/profile failure cannot prevent an available workout's import.
+At most one unresolved optional summary can consume native capacity. Persisted
+activity invalidation is separate from overall source completion and refetches
+mounted Run/History/Dashboard data without remounting forms or active sessions.
+These are foreground web semantics, not closed-app/background delivery.
+
 ## Verification
 
 `frontend/test/healthSyncLiveness.smoke.mjs` loads the real service/coordinator/

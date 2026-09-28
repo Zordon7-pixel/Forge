@@ -8,6 +8,8 @@ import AiGuidanceNote from '../components/AiGuidanceNote'
 import { fetchDailyExecution, recommendationFromExecution, runRouteState } from '../lib/dailyExecution'
 import { getSmartQuickAction } from '../lib/smartQuickAction'
 import { latestRunningActivity } from '../lib/activityType'
+import { subscribeActivityDataChanged } from '../lib/healthSync'
+import { getAuthSession, isAuthSessionCurrent } from '../lib/tokenStore'
 
 const SMART_ACTION_ICONS = {
   calendar: CalendarDays,
@@ -24,8 +26,13 @@ export default function RunHub() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    Promise.all([
-      api.get('/runs', { params: { activity_kind: 'run' } }),
+    let active = true, sequence = 0
+    const session = getAuthSession()
+    const load = () => {
+    const request = ++sequence
+    const current = () => active && isAuthSessionCurrent(session) && request === sequence
+    return Promise.all([
+      api.get('/runs', { params: { activity_kind: 'run' }, forgeAuthSession: session }),
       fetchDailyExecution().catch((err) => {
         console.error('[RunHub] canonical daily execution fetch failed:', err?.message || err)
         return null
@@ -33,6 +40,7 @@ export default function RunHub() {
       api.get('/runs/next-recommendation').catch(() => ({ data: null })),
     ])
       .then(([runsRes, dailyExecution, recRes]) => {
+        if (!current()) return
         const runs = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         setLatestRun(latestRunningActivity(runs))
         setExecution(dailyExecution)
@@ -41,12 +49,17 @@ export default function RunHub() {
           : (recRes.data || null))
       })
       .catch((err) => {
+        if (!current()) return
         console.error('[RunHub] failed to load run hub:', err?.message || err)
         setLatestRun(null)
         setRecommendation(null)
         setExecution(null)
       })
-      .finally(() => setLoading(false))
+      .finally(() => { if (current()) setLoading(false) })
+    }
+    void load()
+    const unsubscribe = subscribeActivityDataChanged(load)
+    return () => { active = false; unsubscribe() }
   }, [])
 
   const paceZone = useMemo(() => {

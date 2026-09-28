@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
-import { isLoggedIn } from '../lib/auth'
-import { runHealthAwarePageRefresh } from '../lib/healthSync'
+import { isLoggedIn, getAuthenticatedUserId } from '../lib/auth'
+import { getAuthSession, isAuthSessionCurrent } from '../lib/tokenStore'
+import api from '../lib/api'
+import { syncConnectedStrava } from '../lib/healthForegroundSync'
+import { runHealthAwarePageRefresh, activityRefreshNotice } from '../lib/healthSync'
 import {
   createPullToRefreshEndHandler,
   measurePullRefreshGesture,
@@ -38,6 +41,8 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
   const [pulling, setPulling] = useState(false)
   const [pullDistance, setPullDistance] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
+  const [syncNotice, setSyncNotice] = useState('')
+  const noticeAttempt = useRef(null)
   const refreshInFlight = useRef(false)
   const gestureRef = useRef(null)
   const onRefreshCompleteRef = useRef(onRefreshComplete)
@@ -47,6 +52,7 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
   }, [onRefreshComplete])
 
   useEffect(() => {
+    let mounted = true
     const resetGesture = () => {
       gestureRef.current = null
       setPulling(false)
@@ -112,21 +118,36 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
       ),
       onRefreshStart: () => {
         setRefreshing(true)
+        setSyncNotice('')
         setPullDistance(PULL_REFRESH_THRESHOLD_PX)
       },
       runPageRefresh: async () => {
-        await runHealthAwarePageRefresh({
+        const session = { ...getAuthSession(), accountId: getAuthenticatedUserId() }
+        const attempt = { session, states: {}, finished: false }
+        noticeAttempt.current = attempt
+        const outcome = await runHealthAwarePageRefresh({
           authenticated: isLoggedIn(),
           native: Capacitor.isNativePlatform(),
           syncNativeData: (options) => HealthService.syncNativeData(options),
+          syncConnectedProvider: () => syncConnectedStrava(api, session, { force: true }),
+          onSourceSettled: (source, status) => {
+            if (!mounted || !isAuthSessionCurrent(session) || noticeAttempt.current !== attempt) return
+            attempt.states[source] = status
+            if (attempt.finished) setSyncNotice(activityRefreshNotice({ sourceStates: attempt.states }))
+          },
           onHealthSyncError: (error) => {
             console.error('[PullToRefresh] Apple Health sync failed:', error?.message || error)
           },
           // Let the completion state paint before page data is requested again.
           afterHealthSync: () => new Promise(r => setTimeout(r, 150)),
-          refreshPage: () => onRefreshCompleteRef.current?.(),
+          refreshPage: () => { if (mounted && isAuthSessionCurrent(session)) onRefreshCompleteRef.current?.() },
         })
-        setRefreshing(false)
+        if (mounted && isAuthSessionCurrent(session)) {
+          attempt.states = { ...outcome.sourceStates, ...attempt.states }
+          attempt.finished = true
+          setSyncNotice(activityRefreshNotice({ sourceStates: attempt.states }))
+          setRefreshing(false)
+        }
       },
       onRefreshFailure: (error) => {
         console.error('[PullToRefresh] Page refresh failed:', error?.message || error)
@@ -145,6 +166,7 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
     window.addEventListener('touchcancel', onTouchCancel, { passive: true, capture: true })
 
     return () => {
+      mounted = false
       window.removeEventListener('touchstart', onTouchStart, true)
       window.removeEventListener('touchmove', onTouchMove, true)
       window.removeEventListener('touchend', onTouchEnd, true)
@@ -226,6 +248,10 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
         }
       `}</style>
 
+      {syncNotice && <div role="status" aria-live="polite" className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+        {syncNotice}
+        <button type="button" aria-label="Dismiss sync status" onClick={() => { noticeAttempt.current = null; setSyncNotice('') }} className="ml-2 underline">Dismiss</button>
+      </div>}
       {children}
     </div>
   )

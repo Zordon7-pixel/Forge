@@ -20,7 +20,8 @@ import { useProContext } from '../context/ProContext'
 import { fetchDailyExecution, recommendationFromExecution, localDateISO } from '../lib/dailyExecution'
 import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 import { resolveReadiness } from '../lib/truthConsistency'
-import { HEALTH_SYNC_RESULT_EVENT, shouldRefreshPageForHealthSyncEvent } from '../lib/healthSync'
+import { HEALTH_SYNC_RESULT_EVENT, shouldRefreshPageForHealthSyncEvent, subscribeActivityDataChanged } from '../lib/healthSync'
+import { getAuthSession, isAuthSessionCurrent } from '../lib/tokenStore'
 import { isRunningActivity } from '../lib/activityType'
 import { combineRecentActivity } from '../lib/recentActivity'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
@@ -310,12 +311,17 @@ export default function Dashboard() {
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
+  const activityReads = useRef({ active: true, dashboard: 0, readiness: 0 })
   const fetchReadinessData = useCallback(async () => {
+    const session = getAuthSession(), request = ++activityReads.current.readiness
+    const current = () => activityReads.current.active && request === activityReads.current.readiness && isAuthSessionCurrent(session)
     setReadinessState((prev) => ({ ...prev, loading: true, error: false, locked: false }))
     try {
       const res = await api.get('/recovery/readiness')
+      if (!current()) return
       setReadinessState({ loading: false, error: false, locked: false, data: res.data || null })
     } catch (error) {
+      if (!current()) return
       if (error?.response?.status === 402) {
         setReadinessState({ loading: false, error: false, locked: true, data: null })
       } else {
@@ -326,6 +332,8 @@ export default function Dashboard() {
   }, [])
 
   const fetchDashboardData = useCallback(async () => {
+    const session = getAuthSession(), request = ++activityReads.current.dashboard
+    const current = () => activityReads.current.active && request === activityReads.current.dashboard && isAuthSessionCurrent(session)
     const requestNow = new Date()
     setDashboardNow(requestNow)
     try {
@@ -373,6 +381,7 @@ export default function Dashboard() {
           }),
           api.get('/stats/hybrid-streak').catch(() => ({ data: { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] } })),
         ])
+        if (!current()) return
         setExecution(executionRes || null)
         setTomorrowExecution(tomorrowExecutionRes || null)
         setUpcomingSocialRun(upcomingGroupRun(groupRunsRes.data?.group_runs || []))
@@ -425,11 +434,12 @@ export default function Dashboard() {
         const weekKey = `recap-seen-${getWeekKey()}`
         setShowWeeklyRecap(isSunday && localStorage.getItem(weekKey) !== '1' && Boolean(recapRes.data))
     } finally {
-        setLoading(false)
+        if (current()) setLoading(false)
       }
   }, [])
 
   useEffect(() => {
+    activityReads.current.active = true
     fetchDashboardData()
     fetchReadinessData()
     let cancelled = false
@@ -451,6 +461,7 @@ export default function Dashboard() {
       }
     }
     window.addEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncCompleted)
+    const unsubscribeActivity = subscribeActivityDataChanged(() => Promise.all([fetchDashboardData(), fetchReadinessData()]))
 
     try {
       const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
@@ -481,6 +492,8 @@ export default function Dashboard() {
 
     return () => {
       cancelled = true
+      activityReads.current.active = false
+      unsubscribeActivity()
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncCompleted)
       listenerHandles.forEach((handle) => handle?.remove?.())

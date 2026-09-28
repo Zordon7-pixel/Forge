@@ -130,12 +130,15 @@ try {
     await flush(); await f.time.advance(sync.HEALTH_SYNC_OPERATION_DEADLINE_MS); await rejected
     assert.equal(f.service.hasNativeSyncInFlight(), false)
     f.bridge.getSummary = async () => ({ metricsSchemaVersion: 6 })
-    assert.equal((await f.service.syncNativeData()).complete, true)
+    const partial = await f.service.syncNativeData()
+    assert.equal(partial.complete, false, 'unsettled optional summary remains unknown, not successful')
+    assert.equal(partial.stages.workouts, 'complete', 'hung optional summary cannot starve workout retry')
     const after = calls.length, published = events.length
     hang.resolve({ metricsSchemaVersion: 6 }); await flush()
     assert.equal(calls.length, after, 'late summary cannot write profile or import')
     assert.equal(events.length, published, 'late operation cannot publish')
     assert.ok(after > before && published > beforeEvents)
+    assert.equal((await f.service.syncNativeData()).complete, true, 'summary retry resumes only after old native slot settles')
     f.service.dispose()
   }
 
