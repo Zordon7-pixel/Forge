@@ -317,7 +317,7 @@ export default function Dashboard() {
     const current = () => activityReads.current.active && request === activityReads.current.readiness && isAuthSessionCurrent(session)
     setReadinessState((prev) => ({ ...prev, loading: true, error: false, locked: false }))
     try {
-      const res = await api.get('/recovery/readiness')
+      const res = await api.get('/recovery/readiness', { forgeAuthSession: session })
       if (!current()) return
       setReadinessState({ loading: false, error: false, locked: false, data: res.data || null })
     } catch (error) {
@@ -333,53 +333,54 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     const session = getAuthSession(), request = ++activityReads.current.dashboard
+    const requestConfig = { forgeAuthSession: session }
     const current = () => activityReads.current.active && request === activityReads.current.dashboard && isAuthSessionCurrent(session)
     const requestNow = new Date()
     setDashboardNow(requestNow)
     try {
         const [statsRes, runsRes, liftsRes, workoutsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, tomorrowExecutionRes, groupRunsRes, adaptationRes, reconciliationRes, hybridStreakRes] = await Promise.all([
-          api.get('/auth/me/stats'),
-          api.get('/runs', { params: { limit: 5 } }),
-          api.get('/lifts'),
-          api.get('/workouts').catch((error) => {
+          api.get('/auth/me/stats', requestConfig),
+          api.get('/runs', { ...requestConfig, params: { limit: 5 } }),
+          api.get('/lifts', requestConfig),
+          api.get('/workouts', requestConfig).catch((error) => {
             console.error('[Dashboard] completed workout fetch failed:', error?.message || error)
             return { data: { sessions: [] } }
           }),
-          api.get('/coach/warning'),
-          api.get('/checkin/today', { params: { date: localDateISO() } }).catch(() => ({ data: null })),
-          api.get('/users/goal').catch(() => ({ data: null })),
-          api.get('/plans/compliance').catch(() => ({ data: null })),
-          api.get('/runs/load-analysis').catch(() => ({ data: null })),
-          api.get('/races/next').catch(() => ({ data: { race: null } })),
-          api.get('/gear/shoes').catch(() => ({ data: { shoes: [] } })),
-          api.get('/injury/active').catch((error) => {
+          api.get('/coach/warning', requestConfig),
+          api.get('/checkin/today', { ...requestConfig, params: { date: localDateISO() } }).catch(() => ({ data: null })),
+          api.get('/users/goal', requestConfig).catch(() => ({ data: null })),
+          api.get('/plans/compliance', requestConfig).catch(() => ({ data: null })),
+          api.get('/runs/load-analysis', requestConfig).catch(() => ({ data: null })),
+          api.get('/races/next', requestConfig).catch(() => ({ data: { race: null } })),
+          api.get('/gear/shoes', requestConfig).catch(() => ({ data: { shoes: [] } })),
+          api.get('/injury/active', requestConfig).catch((error) => {
             console.error('[Dashboard] injury safety lookup failed:', error?.message || error)
             return { data: { injuries: [], safetyUnavailable: true } }
           }),
-          api.get('/recap/weekly').catch(() => ({ data: null })),
-          api.get('/runs/next-recommendation').catch(() => ({ data: null })),
-          api.get('/runs/age-graded-performance').catch(() => ({ data: null })),
-          fetchDailyExecution(localDateISO()).catch((err) => {
+          api.get('/recap/weekly', requestConfig).catch(() => ({ data: null })),
+          api.get('/runs/next-recommendation', requestConfig).catch(() => ({ data: null })),
+          api.get('/runs/age-graded-performance', requestConfig).catch(() => ({ data: null })),
+          fetchDailyExecution(localDateISO(), requestConfig).catch((err) => {
             console.error('[Dashboard] daily execution fetch failed:', err?.message || err)
             return null
           }),
-          fetchDailyExecution(localTomorrowDateISO(requestNow)).catch((err) => {
+          fetchDailyExecution(localTomorrowDateISO(requestNow), requestConfig).catch((err) => {
             console.error('[Dashboard] tomorrow execution fetch failed:', err?.message || err)
             return null
           }),
-          api.get('/group-runs').catch((error) => {
+          api.get('/group-runs', requestConfig).catch((error) => {
             console.error('[Dashboard] group run reminder fetch failed:', error?.message || error)
             return { data: { group_runs: [] } }
           }),
-          api.get('/plans/adaptation/current', { params: { date: localDateISO() } }).catch((error) => {
+          api.get('/plans/adaptation/current', { ...requestConfig, params: { date: localDateISO() } }).catch((error) => {
             console.error('[Dashboard] training gap check failed:', error?.message || error)
             return { data: { proposal: null } }
           }),
-          api.get('/plans/reconciliation/current', { params: { date: localDateISO(), hour: new Date().getHours(), timezone: localTimezone() } }).catch((error) => {
+          api.get('/plans/reconciliation/current', { ...requestConfig, params: { date: localDateISO(), hour: new Date().getHours(), timezone: localTimezone() } }).catch((error) => {
             console.error('[Dashboard] hybrid session reconciliation check failed:', error?.message || error)
             return { data: { reconciliation: null } }
           }),
-          api.get('/stats/hybrid-streak').catch(() => ({ data: { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] } })),
+          api.get('/stats/hybrid-streak', requestConfig).catch(() => ({ data: { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] } })),
         ])
         if (!current()) return
         setExecution(executionRes || null)

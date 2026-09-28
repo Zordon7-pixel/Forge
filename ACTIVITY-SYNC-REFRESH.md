@@ -63,3 +63,33 @@ reconciliation, provider ingest schema, privacy permissions, HealthKit anchors
 on the native side, webhooks or push notifications. Closed-app import and the
 post-commit background saved-run notification require separate investigation
 and implementation. Do not label this patch a verified phone resolution.
+
+## Independent-review correction
+
+A resolved HTTP request alone is not an Apple persistence acknowledgment.
+Before publishing a batch, `importHealthWorkoutBatches` validates the actual
+backend `importRows` accounting: integer nonnegative imported/skipped counts,
+one uniquely indexed error per failed row, and exactly one terminal accounting
+entry for each submitted row. Errors require the backend's index/error/code/
+retryable shape; only `IMPORT_ROW_INVALID` is terminal/nonretryable. Failed rows
+are not also counted as skipped. The optional identity receipt is separate
+metadata, never a substitute for missing accounting. Malformed ACKs throw a
+safe retryable client error with earlier valid batch totals preserved. They
+cannot publish invalidation, clear the history checkpoint or certify schema6.
+Valid acknowledged partial batches still publish their persisted changes while
+retryable row failures retain the checkpoint. Existing terminal-invalid-row
+completion semantics remain unchanged.
+
+Every API request in the three mounted activity-refetch fanouts carries the
+captured login generation, including Dashboard readiness and both daily-execution
+reads. The shared daily-execution reader accepts an optional session without
+changing its default behavior or normalization. Stale401 is contained before the
+Axios interceptor can log out a successor login; state guards remain a separate
+protection. Global API authentication policy is not changed.
+
+Mounted browser coverage includes Dashboard persistence beyond the gesture
+deadline with its open insights state retained and no navigation/remount, plus
+every fanout endpoint held until account switch or same-account relogin and then
+returned as401. These are synthetic API/native boundaries, not phone/background
+acceptance. The independent cd4 review and its failing adversarial probe remain
+part of the release evidence; successor review is still required.

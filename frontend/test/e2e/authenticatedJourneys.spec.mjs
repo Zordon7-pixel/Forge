@@ -13,7 +13,7 @@ import {
   signatureUiDashboardFixture,
 } from './support/mockApi.mjs'
 
-for (const destination of ['/run', '/history']) {
+for (const destination of ['/run', '/history', '/']) {
   test(`activity sync refresh updates mounted ${destination} after late native commit without reopening`, async ({ page }) => {
     test.setTimeout(55000)
     await page.addInitScript(() => {
@@ -74,9 +74,15 @@ for (const destination of ['/run', '/history']) {
     await expect.poll(() => page.evaluate(() => typeof window.__releaseHistory)).toBe('function')
     // The one manual refresh may remount; no later persistence event may do so.
     await page.evaluate(() => { document.querySelector('main').dataset.lateSentinel = 'preserve' })
+    let navigations = 0
+    page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++ })
     if (destination === '/history') {
       await page.getByRole('button', { name: 'Edit run', exact: true }).first().click()
       await page.locator('textarea').fill('unsaved draft must survive import')
+    }
+    if (destination === '/') {
+      await page.getByRole('button', { name: 'More insights →', exact: true }).click()
+      await expect(page.getByRole('heading', { name: 'More insights', exact: true })).toBeVisible()
     }
     const reads = state.requestsFor('GET', '/api/runs').length
     await page.evaluate(() => { window.__holdHistory = false; window.__releaseHistory() })
@@ -84,13 +90,18 @@ for (const destination of ['/run', '/history']) {
     await expect.poll(() => state.requestsFor('GET', '/api/runs').length).toBeGreaterThan(reads)
     await expect(page.getByText(/Apple Health: synced/)).toBeVisible()
     expect(await page.locator('main').getAttribute('data-late-sentinel')).toBe('preserve')
+    expect(navigations).toBe(0)
     if (destination === '/history') {
       await expect(page.locator('textarea')).toHaveValue('unsaved draft must survive import')
       await page.getByRole('button', { name: 'Cancel', exact: true }).click()
       await expect(page.getByRole('button', { name: 'Edit run', exact: true })).toHaveCount(2)
-    } else {
+    } else if (destination === '/run') {
       await page.getByText('Recent run', { exact: true }).click()
       await expect(page.getByText('5.00 mi', { exact: true })).toBeVisible()
+    } else {
+      await expect(page.getByRole('heading', { name: 'More insights', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Close', exact: true }).click()
+      await expect(page.locator('section').filter({ has: page.getByRole('heading', { name: 'Recent Activity', exact: true }) }).getByText('5.00 mi', { exact: true })).toBeVisible()
     }
     expect(rows.length).toBe(2)
     if (destination === '/history') {
@@ -106,6 +117,59 @@ for (const destination of ['/run', '/history']) {
       await expect(page.getByRole('button', { name: 'Edit run', exact: true })).toHaveCount(2)
       expect(rows.length).toBe(2)
     }
+  })
+}
+
+const activityConsumerPaths = {
+  '/run': ['/api/runs', '/api/plans/today', '/api/runs/next-recommendation'],
+  '/history': ['/api/runs', '/api/lifts', '/api/workouts', '/api/races', '/api/profile/hr-zones'],
+  '/': ['/api/recovery/readiness', '/api/auth/me/stats', '/api/runs', '/api/lifts', '/api/workouts', '/api/coach/warning',
+    '/api/checkin/today', '/api/users/goal', '/api/plans/compliance', '/api/runs/load-analysis', '/api/races/next', '/api/gear/shoes',
+    '/api/injury/active', '/api/recap/weekly', '/api/runs/next-recommendation', '/api/runs/age-graded-performance', '/api/plans/today',
+    '/api/group-runs', '/api/plans/adaptation/current', '/api/plans/reconciliation/current', '/api/stats/hybrid-streak'],
+}
+for (const destination of Object.keys(activityConsumerPaths)) for (const sameAccount of [false, true]) {
+  test(`activity sync refresh ${destination} fences every late 401 after ${sameAccount ? 'same-account relogin' : 'account switch'}`, async ({ page }) => {
+    await installAuthenticatedApi(page)
+    const paths = new Set(activityConsumerPaths[destination]), pending = []
+    let hold = false, heldRequests = 0
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname
+      if (!hold || !paths.has(path)) return route.fallback()
+      heldRequests++
+      await new Promise(resolve => pending.push({ path, resolve }))
+      await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Synthetic expired old login' }) })
+    })
+    await page.goto(destination)
+    await expect(page.getByRole('main')).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    const beforeText = await page.getByRole('main').innerText()
+    hold = true
+    await page.evaluate(() => {
+      document.querySelector('main').dataset.loginSentinel = 'original-mount'
+      window.dispatchEvent(new CustomEvent('forge-activity-data-changed', { detail: { source: 'apple', accountId: 'qa-user-001', generation: 0 } }))
+    })
+    await expect.poll(() => [...new Set(pending.map(p => p.path))].sort()).toEqual([...paths].sort())
+    const count = heldRequests
+    // No app reload: storage events exercise the real tokenStore generation
+    // listener, including logout→login with the very same token/account ID.
+    const replacement = sameAccount
+      ? await page.evaluate(() => localStorage.getItem('forge_token'))
+      : createQaToken({ id: 'qa-replacement' })
+    await page.evaluate(token => {
+      const oldValue = localStorage.getItem('forge_token')
+      localStorage.removeItem('forge_token')
+      window.dispatchEvent(new StorageEvent('storage', { key: 'forge_token', oldValue, newValue: null }))
+      localStorage.setItem('forge_token', token)
+      window.dispatchEvent(new StorageEvent('storage', { key: 'forge_token', oldValue: null, newValue: token }))
+    }, replacement)
+    for (const entry of pending) entry.resolve()
+    await page.waitForLoadState('networkidle')
+    expect(await page.evaluate(() => localStorage.getItem('forge_token'))).toBe(replacement)
+    expect(new URL(page.url()).pathname).toBe(destination)
+    expect(await page.locator('main').getAttribute('data-login-sentinel')).toBe('original-mount')
+    expect(await page.getByRole('main').innerText()).toBe(beforeText)
+    expect(heldRequests).toBe(count, 'stale consumer responses cannot trigger another acquisition')
   })
 }
 

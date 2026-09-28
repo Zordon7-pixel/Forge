@@ -167,10 +167,10 @@ export default function History() {
       try {
         const [runsRes, liftsRes, workoutsRes, racesRes, hrZonesRes] = await Promise.all([
           api.get('/runs', { forgeAuthSession: session }),
-          api.get('/lifts'),
-          api.get('/workouts').catch(() => ({ data: { sessions: [] } })),
-          api.get('/races').catch(() => ({ data: { races: [] } })),
-          api.get('/profile/hr-zones').catch(() => ({ data: { zones: [] } })),
+          api.get('/lifts', { forgeAuthSession: session }),
+          api.get('/workouts', { forgeAuthSession: session }).catch(() => ({ data: { sessions: [] } })),
+          api.get('/races', { forgeAuthSession: session }).catch(() => ({ data: { races: [] } })),
+          api.get('/profile/hr-zones', { forgeAuthSession: session }).catch(() => ({ data: { zones: [] } })),
         ])
         if (!current()) return
         setRuns([...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a, b) => getRunDate(b).localeCompare(getRunDate(a))))

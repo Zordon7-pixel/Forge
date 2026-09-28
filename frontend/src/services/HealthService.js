@@ -419,8 +419,10 @@ export class HealthService {
           operation.assertCurrent()
           const { data } = await this.api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS, signal: operation.signal, forgeAuthSession: operation.identity })
           operation.assertCurrent()
-          announceActivityDataChanged('apple', operation.identity)
           return data
+        }, (acknowledgment) => {
+          operation.assertCurrent()
+          if (acknowledgment.imported + acknowledgment.skipped > 0) announceActivityDataChanged('apple', operation.identity)
         })
       } catch (error) {
         operation.assertCurrent()

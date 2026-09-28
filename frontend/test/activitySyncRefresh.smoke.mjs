@@ -202,5 +202,81 @@ try {
     assert.equal(rows.size, 1); assert.equal(events.at(-1).source, 'strava'); assert.equal(events.at(-1).rows, 1)
     lifecycle.dispose(); f.service.dispose()
   }
+  const rowError = { index: 0, error: 'Synthetic row failure', code: 'IMPORT_OPERATION_FAILED', retryable: true }
+  const malformedAcks = [
+    {}, null, [], { imported: 2, skipped: 0 }, { imported: 2, skipped: 0, errors: {} },
+    { imported: '2', skipped: 0, errors: [] }, { imported: 1.5, skipped: .5, errors: [] },
+    { imported: -1, skipped: 3, errors: [] }, { imported: 3, skipped: 0, errors: [] },
+    { imported: 1, skipped: 0, errors: [] }, { imported: null, skipped: 2, errors: [] },
+    { imported: 2, skipped: 0, errors: [], unexpected: true },
+    ...[null, {}, { ...rowError, index: -1 }, { ...rowError, index: 2 }, { ...rowError, index: '0' },
+      { ...rowError, index: .5 }, { ...rowError, error: '' }, { ...rowError, code: null },
+      { ...rowError, retryable: false }, { ...rowError, retryable: 'true' },
+      { ...rowError, code: 'IMPORT_ROW_INVALID', retryable: true }, { index: 0, error: 'no classification' }]
+      .map(error => ({ imported: 1, skipped: 0, errors: [error] })),
+    { imported: 0, skipped: 0, errors: [rowError, rowError] },
+    { imported: 2, skipped: 0, errors: [rowError] },
+  ]
+  for (const acknowledgment of malformedAcks) {
+    reset()
+    const f = fixture({ getWorkoutHistory: async () => ({ workouts: [{ id: 'one' }, { id: 'two' }] }) })
+    hook = async c => c.url === '/import/health' ? acknowledgment : undefined
+    await assert.rejects(f.service.syncNativeData(), error => {
+      assert.equal(error.code, 'HEALTH_IMPORT_ACK_INVALID', JSON.stringify(acknowledgment))
+      assert.deepEqual(error.partialImportResult, { imported: 0, skipped: 0, errors: [] })
+      return true
+    })
+    assert.equal(events.length, 0, 'malformed ACK cannot publish activity persistence')
+    assert.equal(sync.isHealthHistoryTransferPending('owner-a'), true)
+    assert.equal(localStorage.getItem(sync.healthAccountKey('forge_health_workout_import_version', 'owner-a')), null)
+    hook = null
+    assert.equal((await f.service.syncNativeData()).complete, true, 'valid retry can acknowledge the retained checkpoint')
+    f.service.dispose()
+  }
+  for (const retryable of [true, false]) {
+    reset()
+    const f = fixture({ getWorkoutHistory: async () => ({ workouts: [{ id: 'one' }, { id: 'two' }] }) })
+    hook = async c => c.url === '/import/health' ? { imported: 1, skipped: 0, errors: [{ ...rowError, index: 1, retryable, code: retryable ? 'IMPORT_OPERATION_FAILED' : 'IMPORT_ROW_INVALID' }] } : undefined
+    const result = await f.service.syncNativeData()
+    assert.equal(result.imported, 1); assert.equal(result.errors.length, 1); assert.equal(events.length, 1)
+    assert.equal(result.complete, !retryable, 'valid terminal-invalid rows retain existing completion semantics, operational failures retry')
+    assert.equal(sync.isHealthHistoryTransferPending('owner-a'), retryable)
+    f.service.dispose()
+  }
+  reset()
+  {
+    const f = fixture()
+    hook = async c => c.url === '/import/health' ? { imported: 0, skipped: 0, errors: [rowError] } : undefined
+    assert.equal((await f.service.syncNativeData()).complete, false)
+    assert.equal(events.length, 0, 'a valid all-failed batch acknowledges no persisted rows')
+    assert.equal(sync.isHealthHistoryTransferPending('owner-a'), true)
+    f.service.dispose()
+  }
+  reset()
+  {
+    const { fetchDailyExecution } = await vite.ssrLoadModule('/src/lib/dailyExecution.js')
+    const configs = []
+    hook = async c => {
+      if (c.url.startsWith('/plans/today?')) { configs.push(c.forgeAuthSession); return { today: null, execution: { hasPlan: false, hasDay: false, sessions: [] } } }
+    }
+    const date = '2026-09-28', identity = session()
+    assert.deepEqual(await fetchDailyExecution(date, { forgeAuthSession: identity }), await fetchDailyExecution(date), 'optional request identity does not change coaching normalization')
+    assert.deepEqual(configs, [identity, undefined], 'other callers retain the existing unscoped default')
+  }
+  reset()
+  {
+    let batch = 0
+    const f = fixture({ getWorkoutHistory: async () => ({ workouts: Array.from({ length: 11 }, (_, i) => ({ id: `row-${i}` })) }) })
+    hook = async c => c.url === '/import/health' && ++batch === 2 ? {} : undefined
+    await assert.rejects(f.service.syncNativeData(), error => {
+      assert.equal(error.code, 'HEALTH_IMPORT_ACK_INVALID'); assert.equal(error.partialImportResult.imported, 10)
+      return true
+    })
+    assert.equal(events.length, 1, 'valid earlier batch remains published; malformed later batch does not')
+    assert.equal(sync.isHealthHistoryTransferPending('owner-a'), true)
+    assert.equal(localStorage.getItem(sync.healthAccountKey('forge_health_workout_import_version', 'owner-a')), null)
+    hook = null; assert.equal((await f.service.syncNativeData()).complete, true); assert.equal(rows.size, 11)
+    f.service.dispose()
+  }
   console.log('ACTIVITY SYNC REFRESH OK: real modules, source independence, post-persistence events, explicit cooldown bypass, coalescing, account generations, late completion and bounded native work; synthetic API/native boundaries')
 } finally { await vite.close() }

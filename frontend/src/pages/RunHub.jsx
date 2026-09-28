@@ -33,11 +33,11 @@ export default function RunHub() {
     const current = () => active && isAuthSessionCurrent(session) && request === sequence
     return Promise.all([
       api.get('/runs', { params: { activity_kind: 'run' }, forgeAuthSession: session }),
-      fetchDailyExecution().catch((err) => {
+      fetchDailyExecution(undefined, { forgeAuthSession: session }).catch((err) => {
         console.error('[RunHub] canonical daily execution fetch failed:', err?.message || err)
         return null
       }),
-      api.get('/runs/next-recommendation').catch(() => ({ data: null })),
+      api.get('/runs/next-recommendation', { forgeAuthSession: session }).catch(() => ({ data: null })),
     ])
       .then(([runsRes, dailyExecution, recRes]) => {
         if (!current()) return

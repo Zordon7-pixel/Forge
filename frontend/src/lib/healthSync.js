@@ -66,21 +66,47 @@ export function createHealthImportBatches(workouts, batchSize = HEALTH_IMPORT_BA
   return batches
 }
 
-export async function importHealthWorkoutBatches(workouts, sendBatch) {
+export function validateHealthImportAcknowledgment(data, submittedCount) {
+  const invalid = () => { throw Object.assign(new Error('Apple Health import acknowledgment is invalid. The history will be retried.'), { code: 'HEALTH_IMPORT_ACK_INVALID' }) }
+  const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key)
+  if (!data || typeof data !== 'object' || Array.isArray(data)
+    || !Number.isInteger(submittedCount) || submittedCount < 1
+    || !['imported', 'skipped', 'errors'].every(key => own(data, key))
+    || Object.keys(data).some(key => !['imported', 'skipped', 'errors', 'identity_decision_receipt'].includes(key))
+    || !Number.isInteger(data.imported) || data.imported < 0 || data.imported > submittedCount
+    || !Number.isInteger(data.skipped) || data.skipped < 0 || data.skipped > submittedCount
+    || !Array.isArray(data.errors) || data.errors.length > submittedCount) invalid()
+  const indexes = new Set()
+  for (const row of data.errors) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)
+      || Object.keys(row).length !== 4 || !['index', 'error', 'code', 'retryable'].every(key => own(row, key))
+      || !Number.isInteger(row.index) || row.index < 0 || row.index >= submittedCount || indexes.has(row.index)
+      || typeof row.error !== 'string' || !row.error.trim() || typeof row.code !== 'string' || !row.code.trim()
+      || typeof row.retryable !== 'boolean' || row.retryable !== (row.code !== 'IMPORT_ROW_INVALID')) invalid()
+    indexes.add(row.index)
+  }
+  // importRows counts each submitted row exactly once: saved, skipped or failed.
+  // Failed rows are NOT also counted as skipped. The identity receipt is metadata,
+  // not an alternative acknowledgment or authority to fabricate missing totals.
+  if (data.imported + data.skipped + data.errors.length !== submittedCount) invalid()
+  return data
+}
+
+export async function importHealthWorkoutBatches(workouts, sendBatch, onBatchAcknowledged) {
   const result = { imported: 0, skipped: 0, errors: [] }
   let offset = 0
 
   for (const batch of createHealthImportBatches(workouts)) {
     try {
-      const data = await sendBatch(batch)
-      result.imported += Number(data?.imported || 0)
-      result.skipped += Number(data?.skipped || 0)
-      const batchErrors = Array.isArray(data?.errors) ? data.errors : []
-      result.errors.push(...batchErrors.map((item) => ({
+      const data = validateHealthImportAcknowledgment(await sendBatch(batch), batch.length)
+      result.imported += data.imported
+      result.skipped += data.skipped
+      result.errors.push(...data.errors.map((item) => ({
         ...item,
-        index: Number.isInteger(Number(item?.index)) ? offset + Number(item.index) : item?.index,
+        index: offset + item.index,
       })))
       offset += batch.length
+      await onBatchAcknowledged?.(data)
     } catch (error) {
       error.partialImportResult = { ...result, errors: [...result.errors] }
       throw error

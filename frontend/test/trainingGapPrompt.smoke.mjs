@@ -9,7 +9,7 @@ function check(condition, message) {
   passed += 1
 }
 
-check(source.includes("api.get('/plans/adaptation/current', { params: { date: localDateISO() } })"), 'Today requests the phone-local transparent adaptation')
+check(source.includes("api.get('/plans/adaptation/current', { ...requestConfig, params: { date: localDateISO() } })") && source.includes('const requestConfig = { forgeAuthSession: session }'), 'Today requests the phone-local transparent adaptation bound to the captured authentication session')
 check(source.includes("['run_gap', 'training_gap'].includes(item?.signal)"), 'Today limits the inactivity card to current or legacy training-gap evidence')
 check(source.includes('Everything okay?'), 'training-gap card asks before changing the plan')
 check(source.includes('Ease my return') && source.includes('Keep original'), 'both consent choices are visible')

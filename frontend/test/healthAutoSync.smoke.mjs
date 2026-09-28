@@ -560,7 +560,7 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   const partial = await importHealthWorkoutBatches([{ id: 1 }, { id: 2 }], async () => ({
     imported: 1,
     skipped: 0,
-    errors: [{ index: 1, error: 'database unavailable', retryable: true }],
+    errors: [{ index: 1, error: 'database unavailable', code: 'IMPORT_OPERATION_FAILED', retryable: true }],
   }))
   assert.equal(partial.imported, 1)
   assert.equal(retryableHealthSyncErrors(partial.errors).length, 1, 'HTTP-200 row errors remain unresolved')
@@ -634,7 +634,7 @@ assert.ok(dashboardSource.includes('HealthService.hasNativeSyncInFlight()'), 'Da
 assert.ok(healthSourceManager.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'connected sources suppress duplicate pull-origin fetches')
 assert.ok(healthSourceManager.includes('setNotice(healthSyncNotice(result))'), 'explicit Apple Health sync retains successful diagnostic counts')
 assert.ok(healthSourceManager.includes('setNotice(healthSyncFailureMessage(err))'), 'explicit Apple Health sync retains failure diagnostics')
-assert.ok(dashboardSource.includes("api.get('/runs', { params: { limit: 5 } })") && dashboardSource.includes("api.get('/lifts')") && dashboardSource.includes("api.get('/workouts')"), 'Dashboard refreshes runs, legacy lifts, and completed workout sessions that feed Recent Activity')
+assert.ok(dashboardSource.includes("api.get('/runs', { ...requestConfig, params: { limit: 5 } })") && dashboardSource.includes("api.get('/lifts', requestConfig)") && dashboardSource.includes("api.get('/workouts', requestConfig)") && dashboardSource.includes('const requestConfig = { forgeAuthSession: session }'), 'Dashboard refreshes runs, legacy lifts, and completed workout sessions under its captured login')
 assert.ok(dashboardSource.includes("console.error('[Dashboard] completed workout fetch failed:'"), 'completed workout fetch failures remain contextual and fail soft')
 assert.ok(insightsSheetSource.includes("item._type === 'workout'") && insightsSheetSource.includes("/history?workoutId=${item.id}"), 'Recent Activity renders completed workout sessions and links them to History detail')
 assert.ok(dashboardSource.includes('<RecentActivityCard recentActivity={recentActivity}'), 'Recent Activity remains the visible Dashboard result of ordinary and late successful imports')

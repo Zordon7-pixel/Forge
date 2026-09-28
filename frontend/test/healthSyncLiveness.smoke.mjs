@@ -432,7 +432,7 @@ try {
     const released = hold; hold = null; released.resolve(); await flush(); await time.advance(0)
     assert.equal(summaries, 5, 'burst during active sync drains exactly one follow-up')
     await time.advance(0); assert.equal(summaries, 5)
-    responseHook = async (config) => config.url === '/import/health' ? { errors: [{ retryable: true }], imported: 0, skipped: 0 } : null
+    responseHook = async (config) => config.url === '/import/health' ? { errors: [{ index: 0, error: 'Synthetic import unavailable', code: 'IMPORT_OPERATION_FAILED', retryable: true }], imported: 0, skipped: 0 } : null
     listeners.get('workoutObserved')(); await flush(); const failed = summaries
     assert.ok(localStorage.getItem(sync.healthAccountKey('forge.health.observerPending', 'owner-a')))
     for (let i = 0; i < 10; i++) listeners.get('workoutObserved')()

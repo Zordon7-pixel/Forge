@@ -109,7 +109,8 @@ assert.match(dashboard, /recommendation=\{effectiveRecommendation\}/, 'Dashboard
 assert.match(dashboard, /execution=\{execution\}/, 'Dashboard passes its existing daily execution to the log')
 assert.doesNotMatch(dashboard, /<DailyCoachFlow|<TodayDetailSheet/, 'Dashboard does not duplicate today’s workout outside Train')
 assert.equal((dashboard.match(/['"]\/recovery\/readiness['"]/g) || []).length, 1, 'Dashboard retains exactly one readiness request path')
-assert.equal((dashboard.match(/fetchDailyExecution\(localDateISO\(\)\)/g) || []).length, 1, 'Dashboard retains exactly one daily-execution request path')
+assert.equal((dashboard.match(/fetchDailyExecution\(localDateISO\(\), requestConfig\)/g) || []).length, 1, 'Dashboard retains exactly one session-scoped phone-local daily-execution request path')
+assert.match(dashboard, /const requestConfig = \{ forgeAuthSession: session \}/, 'daily execution retains the captured authentication session')
 
 const signatureCss = css.slice(css.indexOf("/* FORGE Signature UI: Readiness Arc + Coach's Log */"))
 assert.ok(signatureCss.length > 0, 'signature styles are present')
