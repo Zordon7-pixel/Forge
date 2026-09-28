@@ -1,3 +1,6 @@
+import { getAuthSession, isAuthSessionCurrent } from './tokenStore.js'
+import { getAuthenticatedUserId } from './auth.js'
+
 export const HEALTH_SYNC_RESULT_EVENT = 'forge-health-sync-result'
 export const HEALTH_SYNC_COMPLETED_EVENT = 'forge-health-sync-completed'
 export const HEALTH_SYNC_ORIGIN_PULL_REFRESH = 'pull_to_refresh'
@@ -63,21 +66,47 @@ export function createHealthImportBatches(workouts, batchSize = HEALTH_IMPORT_BA
   return batches
 }
 
-export async function importHealthWorkoutBatches(workouts, sendBatch) {
+export function validateHealthImportAcknowledgment(data, submittedCount) {
+  const invalid = () => { throw Object.assign(new Error('Apple Health import acknowledgment is invalid. The history will be retried.'), { code: 'HEALTH_IMPORT_ACK_INVALID' }) }
+  const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key)
+  if (!data || typeof data !== 'object' || Array.isArray(data)
+    || !Number.isInteger(submittedCount) || submittedCount < 1
+    || !['imported', 'skipped', 'errors'].every(key => own(data, key))
+    || Object.keys(data).some(key => !['imported', 'skipped', 'errors', 'identity_decision_receipt'].includes(key))
+    || !Number.isInteger(data.imported) || data.imported < 0 || data.imported > submittedCount
+    || !Number.isInteger(data.skipped) || data.skipped < 0 || data.skipped > submittedCount
+    || !Array.isArray(data.errors) || data.errors.length > submittedCount) invalid()
+  const indexes = new Set()
+  for (const row of data.errors) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)
+      || Object.keys(row).length !== 4 || !['index', 'error', 'code', 'retryable'].every(key => own(row, key))
+      || !Number.isInteger(row.index) || row.index < 0 || row.index >= submittedCount || indexes.has(row.index)
+      || typeof row.error !== 'string' || !row.error.trim() || typeof row.code !== 'string' || !row.code.trim()
+      || typeof row.retryable !== 'boolean' || row.retryable !== (row.code !== 'IMPORT_ROW_INVALID')) invalid()
+    indexes.add(row.index)
+  }
+  // importRows counts each submitted row exactly once: saved, skipped or failed.
+  // Failed rows are NOT also counted as skipped. The identity receipt is metadata,
+  // not an alternative acknowledgment or authority to fabricate missing totals.
+  if (data.imported + data.skipped + data.errors.length !== submittedCount) invalid()
+  return data
+}
+
+export async function importHealthWorkoutBatches(workouts, sendBatch, onBatchAcknowledged) {
   const result = { imported: 0, skipped: 0, errors: [] }
   let offset = 0
 
   for (const batch of createHealthImportBatches(workouts)) {
     try {
-      const data = await sendBatch(batch)
-      result.imported += Number(data?.imported || 0)
-      result.skipped += Number(data?.skipped || 0)
-      const batchErrors = Array.isArray(data?.errors) ? data.errors : []
-      result.errors.push(...batchErrors.map((item) => ({
+      const data = validateHealthImportAcknowledgment(await sendBatch(batch), batch.length)
+      result.imported += data.imported
+      result.skipped += data.skipped
+      result.errors.push(...data.errors.map((item) => ({
         ...item,
-        index: Number.isInteger(Number(item?.index)) ? offset + Number(item.index) : item?.index,
+        index: offset + item.index,
       })))
       offset += batch.length
+      await onBatchAcknowledged?.(data)
     } catch (error) {
       error.partialImportResult = { ...result, errors: [...result.errors] }
       throw error
@@ -188,6 +217,8 @@ export async function runHealthAwarePageRefresh({
   authenticated = false,
   native = false,
   syncNativeData,
+  syncConnectedProvider,
+  onSourceSettled,
   afterHealthSync,
   onHealthSyncError,
   refreshPage,
@@ -197,20 +228,46 @@ export async function runHealthAwarePageRefresh({
   let healthSyncAttempted = false
   let healthSyncResult = null
   let healthSyncError = null
+  let providerResult = null
+  let providerError = null
+  let refreshError = null
+  const sourceStates = { apple: authenticated && native ? 'pending' : 'not_attempted', strava: authenticated && syncConnectedProvider ? 'pending' : 'not_attempted' }
+  const settled = (source, status) => {
+    sourceStates[source] = status
+    try { onSourceSettled?.(source, status) }
+    catch (error) { console.warn('[activity-sync] status display unavailable') }
+  }
+  const providerPromise = authenticated && syncConnectedProvider
+    ? Promise.resolve().then(syncConnectedProvider).then((result) => {
+      providerResult = result
+      settled('strava', result?.status || 'partial')
+    }, (error) => { providerError = error; settled('strava', 'error') })
+    : Promise.resolve()
   const suppressHealthEventRefreshes = Boolean(authenticated && native)
 
   if (suppressHealthEventRefreshes) activeHealthPullRefreshes += 1
 
   try {
-    if (suppressHealthEventRefreshes) {
-      healthSyncAttempted = true
+    if (suppressHealthEventRefreshes || (authenticated && syncConnectedProvider)) {
+      healthSyncAttempted = suppressHealthEventRefreshes
       let deadlineExpired = false
       let deadlineScheduled = false
       let deadlineId
-      const healthSyncPromise = Promise.resolve().then(() => syncNativeData({
+      const nativePromise = suppressHealthEventRefreshes ? Promise.resolve().then(() => syncNativeData({
         forceFresh: true,
+        afterActive: true,
         syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
-      }))
+      })).then((result) => {
+        healthSyncResult = result
+        settled('apple', result?.complete === true ? 'complete' : 'partial')
+      }, (error) => {
+        healthSyncError = error; settled('apple', 'error')
+        if (!deadlineExpired) {
+          try { onHealthSyncError?.(error) }
+          catch (reportingError) { console.warn('[healthSync] refresh error reporter failed') }
+        }
+      }) : Promise.resolve()
+      const healthSyncPromise = Promise.all([nativePromise, providerPromise])
       // Promise.race observes the losing branch, and this explicit observer
       // keeps that contract obvious if the bridge rejects after the gesture.
       void healthSyncPromise.catch((error) => {
@@ -221,16 +278,20 @@ export async function runHealthAwarePageRefresh({
       const deadlinePromise = new Promise((resolve, reject) => {
         deadlineId = scheduleDeadline(() => {
           deadlineExpired = true
-          reject(new HealthPullRefreshTimeoutError())
+          reject(suppressHealthEventRefreshes && sourceStates.apple === 'pending'
+            ? new HealthPullRefreshTimeoutError()
+            : Object.assign(new Error('Activity sources are still syncing.'), { code: 'ACTIVITY_REFRESH_TIMEOUT' }))
         }, HEALTH_PULL_REFRESH_DEADLINE_MS)
         deadlineScheduled = true
       })
       try {
-        healthSyncResult = await Promise.race([healthSyncPromise, deadlinePromise])
+        await Promise.race([healthSyncPromise, deadlinePromise])
       } catch (error) {
-        healthSyncError = error
+        refreshError = error
+        if (sourceStates.strava === 'pending') providerError = error
+        if (suppressHealthEventRefreshes && sourceStates.apple === 'pending') healthSyncError = error
         try {
-          onHealthSyncError?.(error)
+          if (suppressHealthEventRefreshes && sourceStates.apple === 'pending') onHealthSyncError?.(error)
         } catch (reportingError) {
           console.warn('[healthSync] refresh error reporter failed:', reportingError?.message || reportingError)
         }
@@ -249,6 +310,10 @@ export async function runHealthAwarePageRefresh({
       healthSyncAttempted,
       healthSyncResult,
       healthSyncError,
+      providerResult,
+      providerError,
+      refreshError,
+      sourceStates: { ...sourceStates },
     }
 
     await afterHealthSync?.()
@@ -259,6 +324,13 @@ export async function runHealthAwarePageRefresh({
       activeHealthPullRefreshes = Math.max(0, activeHealthPullRefreshes - 1)
     }
   }
+}
+
+export function activityRefreshNotice(outcome) {
+  const labels = { apple: 'Apple Health', strava: 'Strava' }
+  const text = { pending: 'still syncing; saved runs will appear automatically', partial: 'partially synced; some data is unavailable', error: 'could not sync; try again', complete: 'synced', disconnected: 'not connected', cooldown: 'recently checked', cancelled: 'sync cancelled' }
+  return Object.entries(outcome?.sourceStates || {}).filter(([, state]) => state !== 'not_attempted')
+    .map(([source, state]) => `${labels[source]}: ${text[state] || text.partial}.`).join(' ')
 }
 
 export function getLastHealthSyncResult(accountId) {
@@ -323,4 +395,33 @@ export function healthSyncFailureMessage(error) {
     return 'Apple Health is taking longer than expected. Any completed batches are safely saved; keep Forged Hybrid open and try Sync again.'
   }
   return message || 'Unable to sync Apple Health on this device.'
+}
+export const ACTIVITY_DATA_CHANGED_EVENT = 'forge-activity-data-changed'
+// Invalidation carries no token, measurements or provider exception text.
+export function announceActivityDataChanged(source, session) {
+  if (!isAuthSessionCurrent(session) || session.accountId !== getAuthenticatedUserId()) return false
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(ACTIVITY_DATA_CHANGED_EVENT, {
+    detail: { source, accountId: session.accountId, generation: session.generation },
+  }))
+  return true
+}
+
+export function subscribeActivityDataChanged(callback) {
+  const session = { ...getAuthSession(), accountId: getAuthenticatedUserId() }
+  let active = true
+  let reading = false, pending = false
+  const current = () => active && isAuthSessionCurrent(session) && session.accountId === getAuthenticatedUserId()
+  const read = () => {
+    if (!current()) return
+    if (reading) { pending = true; return }
+    reading = true
+    Promise.resolve().then(() => { if (current()) return callback(current, session) })
+      .catch(() => console.warn('[activity-sync] data refresh unavailable'))
+      .finally(() => { reading = false; if (pending) { pending = false; read() } })
+  }
+  const listener = (event) => {
+    if (current() && event.detail?.accountId === session.accountId && event.detail?.generation === session.generation) read()
+  }
+  window.addEventListener(ACTIVITY_DATA_CHANGED_EVENT, listener)
+  return () => { active = false; window.removeEventListener(ACTIVITY_DATA_CHANGED_EVENT, listener) }
 }

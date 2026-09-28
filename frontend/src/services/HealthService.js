@@ -4,6 +4,7 @@ import { getAuthenticatedUserId } from '../lib/auth'
 import { getAuthSession, isAuthSessionCurrent, subscribeAuthSession } from '../lib/tokenStore'
 import {
   announceHealthSyncResult,
+  announceActivityDataChanged,
   clearHealthHistoryTransferPending,
   createHealthSyncCoordinator,
   HEALTH_IMPORT_TIMEOUT_MS,
@@ -135,6 +136,7 @@ export class HealthService {
     this.native = native
     this.pendingBridgeCalls = new Set()
     this.pendingHistoryReads = new Set()
+    this.pendingOptionalSummary = null
     this.healthKit = null
     this.lastNativeSync = null
     this.nativeSyncCoordinator = createHealthSyncCoordinator((options) => this.performNativeSync(options), {
@@ -350,15 +352,34 @@ export class HealthService {
   async performNativeSync({ requestPermission = false, syncOrigin = null, operation } = {}) {
     operation.assertCurrent()
     const accountId = operation.identity.accountId
-    const result = await this.getHealthSummary({ requestPermission, operation })
+    const init = await this.initialize({ requestPermission, operation })
     operation.assertCurrent()
-    if (!result?.available) {
-      throw new Error(result?.reason || 'Apple Health is not available.')
+    if (!init?.available) {
+      throw new Error(init?.reason || 'Apple Health is not available.')
     }
-
-    await this.syncToProfile(result.metrics, operation)
-    const nativeMetricsVersion = Number(result.metrics?.metricsSchemaVersion || 1)
-    const workoutUpgradeAvailable = nativeMetricsVersion >= REQUIRED_WORKOUT_IMPORT_VERSION
+    // At most one optional native summary may remain unresolved. Retrying it
+    // must not occupy both uncancellable bridge slots and starve history.
+    const startSummary = () => {
+      if (!this.pendingOptionalSummary && this.pendingBridgeCalls.size < 2) {
+        const task = (async () => {
+          const summary = await this.getHealthSummary({ operation })
+          operation.assertCurrent()
+          if (!summary.available) return { ...summary, summaryStatus: 'error' }
+          try {
+            await this.syncToProfile(summary.metrics, operation)
+            return { ...summary, summaryStatus: 'complete' }
+          } catch (error) {
+            operation.assertCurrent()
+            return { ...summary, summaryStatus: 'error' }
+          }
+        })().finally(() => { if (this.pendingOptionalSummary === task) this.pendingOptionalSummary = null })
+        this.pendingOptionalSummary = task
+        // Observe rejection immediately even when history fails first.
+        void task.catch(() => null) // The owning operation reports failure; no detached rejection.
+        return task
+      }
+      return Promise.resolve({ available: true, metrics: null, workouts: [], summaryStatus: 'pending' })
+    }
     const historyOptions = (isHealthHistoryTransferPending(accountId) || workoutHistoryUpgradeRequired(accountId) || this.pendingHistoryReads.size > 0) ? { forceFullSync: true } : {}
     let profile = null
     try {
@@ -382,11 +403,15 @@ export class HealthService {
       throw new Error('Unable to checkpoint Apple Health history before syncing. Please try again.')
     }
     const read = this.getWorkoutHistory(historyOptions)
+    const summaryTask = startSummary()
     this.pendingHistoryReads.add(read)
     let history
     try { history = await read } finally { this.pendingHistoryReads.delete(read) }
     operation.assertCurrent()
-    const workouts = history.available && history.workouts.length > 0 ? history.workouts : result.workouts
+    // A failed optional summary never defines whether workouts exist.
+    const hasHistoryWorkouts = history.available && history.workouts.length > 0
+    const fallbackSummary = !hasHistoryWorkouts ? await summaryTask : null
+    const workouts = hasHistoryWorkouts ? history.workouts : (fallbackSummary?.workouts || [])
     let importResult = { imported: 0, skipped: 0, errors: [] }
     if (Array.isArray(workouts) && workouts.length > 0) {
       try {
@@ -395,6 +420,9 @@ export class HealthService {
           const { data } = await this.api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS, signal: operation.signal, forgeAuthSession: operation.identity })
           operation.assertCurrent()
           return data
+        }, (acknowledgment) => {
+          operation.assertCurrent()
+          if (acknowledgment.imported + acknowledgment.skipped > 0) announceActivityDataChanged('apple', operation.identity)
         })
       } catch (error) {
         operation.assertCurrent()
@@ -403,7 +431,10 @@ export class HealthService {
       }
     }
 
+    const result = await summaryTask
     operation.assertCurrent()
+    const nativeMetricsVersion = Number(result.metrics?.metricsSchemaVersion || 1)
+    const workoutUpgradeAvailable = nativeMetricsVersion >= REQUIRED_WORKOUT_IMPORT_VERSION
     const unresolved = retryableHealthSyncErrors(importResult.errors)
     const importComplete = isHealthHistoryImportComplete({
       historyAvailable: history.available && this.pendingHistoryReads.size === 0,
@@ -413,18 +444,23 @@ export class HealthService {
     if (importComplete && workoutUpgradeAvailable) {
       upgradeCommitted = markWorkoutHistoryUpgraded(accountId)
     }
-    let complete = importComplete && upgradeCommitted
-    if (complete) {
-      complete = clearHealthHistoryTransferPending(accountId)
+    let historyComplete = importComplete && upgradeCommitted
+    if (historyComplete) {
+      historyComplete = clearHealthHistoryTransferPending(accountId)
     }
-    if (!complete) {
+    if (!historyComplete) {
       markHealthHistoryTransferPending(accountId)
     }
+    const complete = historyComplete && result.summaryStatus === 'complete'
 
     markAutoHealthSyncAttempted(accountId)
 
     const syncResult = {
       ...result,
+      available: true,
+      reason: null,
+      authorizationUpgradeRequired: Boolean(init.authorizationUpgradeRequired),
+      stages: { workouts: historyComplete ? 'complete' : 'partial', summary: result.summaryStatus },
       profile,
       observedMaxHR: history.observedMaxHR,
       workouts,

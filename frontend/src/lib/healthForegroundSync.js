@@ -1,21 +1,41 @@
-import { healthAccountKey } from './healthSync.js'
+import { healthAccountKey, announceActivityDataChanged } from './healthSync.js'
 import { getAuthSession, isAuthSessionCurrent } from './tokenStore.js'
 
 export const HEALTH_FOREGROUND_INTERVAL_MS = 5 * 60 * 1000
 export const HEALTH_FOREGROUND_RETRY_MS = 30000
 const pendingKey = (id) => healthAccountKey('forge.health.observerPending', id)
 
-export async function syncConnectedStrava(api, session, { storage = localStorage, now = () => Date.now() } = {}) {
-  if (!isAuthSessionCurrent(session) || !session.accountId) return
-  const key = healthAccountKey('forge_auto_strava_sync_last_sync_at', session.accountId)
-  let last = 0
-  try { last = Number(storage.getItem(key) || 0) } catch (error) { console.warn('[AutoHealthSync] Strava timestamp lookup failed:', error?.message) }
-  if (last && now() - last < 15 * 60 * 1000) return
-  const status = await api.get('/strava/status', { forgeAuthSession: session })
-  if (!isAuthSessionCurrent(session)) return
-  if (status.data?.connected) await api.post('/strava/sync', undefined, { forgeAuthSession: session })
-  if (!isAuthSessionCurrent(session)) return
-  try { storage.setItem(key, String(now())) } catch (error) { console.warn('[AutoHealthSync] Strava timestamp save failed:', error?.message) }
+const stravaOperations = new Map()
+export async function syncConnectedStrava(api, session, { storage = localStorage, now = () => Date.now(), force = false } = {}) {
+  if (!isAuthSessionCurrent(session) || !session.accountId) return { status: 'cancelled' }
+  const active = stravaOperations.get(session.accountId)
+  if (active && active.session.token === session.token && active.session.generation === session.generation) {
+    if (!force || active.force) return active.promise
+    await active.promise.catch(() => null) // Explicit retry owns the next bounded request.
+    return syncConnectedStrava(api, session, { storage, now, force })
+  }
+  const operation = { session, force, promise: null }
+  operation.promise = Promise.resolve().then(async () => {
+    if (!isAuthSessionCurrent(session)) return { status: 'cancelled' }
+    const key = healthAccountKey('forge_auto_strava_sync_last_sync_at', session.accountId)
+    let last = 0
+    try { last = Number(storage.getItem(key) || 0) } catch (error) { console.warn('[AutoHealthSync] Strava timestamp lookup failed:', error?.message) }
+    if (!force && last && now() - last < 15 * 60 * 1000) return { status: 'cooldown' }
+    const status = await api.get('/strava/status', { forgeAuthSession: session })
+    if (!isAuthSessionCurrent(session)) return { status: 'cancelled' }
+    if (status.data?.connected === false) return { status: 'disconnected' }
+    if (status.data?.connected !== true) throw new Error('Strava connection status is unavailable.')
+    const response = await api.post('/strava/sync', undefined, { forgeAuthSession: session })
+    if (!isAuthSessionCurrent(session)) return { status: 'cancelled' }
+    if (!Number.isInteger(response.data?.imported) || response.data.imported < 0) throw new Error('Strava sync acknowledgment is unavailable.')
+    announceActivityDataChanged('strava', session)
+    const partial = response.data?.complete === false || (Array.isArray(response.data?.errors) && response.data.errors.length > 0)
+    if (partial) return { status: 'partial' }
+    try { storage.setItem(key, String(now())) } catch (error) { console.warn('[AutoHealthSync] Strava timestamp save failed:', error?.message) }
+    return { status: 'complete' }
+  }).finally(() => { if (stravaOperations.get(session.accountId) === operation) stravaOperations.delete(session.accountId) })
+  stravaOperations.set(session.accountId, operation)
+  return operation.promise
 }
 
 // A foreground lifecycle owner, not background upload. The durable event marker
@@ -65,6 +85,10 @@ export function mountForegroundHealthSync({
     }
     active = true
     lastAttempt.set(id, at)
+    // Connected-provider acquisition is independent of Apple summary/history.
+    void Promise.resolve().then(() => {
+      if (!disposed && isAuthSessionCurrent(session)) return afterSync({ ...session, accountId: id })
+    }).catch(onError)
     let complete = false
     try {
       const result = await service.syncNativeData({ forceFresh: Boolean(pending), afterActive: Boolean(pending) })
@@ -76,10 +100,6 @@ export function mountForegroundHealthSync({
         retryAfter.set(id, now() + HEALTH_FOREGROUND_RETRY_MS)
       }
       else retryAfter.delete(id)
-      // Optional enrichment never owns or holds the Apple sync latch.
-      void Promise.resolve().then(() => {
-        if (!disposed && isAuthSessionCurrent(session)) return afterSync({ ...session, accountId: id })
-      }).catch(onError)
     } catch (error) {
       if (!disposed && getAccountId() === id) {
         if (!readPending(id)) setPending(id, `${now()}:${++sequence}`)

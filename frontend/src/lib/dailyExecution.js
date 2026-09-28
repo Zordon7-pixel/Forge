@@ -127,8 +127,9 @@ export function planSessionIdFromState(state) {
 }
 
 // Fetch + normalize today's execution for a phone-local date.
-export async function fetchDailyExecution(dateISO = localDateISO()) {
-  const res = await api.get(`/plans/today?date=${encodeURIComponent(dateISO)}`);
+export async function fetchDailyExecution(dateISO = localDateISO(), { forgeAuthSession } = {}) {
+  const url = `/plans/today?date=${encodeURIComponent(dateISO)}`;
+  const res = forgeAuthSession ? await api.get(url, { forgeAuthSession }) : await api.get(url);
   return normalizeExecution(res && res.data);
 }
 

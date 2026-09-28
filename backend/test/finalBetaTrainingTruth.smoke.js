@@ -195,7 +195,7 @@ check(/<AutoHealthSync\s*\/>/.test(appSource), 'the native sync host remains ren
 check(/mountForegroundHealthSync\(\{[\s\S]*service: HealthService, app: CapacitorApp, documentTarget: document/.test(appSource)
   && /getAccountId: getAuthenticatedUserId/.test(appSource)
   && /return \(\) => lifecycle\.dispose\(\)/.test(appSource), 'native lifecycle uses the tested service, account identity and cleanup');
-check(healthServiceSource.includes('await this.syncToProfile(result.metrics, operation)'), 'summary persistence retains its operation/account fence');
+check(healthServiceSource.includes('await this.syncToProfile(summary.metrics, operation)'), 'optional summary persistence retains its operation/account fence');
 check(healthServiceSource.includes('const read = this.getWorkoutHistory(historyOptions)')
   && healthServiceSource.includes('history = await read'), 'native history remains awaited while tracking late reads');
 check(healthServiceSource.includes("this.api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS, signal: operation.signal, forgeAuthSession: operation.identity })"), 'workout batches retain timeout, cancellation and captured login identity');

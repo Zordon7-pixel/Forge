@@ -16,7 +16,9 @@ let apiState
 
 test.beforeEach(async ({ page }) => {
   await setQaBrowserClock(page)
-  apiState = await installAuthenticatedApi(page)
+  apiState = await installAuthenticatedApi(page, { responses: [
+    ['GET /api/strava/status', { connected: false }],
+  ] })
 })
 
 test.afterEach(() => {
@@ -97,4 +99,6 @@ test('pull to refresh remounts page data without a browser reload', async ({ pag
   expect(mainFrameNavigations, 'Pull-to-refresh must not navigate or reload the main document').toBe(0)
   await expect.poll(() => page.evaluate(() => window.__forgeQaDocumentSentinel)).toBe(documentSentinel)
   await expect(page.getByText('Forged Hybrid — Startup Error')).toHaveCount(0)
+  expect(apiState.requestsFor('GET', '/api/strava/status')).toHaveLength(1)
+  expect(apiState.requestsFor('POST', '/api/strava/sync')).toHaveLength(0)
 })

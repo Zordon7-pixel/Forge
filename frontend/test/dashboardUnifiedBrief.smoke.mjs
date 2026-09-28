@@ -88,7 +88,8 @@ assert.equal(buildWeeklyRecapView({ ...recapFixture, totalCalories: null }).teas
 assert.equal(dashboardCustomerText('FULL_REST'), 'Full rest', 'closed enums are humanized before presentation')
 assert.deepEqual({ recapFixture, restFixture }, before, 'presentation helpers never mutate dashboard payloads')
 
-assert.equal((dashboard.match(/api\.get\('\/recap\/weekly'\)/g) || []).length, 1, 'Dashboard retains one weekly recap request')
+assert.equal((dashboard.match(/api\.get\('\/recap\/weekly', requestConfig\)/g) || []).length, 1, 'Dashboard retains one session-scoped weekly recap request')
+assert.match(dashboard, /const requestConfig = \{ forgeAuthSession: session \}/, 'recap request configuration retains the captured authentication session')
 assert.match(dashboard, /<WeeklyRecapDialog open=\{weeklyRecapOpen\} data=\{weeklyRecap\}/, 'the dialog reuses the loaded Dashboard recap payload')
 assert.match(dashboard, /event\.stopPropagation\(\)[\s\S]*recap-seen-/, 'teaser dismissal stops propagation and retains announcement persistence')
 assert.match(dashboard, /aria-haspopup="dialog"/, 'the recap opener advertises the dialog interaction')

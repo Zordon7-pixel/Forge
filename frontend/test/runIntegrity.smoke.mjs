@@ -199,7 +199,9 @@ check(/workout\.statistics\(for: type\)/.test(swift), 'native import prefers sta
 check(/predicateForObjects\(from: workout\)/.test(swift) && /workout\.sourceRevision\.source/.test(swift), 'heart-rate samples are scoped to the workout with a same-source fallback')
 check(/timeWeightedAverage/.test(swift), 'sparse fallback samples use time weighting instead of an unweighted mean')
 check(/metricsSchemaVersion": 6/.test(swift) && /REQUIRED_WORKOUT_IMPORT_VERSION = 6/.test(healthService), 'the next native build triggers one full re-import with corrected summaries and Watch streams')
-check(/workoutUpgradeAvailable[\s\S]*workoutHistoryUpgradeRequired/.test(healthService), 'old TestFlight shells cannot prematurely mark the v5 import complete')
+check(/const workoutUpgradeAvailable = nativeMetricsVersion >= REQUIRED_WORKOUT_IMPORT_VERSION/.test(healthService)
+  && /if \(importComplete && workoutUpgradeAvailable\)\s*\{\s*upgradeCommitted = markWorkoutHistoryUpgraded\(accountId\)/.test(healthService),
+  'only a complete import with the required native schema can acknowledge the history upgrade (runtime old-schema retries covered by activitySyncRefresh)')
 
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed) process.exit(1)

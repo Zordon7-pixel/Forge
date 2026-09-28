@@ -13,6 +13,217 @@ import {
   signatureUiDashboardFixture,
 } from './support/mockApi.mjs'
 
+for (const destination of ['/run', '/history', '/']) {
+  test(`activity sync refresh updates mounted ${destination} after late native commit without reopening`, async ({ page }) => {
+    test.setTimeout(55000)
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'userAgent', { value: 'iPhone', configurable: true })
+      window.CapacitorCustomPlatform = { name: 'ios' }
+      window.__holdHistory = false
+      window.__nativeRows = [{ id: 'physical-one', activityType: 'running' }]
+      window.Capacitor = {
+        PluginHeaders: [
+          { name: 'ForgeHealth', methods: ['isAvailable', 'getSummary', 'getWorkoutHistory', 'removeListener'].map(name => ({ name, rtype: 'promise' })).concat({ name: 'addListener', rtype: 'callback' }) },
+          { name: 'App', methods: ['getInfo', 'removeListener'].map(name => ({ name, rtype: 'promise' })).concat({ name: 'addListener', rtype: 'callback' }) },
+        ],
+        nativeCallback: () => 'synthetic-listener',
+        nativePromise: async (plugin, method) => {
+          if (plugin === 'App') return { version: 'synthetic', build: 'synthetic' }
+          if (method === 'isAvailable') return { available: true }
+          if (method === 'getSummary') {
+            if (window.__summaryFails) throw new Error('synthetic optional summary unavailable')
+            return { metricsSchemaVersion: 6 }
+          }
+          if (method === 'getWorkoutHistory') {
+            if (window.__holdHistory) await new Promise(resolve => { window.__releaseHistory = resolve })
+            return { workouts: window.__nativeRows }
+          }
+          return {}
+        },
+      }
+      localStorage.setItem('forge_health_authorized', '1')
+      localStorage.setItem('forge_health_authorized_version', '4')
+    })
+    let rows = []
+    const state = await installAuthenticatedApi(page, { responses: [
+      ['GET /api/runs', () => ({ runs: [...rows].reverse() })],
+      ['GET /api/strava/status', { connected: false }],
+      ['POST /api/health/sync', { ok: true }],
+      ['POST /api/import/health', entry => {
+        let imported = 0
+        for (const workout of entry.body.workouts) if (!rows.some(row => row.id === workout.id)) {
+          rows.push({ id: workout.id, activity_kind: 'run', workout_type: 'easy_run', source: 'apple_health', date: qaLocalDateISO(), created_at: new Date().toISOString(), distance_miles: workout.id === 'physical-one' ? 3 : 5, duration_seconds: 3000, notes: workout.id === 'physical-one' ? 'Prior saved run' : 'Late imported run' }); imported++
+        }
+        return { imported, skipped: entry.body.workouts.length - imported, errors: [] }
+      }],
+    ] })
+    await page.goto(destination)
+    await expect.poll(() => rows.length).toBe(1)
+    await expect.poll(() => state.requestsFor('GET', '/api/runs').length).toBeGreaterThan(0)
+    await page.evaluate(() => {
+      window.__holdHistory = true
+      window.__nativeRows = [{ id: 'physical-one' }, { id: 'physical-two' }]
+      window.scrollTo(0, 0)
+      const target = document.querySelector('main')
+      const touch = y => new Touch({ identifier: 1, target, clientX: 140, clientY: y })
+      window.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(80)], bubbles: true }))
+      window.dispatchEvent(new TouchEvent('touchmove', { touches: [touch(245)], bubbles: true, cancelable: true }))
+      window.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(245)], bubbles: true }))
+    })
+    await expect(page.getByText(/Apple Health: still syncing/)).toBeVisible({ timeout: 20000 })
+    await expect.poll(() => page.evaluate(() => typeof window.__releaseHistory)).toBe('function')
+    // The one manual refresh may remount; no later persistence event may do so.
+    await page.evaluate(() => { document.querySelector('main').dataset.lateSentinel = 'preserve' })
+    let navigations = 0
+    page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++ })
+    if (destination === '/history') {
+      await page.getByRole('button', { name: 'Edit run', exact: true }).first().click()
+      await page.locator('textarea').fill('unsaved draft must survive import')
+    }
+    if (destination === '/') {
+      await page.getByRole('button', { name: 'More insights →', exact: true }).click()
+      await expect(page.getByRole('heading', { name: 'More insights', exact: true })).toBeVisible()
+    }
+    const reads = state.requestsFor('GET', '/api/runs').length
+    await page.evaluate(() => { window.__holdHistory = false; window.__releaseHistory() })
+    await expect.poll(() => rows.length).toBe(2)
+    await expect.poll(() => state.requestsFor('GET', '/api/runs').length).toBeGreaterThan(reads)
+    await expect(page.getByText(/Apple Health: synced/)).toBeVisible()
+    expect(await page.locator('main').getAttribute('data-late-sentinel')).toBe('preserve')
+    expect(navigations).toBe(0)
+    if (destination === '/history') {
+      await expect(page.locator('textarea')).toHaveValue('unsaved draft must survive import')
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Edit run', exact: true })).toHaveCount(2)
+    } else if (destination === '/run') {
+      await page.getByText('Recent run', { exact: true }).click()
+      await expect(page.getByText('5.00 mi', { exact: true })).toBeVisible()
+    } else {
+      await expect(page.getByRole('heading', { name: 'More insights', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Close', exact: true }).click()
+      await expect(page.locator('section').filter({ has: page.getByRole('heading', { name: 'Recent Activity', exact: true }) }).getByText('5.00 mi', { exact: true })).toBeVisible()
+    }
+    expect(rows.length).toBe(2)
+    if (destination === '/history') {
+      await page.evaluate(() => {
+        window.__summaryFails = true
+        window.scrollTo(0, 0)
+        const target = document.querySelector('main'), touch = y => new Touch({ identifier: 2, target, clientX: 140, clientY: y })
+        window.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(80)], bubbles: true }))
+        window.dispatchEvent(new TouchEvent('touchmove', { touches: [touch(245)], bubbles: true, cancelable: true }))
+        window.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(245)], bubbles: true }))
+      })
+      await expect(page.getByRole('status').filter({ hasText: /Apple Health: partially synced/ })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Edit run', exact: true })).toHaveCount(2)
+      expect(rows.length).toBe(2)
+    }
+  })
+}
+
+const activityConsumerPaths = {
+  '/run': ['/api/runs', '/api/plans/today', '/api/runs/next-recommendation'],
+  '/history': ['/api/runs', '/api/lifts', '/api/workouts', '/api/races', '/api/profile/hr-zones'],
+  '/': ['/api/recovery/readiness', '/api/auth/me/stats', '/api/runs', '/api/lifts', '/api/workouts', '/api/coach/warning',
+    '/api/checkin/today', '/api/users/goal', '/api/plans/compliance', '/api/runs/load-analysis', '/api/races/next', '/api/gear/shoes',
+    '/api/injury/active', '/api/recap/weekly', '/api/runs/next-recommendation', '/api/runs/age-graded-performance', '/api/plans/today',
+    '/api/group-runs', '/api/plans/adaptation/current', '/api/plans/reconciliation/current', '/api/stats/hybrid-streak'],
+}
+for (const destination of Object.keys(activityConsumerPaths)) for (const sameAccount of [false, true]) {
+  test(`activity sync refresh ${destination} fences every late 401 after ${sameAccount ? 'same-account relogin' : 'account switch'}`, async ({ page }) => {
+    await installAuthenticatedApi(page)
+    const paths = new Set(activityConsumerPaths[destination]), pending = []
+    let hold = false, heldRequests = 0
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname
+      if (!hold || !paths.has(path)) return route.fallback()
+      heldRequests++
+      await new Promise(resolve => pending.push({ path, resolve }))
+      await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Synthetic expired old login' }) })
+    })
+    await page.goto(destination)
+    await expect(page.getByRole('main')).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    const beforeText = await page.getByRole('main').innerText()
+    hold = true
+    await page.evaluate(() => {
+      document.querySelector('main').dataset.loginSentinel = 'original-mount'
+      window.dispatchEvent(new CustomEvent('forge-activity-data-changed', { detail: { source: 'apple', accountId: 'qa-user-001', generation: 0 } }))
+    })
+    await expect.poll(() => [...new Set(pending.map(p => p.path))].sort()).toEqual([...paths].sort())
+    const count = heldRequests
+    // No app reload: storage events exercise the real tokenStore generation
+    // listener, including logout→login with the very same token/account ID.
+    const replacement = sameAccount
+      ? await page.evaluate(() => localStorage.getItem('forge_token'))
+      : createQaToken({ id: 'qa-replacement' })
+    await page.evaluate(token => {
+      const oldValue = localStorage.getItem('forge_token')
+      localStorage.removeItem('forge_token')
+      window.dispatchEvent(new StorageEvent('storage', { key: 'forge_token', oldValue, newValue: null }))
+      localStorage.setItem('forge_token', token)
+      window.dispatchEvent(new StorageEvent('storage', { key: 'forge_token', oldValue: null, newValue: token }))
+    }, replacement)
+    for (const entry of pending) entry.resolve()
+    await page.waitForLoadState('networkidle')
+    expect(await page.evaluate(() => localStorage.getItem('forge_token'))).toBe(replacement)
+    expect(new URL(page.url()).pathname).toBe(destination)
+    expect(await page.locator('main').getAttribute('data-login-sentinel')).toBe('original-mount')
+    expect(await page.getByRole('main').innerText()).toBe(beforeText)
+    expect(heldRequests).toBe(count, 'stale consumer responses cannot trigger another acquisition')
+  })
+}
+
+test('activity sync refresh explicitly checks connected Strava on web within automatic cooldown', async ({ page }) => {
+  let imported = 0
+  const state = await installAuthenticatedApi(page, { responses: [
+    ['GET /api/strava/status', { connected: true }],
+    ['POST /api/strava/sync', () => { imported++; return { imported: 1, enriched: 0, total: 1 } }],
+  ] })
+  await page.goto('/run')
+  await expect(page.getByRole('heading', { name: 'Train', exact: true })).toBeVisible()
+  await page.evaluate(() => {
+    localStorage.setItem('forge_auto_strava_sync_last_sync_at:qa-user-001', String(Date.now()))
+    window.scrollTo(0, 0)
+    const target = document.querySelector('main'), touch = y => new Touch({ identifier: 1, target, clientX: 140, clientY: y })
+    window.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(80)], bubbles: true }))
+    window.dispatchEvent(new TouchEvent('touchmove', { touches: [touch(245)], bubbles: true, cancelable: true }))
+    window.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(245)], bubbles: true }))
+  })
+  await expect.poll(() => imported).toBe(1)
+  await expect(page.getByRole('status').filter({ hasText: 'Strava: synced.' })).toBeVisible()
+  expect(state.requestsFor('POST', '/api/strava/sync')).toHaveLength(1)
+})
+
+test('activity sync refresh invalidation preserves an active paused run and does not enable pull refresh', async ({ page }) => {
+  await installAuthenticatedApi(page)
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'geolocation', { value: undefined })
+    localStorage.setItem('forged_hybrid_active_run_v1', JSON.stringify({
+      ownerUserId: 'qa-user-001', phase: 'paused', startedAt: Date.now() - 600000, savedAt: Date.now(),
+      elapsed: 600, distanceMiles: 1.25, pauseStartedAt: Date.now(), pausedDurationMs: 0,
+      routeCoords: [], mapMyRun: false, gpsStarted: false, gpsAvailable: false, runEnvironment: 'outdoor', surface: 'road', runType: 'run',
+    }))
+  })
+  await page.goto('/run/active')
+  await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
+  const result = await page.evaluate(() => {
+    const target = document.querySelector('main') || document.querySelector('[data-active-run]') || document.body
+    target.dataset.activitySentinel = 'active-session'
+    const before = JSON.parse(localStorage.getItem('forged_hybrid_active_run_v1'))
+    window.dispatchEvent(new CustomEvent('forge-activity-data-changed', { detail: { source: 'strava', accountId: 'qa-user-001', generation: 0 } }))
+    const touch = y => new Touch({ identifier: 3, target, clientX: 140, clientY: y })
+    window.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(80)], bubbles: true }))
+    window.dispatchEvent(new TouchEvent('touchmove', { touches: [touch(245)], bubbles: true, cancelable: true }))
+    window.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(245)], bubbles: true }))
+    return before
+  })
+  await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
+  await expect(page.getByText('Refreshing app', { exact: true })).toHaveCount(0)
+  const after = await page.evaluate(() => JSON.parse(localStorage.getItem('forged_hybrid_active_run_v1')))
+  expect(after).toMatchObject({ phase: 'paused', elapsed: result.elapsed, distanceMiles: result.distanceMiles, startedAt: result.startedAt })
+  await expect(page.locator('[data-activity-sentinel="active-session"]')).toHaveCount(1)
+})
+
 test('shoe containment preserves unknown profiles and honest optional recommendations', async ({ page }, testInfo) => {
   await page.addInitScript(() => Object.defineProperty(navigator, 'geolocation', { value: undefined }))
   const errors = []

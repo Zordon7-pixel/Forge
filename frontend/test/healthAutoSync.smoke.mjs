@@ -255,6 +255,7 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   await Promise.resolve()
   assert.deepEqual(calls, [{
     forceFresh: true,
+    afterActive: true,
     syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
   }], 'authenticated native pull refresh requests exactly one forced HealthKit sync with pull provenance')
   assert.deepEqual(events, ['health-started'], 'page refresh waits while the HealthKit sync is unsettled')
@@ -559,7 +560,7 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   const partial = await importHealthWorkoutBatches([{ id: 1 }, { id: 2 }], async () => ({
     imported: 1,
     skipped: 0,
-    errors: [{ index: 1, error: 'database unavailable', retryable: true }],
+    errors: [{ index: 1, error: 'database unavailable', code: 'IMPORT_OPERATION_FAILED', retryable: true }],
   }))
   assert.equal(partial.imported, 1)
   assert.equal(retryableHealthSyncErrors(partial.errors).length, 1, 'HTTP-200 row errors remain unresolved')
@@ -617,12 +618,12 @@ assert.ok(!pullToRefresh.includes('}, [pulling, pullDistance])'), 'gesture liste
 assert.ok(pullToRefresh.includes("'form'") && pullToRefresh.includes("'[role=\"dialog\"]'"), 'forms and dialogs are excluded from destructive pull gestures')
 assert.ok(pullToRefresh.includes('event.touches.length !== 1') && pullToRefresh.includes('resetGesture()'), 'multi-touch transitions cancel the stored pull gesture')
 assert.ok(pullToRefresh.includes("'Syncing Apple Health'"), 'native refresh exposes clear HealthKit progress')
-assert.ok(pullToRefresh.includes('refreshPage: () => onRefreshCompleteRef.current?.()'), 'pull refresh remounts current data without a duplicate cold-launch HealthKit sync')
+assert.ok(pullToRefresh.includes('if (mounted && isAuthSessionCurrent(session)) onRefreshCompleteRef.current?.()'), 'pull refresh fences completion to the mounted initiating login')
 assert.ok(!pullToRefresh.includes('window.location.reload()'), 'pull refresh does not hard-reload the native shell')
 assert.ok(healthSyncSource.includes('HEALTH_PULL_REFRESH_DEADLINE_MS'), 'pull refresh owns one named gesture deadline')
 assert.ok(healthSyncSource.includes('HealthPullRefreshTimeoutError'), 'pull refresh uses a distinguishable timeout error')
 assert.ok(!/\bhealthSync(?:Notice|FailureMessage)\b/.test(pullToRefresh), 'pull refresh neither imports nor invokes diagnostic Health result copy')
-assert.ok(!pullToRefresh.includes('refreshNotice'), 'pull refresh has no completed-result notice state')
+assert.ok(pullToRefresh.includes('activityRefreshNotice') && pullToRefresh.includes('onSourceSettled'), 'pull refresh exposes source-specific pending/partial/error states and tracks its own late completion')
 assert.ok(!pullToRefresh.includes('showTemporaryNotice'), 'pull refresh has no post-refresh notice helper')
 assert.ok(!pullToRefresh.includes('noticeTimerRef') && !pullToRefresh.includes('5000'), 'pull refresh has no five-second post-refresh timer')
 assert.ok(pullToRefresh.includes('{(showIndicator || refreshing) && ('), 'the fixed pull indicator renders only while actively pulling or refreshing')
@@ -633,7 +634,7 @@ assert.ok(dashboardSource.includes('HealthService.hasNativeSyncInFlight()'), 'Da
 assert.ok(healthSourceManager.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'connected sources suppress duplicate pull-origin fetches')
 assert.ok(healthSourceManager.includes('setNotice(healthSyncNotice(result))'), 'explicit Apple Health sync retains successful diagnostic counts')
 assert.ok(healthSourceManager.includes('setNotice(healthSyncFailureMessage(err))'), 'explicit Apple Health sync retains failure diagnostics')
-assert.ok(dashboardSource.includes("api.get('/runs', { params: { limit: 5 } })") && dashboardSource.includes("api.get('/lifts')") && dashboardSource.includes("api.get('/workouts')"), 'Dashboard refreshes runs, legacy lifts, and completed workout sessions that feed Recent Activity')
+assert.ok(dashboardSource.includes("api.get('/runs', { ...requestConfig, params: { limit: 5 } })") && dashboardSource.includes("api.get('/lifts', requestConfig)") && dashboardSource.includes("api.get('/workouts', requestConfig)") && dashboardSource.includes('const requestConfig = { forgeAuthSession: session }'), 'Dashboard refreshes runs, legacy lifts, and completed workout sessions under its captured login')
 assert.ok(dashboardSource.includes("console.error('[Dashboard] completed workout fetch failed:'"), 'completed workout fetch failures remain contextual and fail soft')
 assert.ok(insightsSheetSource.includes("item._type === 'workout'") && insightsSheetSource.includes("/history?workoutId=${item.id}"), 'Recent Activity renders completed workout sessions and links them to History detail')
 assert.ok(dashboardSource.includes('<RecentActivityCard recentActivity={recentActivity}'), 'Recent Activity remains the visible Dashboard result of ordinary and late successful imports')
