@@ -189,6 +189,61 @@ async function sqliteNegatives() {
   bounded.close();
   console.log('PASS SQLite invalid-owner/duplicate/partial/ambiguous rollback; malformed provenance remains LEGACY');
 }
+async function sqliteRestorationFailures() {
+  const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'forge-b1a-begin-'));
+  const file=path.join(directory,'locked.sqlite');
+  let locker, contender;
+  try {
+    locker=new DatabaseSync(file); contender=new DatabaseSync(file);
+    locker.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=0;');
+    contender.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=0;');
+    locker.exec(baseSql(true)); locker.exec('BEGIN EXCLUSIVE');
+    await assert.rejects(()=>migration.migrateBackgroundSyncSqlite(contender),error=>error.code==='ERR_SQLITE_ERROR' && /locked/.test(error.message));
+    assert.equal(contender.isTransaction,false,'failed BEGIN must not create caller transaction');
+    assert.equal(contender.prepare('PRAGMA foreign_keys').get().foreign_keys,1,'failed BEGIN must restore caller FK enforcement');
+    locker.exec('ROLLBACK');
+    assert.equal((await migration.migrateBackgroundSyncSqlite(contender)).applied,true,'same connection remains usable after rejection');
+    assert.equal(contender.prepare('PRAGMA foreign_keys').get().foreign_keys,1);
+  } finally {
+    if(locker?.isTransaction)locker.exec('ROLLBACK');
+    contender?.close(); locker?.close();
+    for(const suffix of ['','-wal','-shm','-journal']){const target=file+suffix;if(fs.existsSync(target))fs.unlinkSync(target);}
+    fs.rmdirSync(directory);
+  }
+  console.log('PASS real file-backed two-connection BEGIN failure preserves original lock error and restores FK=1');
+  for(const mode of ['off-throws','rollback-throws','restore-throws','restore-noop']) {
+    const fixture=sqliteFixture();
+    const originalError=new Error('synthetic migration fault');
+    const rollbackError=new Error('synthetic rollback fault');
+    let rollbackCalls=0;
+    const wrapped={get isTransaction(){return fixture.native.isTransaction;},prepare:sql=>fixture.native.prepare(sql),exec:sql=>{
+      if(mode==='off-throws' && sql==='PRAGMA foreign_keys=OFF;'){fixture.native.exec(sql);throw originalError;}
+      if(sql==='CREATE TABLE IF NOT EXISTS schema_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT UNIQUE NOT NULL, executed_at TEXT DEFAULT CURRENT_TIMESTAMP)')throw originalError;
+      if(sql==='ROLLBACK'){rollbackCalls++;if(mode==='rollback-throws')throw rollbackError;}
+      if(sql==='PRAGMA foreign_keys=ON'){
+        if(mode==='restore-throws')throw new Error('synthetic restoration failure');
+        if(mode==='restore-noop')return;
+      }
+      return fixture.native.exec(sql);
+    }};
+    try {
+      await assert.rejects(()=>migration.migrateBackgroundSyncSqlite(wrapped),error=>{
+        if(mode==='off-throws')return error===originalError;
+        assert.equal(error.code,'BACKGROUND_SCHEMA_SQLITE_FOREIGN_KEYS_RESTORE');
+        assert.ok(error.cause instanceof AggregateError,'restoration failure keeps diagnostic cause');
+        if(mode==='rollback-throws')assert.deepEqual(error.cause.errors[0].errors,[originalError,rollbackError]);
+        else assert.equal(error.cause.errors[0],originalError);
+        return true;
+      });
+      assert.equal(rollbackCalls,mode==='off-throws'?0:1);
+      assert.equal(fixture.db.get('PRAGMA foreign_keys').foreign_keys,mode==='off-throws'?1:0);
+    } finally {
+      if(fixture.native.isTransaction)fixture.native.exec('ROLLBACK');
+      fixture.native.exec('PRAGMA foreign_keys=ON');fixture.close();
+    }
+  }
+  console.log('PASS fault-injected OFF/rollback/restore failure paths reject explicitly; no silent FK restoration success');
+}
 async function postgres() {
   const { Pool } = require('pg');
   const root = new URL('postgresql://forge_background_test@127.0.0.1:55449/forge_background_test');
@@ -294,6 +349,7 @@ async function postgres() {
   const fixture = sqliteFixture();
   try { await sharedChecks(fixture, 'sqlite'); } finally { fixture.close(); }
   await sqliteNegatives();
+  await sqliteRestorationFailures();
   if (process.argv.includes('--postgres')) await postgres();
   console.log('BACKGROUND SYNC SCHEMA GATE OK — schema only, no closed-app acceptance');
 })().catch(error => { console.error(error); process.exitCode=1; });
