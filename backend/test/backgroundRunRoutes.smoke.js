@@ -82,7 +82,16 @@ async function main(){
     tokenPayload={access_token:'synthetic-refreshed',refresh_token:'synthetic-refresh',expires_at:Math.floor(Date.now()/1000)+3600,athlete:{id:123}};
     await f.tx.run("UPDATE strava_tokens SET expires_at=1 WHERE user_id='a'");
     activities=[raw(941)];streamOk=true;const sequenceStart=providerTimes.length;
-    const sequential=await request('POST','/strava/sync');assert.equal(sequential.status,200);assert.deepEqual(sequential.body,{imported:1,enriched:0,total:1});
+    const realTimer=global.setTimeout;let earlyWakes=0,sequential;
+    try {
+      global.setTimeout=(fn,ms,...args)=>{
+        if(ms>100&&ms<=1000&&earlyWakes<4){earlyWakes++;return realTimer(fn,0,...args);}
+        return realTimer(fn,ms,...args);
+      };
+      sequential=await request('POST','/strava/sync');
+    } finally {global.setTimeout=realTimer;}
+    assert.equal(earlyWakes,4,'real HTTP sequence includes deliberately early spacing wakeups');
+    assert.equal(sequential.status,200);assert.deepEqual(sequential.body,{imported:1,enriched:0,total:1});
     const sequence=providerTimes.slice(sequenceStart);assert.equal(sequence.length,3);assert.match(sequence[0].url,/oauth\/token$/);assert.match(sequence[1].url,/athlete\/activities/);assert.match(sequence[2].url,/\/streams\?/);
     assert.ok(sequence[1].at-sequence[0].at>=990&&sequence[2].at-sequence[1].at>=990,'expired-token manual sync actually reserves token/list/streams separately with one-second spacing');
     assert.ok(await f.tx.get("SELECT id FROM runs WHERE id='strava_a_941'"),'normal multi-request path saves valid core');

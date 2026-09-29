@@ -1,4 +1,5 @@
 'use strict';
+const { performance } = require('node:perf_hooks');
 
 // One provider-wide reservation authority. All network work starts only after
 // the control-only transaction commits; reservations are never refunded.
@@ -128,8 +129,17 @@ function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => 
       // normal token/list/detail sequence. Contention on re-reservation fails
       // closed; this is neither a quota wait loop nor a provider retry.
       await new Promise((resolve, reject) => {
+        const notBefore = performance.now() + error.spacingDelay;
+        let timer;
         const aborted = () => { clearTimeout(timer); signal?.removeEventListener('abort', aborted); reject(failure('STRAVA_REQUEST_ABORTED')); };
-        const timer = setTimeout(() => { signal?.removeEventListener('abort', aborted); resolve(); }, error.spacingDelay);
+        const wake = () => {
+          // Timers are wake-up hints, not proof that the full interval elapsed.
+          // Rearm only the remainder of this one budget; never reserve early.
+          const remaining = notBefore - performance.now();
+          if (remaining > 0) { timer = setTimeout(wake, Math.ceil(remaining)); return; }
+          signal?.removeEventListener('abort', aborted); resolve();
+        };
+        timer = setTimeout(wake, Math.ceil(error.spacingDelay));
         signal?.addEventListener('abort', aborted, { once: true });
         if (signal?.aborted) aborted();
       });
