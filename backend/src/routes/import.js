@@ -27,6 +27,7 @@ const {
 } = require('../lib/plannedRunMatch');
 const autoUpdatePRs = require('../services/prAuto');
 const { planningInputUnchanged } = require('../lib/planningRevision');
+const { mergeSavedRunReferences } = require('../services/savedRunEvents');
 const {
   buildActivityIdentityReceipt,
   classifyCanonicalActivityIdentity,
@@ -1134,6 +1135,7 @@ async function applyRunConsolidationPatch(db, userId, canonicalRunId, patch) {
 async function repointOwnedRunReferences(db, userId, duplicateRunId, canonicalRunId, {
   duplicateProposal = null,
 } = {}) {
+  await mergeSavedRunReferences(db, userId, duplicateRunId, canonicalRunId);
   await db.run(
     'UPDATE personal_records SET run_id=? WHERE run_id=? AND user_id=?',
     [canonicalRunId, duplicateRunId, userId]
