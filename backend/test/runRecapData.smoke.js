@@ -12,6 +12,7 @@ const { normalizeWorkoutMetrics } = require('../src/lib/workoutMetrics');
 
 const root = path.join(__dirname, '..', '..');
 const stravaRoute = fs.readFileSync(path.join(root, 'backend/src/routes/strava.js'), 'utf8');
+const stravaPersistence = fs.readFileSync(path.join(root, 'backend/src/services/stravaPersistence.js'), 'utf8');
 const importRoute = fs.readFileSync(path.join(root, 'backend/src/routes/import.js'), 'utf8');
 const swift = fs.readFileSync(path.join(root, 'frontend/ios/App/App/ForgeHealthPlugin.swift'), 'utf8');
 const healthService = fs.readFileSync(path.join(root, 'frontend/src/services/HealthService.js'), 'utf8');
@@ -90,8 +91,10 @@ assert.strictEqual(metrics.elevation_derived_from_route, 1);
 assert.strictEqual(metrics.route_enriched_from_strava, 1);
 assert.strictEqual(metrics.elevation_enriched_from_strava, 1);
 
-assert(/WHERE user_id=\? AND date=\? AND health_source IN \('apple_health', 'forged_hybrid'\)/.test(stravaRoute), 'Strava matching enriches only user-scoped canonical health or Forged recordings');
-assert(/WHERE id=\? AND user_id=\?/.test(stravaRoute), 'Strava enrichment updates are user scoped');
+assert(/WHERE user_id=\? AND date=\? AND health_source IN \('apple_health', 'forged_hybrid'\)/.test(stravaPersistence), 'Strava matching enriches only user-scoped canonical health or Forged recordings');
+assert(/WHERE id=\? AND user_id=\?/.test(stravaPersistence), 'Strava enrichment updates are user scoped');
+assert(/const \{ captureStravaConnection, persistStravaActivity \} = require\('\.\.\/services\/stravaPersistence'\)/.test(stravaRoute), 'Strava route imports the single extracted persistence authority');
+assert(/async function syncStravaActivitiesForUser\(userId, activities = \[\], expectedConnection\)[\s\S]*withPlanningInputMutation\(userId, async \(tx\) => \{[\s\S]*persistStravaActivity\(tx,userId,activity,expectedConnection\)/.test(stravaRoute), 'Strava route delegates inside the owner transaction with the captured connection (behavior: backgroundRunPersistence)');
 assert(/\/streams/.test(stravaRoute) && /latlng,altitude,time/.test(stravaRoute), 'Strava route recovery requests full GPS streams');
 assert(/perceived_effort = COALESCE\(\?, perceived_effort\)/.test(importRoute), 'Apple Health re-sync can add a real effort score to an existing run');
 assert(/workoutEffortScore/.test(swift) && /HKWorkoutEffortRelationshipQuery/.test(swift), 'native bridge requests the associated HealthKit effort rating');
