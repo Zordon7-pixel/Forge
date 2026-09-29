@@ -79,6 +79,7 @@ const ACCOUNT_EXPORT_TABLES = [
 
 const ACCOUNT_SECRET_TABLES = [
   'password_reset_tokens',
+  'strava_connection_fences',
   'web_push_claims', 'web_push_challenges', 'web_push_setup_operations',
 ];
 
@@ -178,6 +179,7 @@ const ACCOUNT_DELETE_QUERIES = [
   ['DELETE FROM oura_data WHERE user_id = ?', [0]],
   ['DELETE FROM oura_tokens WHERE user_id = ?', [0]],
   ['DELETE FROM strava_tokens WHERE user_id = ?', [0]],
+  ['DELETE FROM strava_connection_fences WHERE user_id = ?', [0]],
   ['DELETE FROM garmin_sleep WHERE user_id = ?', [0]],
   ['DELETE FROM watch_sync WHERE user_id = ?', [0]],
   ['DELETE FROM health_sync WHERE user_id = ?', [0]],
