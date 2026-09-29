@@ -55,19 +55,36 @@ async function main(){
     await assert.rejects(()=>request(),{code:'STRAVA_PROVIDER_PAUSED'});
     assert.equal((await f.tx.get('SELECT paused FROM background_sync_control')).paused,1,'late larger-grant response cannot unpause a smaller grant');
     // Real database time, no clock jumps or reservation resets between calls.
-    clock=Date.now();await reset();const times=[],reservationTimes=[];
+    clock=Date.now();await reset();const times=[],reservationTimes=[];let reservationAttempts=0;
     const sequential=createStravaProviderClient({dialect:'sqlite',withTransaction:async fn=>{
+      reservationAttempts++;
       f.exec('BEGIN');try{const value=await fn(f.tx);f.exec('COMMIT');return value;}catch(e){f.exec('ROLLBACK');throw e;}
     },fetchImpl:async(_url,options)=>{times.push(Date.now());reservationTimes.push(Date.parse((await f.tx.get('SELECT next_allowed_at FROM background_sync_control')).next_allowed_at)-1000);return new Response(options.method==='POST'?'{}':_url.includes('/athlete/activities')?'[]':'{}');}});
-    await sequential.request('token',{clientId:'s',clientSecret:'s',refreshToken:'s'});
-    await sequential.request('activities',{accessToken:'s'});
-    await sequential.request('activity',{accessToken:'s',activityId:12});
+    const realTimer=global.setTimeout;let earlyRemaining=0,earlyWakes=0;
+    try {
+      global.setTimeout=(fn,ms,...args)=>{
+        if(ms>0&&ms<=1000&&earlyRemaining>0){earlyRemaining--;earlyWakes++;return realTimer(fn,0,...args);}
+        return realTimer(fn,ms,...args);
+      };
+      await sequential.request('token',{clientId:'s',clientSecret:'s',refreshToken:'s'});
+      earlyRemaining=3;await sequential.request('activities',{accessToken:'s'});
+      earlyRemaining=3;await sequential.request('activity',{accessToken:'s',activityId:12});
+    } finally {global.setTimeout=realTimer;}
+    assert.equal(earlyWakes,6,'actual module handles repeatedly premature spacing wakeups');
+    assert.equal(reservationAttempts,5,'early timer wakes do not add database reservation retries');
     assert.equal(times.length,3);assert.ok(times[1]-times[0]>=990&&times[2]-times[1]>=990,'reservation timestamps enforce at least one second (allow network invocation scheduling jitter)');
     assert.ok(reservationTimes[1]-reservationTimes[0]>=1000&&reservationTimes[2]-reservationTimes[1]>=1000,'persisted reservation times have no sub-second tolerance');
     assert.equal((await f.tx.get('SELECT quarter_used FROM background_sync_control')).quarter_used,3);
     const waitAbort=new AbortController(),beforeAbort=times.length;
     const waiting=sequential.request('activities',{accessToken:'s'},{signal:waitAbort.signal});setTimeout(()=>waitAbort.abort(),20);
     await assert.rejects(()=>waiting,{code:'STRAVA_REQUEST_ABORTED'});assert.equal(times.length,beforeAbort,'spacing cancellation does not issue a provider call');
+    const attemptsBefore=reservationAttempts;
+    const competing=sequential.request('activities',{accessToken:'s'});
+    await new Promise(resolve=>realTimer(resolve,20));
+    await f.tx.run('UPDATE background_sync_control SET next_allowed_at=?',[new Date(Date.now()+2000).toISOString()]);
+    await assert.rejects(()=>competing,{code:'STRAVA_QUOTA_UNAVAILABLE'});
+    assert.equal(reservationAttempts-attemptsBefore,2,'changed not-before after waiting fails after exactly one re-reservation');
+    assert.equal(times.length,beforeAbort,'contention never leaks another provider request');
     clock=Date.now();
     await reset();let cancelled=false;reply=()=>new Response(new ReadableStream({cancel(){cancelled=true;}}));
     const began=Date.now();await assert.rejects(()=>request(),{code:'STRAVA_REQUEST_TIMEOUT'});assert.ok(Date.now()-began>=19500&&Date.now()-began<24000);assert.equal(cancelled,true,'20s deadline cancels hanging body reader, not just response headers');
