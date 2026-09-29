@@ -19,6 +19,7 @@ const {
   ACCOUNT_SOCIAL_DELETE_QUERIES,
   bindUserId,
   buildExportSql,
+  erasePushSetupUserRate,
 } = require('../lib/accountDataCoverage');
 const { computeStreak, serverUtcAnchorCandidates } = require('../lib/streak');
 const backendPackage = require('../../package.json');
@@ -669,6 +670,7 @@ router.delete('/account', auth, async (req, res) => {
         throw err;
       }
 
+      await erasePushSetupUserRate(tx, userId);
       await cleanupOwnedSocialChallenges(tx, userId);
       for (const [sql, params] of ACCOUNT_SOCIAL_DELETE_QUERIES) {
         await tx.run(sql, bindUserId(params, userId));

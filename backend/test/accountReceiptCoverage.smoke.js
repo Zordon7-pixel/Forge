@@ -81,7 +81,8 @@ async function runAccountReceiptCoverageSmoke() {
         sqlite.exec('BEGIN');
         try {
           const result = await fn({
-            get: async (sql, params) => sqlite.prepare(sql).get(...params),
+            get: async (sql, params) => sql === "SELECT 1 AS present FROM web_push_setup_rate_buckets WHERE dimension='USER' LIMIT 1"
+              ? null : sqlite.prepare(sql).get(...params), // Unrelated empty setup fixture; receipt queries remain real.
             all: async (sql, params) => {
               assert.match(sql, /FROM challenges c/);
               assert.deepEqual(params, [OWNER]);
