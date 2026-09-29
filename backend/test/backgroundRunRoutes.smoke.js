@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const crypto=require('node:crypto');
 const {sqliteFixture,seed,raw,snapshot}=require('./backgroundRunPersistence.smoke');
 process.env.JWT_SECRET='synthetic-background-route-only';
+process.env.STRAVA_CLIENT_ID='123';process.env.STRAVA_CLIENT_SECRET='synthetic-only';process.env.STRAVA_REDIRECT_URI='https://forge.example.invalid/callback';
 process.env.DATABASE_URL='postgresql://invalid@127.0.0.1:1/no_external_database';
 function encrypted(token){const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',crypto.createHash('sha256').update(process.env.JWT_SECRET).digest(),iv);const value=Buffer.concat([cipher.update(JSON.stringify({token})),cipher.final()]);return JSON.stringify({v:1,iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),content:value.toString('base64')});}
 async function main(){
@@ -11,20 +12,28 @@ async function main(){
   try{
     await seed(f);
     const dbPath=require.resolve('../src/db');
-    require.cache[dbPath]={id:dbPath,filename:dbPath,loaded:true,exports:{dbGet:f.tx.get,dbAll:f.tx.all,dbRun:f.tx.run,withPlanningInputMutation:f.mutate,withUserMutation:f.mutate,runWithUserContext:(_id,next)=>next()}};
+    const transaction=async fn=>{f.exec('BEGIN IMMEDIATE');try{const result=await fn({...f.tx,run:(sql,p)=>sql.startsWith('SET LOCAL ')?{changes:0}:f.tx.run(sql,p),get:(sql,p)=>f.tx.get(sql.replace('clock_timestamp()',"strftime('%Y-%m-%dT%H:%M:%fZ','now')"),p)});f.exec('COMMIT');return result;}catch(e){f.exec('ROLLBACK');throw e;}};
+    const owner=(id,fn,options)=>{assert.equal(options.userLock,'update');return transaction(async tx=>{assert.ok(await tx.get('SELECT id FROM users WHERE id=?',[id]));return fn(tx);});};
+    require.cache[dbPath]={id:dbPath,filename:dbPath,loaded:true,exports:{dbGet:f.tx.get,dbAll:f.tx.all,dbRun:f.tx.run,withPlanningInputMutation:f.mutate,withUserMutation:owner,withTransaction:transaction,runWithUserContext:(_id,next)=>next()}};
     await f.tx.run("UPDATE strava_tokens SET access_token=?,refresh_token=?,expires_at=4102444800 WHERE user_id='a'",[encrypted('synthetic-access'),encrypted('synthetic-refresh')]);
-    let activities=[raw(900,{routeCoords:[{lat:1,lon:1},{lat:1.01,lon:1.01}]})],held;
+    let activities=[raw(900,{routeCoords:[{lat:1,lon:1},{lat:1.01,lon:1.01}]})],held,includeRoute=true,tokenPayload,streamOk=false;const providerTimes=[];
     global.fetch=async(url,options)=>{
+      providerTimes.push({url:String(url),at:Date.now()});
+      if(String(url)==='https://www.strava.com/oauth/token')return new Response(JSON.stringify(tokenPayload));
+      if(/\/activities\/\d+\/streams\?/.test(String(url)))return new Response(JSON.stringify(streamOk?{latlng:{data:[[1,1],[1.01,1.01]]}}:{}),{status:streamOk?200:503});
       assert.match(String(url),/^https:\/\/www\.strava\.com\/api\/v3\/athlete\/activities\?/,'no unapproved external call');
       if(held)await held;
-      return {ok:true,status:200,json:async()=>activities.map(activity=>({...activity,routeCoords:[{lat:1,lon:1},{lat:1.01,lon:1.01}]}))};
+      return new Response(JSON.stringify(activities.map(activity=>({...activity,...(includeRoute?{routeCoords:[{lat:1,lon:1},{lat:1.01,lon:1.01}]}:{})}))));
     };
     const express=require('express'),jwt=require('jsonwebtoken'),app=express();app.use(express.json());
     app.use('/strava',require('../src/routes/strava'));app.use('/runs',require('../src/routes/runs'));app.use('/import',require('../src/routes/import'));
     server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
     async function request(method,url,owner='a',payload){
+      // Independent sequential import witnesses start with available quota.
+      // Provider spacing/capacity is exercised without resets in its own gate.
+      if(url==='/strava/sync'||url.startsWith('/strava/callback'))await f.tx.run("UPDATE background_sync_control SET next_allowed_at='2020-01-01T00:00:00Z' WHERE id='strava'");
       const response=await realFetch(`http://127.0.0.1:${server.address().port}${url}`,{method,headers:{'Content-Type':'application/json',...(owner?{Authorization:`Bearer ${jwt.sign({id:owner},process.env.JWT_SECRET)}`}:{})},...(payload?{body:JSON.stringify(payload)}:{})});
-      return {status:response.status,body:await response.json()};
+      return {status:response.status,body:response.headers.get('content-type')?.includes('application/json')?await response.json():await response.text(),headers:response.headers};
     }
     assert.equal((await request('POST','/strava/sync',null)).status,401);
     const saved=await request('POST','/strava/sync');assert.equal(saved.status,200);assert.deepEqual(saved.body,{imported:1,enriched:0,total:1});
@@ -63,11 +72,38 @@ async function main(){
     const prior=await f.tx.get("SELECT * FROM strava_tokens WHERE user_id='a'");
     await f.tx.run("UPDATE strava_tokens SET connection_generation='replacement' WHERE user_id='a'");
     await f.tx.run("INSERT INTO strava_ingress_bindings(id,user_id,athlete_id) VALUES('replacement','a','123')");
-    const reconnectSnapshot=await snapshot(f.tx);release();assert.equal((await pending).status,500);assert.deepEqual(await snapshot(f.tx),reconnectSnapshot);
+    const reconnectSnapshot=await snapshot(f.tx);release();assert.equal((await pending).status,503);assert.deepEqual(await snapshot(f.tx),reconnectSnapshot);
     assert.notEqual(prior.connection_generation,'replacement');
     activities=[raw(900),raw(901)];
     const afterReconnect=await request('POST','/strava/sync');assert.equal(afterReconnect.status,200);assert.deepEqual(afterReconnect.body,{imported:0,enriched:0,total:2});
     assert.equal(await f.tx.get("SELECT id FROM runs WHERE id='strava_a_900'"),undefined,'new authenticated generation cannot resurrect user-deleted aliases');
+    held=null;includeRoute=false;activities=[raw(940)];
+    const optional=await request('POST','/strava/sync');assert.equal(optional.status,200);assert.equal(optional.body.imported,1,'optional stream provider failure cannot discard valid core run');
+    tokenPayload={access_token:'synthetic-refreshed',refresh_token:'synthetic-refresh',expires_at:Math.floor(Date.now()/1000)+3600,athlete:{id:123}};
+    await f.tx.run("UPDATE strava_tokens SET expires_at=1 WHERE user_id='a'");
+    activities=[raw(941)];streamOk=true;const sequenceStart=providerTimes.length;
+    const sequential=await request('POST','/strava/sync');assert.equal(sequential.status,200);assert.deepEqual(sequential.body,{imported:1,enriched:0,total:1});
+    const sequence=providerTimes.slice(sequenceStart);assert.equal(sequence.length,3);assert.match(sequence[0].url,/oauth\/token$/);assert.match(sequence[1].url,/athlete\/activities/);assert.match(sequence[2].url,/\/streams\?/);
+    assert.ok(sequence[1].at-sequence[0].at>=990&&sequence[2].at-sequence[1].at>=990,'expired-token manual sync actually reserves token/list/streams separately with one-second spacing');
+    assert.ok(await f.tx.get("SELECT id FROM runs WHERE id='strava_a_941'"),'normal multi-request path saves valid core');
+    const revisionBefore=(await f.tx.get("SELECT planning_input_revision FROM users WHERE id='a'")).planning_input_revision;
+    const authStart=await request('GET','/strava/auth?format=json');assert.equal(authStart.status,200);assert.equal(authStart.headers.get('cache-control'),'no-store');
+    const state=new URL(authStart.body.url).searchParams.get('state');assert.ok(state);
+    tokenPayload={access_token:'synthetic-http-access',refresh_token:'synthetic-http-refresh',expires_at:Math.floor(Date.now()/1000)+3600,athlete:{id:123,firstname:'Synthetic'}};
+    const callback=await request('GET',`/strava/callback?state=${encodeURIComponent(state)}&code=synthetic`,null);assert.equal(callback.status,200);assert.match(callback.body,/Strava Connected/);
+    const row=await f.tx.get("SELECT * FROM strava_tokens WHERE user_id='a'");assert.equal(row.token_revision,1);assert.notEqual(row.connection_generation,'replacement');assert.ok(row.access_token.startsWith('{'));assert.equal(row.refresh_lease_token,null);
+    assert.ok(await f.tx.get('SELECT id FROM strava_ingress_bindings WHERE id=?',[row.connection_generation]));
+    assert.equal((await request('GET',`/strava/callback?state=${encodeURIComponent(state)}&code=replay`,null)).status,409);
+    assert.equal((await request('GET','/strava/auth?format=json',null)).status,401);
+    const badReturnBefore=await f.tx.get("SELECT epoch FROM strava_connection_fences WHERE user_id='a'");
+    assert.equal((await request('GET','/strava/auth?format=json&deeplink=invalid')).status,400);assert.deepEqual(await f.tx.get("SELECT epoch FROM strava_connection_fences WHERE user_id='a'"),badReturnBefore);
+    const pendingStart=await request('GET','/strava/auth?format=json'),cancelState=new URL(pendingStart.body.url).searchParams.get('state');
+    assert.equal((await request('GET',`/strava/callback?state=${encodeURIComponent(cancelState)}&error=access_denied`,null)).status,400);
+    assert.equal((await f.tx.get("SELECT connection_generation FROM strava_tokens WHERE user_id='a'")).connection_generation,row.connection_generation);
+    assert.equal((await request('DELETE','/strava/disconnect')).status,200);assert.equal(await f.tx.get("SELECT * FROM strava_tokens WHERE user_id='a'"),undefined);assert.ok(await f.tx.get("SELECT epoch FROM strava_connection_fences WHERE user_id='a'"));
+    assert.equal((await f.tx.get("SELECT planning_input_revision FROM users WHERE id='a'")).planning_input_revision,revisionBefore,'OAuth/cancel/disconnect never mutate physiological revision');
+    assert.equal((await request('POST','/strava/sync')).status,400);
+    console.log('PASS actual authenticated OAuth route/state/callback/consumed replay/cancel/disconnect/no physiology; optional enrichment cannot block core save');
     console.log('BACKGROUND RUN ROUTES OK: authenticated sync/replay/owned delete/all aliases/reconnect fence');
   }finally{global.fetch=realFetch;if(server)await new Promise(resolve=>server.close(resolve));f.close();}
 }

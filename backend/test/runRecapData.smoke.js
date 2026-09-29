@@ -95,7 +95,8 @@ assert(/WHERE user_id=\? AND date=\? AND health_source IN \('apple_health', 'for
 assert(/WHERE id=\? AND user_id=\?/.test(stravaPersistence), 'Strava enrichment updates are user scoped');
 assert(/const \{ captureStravaConnection, persistStravaActivity \} = require\('\.\.\/services\/stravaPersistence'\)/.test(stravaRoute), 'Strava route imports the single extracted persistence authority');
 assert(/async function syncStravaActivitiesForUser\(userId, activities = \[\], expectedConnection\)[\s\S]*withPlanningInputMutation\(userId, async \(tx\) => \{[\s\S]*persistStravaActivity\(tx,userId,activity,expectedConnection\)/.test(stravaRoute), 'Strava route delegates inside the owner transaction with the captured connection (behavior: backgroundRunPersistence)');
-assert(/\/streams/.test(stravaRoute) && /latlng,altitude,time/.test(stravaRoute), 'Strava route recovery requests full GPS streams');
+const stravaProvider = fs.readFileSync(path.join(root, 'backend/src/services/stravaProviderClient.js'), 'utf8');
+assert(/getStravaProviderClient\(\)\.request\('streams'/.test(stravaRoute) && /\/streams\?keys=latlng,altitude,time/.test(stravaProvider), 'Strava route recovery delegates full GPS streams through the shared budgeted client');
 assert(/perceived_effort = COALESCE\(\?, perceived_effort\)/.test(importRoute), 'Apple Health re-sync can add a real effort score to an existing run');
 assert(/workoutEffortScore/.test(swift) && /HKWorkoutEffortRelationshipQuery/.test(swift), 'native bridge requests the associated HealthKit effort rating');
 assert(/elevation_derived_from_route/.test(swift) && /verticalAccuracy/.test(swift), 'route elevation fallback accepts only bounded-accuracy altitude');

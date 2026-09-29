@@ -1,8 +1,7 @@
-const crypto = require('crypto');
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 
-const { dbGet, dbRun, withUserMutation, withPlanningInputMutation } = require('../db');
+const { dbGet, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const {
   normalizeStravaRun,
@@ -10,17 +9,12 @@ const {
 } = require('../lib/stravaActivity');
 const { captureStravaConnection, persistStravaActivity } = require('../services/stravaPersistence');
 const { planningInputUnchanged } = require('../lib/planningRevision');
-const { createUserNotification } = require('../services/notifications');
+const { getStravaProviderClient } = require('../services/stravaProviderClient');
+const { getStravaConnectionService } = require('../services/stravaConnectionService');
 const { getWebhookVerifyToken, normalizeWebhookEvent, verifyWebhookToken } = require('../lib/stravaWebhook');
 
 const STRAVA_AUTH_URL = 'https://www.strava.com/oauth/authorize';
-const STRAVA_TOKEN_URL = 'https://www.strava.com/oauth/token';
-const STRAVA_ACTIVITIES_URL = 'https://www.strava.com/api/v3/athlete/activities';
-const STRAVA_ACTIVITY_URL = 'https://www.strava.com/api/v3/activities';
-const STRAVA_ATHLETE_URL = 'https://www.strava.com/api/v3/athlete';
 const MAX_STREAM_LOOKUPS_PER_SYNC = 3;
-const OAUTH_STATE_TTL_SECONDS = 10 * 60;
-const ENCRYPTION_ALGO = 'aes-256-gcm';
 const webhookLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 300,
@@ -29,68 +23,9 @@ const webhookLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-function getEncryptionKey() {
-  return crypto.createHash('sha256').update(String(process.env.JWT_SECRET)).digest();
-}
-
-function encryptJson(payload) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv(ENCRYPTION_ALGO, getEncryptionKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return JSON.stringify({
-    v: 1,
-    iv: iv.toString('base64'),
-    tag: authTag.toString('base64'),
-    content: encrypted.toString('base64'),
-  });
-}
-
-function decryptJson(encryptedPayload) {
-  const parsed = typeof encryptedPayload === 'string' ? JSON.parse(encryptedPayload) : encryptedPayload;
-  const decipher = crypto.createDecipheriv(ENCRYPTION_ALGO, getEncryptionKey(), Buffer.from(parsed.iv, 'base64'));
-  decipher.setAuthTag(Buffer.from(parsed.tag, 'base64'));
-  const decrypted = Buffer.concat([
-    decipher.update(Buffer.from(parsed.content, 'base64')),
-    decipher.final(),
-  ]).toString('utf8');
-  return JSON.parse(decrypted);
-}
-
-function isEncryptedToken(value) {
-  if (typeof value === 'string' && !value.trim().startsWith('{')) return false;
-  try {
-    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    return Boolean(parsed?.v === 1 && parsed?.iv && parsed?.tag && parsed?.content);
-  } catch (err) {
-    console.error('[strava] failed to inspect encrypted token payload:', err.message);
-    return false;
-  }
-}
-
-function encryptToken(value) {
-  return encryptJson({ token: String(value || '') });
-}
-
-function decryptToken(value) {
-  if (!value) return '';
-  if (!isEncryptedToken(value)) return String(value);
-  const decrypted = decryptJson(value);
-  return String(decrypted?.token || '');
-}
-
-function decodeStravaTokenRow(row) {
-  if (!row) return null;
-  return {
-    ...row,
-    access_token: decryptToken(row.access_token),
-    refresh_token: decryptToken(row.refresh_token),
-    token_storage_encrypted: isEncryptedToken(row.access_token) && isEncryptedToken(row.refresh_token),
-  };
-}
-
 function getMissingStravaEnv() {
   const missing = [];
+  if (!process.env.JWT_SECRET) missing.push('JWT_SECRET');
   if (!process.env.STRAVA_CLIENT_ID) missing.push('STRAVA_CLIENT_ID');
   if (!process.env.STRAVA_CLIENT_SECRET) missing.push('STRAVA_CLIENT_SECRET');
   if (!process.env.STRAVA_REDIRECT_URI) missing.push('STRAVA_REDIRECT_URI');
@@ -158,148 +93,25 @@ function sendOAuthResultPage(res, { ok, title, message }) {
 </html>`);
 }
 
-function signOAuthState(payload = {}) {
-  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  const signature = crypto
-    .createHmac('sha256', String(process.env.JWT_SECRET || ''))
-    .update(body)
-    .digest('base64url');
-  return `${body}.${signature}`;
+function requestSignal(req, res) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const close = () => { if (!res.writableFinished) abort(); cleanup(); };
+  const cleanup = () => { req.removeListener('aborted', abort); res.removeListener('close', close); res.removeListener('finish', cleanup); };
+  req.once('aborted', abort); res.once('close', close); res.once('finish', cleanup);
+  return controller.signal;
+}
+async function fetchStravaActivities(accessToken, signal) {
+  return getStravaProviderClient().request('activities', { accessToken }, { signal });
+}
+async function fetchStravaActivity(accessToken, activityId, signal) {
+  return getStravaProviderClient().request('activity', { accessToken, activityId }, { signal });
+}
+async function fetchStravaActivityStreams(accessToken, activityId, signal) {
+  return getStravaProviderClient().request('streams', { accessToken, activityId }, { signal });
 }
 
-function verifyOAuthState(rawState) {
-  if (!rawState || typeof rawState !== 'string') return null;
-  const [body, signature] = rawState.split('.');
-  if (!body || !signature) return null;
-
-  const expectedSignature = crypto
-    .createHmac('sha256', String(process.env.JWT_SECRET || ''))
-    .update(body)
-    .digest('base64url');
-
-  const sigBuf = Buffer.from(signature);
-  const expectedBuf = Buffer.from(expectedSignature);
-  if (sigBuf.length !== expectedBuf.length) return null;
-  if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
-
-  try {
-    const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-    const expiresAt = Number(parsed?.exp || 0);
-    const userId = String(parsed?.user_id || '');
-    if (!userId || !Number.isFinite(expiresAt)) return null;
-    if (expiresAt < Math.floor(Date.now() / 1000)) return null;
-    return parsed;
-  } catch (err) {
-    console.error('[strava] invalid OAuth state payload:', err.message);
-    return null;
-  }
-}
-
-function buildAthleteName(athlete = {}) {
-  const first = String(athlete?.firstname || '').trim();
-  const last = String(athlete?.lastname || '').trim();
-  const fullName = `${first} ${last}`.trim();
-  return fullName || null;
-}
-
-
-async function callStravaTokenEndpoint(params = {}) {
-  const response = await fetch(STRAVA_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(params).toString(),
-  });
-
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch (err) {
-    console.error('[strava] failed to parse token response:', err.message);
-    payload = null;
-  }
-
-  if (!response.ok) {
-    const message = payload?.message || payload?.error || 'Strava token exchange failed';
-    const err = new Error(String(message));
-    err.status = response.status;
-    throw err;
-  }
-
-  if (!payload?.access_token || !payload?.refresh_token) {
-    const err = new Error('Invalid token payload from Strava');
-    err.status = 502;
-    throw err;
-  }
-
-  return payload;
-}
-
-async function fetchStravaActivities(accessToken) {
-  const url = new URL(STRAVA_ACTIVITIES_URL);
-  url.searchParams.set('per_page', '20');
-  url.searchParams.set('access_token', String(accessToken || ''));
-
-  const response = await fetch(url.toString());
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch (err) {
-    console.error('[strava] failed to parse activities response:', err.message);
-    payload = null;
-  }
-
-  if (!response.ok) {
-    const message = payload?.message || payload?.error || 'Failed to fetch Strava activities';
-    const err = new Error(String(message));
-    err.status = response.status;
-    throw err;
-  }
-
-  return Array.isArray(payload) ? payload : [];
-}
-
-async function fetchStravaActivity(accessToken, activityId) {
-  const response = await fetch(`${STRAVA_ACTIVITY_URL}/${encodeURIComponent(activityId)}`, {
-    headers: { Authorization: `Bearer ${String(accessToken || '')}` },
-  });
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch (err) {
-    console.error('[strava] failed to parse activity response:', err.message);
-  }
-  if (!response.ok || !payload) {
-    const message = payload?.message || payload?.error || 'Failed to fetch Strava activity';
-    const err = new Error(String(message));
-    err.status = response.status;
-    throw err;
-  }
-  return payload;
-}
-
-async function fetchStravaActivityStreams(accessToken, activityId) {
-  const url = new URL(`${STRAVA_ACTIVITY_URL}/${encodeURIComponent(activityId)}/streams`);
-  url.searchParams.set('keys', 'latlng,altitude,time');
-  url.searchParams.set('key_by_type', 'true');
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${String(accessToken || '')}` },
-  });
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch (err) {
-    console.error('[strava] failed to parse activity streams response:', err.message);
-  }
-  if (!response.ok || !payload) {
-    const message = payload?.message || payload?.error || 'Failed to fetch Strava activity streams';
-    const err = new Error(String(message));
-    err.status = response.status;
-    throw err;
-  }
-  return payload;
-}
-
-async function hydrateMissingStravaRoutes(activities, accessToken, maxLookups = MAX_STREAM_LOOKUPS_PER_SYNC) {
+async function hydrateMissingStravaRoutes(activities, accessToken, maxLookups = MAX_STREAM_LOOKUPS_PER_SYNC, signal) {
   const hydrated = Array.isArray(activities) ? [...activities] : [];
   let lookups = 0;
   for (let index = 0; index < hydrated.length && lookups < maxLookups; index += 1) {
@@ -311,110 +123,27 @@ async function hydrateMissingStravaRoutes(activities, accessToken, maxLookups = 
 
     lookups += 1;
     try {
-      const streams = await fetchStravaActivityStreams(accessToken, normalized.activityId);
+      const streams = await fetchStravaActivityStreams(accessToken, normalized.activityId, signal);
       const routeCoords = routeCoordsFromStravaStreams(streams, normalized.startDate);
       if (routeCoords.length >= 2) hydrated[index] = { ...activity, routeCoords };
     } catch (err) {
-      if (Number(err?.status || 0) === 401) throw err;
-      console.warn(`[strava/streams] route unavailable for activity ${normalized.activityId}:`, err.message);
+      // Optional enrichment never discards valid fetched core activity facts.
+      console.warn('[strava/streams] optional route unavailable:', err.code || 'STRAVA_UNAVAILABLE');
       if (Number(err?.status || 0) === 429) break;
     }
   }
   return hydrated;
 }
 
-async function fetchStravaActivitiesWithRoutes(accessToken) {
-  const activities = await fetchStravaActivities(accessToken);
-  return hydrateMissingStravaRoutes(activities, accessToken);
+async function fetchStravaActivitiesWithRoutes(accessToken, signal) {
+  const activities = await fetchStravaActivities(accessToken, signal);
+  return hydrateMissingStravaRoutes(activities, accessToken, MAX_STREAM_LOOKUPS_PER_SYNC, signal);
 }
 
-async function fetchStravaActivityWithRoute(accessToken, activityId) {
-  const activity = await fetchStravaActivity(accessToken, activityId);
-  const hydrated = await hydrateMissingStravaRoutes([activity], accessToken, 1);
+async function fetchStravaActivityWithRoute(accessToken, activityId, signal) {
+  const activity = await fetchStravaActivity(accessToken, activityId, signal);
+  const hydrated = await hydrateMissingStravaRoutes([activity], accessToken, 1, signal);
   return hydrated[0] || activity;
-}
-
-async function fetchStravaAthlete(accessToken) {
-  const response = await fetch(STRAVA_ATHLETE_URL, {
-    headers: { Authorization: `Bearer ${String(accessToken || '')}` },
-  });
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch (err) {
-    console.error('[strava] failed to parse athlete response:', err.message);
-  }
-  if (!response.ok || !payload) {
-    const message = payload?.message || payload?.error || 'Failed to verify Strava athlete';
-    const err = new Error(String(message));
-    err.status = response.status;
-    throw err;
-  }
-  return payload;
-}
-
-async function upsertStravaTokens({ userId, accessToken, refreshToken, expiresAt, athleteId, athleteName, query = null }) {
-  const run = query?.run || dbRun;
-  await run(
-    `INSERT INTO strava_tokens (
-      user_id,
-      access_token,
-      refresh_token,
-      expires_at,
-      athlete_id,
-      athlete_name,
-      connected_at
-    ) VALUES (?, ?, ?, ?, ?, ?, NOW())
-    ON CONFLICT (user_id) DO UPDATE SET
-      access_token = EXCLUDED.access_token,
-      refresh_token = EXCLUDED.refresh_token,
-      expires_at = EXCLUDED.expires_at,
-      athlete_id = EXCLUDED.athlete_id,
-      athlete_name = EXCLUDED.athlete_name,
-      connected_at = NOW()`,
-    [
-      userId,
-      encryptToken(accessToken),
-      encryptToken(refreshToken),
-      Number(expiresAt || 0),
-      athleteId ? Number(athleteId) : null,
-      athleteName || null,
-    ]
-  );
-}
-
-async function maybeRefreshAccessToken(userId, tokens) {
-  const now = Math.floor(Date.now() / 1000);
-  const expiresAt = Number(tokens?.expires_at || 0);
-  if (expiresAt > now + 30) return tokens;
-
-  const refreshed = await callStravaTokenEndpoint({
-    client_id: process.env.STRAVA_CLIENT_ID,
-    client_secret: process.env.STRAVA_CLIENT_SECRET,
-    grant_type: 'refresh_token',
-    refresh_token: String(tokens?.refresh_token || ''),
-  });
-
-  const nextAthleteId = Number(refreshed?.athlete?.id || tokens?.athlete_id || 0) || null;
-  const nextAthleteName = buildAthleteName(refreshed?.athlete) || tokens?.athlete_name || null;
-
-  await upsertStravaTokens({
-    userId,
-    accessToken: String(refreshed.access_token),
-    refreshToken: String(refreshed.refresh_token || tokens?.refresh_token || ''),
-    expiresAt: Number(refreshed.expires_at || 0),
-    athleteId: nextAthleteId,
-    athleteName: nextAthleteName,
-  });
-
-  return {
-    ...tokens,
-    access_token: String(refreshed.access_token),
-    refresh_token: String(refreshed.refresh_token || tokens?.refresh_token || ''),
-    expires_at: Number(refreshed.expires_at || 0),
-    athlete_id: nextAthleteId,
-    athlete_name: nextAthleteName,
-  };
 }
 
 async function syncStravaActivitiesForUser(userId, activities = [], expectedConnection) {
@@ -434,62 +163,25 @@ async function syncStravaActivitiesForUser(userId, activities = [], expectedConn
   return {...result,total:runs.length};
 }
 
-async function confirmStravaDeauthorization(userId, connected) {
-  let tokens = connected;
-  try {
-    tokens = await maybeRefreshAccessToken(userId, connected);
-  } catch (refreshError) {
-    if (![400, 401, 403].includes(Number(refreshError?.status || 0))) throw refreshError;
-  }
-
-  try {
-    await fetchStravaAthlete(tokens.access_token);
-    return false;
-  } catch (error) {
-    if ([401, 403].includes(Number(error?.status || 0))) return true;
-    throw error;
-  }
-}
-
 async function processWebhookEvent(event) {
-  const row = await dbGet(
-    `SELECT user_id, connection_generation, access_token, refresh_token, expires_at, athlete_id, athlete_name
-     FROM strava_tokens
-     WHERE athlete_id = ?`,
-    [event.ownerId]
-  );
-  const connected = decodeStravaTokenRow(row);
-  if (!connected?.user_id) return { ignored: 'unknown_athlete' };
-
+  const row = await dbGet('SELECT user_id FROM strava_tokens WHERE athlete_id = ?', [event.ownerId]);
+  if (!row) return { ignored: 'unknown_athlete' };
+  const connections = getStravaConnectionService();
+  let connected = await connections.connection(row.user_id);
   if (event.objectType === 'athlete' && String(event.updates?.authorized) === 'false') {
-    const deauthorized = await confirmStravaDeauthorization(connected.user_id, connected);
-    if (!deauthorized) {
-      console.warn('[strava/webhook] ignored unconfirmed deauthorization event');
-      return { ignored: 'unconfirmed_deauthorization' };
-    }
-    await dbRun('DELETE FROM strava_tokens WHERE athlete_id = ? AND user_id = ?', [event.ownerId, connected.user_id]);
-    await createUserNotification(connected.user_id, {
-      type: 'connection',
-      title: 'Strava disconnected',
-      body: 'Reconnect Strava to keep background activity sync active.',
-      href: '/more',
-      sourceKey: `strava:deauthorization:${event.ownerId}`,
-    });
-    return { disconnected: true };
+    return { disconnected: await connections.verifyRevocation(connected) };
   }
-
   if (event.objectType !== 'activity' || event.aspectType === 'delete') return { ignored: 'unsupported_event' };
-  const expectedConnection = captureStravaConnection(connected.user_id, row);
-  let tokens = await maybeRefreshAccessToken(connected.user_id, connected);
+  const expectedConnection = captureStravaConnection(row.user_id, connected.row);
+  connected = await connections.refresh(connected);
   let activity;
-  try {
-    activity = await fetchStravaActivityWithRoute(tokens.access_token, event.objectId);
-  } catch (err) {
-    if (Number(err?.status || 0) !== 401) throw err;
-    tokens = await maybeRefreshAccessToken(connected.user_id, { ...tokens, expires_at: 0 });
-    activity = await fetchStravaActivityWithRoute(tokens.access_token, event.objectId);
+  try { activity = await fetchStravaActivityWithRoute(connected.row.access_token, event.objectId); }
+  catch (err) {
+    if (Number(err?.status) !== 401) throw err;
+    connected = await connections.refresh(connected, { force: true });
+    activity = await fetchStravaActivityWithRoute(connected.row.access_token, event.objectId);
   }
-  return syncStravaActivitiesForUser(connected.user_id, [activity], expectedConnection);
+  return syncStravaActivitiesForUser(row.user_id, [activity], expectedConnection);
 }
 
 router.get('/webhook', (req, res) => {
@@ -512,104 +204,49 @@ router.post('/webhook', webhookLimiter, (req, res) => {
 });
 
 router.get('/auth', auth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const missing = getMissingStravaEnv();
-  if (missing.length) {
-    return res.status(500).json({ error: `Missing env vars: ${missing.join(', ')}` });
-  }
-
+  if (missing.length) return res.status(503).json({ error: 'Strava connection is unavailable' });
   const deepLink = normalizeDeepLink(req.query?.deeplink);
-  const state = signOAuthState({
-    user_id: req.user.id,
-    deeplink: deepLink,
-    exp: Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS,
-  });
-
-  const authUrl = `${STRAVA_AUTH_URL}?${new URLSearchParams({
-    client_id: String(process.env.STRAVA_CLIENT_ID),
-    redirect_uri: String(process.env.STRAVA_REDIRECT_URI),
-    response_type: 'code',
-    scope: 'activity:read_all,profile:read_all',
-    state,
-  }).toString()}`;
-
-  if (wantsJsonResponse(req)) {
-    return res.json({ url: authUrl });
-  }
-
-  return res.redirect(authUrl);
+  if (req.query?.deeplink !== undefined && !deepLink) return res.status(400).json({ error: 'Invalid return link' });
+  try {
+    const state = await getStravaConnectionService().start(req.user.id, { returnLink: deepLink });
+    const authUrl = `${STRAVA_AUTH_URL}?${new URLSearchParams({
+      client_id: process.env.STRAVA_CLIENT_ID, redirect_uri: process.env.STRAVA_REDIRECT_URI,
+      response_type: 'code', scope: 'activity:read_all,profile:read_all', state,
+    }).toString()}`;
+    return wantsJsonResponse(req) ? res.json({ url: authUrl }) : res.redirect(authUrl);
+  } catch (err) { return res.status(err.status || 503).json({ error: 'Strava connection is unavailable', code: err.code || 'STRAVA_UNAVAILABLE' }); }
 });
 
 router.get('/callback', async (req, res) => {
-  const missing = getMissingStravaEnv();
-  if (missing.length) {
-    return res.status(500).json({ error: `Missing env vars: ${missing.join(', ')}` });
-  }
-
-  const statePayload = verifyOAuthState(String(req.query?.state || ''));
-  if (!statePayload?.user_id) {
-    return res.status(400).json({ error: 'Invalid or expired OAuth state' });
-  }
-
-  const deepLink = normalizeDeepLink(statePayload.deeplink);
-
-  if (req.query?.error) {
-    if (deepLink) {
-      return res.redirect(appendQueryParams(deepLink, { ok: 0, error: String(req.query.error) }));
-    }
-    res.status(400);
-    return sendOAuthResultPage(res, {
-      ok: false,
-      title: 'Strava Connection Cancelled',
-      message: 'Strava was not connected. Return to Forged Hybrid whenever you are ready to try again.',
-    });
-  }
-
-  const code = String(req.query?.code || '').trim();
-  if (!code) {
-    return res.status(400).json({ error: 'Missing Strava authorization code' });
-  }
-
+  res.set('Cache-Control', 'no-store');
+  const connections = getStravaConnectionService();
+  let proof;
+  try { proof = connections.verify(req.query?.state); }
+  catch (err) { return res.status(err.code === 'STRAVA_CONFIG_UNAVAILABLE' ? 503 : 400).json({ error: 'Invalid or expired OAuth state' }); }
+  const deepLink = normalizeDeepLink(proof.deeplink);
+  const signal = requestSignal(req, res);
   try {
-    const tokenPayload = await callStravaTokenEndpoint({
-      client_id: process.env.STRAVA_CLIENT_ID,
-      client_secret: process.env.STRAVA_CLIENT_SECRET,
-      code,
-      grant_type: 'authorization_code',
-    });
-
-    const athleteId = Number(tokenPayload?.athlete?.id || 0) || null;
-    const athleteName = buildAthleteName(tokenPayload?.athlete);
-
-    await withUserMutation(statePayload.user_id, (tx) => upsertStravaTokens({
-      userId: statePayload.user_id,
-      accessToken: String(tokenPayload.access_token),
-      refreshToken: String(tokenPayload.refresh_token),
-      expiresAt: Number(tokenPayload.expires_at || 0),
-      athleteId,
-      athleteName,
-      query: tx,
-    }));
-
-    if (deepLink) {
-      return res.redirect(appendQueryParams(deepLink, { ok: 1, athlete_name: athleteName || '' }));
+    if (req.query?.error) {
+      await connections.cancel(proof);
+      if (deepLink) return res.redirect(appendQueryParams(deepLink, { ok: 0, error: 'authorization_cancelled' }));
+      res.status(400);
+      return sendOAuthResultPage(res, { ok: false, title: 'Strava Connection Cancelled', message: 'Strava was not connected. Return to Forged Hybrid whenever you are ready to try again.' });
     }
-
-    return sendOAuthResultPage(res, {
-      ok: true,
-      title: 'Strava Connected',
-      message: `${athleteName || 'Your Strava account'} is connected. Tap Forged Hybrid or Back at the top-left to return; the Devices section will refresh.`,
-    });
+    const code = typeof req.query?.code === 'string' ? req.query.code.trim() : '';
+    if (!code) return res.status(400).json({ error: 'Missing Strava authorization code' });
+    const { athleteName } = await connections.callback(proof, code, { signal });
+    if (deepLink) return res.redirect(appendQueryParams(deepLink, { ok: 1, athlete_name: athleteName || '' }));
+    return sendOAuthResultPage(res, { ok: true, title: 'Strava Connected',
+      message: `${athleteName || 'Your Strava account'} is connected. Tap Forged Hybrid or Back at the top-left to return; the Devices section will refresh.` });
   } catch (err) {
-    if (deepLink) {
-      return res.redirect(appendQueryParams(deepLink, { ok: 0, error: 'token_exchange_failed' }));
-    }
-    console.error('[strava/callback] failed:', err.message);
-    res.status(Number(err.status || 500));
-    return sendOAuthResultPage(res, {
-      ok: false,
-      title: 'Strava Connection Failed',
-      message: 'Forged Hybrid could not finish the Strava connection. Return to the app and try again.',
-    });
+    const stale = ['STRAVA_CONNECTION_ATTEMPT_STALE','STRAVA_CONNECTION_STALE'].includes(err.code);
+    if (deepLink) return res.redirect(appendQueryParams(deepLink, { ok: 0, error: stale ? 'connection_attempt_stale' : 'token_exchange_failed' }));
+    console.error('[strava/callback] failed:', err.code || 'STRAVA_UNAVAILABLE');
+    res.status(err.status || 503);
+    return sendOAuthResultPage(res, { ok: false, title: 'Strava Connection Failed',
+      message: stale ? 'This connection attempt is no longer current. Return to Forge and start again.' : 'Forged Hybrid could not finish the Strava connection. Return to the app and try again.' });
   }
 });
 
@@ -636,59 +273,34 @@ router.get('/status', auth, async (req, res) => {
 });
 
 router.post('/sync', auth, async (req, res) => {
+  const signal = requestSignal(req, res);
   try {
-    const row = await dbGet(
-      `SELECT user_id, connection_generation, access_token, refresh_token, expires_at, athlete_id, athlete_name
-       FROM strava_tokens
-       WHERE user_id = ?`,
-      [req.user.id]
-    );
-    const connected = decodeStravaTokenRow(row);
-
-    if (!connected?.access_token || !connected?.refresh_token) {
-      return res.status(400).json({ error: 'Strava not connected' });
+    const connections = getStravaConnectionService();
+    let connected = await connections.connection(req.user.id);
+    const expectedConnection = captureStravaConnection(req.user.id, connected.row);
+    connected = await connections.refresh(connected, { signal });
+    let activities;
+    try { activities = await fetchStravaActivitiesWithRoutes(connected.row.access_token, signal); }
+    catch (err) {
+      if (Number(err?.status) !== 401) throw err;
+      connected = await connections.refresh(connected, { force: true, signal });
+      activities = await fetchStravaActivitiesWithRoutes(connected.row.access_token, signal);
     }
-    const expectedConnection = captureStravaConnection(req.user.id, row);
-    if (!connected.token_storage_encrypted) {
-      await upsertStravaTokens({
-        userId: req.user.id,
-        accessToken: connected.access_token,
-        refreshToken: connected.refresh_token,
-        expiresAt: connected.expires_at,
-        athleteId: connected.athlete_id,
-        athleteName: connected.athlete_name,
-      });
-    }
-
-    let tokens = await maybeRefreshAccessToken(req.user.id, connected);
-    let activities = [];
-
-    try {
-      activities = await fetchStravaActivitiesWithRoutes(tokens.access_token);
-    } catch (err) {
-      if (Number(err?.status || 0) === 401) {
-        tokens = await maybeRefreshAccessToken(req.user.id, { ...tokens, expires_at: 0 });
-        activities = await fetchStravaActivitiesWithRoutes(tokens.access_token);
-      } else {
-        throw err;
-      }
-    }
-
     const { imported, enriched, total } = await syncStravaActivitiesForUser(req.user.id, activities, expectedConnection);
     return res.json({ imported, enriched, total });
   } catch (err) {
-    console.error('[strava/sync] failed:', err.message);
-    return res.status(500).json({ error: 'Failed to sync Strava activities' });
+    console.error('[strava/sync] failed:', err.code || 'STRAVA_UNAVAILABLE');
+    return res.status(err.code === 'STRAVA_NOT_CONNECTED' ? 400 : 503).json({ error: 'Failed to sync Strava activities', code: err.code || 'STRAVA_UNAVAILABLE' });
   }
 });
 
 router.delete('/disconnect', auth, async (req, res) => {
   try {
-    await dbRun('DELETE FROM strava_tokens WHERE user_id = ?', [req.user.id]);
+    await getStravaConnectionService().disconnect(req.user.id);
     return res.json({ connected: false });
   } catch (err) {
-    console.error('[strava/disconnect] failed:', err.message);
-    return res.status(500).json({ error: 'Failed to disconnect Strava' });
+    console.error('[strava/disconnect] failed:', err.code || 'STRAVA_UNAVAILABLE');
+    return res.status(503).json({ error: 'Failed to disconnect Strava' });
   }
 });
 
