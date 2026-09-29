@@ -90,7 +90,51 @@ async function checks(f,dialect){
   assert.equal((await save(activity)).runId,null,'deleted record cannot resurrect');
   assert.equal((await tx.get('SELECT state FROM activity_notification_events WHERE id=?',[initialEvent.id])).state,'CANCELLED');
   await mergeChecks(f,expected);
+  await matchingOwnershipChecks(f,expected);
   console.log(`PASS ${dialect} transactional save/replay/history/targets/rollback/lease-CAS/owner/deletion/merge`);
+}
+async function matchingOwnershipChecks(f,expected){
+  const {tx,mutate}=f;
+  const start=new Date().toISOString();
+  const enrichment={start_date:start,start_date_local:start,average_heartrate:151,total_elevation_gain:10,perceived_exertion:5,calories:400,
+    routeCoords:[{lat:38.9,lon:-77},{lat:38.901,lon:-77.001}]};
+  for(const [index,source] of ['apple_health','forged_hybrid'].entries()){
+    const distance=8+index,id=`owned-${source}`,foreign=`foreign-${source}`;
+    // Identical foreign/owned clocks, distance and duration must not make the
+    // owned match ambiguous or permit either enrichment query to cross owners.
+    await addRun(tx,foreign,{owner:'b',source,start,distance,metrics:{private:'foreign'}});
+    await addRun(tx,id,{source,start,distance,metrics:{kept:'athlete'}});
+    await tx.run('UPDATE runs SET route_coords=NULL,elevation_gain=NULL,perceived_effort=NULL,avg_heart_rate=NULL,calories=0,shoe_id=? WHERE id=? AND user_id=?',['explicit-shoe',id,'a']);
+    const foreignBefore=await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?',[foreign,'b']);
+    const runUpdates=[];
+    const saved=await mutate('a',q=>persistStravaActivity({...q,run:async(sql,params)=>{
+      if(/UPDATE runs SET/.test(sql))runUpdates.push({sql,params});
+      return q.run(sql,params);
+    }},'a',raw(8000+index,{...enrichment,distance:distance*1609.34}),expected));
+    assert.equal(saved.runId,id,`${source} matches only the owned canonical row`);
+    assert.equal(saved.imported,0);assert.equal(saved.enriched,1);
+    assert.equal(runUpdates.length,1);assert.match(runUpdates[0].sql,/WHERE id=\? AND user_id=\?/);
+    assert.deepEqual(runUpdates[0].params.slice(-2),[id,'a'],'actual enrichment UPDATE binds canonical id and owner');
+    const owned=await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?',[id,'a']);
+    assert.equal(owned.avg_heart_rate,151);assert.equal(owned.perceived_effort,5);assert.equal(owned.calories,400);
+    assert.equal(owned.shoe_id,'explicit-shoe');assert.equal(JSON.parse(owned.workout_metrics_json).kept,'athlete');
+    assert.equal(JSON.parse(owned.route_coords).length,2);
+    assert.deepEqual(await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?',[foreign,'b']),foreignBefore,'foreign row bytes unchanged by matching and enrichment');
+  }
+  for(const [index,source] of ['manual','unsupported_source'].entries()){
+    const distance=12+index,id=`excluded-${source}`,foreign=`foreign-excluded-${source}`;
+    await addRun(tx,id,{source,start,distance,metrics:{kept:'not canonical health'}});
+    await addRun(tx,foreign,{owner:'b',source:'apple_health',start,distance,metrics:{private:'foreign'}});
+    const ownedBefore=await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?',[id,'a']);
+    const foreignBefore=await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?',[foreign,'b']);
+    const activityId=8010+index;
+    const saved=await mutate('a',q=>persistStravaActivity(q,'a',raw(activityId,{...enrichment,distance:distance*1609.34}),expected));
+    assert.equal(saved.runId,`strava_a_${activityId}`,`${source} is not an inferred canonical enrichment target`);
+    assert.equal(saved.imported,1);assert.equal(saved.enriched,0);
+    assert.deepEqual(await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?',[id,'a']),ownedBefore,'unsupported owned row remains unchanged');
+    assert.deepEqual(await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?',[foreign,'b']),foreignBefore,'foreign supported row remains unchanged');
+  }
+  console.log('PASS real SQL owner/source matching and enrichment with unchanged foreign rows');
 }
 async function retireAndDelete(q,owner,id){await events.retireSavedRun(q,owner,id);await q.run('DELETE FROM runs WHERE id=? AND user_id=?',[id,owner]);}
 async function mergeChecks(f,expected){
