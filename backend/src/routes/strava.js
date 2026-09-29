@@ -30,22 +30,6 @@ const webhookLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-const STRAVA_TOKEN_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS strava_tokens (
-  id SERIAL PRIMARY KEY,
-  user_id TEXT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-  access_token TEXT,
-  refresh_token TEXT,
-  expires_at BIGINT,
-  athlete_id BIGINT,
-  athlete_name TEXT,
-  connected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-)
-`;
-
-dbRun(STRAVA_TOKEN_SCHEMA_SQL)
-  .catch((err) => console.error('[strava] schema init failed:', err.message));
-
 function getEncryptionKey() {
   return crypto.createHash('sha256').update(String(process.env.JWT_SECRET)).digest();
 }

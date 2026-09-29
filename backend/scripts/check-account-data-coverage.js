@@ -6,6 +6,7 @@ const {
   ACCOUNT_DELETE_QUERIES,
   ACCOUNT_EXPORT_TABLES,
   ACCOUNT_SECRET_TABLES,
+  ACCOUNT_INDIRECT_OWNED_TABLES,
   ACCOUNT_SOCIAL_DELETE_QUERIES,
 } = require('../src/lib/accountDataCoverage');
 
@@ -23,6 +24,7 @@ function walk(dir) {
 
 function collectUserOwnedTables() {
   const tables = new Map();
+  for (const table of ACCOUNT_INDIRECT_OWNED_TABLES) tables.set(table, ['src/lib/accountDataCoverage.js (joined ownership)']);
   for (const file of walk(srcDir)) {
     const content = fs.readFileSync(file, 'utf8');
     const createTablePattern = /CREATE TABLE IF NOT EXISTS\s+([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)/g;

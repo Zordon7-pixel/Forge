@@ -74,6 +74,7 @@ function createScenario({ failOnSql = null } = {}) {
             : [];
         },
         get: async (sql, params) => {
+          if (sql === "SELECT 1 AS present FROM web_push_setup_rate_buckets WHERE dimension='USER' LIMIT 1") return null;
           if (/^SELECT id, password_hash FROM users/.test(sql)) {
             assert.equal(sql, 'SELECT id, password_hash FROM users WHERE id = ?');
             assert.deepEqual(params, [USER_ID]);
