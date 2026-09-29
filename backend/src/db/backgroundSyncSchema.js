@@ -459,7 +459,7 @@ async function rebuildSqlite(db, table, original) {
   if (sequence) await db.run('UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name=?', [sequence.seq, table]);
 }
 
-async function migrateBackgroundSyncPostgres(pool) {
+async function migrateBackgroundBasePostgres(pool) {
   const client = await pool.connect();
   const db = pgAdapter(client);
   try {
@@ -487,7 +487,7 @@ async function migrateBackgroundSyncPostgres(pool) {
   } finally { client.release(); }
 }
 
-async function migrateBackgroundSyncSqlite(database) {
+async function migrateBackgroundBaseSqlite(database) {
   if (database.isTransaction) throw blocked('SQLITE_TRANSACTION_ACTIVE');
   const db = sqliteAdapter(database);
   if (!(await db.get('PRAGMA foreign_keys')).foreign_keys) throw blocked('SQLITE_FOREIGN_KEYS_DISABLED');
@@ -541,5 +541,94 @@ async function migrateBackgroundSyncSqlite(database) {
   }
 }
 
-module.exports = { MIGRATION_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
+// This separate migration must not enter B1a's OWNED_TABLES/preflight: a valid
+// already-recorded B1a database does not have this later table yet.
+const FENCE_MIGRATION_VERSION = 'background-sync-strava-fence-v1';
+const FENCE_PG_SQL = `CREATE TABLE strava_connection_fences (
+ user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ epoch TEXT NOT NULL CHECK (epoch ~ '^[a-f0-9]{64}$')
+);`;
+const FENCE_SQLITE_SQL = `CREATE TABLE strava_connection_fences (
+ user_id TEXT PRIMARY KEY NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ epoch TEXT NOT NULL CHECK (length(epoch) = 64 AND epoch NOT GLOB '*[^0-9a-f]*')
+);`;
+const compactSql = sql => sql.replace(/\s+/g, '').replace(/;$/, '');
+async function validateFence(db, dialect) {
+  if (dialect === 'sqlite') {
+    const row = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='strava_connection_fences'");
+    if (!row || compactSql(row.sql) !== compactSql(FENCE_SQLITE_SQL)) throw blocked('FENCE_SCHEMA');
+  } else {
+    const attrs = await db.all(`SELECT a.attname AS name,format_type(a.atttypid,a.atttypmod) AS type,
+      a.attnotnull AS required,pg_get_expr(d.adbin,d.adrelid) AS default_value
+      FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+      LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
+      WHERE n.nspname=current_schema() AND c.relname='strava_connection_fences' AND c.relkind='r'
+        AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum`);
+    if (JSON.stringify(attrs) !== JSON.stringify(['user_id','epoch'].map(name => ({ name,type:'text',required:true,default_value:null })))) throw blocked('FENCE_SCHEMA');
+    const constraints = await db.all(`SELECT c.contype,pg_get_constraintdef(c.oid) AS definition,c.convalidated
+      FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+      WHERE n.nspname=current_schema() AND t.relname='strava_connection_fences'`);
+    const expected = ["CHECK ((epoch ~ '^[a-f0-9]{64}$'::text))", 'PRIMARY KEY (user_id)',
+      'FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE'].map(compactSql).sort();
+    if (constraints.length !== 3 || constraints.some(c => !c.convalidated)
+      || JSON.stringify(constraints.map(c => compactSql(c.definition)).sort()) !== JSON.stringify(expected)) throw blocked('FENCE_SCHEMA');
+  }
+  let after = null;
+  while (true) {
+    const rows = await db.all(`SELECT f.user_id,f.epoch,u.id AS owner_id FROM strava_connection_fences f
+      LEFT JOIN users u ON u.id=f.user_id ${after === null ? '' : 'WHERE f.user_id>?'} ORDER BY f.user_id LIMIT 1000`, after === null ? [] : [after]);
+    if (!rows.length) break;
+    if (rows.some(r => !r.owner_id || typeof r.epoch !== 'string' || !/^[a-f0-9]{64}$/.test(r.epoch))) throw blocked('FENCE_ROWS');
+    after = rows.at(-1).user_id;
+  }
+  if (await db.get(`SELECT t.user_id FROM strava_tokens t LEFT JOIN strava_connection_fences f ON f.user_id=t.user_id
+    WHERE f.user_id IS NULL LIMIT 1`)) throw blocked('FENCE_COVERAGE');
+}
+async function applyFence(db, dialect) {
+  const recorded = await db.get('SELECT version FROM schema_migrations WHERE version=?', [FENCE_MIGRATION_VERSION]);
+  const present = (await columns(db, dialect, 'strava_connection_fences')).length > 0;
+  if (!recorded) {
+    if (present) throw blocked('FENCE_UNRECORDED_SCHEMA');
+    await db.exec(dialect === 'postgres' ? FENCE_PG_SQL : FENCE_SQLITE_SQL);
+    let after = null;
+    while (true) {
+      const rows = await db.all(`SELECT user_id FROM strava_tokens ${after === null ? '' : 'WHERE user_id>?'} ORDER BY user_id LIMIT 1000`, after === null ? [] : [after]);
+      if (!rows.length) break;
+      for (const row of rows) await db.run('INSERT INTO strava_connection_fences(user_id,epoch) VALUES(?,?)',
+        [row.user_id, require('node:crypto').randomBytes(32).toString('hex')]);
+      after = rows.at(-1).user_id;
+    }
+  } else if (!present) throw blocked('FENCE_SCHEMA');
+  await validateFence(db, dialect);
+  if (!recorded) await db.run('INSERT INTO schema_migrations(version) VALUES(?)', [FENCE_MIGRATION_VERSION]);
+}
+async function migrateBackgroundSyncPostgres(pool) {
+  const result = await migrateBackgroundBasePostgres(pool);
+  const client = await pool.connect(); const db = pgAdapter(client);
+  try {
+    await db.exec('BEGIN');
+    await db.exec("SELECT pg_advisory_xact_lock(hashtext('background-sync-v2'))");
+    await applyFence(db, 'postgres');
+    await db.exec('COMMIT');
+    return result;
+  } catch (error) { await db.exec('ROLLBACK'); throw error; }
+  finally { client.release(); }
+}
+async function migrateBackgroundSyncSqlite(database) {
+  const result = await migrateBackgroundBaseSqlite(database);
+  const db = sqliteAdapter(database); let begun = false;
+  if ((await db.get('PRAGMA foreign_keys')).foreign_keys !== 1) throw blocked('SQLITE_FOREIGN_KEYS_DISABLED');
+  try {
+    await db.exec('BEGIN IMMEDIATE'); begun = true;
+    await applyFence(db, 'sqlite');
+    if ((await db.all('PRAGMA foreign_key_check')).length) throw blocked('SQLITE_FOREIGN_KEYS');
+    await db.exec('COMMIT'); begun = false;
+    return result;
+  } catch (error) {
+    if (begun && database.isTransaction) await db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+module.exports = { MIGRATION_VERSION, FENCE_MIGRATION_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
   _test: { providerId, bootstrapLinks, POSTGRES_SQL, SETUP_SQL, OWNED_TABLES } };
