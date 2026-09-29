@@ -136,10 +136,15 @@ async function runAuthMutationGuardSmoke() {
   const inviteRowLockIndex = socialFriendsSource.indexOf('WHERE id = ? AND owner_id = ? AND token_hash = ?');
   assert.ok(invitePreviewIndex >= 0 && invitePreviewIndex < inviteUserLockIndex && inviteUserLockIndex < inviteRowLockIndex,
     'invite resolution must lock users before locking and consuming the invite row');
-  for (const route of ['whoop.js', 'oura.js', 'strava.js']) {
+  for (const route of ['whoop.js', 'oura.js']) {
     const source = fs.readFileSync(path.join(root, 'src/routes', route), 'utf8');
     assert.match(source, /withUserMutation\(/, `${route} OAuth callback must reject deleted-account writes`);
   }
+  const strava = fs.readFileSync(path.join(root, 'src/routes/strava.js'), 'utf8');
+  const connection = fs.readFileSync(path.join(root, 'src/services/stravaConnectionService.js'), 'utf8');
+  assert.match(strava, /connections\.callback\(proof, code/,'Strava callback delegates to the fenced lifecycle service');
+  assert.match(connection, /withUserMutation\(userId,fn,\{userLock:'update'\}\)/,'Strava lifecycle uses real owner UPDATE authority');
+  assert.match(connection, /await lifecycle\.consume\(tx,proof/,'Strava callback consumes current owner epoch inside the transaction (behavior: stravaConnectionService)');
 }
 
 if (require.main === module) {
