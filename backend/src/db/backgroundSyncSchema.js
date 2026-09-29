@@ -491,8 +491,12 @@ async function migrateBackgroundSyncSqlite(database) {
   if (database.isTransaction) throw blocked('SQLITE_TRANSACTION_ACTIVE');
   const db = sqliteAdapter(database);
   if (!(await db.get('PRAGMA foreign_keys')).foreign_keys) throw blocked('SQLITE_FOREIGN_KEYS_DISABLED');
-  await db.exec('PRAGMA foreign_keys=OFF; BEGIN EXCLUSIVE;');
+  let begun = false;
+  let migrationError;
   try {
+    await db.exec('PRAGMA foreign_keys=OFF;');
+    await db.exec('BEGIN EXCLUSIVE;');
+    begun = true;
     await db.exec('CREATE TABLE IF NOT EXISTS schema_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT UNIQUE NOT NULL, executed_at TEXT DEFAULT CURRENT_TIMESTAMP)');
     const { original, recorded } = await preflight(db, 'sqlite');
     if (recorded) {
@@ -510,9 +514,31 @@ async function migrateBackgroundSyncSqlite(database) {
     }
     if ((await db.all('PRAGMA foreign_key_check')).length) throw blocked('SQLITE_FOREIGN_KEYS');
     await db.exec('COMMIT');
+    begun = false;
     return { applied: !recorded };
-  } catch (error) { await db.exec('ROLLBACK'); throw error; }
-  finally { await db.exec('PRAGMA foreign_keys=ON'); }
+  } catch (error) {
+    migrationError = error;
+    if (begun && database.isTransaction) {
+      try { await db.exec('ROLLBACK'); }
+      catch (rollbackError) {
+        migrationError = new AggregateError([error, rollbackError], 'Background sync migration rollback failed');
+      }
+    }
+    throw migrationError;
+  } finally {
+    // BEGIN itself can fail after OFF. Restoration also needs readback because
+    // SQLite silently ignores this pragma inside an unrolled-back transaction.
+    try {
+      await db.exec('PRAGMA foreign_keys=ON');
+      if ((await db.get('PRAGMA foreign_keys')).foreign_keys !== 1) throw blocked('SQLITE_FOREIGN_KEYS_RESTORE');
+    } catch (restoreError) {
+      const error = blocked('SQLITE_FOREIGN_KEYS_RESTORE');
+      error.cause = migrationError
+        ? new AggregateError([migrationError, restoreError], 'Migration and foreign-key restoration failed')
+        : restoreError;
+      throw error;
+    }
+  }
 }
 
 module.exports = { MIGRATION_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
