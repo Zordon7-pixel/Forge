@@ -53,6 +53,7 @@ app.use(cors({
 // Stripe webhooks require the raw request body for signature verification.
 app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+require('./lib/stravaWebhook').mountStravaWebhookParser(app);
 app.use(express.json({ limit: '10mb' }));
 app.use(helmet({
   contentSecurityPolicy: {
