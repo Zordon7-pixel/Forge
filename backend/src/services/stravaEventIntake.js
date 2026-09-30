@@ -22,6 +22,8 @@ async function storeHint(tx, event) {
     const due = Math.max(now, fetched === null ? now : fetched + 30000);
     const revive = prior.state === 'DEAD' && event.eventTime > Number(prior.reported_event_time)
       && now >= Math.max(fetched || 0, new Date(prior.updated_at).getTime()) + 30000;
+    const newEpisode = revive || prior.state === 'DONE' && Number(prior.processed_revision) === revision;
+    if (prior.state === 'DONE' && !newEpisode) throw error('STRAVA_INTAKE_STATE_INVALID');
     // Leased callbacks do not touch lease/due/fetch/processed fields. A stale
     // DEAD hint is retained but cannot restart a failed episode.
     if (prior.state === 'LEASED' || prior.state === 'DEAD' && !revive) {
@@ -32,9 +34,10 @@ async function storeHint(tx, event) {
       const previousDue = new Date(prior.available_at).getTime();
       const available = prior.state === 'PENDING' || prior.state === 'RETRY'
         ? Math.max(fetched === null ? 0 : fetched + 30000, Math.min(previousDue, due)) : due;
-      await tx.run("UPDATE provider_event_jobs SET requested_revision=?,last_fingerprint=?,reported_event_time=?,last_aspect=?,updated_at=?,state='PENDING',available_at=?,attempts=?,last_error_code=NULL WHERE id=?",
+      await tx.run("UPDATE provider_event_jobs SET requested_revision=?,last_fingerprint=?,reported_event_time=?,last_aspect=?,updated_at=?,state='PENDING',available_at=?,attempts=?,episode_started_at=?,last_error_code=NULL WHERE id=?",
         [revision + 1, event.fingerprint, Math.max(event.eventTime, Number(prior.reported_event_time)), event.aspectType,
-          new Date(now).toISOString(), new Date(available).toISOString(), revive ? 0 : prior.attempts, prior.id]);
+          new Date(now).toISOString(), new Date(available).toISOString(), newEpisode ? 0 : prior.attempts,
+          newEpisode ? new Date(now).toISOString() : prior.episode_started_at, prior.id]);
     }
     return { received: true };
   }
@@ -43,8 +46,8 @@ async function storeHint(tx, event) {
   if (!await tx.get(`SELECT id FROM background_sync_control WHERE id='strava'${lock}`)) throw error('STRAVA_INTAKE_UNAVAILABLE');
   const global = await tx.get('SELECT count(*) AS n FROM (SELECT id FROM provider_event_jobs LIMIT 10001) AS slots');
   if (Number(global.n) >= 10000) throw error('STRAVA_INTAKE_CAPACITY');
-  await tx.run(`INSERT INTO provider_event_jobs(id,binding_id,object_type,object_id,last_fingerprint,reported_event_time,last_aspect,available_at,state)
-    VALUES(?,?,?,?,?,?,?,?,'PENDING')`, [randomUUID(), binding.id, event.objectType, event.objectId, event.fingerprint, event.eventTime, event.aspectType, new Date(now).toISOString()]);
+  await tx.run(`INSERT INTO provider_event_jobs(id,binding_id,object_type,object_id,last_fingerprint,reported_event_time,last_aspect,available_at,state,episode_started_at,attempts)
+    VALUES(?,?,?,?,?,?,?,?,'PENDING',?,0)`, [randomUUID(), binding.id, event.objectType, event.objectId, event.fingerprint, event.eventTime, event.aspectType, new Date(now).toISOString(),new Date(now).toISOString()]);
   return { received: true };
 }
 
