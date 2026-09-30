@@ -12,13 +12,17 @@ async function main(){
   try{
     await seed(f);
     const dbPath=require.resolve('../src/db');
-    const transaction=async fn=>{f.exec('BEGIN IMMEDIATE');try{const result=await fn({...f.tx,run:(sql,p)=>sql.startsWith('SET LOCAL ')?{changes:0}:f.tx.run(sql,p),get:(sql,p)=>f.tx.get(sql.replace('clock_timestamp()',"strftime('%Y-%m-%dT%H:%M:%fZ','now')"),p)});f.exec('COMMIT');return result;}catch(e){f.exec('ROLLBACK');throw e;}};
+    let quotaClock=null;
+    const transaction=async fn=>{f.exec('BEGIN IMMEDIATE');try{const result=await fn({...f.tx,run:(sql,p)=>sql.startsWith('SET LOCAL ')?{changes:0}:f.tx.run(sql,p),get:(sql,p)=>sql==='SELECT clock_timestamp() AS now'&&quotaClock
+      ?{now:new Date(quotaClock.wall+(quotaClock.mono===null?0:performance.now()-quotaClock.mono)).toISOString()}
+      :f.tx.get(sql.replace('clock_timestamp()',"strftime('%Y-%m-%dT%H:%M:%fZ','now')"),p)});f.exec('COMMIT');return result;}catch(e){f.exec('ROLLBACK');throw e;}};
     const owner=(id,fn,options)=>{assert.equal(options.userLock,'update');return transaction(async tx=>{assert.ok(await tx.get('SELECT id FROM users WHERE id=?',[id]));return fn(tx);});};
     require.cache[dbPath]={id:dbPath,filename:dbPath,loaded:true,exports:{dbGet:f.tx.get,dbAll:f.tx.all,dbRun:f.tx.run,withPlanningInputMutation:f.mutate,withUserMutation:owner,withTransaction:transaction,runWithUserContext:(_id,next)=>next()}};
     await f.tx.run("UPDATE strava_tokens SET access_token=?,refresh_token=?,expires_at=4102444800 WHERE user_id='a'",[encrypted('synthetic-access'),encrypted('synthetic-refresh')]);
     let activities=[raw(900,{routeCoords:[{lat:1,lon:1},{lat:1.01,lon:1.01}]})],held,includeRoute=true,tokenPayload,streamOk=false;const providerTimes=[];
     global.fetch=async(url,options)=>{
-      providerTimes.push({url:String(url),at:Date.now()});
+      if(quotaClock&&quotaClock.mono===null)quotaClock.mono=performance.now();
+      providerTimes.push({url:String(url),at:Date.now(),budget:quotaClock?{...await f.tx.get("SELECT observed_quarter_cap,observed_day_cap,quarter_used,day_used,quarter_start,day_start,paused FROM background_sync_control WHERE id='strava'")}:null});
       if(String(url)==='https://www.strava.com/oauth/token')return new Response(JSON.stringify(tokenPayload));
       if(/\/activities\/\d+\/streams\?/.test(String(url)))return new Response(JSON.stringify(streamOk?{latlng:{data:[[1,1],[1.01,1.01]]}}:{}),{status:streamOk?200:503});
       assert.match(String(url),/^https:\/\/www\.strava\.com\/api\/v3\/athlete\/activities\?/,'no unapproved external call');
@@ -81,20 +85,36 @@ async function main(){
     const optional=await request('POST','/strava/sync');assert.equal(optional.status,200);assert.equal(optional.body.imported,1,'optional stream provider failure cannot discard valid core run');
     tokenPayload={access_token:'synthetic-refreshed',refresh_token:'synthetic-refresh',expires_at:Math.floor(Date.now()/1000)+3600,athlete:{id:123}};
     await f.tx.run("UPDATE strava_tokens SET expires_at=1 WHERE user_id='a'");
+    // Independent fresh reduced-budget witness: do not reset between token,
+    // list and streams; every real request must consume the same stored caps.
+    await f.tx.run("UPDATE background_sync_control SET observed_quarter_cap=10,observed_day_cap=100,quarter_used=0,day_used=0 WHERE id='strava'");
     activities=[raw(941)];streamOk=true;const sequenceStart=providerTimes.length;
     const realTimer=global.setTimeout;let earlyWakes=0,sequential;
     try {
+      // Freeze the initial DB instant immediately before UTC midnight, then
+      // advance with monotonic elapsed time from the first provider boundary.
+      // No counter reset occurs between requests; real SQLite transactions run.
+      quotaClock={wall:Math.floor(Date.now()/86400000)*86400000-500,mono:null};
       global.setTimeout=(fn,ms,...args)=>{
         if(ms>100&&ms<=1000&&earlyWakes<4){earlyWakes++;return realTimer(fn,0,...args);}
         return realTimer(fn,ms,...args);
       };
       sequential=await request('POST','/strava/sync');
-    } finally {global.setTimeout=realTimer;}
+    } finally {global.setTimeout=realTimer;quotaClock=null;}
     assert.equal(earlyWakes,4,'real HTTP sequence includes deliberately early spacing wakeups');
     assert.equal(sequential.status,200);assert.deepEqual(sequential.body,{imported:1,enriched:0,total:1});
     const sequence=providerTimes.slice(sequenceStart);assert.equal(sequence.length,3);assert.match(sequence[0].url,/oauth\/token$/);assert.match(sequence[1].url,/athlete\/activities/);assert.match(sequence[2].url,/\/streams\?/);
     assert.ok(sequence[1].at-sequence[0].at>=990&&sequence[2].at-sequence[1].at>=990,'expired-token manual sync actually reserves token/list/streams separately with one-second spacing');
     assert.ok(await f.tx.get("SELECT id FROM runs WHERE id='strava_a_941'"),'normal multi-request path saves valid core');
+    for(let i=0;i<sequence.length;i++){
+      const budget=sequence[i].budget,prior=sequence[i-1]?.budget;
+      assert.equal(budget.observed_quarter_cap,10);assert.equal(budget.observed_day_cap,100);assert.equal(budget.paused,0);
+      for(const period of ['quarter','day'])assert.equal(budget[`${period}_used`],prior&&prior[`${period}_start`]===budget[`${period}_start`]?prior[`${period}_used`]+1:1,'each provider call consumes exactly one reservation in its own UTC window');
+    }
+    assert.notEqual(sequence[0].budget.quarter_start,sequence[1].budget.quarter_start,'real route crosses quarter boundary');
+    assert.notEqual(sequence[0].budget.day_start,sequence[1].budget.day_start,'real route crosses day boundary');
+    const reducedBudget=await f.tx.get("SELECT observed_quarter_cap,observed_day_cap,quarter_used,day_used,quarter_start,day_start,paused FROM background_sync_control WHERE id='strava'");
+    assert.deepEqual({...reducedBudget},sequence[2].budget,'postcommit core save preserves final reduced budget without refunds or global pause');
     const revisionBefore=(await f.tx.get("SELECT planning_input_revision FROM users WHERE id='a'")).planning_input_revision;
     const authStart=await request('GET','/strava/auth?format=json');assert.equal(authStart.status,200);assert.equal(authStart.headers.get('cache-control'),'no-store');
     const state=new URL(authStart.body.url).searchParams.get('state');assert.ok(state);

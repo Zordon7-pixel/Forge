@@ -28,6 +28,16 @@ function pair(value) {
   if (typeof value !== 'string' || !/^\d{1,9},\s*\d{1,9}$/.test(value)) return null;
   return value.split(',').map(Number);
 }
+function limitState(row) {
+  function integer(value, maximum) {
+    if (!((typeof value === 'number' || (typeof value === 'string' && /^[1-9][0-9]*$/.test(value)))
+      && Number.isSafeInteger(Number(value)) && Number(value) >= 1 && Number(value) <= maximum)) throw failure('STRAVA_CONTROL_INVALID');
+    return Number(value);
+  }
+  return { quarterCap: row.observed_quarter_cap === null ? 60 : integer(row.observed_quarter_cap,60),
+    dayCap: row.observed_day_cap === null ? 600 : integer(row.observed_day_cap,600),
+    epoch: integer(row.provider_limits_epoch,9000000000000000) };
+}
 function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => fetch(...args), dialect = 'postgres' }) {
   const transact = fn => withTransaction(fn, { skipContextUserGuard: true });
   const clockSql = dialect === 'sqlite' ? "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS now" : 'SELECT clock_timestamp() AS now';
@@ -48,16 +58,17 @@ function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => 
   async function reserve() {
     return transact(async tx => {
       const { row, now, quarter, day } = await locked(tx);
+      const {quarterCap,dayCap,epoch}=limitState(row);
       if (row.paused === true || row.paused === 1) throw failure('STRAVA_PROVIDER_PAUSED');
       const q = instant(row.quarter_start) === quarter ? count(row.quarter_used) : 0;
       const d = instant(row.day_start) === day ? count(row.day_used) : 0;
-      const allowed = Math.max(instant(row.next_allowed_at), q >= 60 ? quarter + QUARTER_MS : 0, d >= 600 ? day + DAY_MS : 0);
+      const allowed = Math.max(instant(row.next_allowed_at), q >= quarterCap ? quarter + QUARTER_MS : 0, d >= dayCap ? day + DAY_MS : 0);
       if (now < allowed) throw Object.assign(failure('STRAVA_QUOTA_UNAVAILABLE', 503, allowed), {
-        spacingDelay: q < 60 && d < 600 && allowed - now <= 1000 ? allowed - now : null,
+        spacingDelay: q < quarterCap && d < dayCap && allowed - now <= 1000 ? allowed - now : null,
       });
       await tx.run(`UPDATE background_sync_control SET quarter_start=?,quarter_used=?,day_start=?,day_used=?,next_allowed_at=? WHERE id='strava'`,
         [iso(quarter), q + 1, iso(day), d + 1, iso(now + 1000)]);
-      return { quarter, day };
+      return { quarter, day, provider_limits_epoch:epoch };
     });
   }
   async function observe(ticket, response) {
@@ -66,23 +77,24 @@ function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => 
     const values = ['x-ratelimit-limit','x-ratelimit-usage','x-readratelimit-limit','x-readratelimit-usage'].map(get);
     const retry = get('retry-after');
     if (values.every(v => v === null) && retry === null && response.status !== 429) return;
-    const newlyPaused = await transact(async tx => {
+    await transact(async tx => {
       const { row, now, quarter, day } = await locked(tx);
+      const state=limitState(row);
       let next = instant(row.next_allowed_at), q = count(row.quarter_used), d = count(row.day_used);
-      let malformed = false, lowerGrant = false;
+      let malformed = false, quarterCap=row.observed_quarter_cap, dayCap=row.observed_day_cap;
       for (let i = 0; i < 4; i += 2) {
         if (values[i] === null && values[i + 1] === null) continue;
         const limits = pair(values[i]), usage = pair(values[i + 1]);
         if (!limits || !usage || limits.some(v => v < 1)) { malformed = true; continue; }
-        // The reviewed schema has no durable lower-limit columns. Do not forget
-        // a known smaller grant at rollover: pause persistently, requiring an
-        // explicit reviewed operational recovery rather than an unsafe reset.
-        if (limits[0] < 60 || limits[1] < 600) lowerGrant = true;
+        // Grant authority is durable within its epoch, unlike windowed usage.
+        if(ticket.provider_limits_epoch===state.epoch){
+          quarterCap=Math.min(quarterCap??60,limits[0]);dayCap=Math.min(dayCap??600,limits[1]);
+        }
         if (ticket.quarter === quarter && instant(row.quarter_start) === quarter) q = Math.max(q, usage[0]);
         if (ticket.day === day && instant(row.day_start) === day) d = Math.max(d, usage[1]);
-        if (ticket.quarter === quarter && usage[0] >= limits[0]) next = Math.max(next, quarter + QUARTER_MS);
-        if (ticket.day === day && usage[1] >= limits[1]) next = Math.max(next, day + DAY_MS);
       }
+      if(instant(row.quarter_start)===quarter && q >= (quarterCap??60))next=Math.max(next,quarter+QUARTER_MS);
+      if(instant(row.day_start)===day && d >= (dayCap??600))next=Math.max(next,day+DAY_MS);
       if (retry !== null) {
         const delta = /^\d{1,5}$/.test(retry) ? Number(retry) * 1000 : NaN;
         const date = typeof retry === 'string' && /^[A-Za-z]{3}, /.test(retry) ? Date.parse(retry) : NaN;
@@ -91,11 +103,9 @@ function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => 
         else next = Math.max(next, until);
       }
       if (malformed || (response.status === 429 && retry === null)) next = Math.max(next, quarter + QUARTER_MS);
-      await tx.run(`UPDATE background_sync_control SET quarter_used=?,day_used=?,next_allowed_at=?,paused=? WHERE id='strava'`,
-        [q,d,iso(next),lowerGrant || row.paused === true || row.paused === 1]);
-      return lowerGrant && row.paused !== true && row.paused !== 1;
+      await tx.run(`UPDATE background_sync_control SET quarter_used=?,day_used=?,next_allowed_at=?,observed_quarter_cap=?,observed_day_cap=? WHERE id='strava'`,
+        [q,d,iso(next),quarterCap,dayCap]);
     });
-    if (newlyPaused) console.warn('[strava/provider] STRAVA_LOWER_PROVIDER_GRANT_PAUSED');
   }
   function endpoint(operation, input) {
     const headers = { Accept: 'application/json' };

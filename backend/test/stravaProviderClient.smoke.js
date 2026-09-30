@@ -12,7 +12,7 @@ async function main(){
     assert.equal(inTransaction,false,'no control transaction during provider IO');network++;requests.push({url,options});return reply(url,options);
   }});
   const request=(op='activities',input={accessToken:'synthetic'},options)=>client.request(op,input,{waitForSpacing:false,...options});
-  async function reset(){await f.tx.run("UPDATE background_sync_control SET paused=0,next_allowed_at=?,quarter_start=?,quarter_used=0,day_start=?,day_used=0 WHERE id='strava'",[new Date(clock).toISOString(),new Date(Math.floor(clock/900000)*900000).toISOString(),new Date(Math.floor(clock/86400000)*86400000).toISOString()]);}
+  async function reset(){await f.tx.run("UPDATE background_sync_control SET paused=0,observed_quarter_cap=NULL,observed_day_cap=NULL,provider_limits_epoch=1,next_allowed_at=?,quarter_start=?,quarter_used=0,day_start=?,day_used=0 WHERE id='strava'",[new Date(clock).toISOString(),new Date(Math.floor(clock/900000)*900000).toISOString(),new Date(Math.floor(clock/86400000)*86400000).toISOString()]);}
   try{
     await reset();await request();assert.equal(network,1);
     await assert.rejects(()=>request(),{code:'STRAVA_QUOTA_UNAVAILABLE'});assert.equal(network,1);
@@ -29,7 +29,8 @@ async function main(){
     reply=()=>new Response('[]',{headers:{'X-RateLimit-Limit':'100,1000','X-RateLimit-Usage':'1,1'}});await request();assert.equal((await f.tx.get('SELECT day_used FROM background_sync_control')).day_used,600,'stale headers cannot refund');
     clock+=1000;await assert.rejects(()=>request(),{code:'STRAVA_QUOTA_UNAVAILABLE'});
     await reset();reply=()=>new Response('[]',{headers:{'X-RateLimit-Limit':'10,100','X-RateLimit-Usage':'1,1'}});await request();clock+=86400000;
-    await assert.rejects(()=>request(),{code:'STRAVA_PROVIDER_PAUSED'});assert.equal((await f.tx.get('SELECT paused FROM background_sync_control')).paused,1,'lower grant cannot be forgotten at UTC rollover');
+    reply=()=>new Response('[]');await request();
+    assert.deepEqual({...await f.tx.get('SELECT paused,observed_quarter_cap,observed_day_cap FROM background_sync_control')},{paused:0,observed_quarter_cap:10,observed_day_cap:100},'lower grant survives UTC rollover without global pause');
     for(const headers of [{'X-RateLimit-Limit':'nonsense'},{'Retry-After':'-1'},{'Retry-After':'999999999'},{'X-RateLimit-Usage':'false,false'}]){
       await reset();reply=()=>new Response('[]',{headers});await request();clock+=1000;await assert.rejects(()=>request(),{code:'STRAVA_QUOTA_UNAVAILABLE'});
     }
@@ -52,8 +53,7 @@ async function main(){
     reply=async()=>{if(first){first=false;entered();return staleHeld;}return new Response('[]',{headers:{'X-RateLimit-Limit':'10,100','X-RateLimit-Usage':'1,1'}});};
     const stale=request();await staleSeen;clock+=1000;await request();clock+=86400000;
     release(new Response('[]',{headers:{'X-RateLimit-Limit':'100,1000','X-RateLimit-Usage':'0,0'}}));await stale;
-    await assert.rejects(()=>request(),{code:'STRAVA_PROVIDER_PAUSED'});
-    assert.equal((await f.tx.get('SELECT paused FROM background_sync_control')).paused,1,'late larger-grant response cannot unpause a smaller grant');
+    assert.deepEqual({...await f.tx.get('SELECT paused,observed_quarter_cap,observed_day_cap FROM background_sync_control')},{paused:0,observed_quarter_cap:10,observed_day_cap:100},'late larger-grant response cannot erase a smaller grant');
     // Real database time, no clock jumps or reservation resets between calls.
     clock=Date.now();await reset();const times=[],reservationTimes=[];let reservationAttempts=0;
     const sequential=createStravaProviderClient({dialect:'sqlite',withTransaction:async fn=>{
@@ -88,7 +88,7 @@ async function main(){
     clock=Date.now();
     await reset();let cancelled=false;reply=()=>new Response(new ReadableStream({cancel(){cancelled=true;}}));
     const began=Date.now();await assert.rejects(()=>request(),{code:'STRAVA_REQUEST_TIMEOUT'});assert.ok(Date.now()-began>=19500&&Date.now()-began<24000);assert.equal(cancelled,true,'20s deadline cancels hanging body reader, not just response headers');
-    console.log('STRAVA PROVIDER CLIENT OK: actual SQLite quota/UTC/no-refund/all request classes/headers/persistent lower-grant pause/body/cancellation; no provider IO');
+    console.log('STRAVA PROVIDER CLIENT OK: actual SQLite quota/UTC/no-refund/all request classes/headers/persistent lower caps/body/cancellation; no provider IO');
   }finally{f.close();}
 }
 async function postgres(){
