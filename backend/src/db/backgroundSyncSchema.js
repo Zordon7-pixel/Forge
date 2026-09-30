@@ -602,6 +602,70 @@ async function applyFence(db, dialect) {
   await validateFence(db, dialect);
   if (!recorded) await db.run('INSERT INTO schema_migrations(version) VALUES(?)', [FENCE_MIGRATION_VERSION]);
 }
+
+const LIMITS_MIGRATION_VERSION = 'background-sync-provider-limits-v1';
+const LIMIT_FIELDS = [
+  ['observed_quarter_cap', 60, 'bg_provider_quarter_cap'],
+  ['observed_day_cap', 600, 'bg_provider_day_cap'],
+  ['provider_limits_epoch', 9000000000000000, 'bg_provider_limits_epoch'],
+];
+function limitColumn(name, max, constraint, dialect) {
+  const epoch = name === 'provider_limits_epoch';
+  const type = dialect === 'postgres' && epoch ? 'BIGINT' : 'INTEGER';
+  const check = dialect === 'postgres' ? `${name} BETWEEN 1 AND ${max}`
+    : `${epoch ? '' : `${name} IS NULL OR `}(typeof(${name})='integer' AND ${name} BETWEEN 1 AND ${max})`;
+  return `${name} ${type}${epoch ? ' NOT NULL DEFAULT 1' : ''} CONSTRAINT ${constraint} CHECK(${check})`;
+}
+async function validateProviderLimits(db, dialect) {
+  if (dialect === 'sqlite') {
+    const row = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='background_sync_control'");
+    const base = sqliteSql().match(/CREATE TABLE IF NOT EXISTS background_sync_control \(([\s\S]*?)\n\);/)[1];
+    const expected = `CREATE TABLE background_sync_control (${base},${LIMIT_FIELDS.map(field=>limitColumn(...field,dialect)).join(',')})`;
+    if (!row || compactSql(row.sql) !== compactSql(expected)) throw blocked('PROVIDER_LIMITS_SCHEMA');
+    const attributes = await db.all('PRAGMA table_info(background_sync_control)');
+    for (const [name, max, constraint] of LIMIT_FIELDS) {
+      const attribute = attributes.find(a => a.name === name), epoch = name === 'provider_limits_epoch';
+      if (!attribute || attribute.type !== 'INTEGER' || attribute.notnull !== Number(epoch)
+        || attribute.dflt_value !== (epoch ? '1' : null)
+        || !compactSql(row.sql).includes(compactSql(limitColumn(name, max, constraint, dialect)))) throw blocked('PROVIDER_LIMITS_SCHEMA');
+    }
+  } else {
+    const attrs = await db.all(`SELECT a.attname AS name,format_type(a.atttypid,a.atttypmod) AS type,
+      a.attnotnull AS required,pg_get_expr(d.adbin,d.adrelid) AS default_value
+      FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+      LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
+      WHERE n.nspname=current_schema() AND c.relname='background_sync_control' AND c.relkind='r'
+        AND a.attnum>0 AND NOT a.attisdropped`);
+    const checks = await db.all(`SELECT c.conname,c.contype,c.convalidated,pg_get_constraintdef(c.oid) AS definition
+      FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+      WHERE n.nspname=current_schema() AND t.relname='background_sync_control'`);
+    const normalize = value => value.replace(/[\s()]/g, '').replace(/::bigint/g, '').replace(/'([0-9]+)'/g, '$1');
+    for (const [name, max, constraint] of LIMIT_FIELDS) {
+      const attribute = attrs.find(a => a.name === name), epoch = name === 'provider_limits_epoch';
+      const check = checks.find(c => c.conname === constraint);
+      if (!attribute || attribute.type !== (epoch ? 'bigint' : 'integer') || attribute.required !== epoch
+        || attribute.default_value !== (epoch ? '1' : null) || !check || check.contype !== 'c' || !check.convalidated
+        || normalize(check.definition) !== normalize(`CHECK (${name} >= 1 AND ${name} <= ${max})`)) throw blocked('PROVIDER_LIMITS_SCHEMA');
+    }
+  }
+  const rows = await db.all('SELECT observed_quarter_cap,observed_day_cap,provider_limits_epoch FROM background_sync_control');
+  if (rows.length !== 1 || rows.some(row => LIMIT_FIELDS.some(([name,max]) => {
+    const value = row[name];
+    return value === null ? name === 'provider_limits_epoch'
+      : !((typeof value === 'number' || (typeof value === 'string' && /^[1-9][0-9]*$/.test(value)))
+        && Number.isSafeInteger(Number(value)) && Number(value) >= 1 && Number(value) <= max);
+  }))) throw blocked('PROVIDER_LIMITS_ROWS');
+}
+async function applyProviderLimits(db, dialect) {
+  const recorded = await db.get('SELECT version FROM schema_migrations WHERE version=?', [LIMITS_MIGRATION_VERSION]);
+  const present = await columns(db, dialect, 'background_sync_control');
+  if (!recorded) {
+    if (LIMIT_FIELDS.some(([name]) => present.includes(name))) throw blocked('PROVIDER_LIMITS_UNRECORDED_SCHEMA');
+    for (const field of LIMIT_FIELDS) await db.exec(`ALTER TABLE background_sync_control ADD COLUMN ${limitColumn(...field,dialect)}`);
+  }
+  await validateProviderLimits(db, dialect);
+  if (!recorded) await db.run('INSERT INTO schema_migrations(version) VALUES(?)', [LIMITS_MIGRATION_VERSION]);
+}
 async function migrateBackgroundSyncPostgres(pool) {
   const result = await migrateBackgroundBasePostgres(pool);
   const client = await pool.connect(); const db = pgAdapter(client);
@@ -609,6 +673,7 @@ async function migrateBackgroundSyncPostgres(pool) {
     await db.exec('BEGIN');
     await db.exec("SELECT pg_advisory_xact_lock(hashtext('background-sync-v2'))");
     await applyFence(db, 'postgres');
+    await applyProviderLimits(db, 'postgres');
     await db.exec('COMMIT');
     return result;
   } catch (error) { await db.exec('ROLLBACK'); throw error; }
@@ -621,6 +686,7 @@ async function migrateBackgroundSyncSqlite(database) {
   try {
     await db.exec('BEGIN IMMEDIATE'); begun = true;
     await applyFence(db, 'sqlite');
+    await applyProviderLimits(db, 'sqlite');
     if ((await db.all('PRAGMA foreign_key_check')).length) throw blocked('SQLITE_FOREIGN_KEYS');
     await db.exec('COMMIT'); begun = false;
     return result;
@@ -630,5 +696,5 @@ async function migrateBackgroundSyncSqlite(database) {
   }
 }
 
-module.exports = { MIGRATION_VERSION, FENCE_MIGRATION_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
+module.exports = { MIGRATION_VERSION, FENCE_MIGRATION_VERSION, LIMITS_MIGRATION_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
   _test: { providerId, bootstrapLinks, POSTGRES_SQL, SETUP_SQL, OWNED_TABLES } };
