@@ -11,7 +11,8 @@ const { captureStravaConnection, persistStravaActivity } = require('../services/
 const { planningInputUnchanged } = require('../lib/planningRevision');
 const { getStravaProviderClient } = require('../services/stravaProviderClient');
 const { getStravaConnectionService } = require('../services/stravaConnectionService');
-const { getWebhookVerifyToken, normalizeWebhookEvent, verifyWebhookToken } = require('../lib/stravaWebhook');
+const { getWebhookVerifyToken, verifyWebhookToken } = require('../lib/stravaWebhook');
+const { createStravaEventIntake } = require('../services/stravaEventIntake');
 
 const STRAVA_AUTH_URL = 'https://www.strava.com/oauth/authorize';
 const MAX_STREAM_LOOKUPS_PER_SYNC = 3;
@@ -163,27 +164,6 @@ async function syncStravaActivitiesForUser(userId, activities = [], expectedConn
   return {...result,total:runs.length};
 }
 
-async function processWebhookEvent(event) {
-  const row = await dbGet('SELECT user_id FROM strava_tokens WHERE athlete_id = ?', [event.ownerId]);
-  if (!row) return { ignored: 'unknown_athlete' };
-  const connections = getStravaConnectionService();
-  let connected = await connections.connection(row.user_id);
-  if (event.objectType === 'athlete' && String(event.updates?.authorized) === 'false') {
-    return { disconnected: await connections.verifyRevocation(connected) };
-  }
-  if (event.objectType !== 'activity' || event.aspectType === 'delete') return { ignored: 'unsupported_event' };
-  const expectedConnection = captureStravaConnection(row.user_id, connected.row);
-  connected = await connections.refresh(connected);
-  let activity;
-  try { activity = await fetchStravaActivityWithRoute(connected.row.access_token, event.objectId); }
-  catch (err) {
-    if (Number(err?.status) !== 401) throw err;
-    connected = await connections.refresh(connected, { force: true });
-    activity = await fetchStravaActivityWithRoute(connected.row.access_token, event.objectId);
-  }
-  return syncStravaActivitiesForUser(row.user_id, [activity], expectedConnection);
-}
-
 router.get('/webhook', (req, res) => {
   const mode = String(req.query['hub.mode'] || '');
   const challenge = String(req.query['hub.challenge'] || '');
@@ -194,13 +174,16 @@ router.get('/webhook', (req, res) => {
   return res.json({ 'hub.challenge': challenge });
 });
 
-router.post('/webhook', webhookLimiter, (req, res) => {
-  const event = normalizeWebhookEvent(req.body);
-  if (!event) return res.status(400).json({ error: 'Invalid webhook event' });
-  res.status(200).json({ received: true });
-  setImmediate(() => {
-    processWebhookEvent(event).catch((err) => console.error('[strava/webhook] processing failed:', err.message));
-  });
+router.post('/webhook', webhookLimiter, async (req, res) => {
+  const signal = requestSignal(req, res);
+  try {
+    const result = await createStravaEventIntake()(req.body, { signal });
+    return res.status(200).json(result);
+  } catch (err) {
+    // Payload/provider identifiers and raw database errors never enter logs.
+    if (err.status !== 400) console.warn('[strava/intake] durable acceptance unavailable');
+    return res.status(err.status === 400 ? 400 : 503).json({ error: err.status === 400 ? 'Invalid webhook event' : 'Durable webhook intake unavailable' });
+  }
 });
 
 router.get('/auth', auth, async (req, res) => {
