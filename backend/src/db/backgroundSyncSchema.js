@@ -666,6 +666,111 @@ async function applyProviderLimits(db, dialect) {
   await validateProviderLimits(db, dialect);
   if (!recorded) await db.run('INSERT INTO schema_migrations(version) VALUES(?)', [LIMITS_MIGRATION_VERSION]);
 }
+
+// A retry episode is not the original slot age or the frequently updated hint
+// clock. This additive migration activates no consumer and never resets pause.
+const EPISODE_MIGRATION_VERSION = 'background-sync-event-episode-v1';
+const EPISODE_SQLITE_COLUMN = "episode_started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP CONSTRAINT bg_jobs_episode_finite CHECK(typeof(episode_started_at)='text' AND julianday(episode_started_at) IS NOT NULL)";
+function jobsBody(dialect, episode) {
+  const body = (dialect === 'sqlite' ? sqliteSql() : POSTGRES_SQL)
+    .match(/CREATE TABLE IF NOT EXISTS provider_event_jobs \(([\s\S]*?)\n\);/)[1];
+  const column = dialect === 'sqlite' ? EPISODE_SQLITE_COLUMN
+    : 'episode_started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp() CONSTRAINT bg_jobs_episode_finite CHECK(isfinite(episode_started_at))';
+  return episode ? body.replace(' UNIQUE(binding_id,object_type,object_id)', ` ${column},\n UNIQUE(binding_id,object_type,object_id)`) : body;
+}
+async function validateEpisodeShape(db, dialect, episode) {
+  if (dialect === 'sqlite') {
+    const row = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='provider_event_jobs'");
+    const normalize = sql => compactSql(sql.replace(/CREATE TABLE IF NOT EXISTS/, 'CREATE TABLE').replace(/"provider_event_jobs"/g, 'provider_event_jobs'));
+    if (!row || normalize(row.sql) !== normalize(`CREATE TABLE provider_event_jobs (${jobsBody(dialect, episode)})`)) throw blocked('EPISODE_SCHEMA');
+    const due = await db.get("SELECT sql FROM sqlite_master WHERE type='index' AND name='bg_jobs_due'");
+    if (!due || compactSql(due.sql.replace('IF NOT EXISTS ','')) !== compactSql('CREATE INDEX bg_jobs_due ON provider_event_jobs(state,available_at,id)')) throw blocked('EPISODE_INDEX');
+  } else {
+    // Compile the frozen authority into a temporary catalog reference instead
+    // of guessing PostgreSQL's expression normalization. Temp tables cannot
+    // reference permanent parents; the single real FK is validated separately.
+    await db.exec(`CREATE TEMP TABLE bg_episode_expected_jobs (${jobsBody(dialect, episode).replace('REFERENCES strava_ingress_bindings(id) ON DELETE CASCADE','')}) ON COMMIT DROP`);
+    const attributes = table => db.all(`SELECT a.attname AS name,format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull AS required,
+      pg_get_expr(d.adbin,d.adrelid) AS default_value FROM pg_attribute a
+      LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+      WHERE a.attrelid=?::regclass AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum`,[table]);
+    const constraints = table => db.all(`SELECT contype,convalidated,condeferrable,condeferred,pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint WHERE conrelid=?::regclass AND contype<>'f' ORDER BY contype,definition`,[table]);
+    if (JSON.stringify(await attributes('provider_event_jobs')) !== JSON.stringify(await attributes('pg_temp.bg_episode_expected_jobs'))
+      || JSON.stringify(await constraints('provider_event_jobs')) !== JSON.stringify(await constraints('pg_temp.bg_episode_expected_jobs'))) throw blocked('EPISODE_SCHEMA');
+    const fks = await db.all(`SELECT convalidated,condeferrable,condeferred,pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint WHERE conrelid='provider_event_jobs'::regclass AND contype='f'`);
+    if (fks.length !== 1 || !fks[0].convalidated || fks[0].condeferrable || fks[0].condeferred
+      || fks[0].definition !== 'FOREIGN KEY (binding_id) REFERENCES strava_ingress_bindings(id) ON DELETE CASCADE') throw blocked('EPISODE_SCHEMA');
+    if (episode && !await db.get("SELECT oid FROM pg_constraint WHERE conrelid='provider_event_jobs'::regclass AND conname='bg_jobs_episode_finite' AND contype='c' AND convalidated")) throw blocked('EPISODE_SCHEMA');
+    const due = await db.get(`SELECT i.indisvalid,i.indisready,i.indisunique,i.indpred IS NULL AS full,
+      pg_get_indexdef(i.indexrelid) AS definition FROM pg_index i
+      WHERE i.indrelid='provider_event_jobs'::regclass AND i.indexrelid=to_regclass('bg_jobs_due')`);
+    if (!due || !due.indisvalid || !due.indisready || due.indisunique || !due.full
+      || !due.definition.endsWith('USING btree (state, available_at, id)')) throw blocked('EPISODE_INDEX');
+    await db.exec('DROP TABLE pg_temp.bg_episode_expected_jobs');
+  }
+  const invalidClock = name => dialect === 'sqlite'
+    ? `(typeof(${name})<>'text' OR julianday(${name}) IS NULL)` : `NOT isfinite(${name})`;
+  const badInteger = name => dialect === 'sqlite' ? `typeof(${name})<>'integer' OR ` : '';
+  if (await db.get(`SELECT id FROM provider_event_jobs WHERE ${invalidClock('first_seen_at')}
+    ${episode ? `OR ${invalidClock('episode_started_at')}` : ''}
+    OR ${badInteger('attempts')}attempts<0 OR ${badInteger('requested_revision')}requested_revision NOT BETWEEN 1 AND 9000000000000000
+    OR ${badInteger('processed_revision')}processed_revision<0 OR processed_revision>requested_revision LIMIT 1`)) throw blocked('EPISODE_ROWS');
+}
+async function applyEpisode(db, dialect) {
+  const recorded = await db.get('SELECT version FROM schema_migrations WHERE version=?',[EPISODE_MIGRATION_VERSION]);
+  const present = (await columns(db,dialect,'provider_event_jobs')).includes('episode_started_at');
+  if (!recorded && present) throw blocked('EPISODE_UNRECORDED_SCHEMA');
+  if (recorded && !present) throw blocked('EPISODE_SCHEMA');
+  await validateEpisodeShape(db,dialect,Boolean(recorded));
+  if (recorded) return;
+  if (dialect === 'postgres') {
+    await db.exec(`ALTER TABLE provider_event_jobs ADD COLUMN episode_started_at TIMESTAMPTZ;
+      UPDATE provider_event_jobs SET episode_started_at=first_seen_at;
+      ALTER TABLE provider_event_jobs ALTER COLUMN episode_started_at SET NOT NULL;
+      ALTER TABLE provider_event_jobs ALTER COLUMN episode_started_at SET DEFAULT clock_timestamp();
+      ALTER TABLE provider_event_jobs ADD CONSTRAINT bg_jobs_episode_finite CHECK(isfinite(episode_started_at));`);
+  } else {
+    const dependents = await db.all("SELECT sql FROM sqlite_master WHERE tbl_name='provider_event_jobs' AND type IN('index','trigger') AND sql IS NOT NULL ORDER BY type,name");
+    const names = (await columns(db,dialect,'provider_event_jobs')).join(',');
+    await db.exec(`CREATE TABLE bg_episode_jobs (${jobsBody(dialect,true)});
+      INSERT INTO bg_episode_jobs(${names},episode_started_at) SELECT ${names},first_seen_at FROM provider_event_jobs;
+      DROP TABLE provider_event_jobs;
+      ALTER TABLE bg_episode_jobs RENAME TO provider_event_jobs;`);
+    for (const row of dependents) await db.exec(row.sql);
+  }
+  await validateEpisodeShape(db,dialect,true);
+  await db.run('INSERT INTO schema_migrations(version) VALUES(?)',[EPISODE_MIGRATION_VERSION]);
+}
+async function migrateEpisodeSqlite(database) {
+  if (database.isTransaction) throw blocked('SQLITE_TRANSACTION_ACTIVE');
+  const db=sqliteAdapter(database);let begun=false,migrationError;
+  if ((await db.get('PRAGMA foreign_keys')).foreign_keys !== 1) throw blocked('SQLITE_FOREIGN_KEYS_DISABLED');
+  try {
+    await db.exec('PRAGMA foreign_keys=OFF');
+    await db.exec('BEGIN EXCLUSIVE');begun=true;
+    await applyEpisode(db,'sqlite');
+    if ((await db.all('PRAGMA foreign_key_check')).length) throw blocked('SQLITE_FOREIGN_KEYS');
+    await db.exec('COMMIT');begun=false;
+  } catch (error) {
+    migrationError=error;
+    if (begun && database.isTransaction) {
+      try { await db.exec('ROLLBACK'); }
+      catch (rollbackError) { migrationError=new AggregateError([error,rollbackError],'Episode migration rollback failed'); }
+    }
+    throw migrationError;
+  } finally {
+    try {
+      await db.exec('PRAGMA foreign_keys=ON');
+      if ((await db.get('PRAGMA foreign_keys')).foreign_keys !== 1) throw blocked('SQLITE_FOREIGN_KEYS_RESTORE');
+    } catch (restoreError) {
+      const error=blocked('SQLITE_FOREIGN_KEYS_RESTORE');
+      error.cause=migrationError ? new AggregateError([migrationError,restoreError],'Migration and FK restoration failed') : restoreError;
+      throw error;
+    }
+  }
+}
 async function migrateBackgroundSyncPostgres(pool) {
   const result = await migrateBackgroundBasePostgres(pool);
   const client = await pool.connect(); const db = pgAdapter(client);
@@ -674,6 +779,7 @@ async function migrateBackgroundSyncPostgres(pool) {
     await db.exec("SELECT pg_advisory_xact_lock(hashtext('background-sync-v2'))");
     await applyFence(db, 'postgres');
     await applyProviderLimits(db, 'postgres');
+    await applyEpisode(db, 'postgres');
     await db.exec('COMMIT');
     return result;
   } catch (error) { await db.exec('ROLLBACK'); throw error; }
@@ -689,6 +795,7 @@ async function migrateBackgroundSyncSqlite(database) {
     await applyProviderLimits(db, 'sqlite');
     if ((await db.all('PRAGMA foreign_key_check')).length) throw blocked('SQLITE_FOREIGN_KEYS');
     await db.exec('COMMIT'); begun = false;
+    await migrateEpisodeSqlite(database);
     return result;
   } catch (error) {
     if (begun && database.isTransaction) await db.exec('ROLLBACK');
@@ -696,5 +803,5 @@ async function migrateBackgroundSyncSqlite(database) {
   }
 }
 
-module.exports = { MIGRATION_VERSION, FENCE_MIGRATION_VERSION, LIMITS_MIGRATION_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
+module.exports = { MIGRATION_VERSION, FENCE_MIGRATION_VERSION, LIMITS_MIGRATION_VERSION, EPISODE_MIGRATION_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
   _test: { providerId, bootstrapLinks, POSTGRES_SQL, SETUP_SQL, OWNED_TABLES } };
