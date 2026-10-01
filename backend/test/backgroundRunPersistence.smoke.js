@@ -85,7 +85,13 @@ async function checks(f,dialect){
   await assert.rejects(()=>mutate('a',async q=>{await persistStravaActivity(q,'a',raw(301),expected);const result=await q.run("UPDATE provider_event_jobs SET state='DONE',processed_revision=leased_revision,lease_token=NULL,lease_until=NULL,leased_revision=NULL WHERE id='job' AND lease_token='stale'");if(result.changes!==1)throw new Error('stale final job lease');}),/stale final job lease/);
   assert.deepEqual(await snapshot(tx),baseline,'future B1c caller final CAS rolls back all save artifacts');
   await save(raw(301));
+  await tx.run("UPDATE notification_deliveries SET state='LEASED',lease_token='erasure-lease',lease_until='2099-01-01' WHERE event_id=?",[initialEvent.id]);
+  await tx.run("UPDATE notification_deliveries SET admitted_lease_token=lease_token,attempts=attempts+1 WHERE event_id=?",[initialEvent.id]);
+  await assert.rejects(()=>tx.run("UPDATE notification_deliveries SET state='CANCELLED',lease_token=NULL,lease_until=NULL WHERE event_id=?",[initialEvent.id]),
+    'old canonical cancellation SET cannot clear a lease while retaining admitted authority');
   await mutate('a',async q=>{await retireAndDelete(q,'a',first.runId);});
+  const retiredDelivery=await tx.get('SELECT * FROM notification_deliveries WHERE event_id=?',[initialEvent.id]);
+  assert.equal(retiredDelivery.admitted_lease_token,null);assert.equal(retiredDelivery.lease_token,null);assert.equal(retiredDelivery.lease_until,null);assert.equal(Number(retiredDelivery.attempts),1);assert.ok(retiredDelivery.terminal_at);
   assert.equal((await tx.get("SELECT state FROM provider_activity_links WHERE object_id='100'")).state,'USER_DELETED');
   assert.equal((await save(activity)).runId,null,'deleted record cannot resurrect');
   assert.equal((await tx.get('SELECT state FROM activity_notification_events WHERE id=?',[initialEvent.id])).state,'CANCELLED');
@@ -169,7 +175,12 @@ async function mergeChecks(f,expected){
   await assert.rejects(()=>events.resolveSavedRunEvent(tx,'b',le.id),{code:'SAVED_RUN_ALIAS_OWNER'});
   const third=await mutate('a',q=>persistStravaActivity(q,'a',raw(502),expected));
   const te=await tx.get('SELECT * FROM activity_notification_events WHERE run_id=?',[third.runId]);
+  await tx.run("UPDATE notification_deliveries SET state='LEASED',lease_token='merge-lease',lease_until='2099-01-01' WHERE event_id=?",[re.id]);
+  await tx.run("UPDATE notification_deliveries SET admitted_lease_token=lease_token,attempts=attempts+1 WHERE event_id=?",[re.id]);
   await mutate('a',async q=>{await events.mergeSavedRunReferences(q,'a',right.runId,third.runId);await q.run('DELETE FROM runs WHERE id=? AND user_id=?',[right.runId,'a']);});
+  for(const row of await tx.all('SELECT * FROM notification_deliveries WHERE event_id=?',[re.id])) {
+    assert.equal(row.state,'CANCELLED');assert.equal(row.admitted_lease_token,null);assert.equal(row.lease_token,null);assert.equal(row.lease_until,null);assert.equal(Number(row.attempts),1);assert.ok(row.terminal_at);
+  }
   assert.equal((await tx.get('SELECT merged_into FROM activity_notification_events WHERE id=?',[le.id])).merged_into,te.id,'existing inbound alias flattened');
   assert.equal((await events.resolveSavedRunEvent(tx,'a',le.id)).id,te.id);
   await tx.run("INSERT INTO activity_notification_events(id,user_id,notification_id,state,merged_into) VALUES('depth-one','a',?,'MERGED',?),('depth-two','a',?,'MERGED','depth-one'),('depth-three','a',?,'MERGED','depth-two')",[te.notification_id,te.id,te.notification_id,te.notification_id]);

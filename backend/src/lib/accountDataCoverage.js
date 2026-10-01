@@ -86,6 +86,7 @@ const ACCOUNT_SECRET_TABLES = [
 // Their ownership is a reviewed join, not an absent user_id exemption.
 const ACCOUNT_INDIRECT_OWNED_TABLES = ['provider_event_jobs', 'web_push_claims', 'web_push_setup_operations'];
 const ACCOUNT_AGGREGATE_TABLES = {
+  web_push_delivery_control: 'Shared delivery configuration control; no account data or export authority.',
   background_sync_control: 'Shared provider quota and activation; no account data.',
   web_push_setup_rate_buckets: 'Bounded aggregate counters; USER HMAC removed by erasePushSetupUserRate, other dimensions have no owner link.',
 };
@@ -104,6 +105,36 @@ async function erasePushSetupUserRate(tx, userId) {
   if (!await tx.get("SELECT 1 AS present FROM web_push_setup_rate_buckets WHERE dimension='USER' LIMIT 1")) return;
   await tx.run("DELETE FROM web_push_setup_rate_buckets WHERE dimension='USER' AND key_hash=?", [pushSetupUserRateKey(userId)]);
 }
+
+// Receives the authenticated owner's already-locked transaction. Neutral
+// authority is not deletion-exempt: erase every owner/proof/result association
+// while preserving the absence incarnation against foreign pending challenges.
+async function neutralizeOwnedWebPushAuthority(tx, userId) {
+  const lock = tx.dialect === 'sqlite' ? '' : ' FOR UPDATE';
+  const claims = await tx.all(`SELECT c.endpoint_hash,c.incarnation,c.subscription_id
+    FROM web_push_claims c JOIN push_subscriptions p ON p.id=c.subscription_id
+    WHERE p.user_id=? ORDER BY c.endpoint_hash${lock ? ' FOR UPDATE OF c' : ''}`, [userId]);
+  const targets = await tx.all(`SELECT id FROM push_subscriptions WHERE user_id=? ORDER BY id${lock}`, [userId]);
+  const owned = new Set(targets.map(row=>row.id));
+  for (const claim of claims) if (!owned.has(claim.subscription_id)) throw new Error('Web push authority changed');
+  await tx.all(`SELECT id FROM web_push_challenges WHERE user_id=? ORDER BY id${lock}`, [userId]);
+  await tx.all(`SELECT o.challenge_id FROM web_push_setup_operations o JOIN web_push_challenges c ON c.id=o.challenge_id
+    WHERE c.user_id=? ORDER BY o.challenge_id${lock ? ' FOR UPDATE OF o' : ''}`, [userId]);
+  await tx.all(`SELECT id FROM notification_deliveries WHERE user_id=? ORDER BY id${lock}`, [userId]);
+  for (const claim of claims) {
+    const result = await tx.run(`UPDATE web_push_claims SET state='VACANT',incarnation=?,claim_revision=0,
+      proof_hash=NULL,subscription_id=NULL,last_operation_id=NULL,confirm_hash=NULL,
+      updated_at=${tx.dialect === 'sqlite' ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : 'clock_timestamp()'}
+      WHERE endpoint_hash=? AND incarnation=? AND subscription_id=? AND state='ACTIVE'
+      AND subscription_id IN (SELECT id FROM push_subscriptions WHERE user_id=?)`,
+    [require('node:crypto').randomUUID(),claim.endpoint_hash,claim.incarnation,claim.subscription_id,userId]);
+    if (Number(result.changes)!==1) throw new Error('Web push authority changed');
+  }
+}
+
+const ACCOUNT_CALLABLE_CLEANUP = Object.freeze([
+  Object.freeze({table:'web_push_claims',execute:neutralizeOwnedWebPushAuthority}),
+]);
 
 const ACCOUNT_SOCIAL_DELETE_QUERIES = [
   ['DELETE FROM group_runs WHERE owner_id = ?', [0]],
@@ -125,7 +156,6 @@ const ACCOUNT_DELETE_QUERIES = [
   ['DELETE FROM run_save_eligibility WHERE user_id = ?', [0]],
   ['DELETE FROM web_push_setup_operations WHERE challenge_id IN (SELECT id FROM web_push_challenges WHERE user_id = ?)', [0]],
   ['DELETE FROM web_push_challenges WHERE user_id = ?', [0]],
-  ['DELETE FROM web_push_claims WHERE subscription_id IN (SELECT id FROM push_subscriptions WHERE user_id = ?)', [0]],
   ['DELETE FROM password_reset_tokens WHERE user_id = ?', [0]],
   ['DELETE FROM push_subscriptions WHERE user_id = ?', [0]],
   ['DELETE FROM user_notifications WHERE user_id = ?', [0]],
@@ -215,8 +245,10 @@ module.exports = {
   ACCOUNT_AGGREGATE_TABLES,
   ACCOUNT_SOCIAL_DELETE_QUERIES,
   ACCOUNT_DELETE_QUERIES,
+  ACCOUNT_CALLABLE_CLEANUP,
   bindUserId,
   buildExportSql,
   pushSetupUserRateKey,
   erasePushSetupUserRate,
+  neutralizeOwnedWebPushAuthority,
 };

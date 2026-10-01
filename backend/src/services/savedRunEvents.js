@@ -28,7 +28,7 @@ async function ownedRun(tx,userId,runId) {
   return run;
 }
 async function cancelPending(tx,userId,eventId) {
-  await tx.run("UPDATE notification_deliveries SET state='CANCELLED',lease_token=NULL,lease_until=NULL WHERE user_id=? AND event_id=? AND state IN ('PENDING','LEASED','RETRY')",[userId,eventId]);
+  await tx.run("UPDATE notification_deliveries SET state='CANCELLED',lease_token=NULL,lease_until=NULL,admitted_lease_token=NULL WHERE user_id=? AND event_id=? AND state IN ('PENDING','LEASED','RETRY')",[userId,eventId]);
 }
 async function ensureSavedRunEvent(tx,{userId,runId,providerStart,providerType}) {
   // Only the authenticated Strava persistence seam supplies these fetched facts.

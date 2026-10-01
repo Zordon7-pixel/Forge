@@ -64,6 +64,7 @@ function sqliteFixture() {
 }
 async function sharedChecks(fixture, dialect) {
   const { db, migrate } = fixture;
+  db.dialect = dialect;
   await seed(db);
   const first = await migrate(); assert.equal(first.applied, true);
   const shape=await manifest(db,dialect);
@@ -93,7 +94,9 @@ async function sharedChecks(fixture, dialect) {
   await reject("UPDATE strava_tokens SET token_revision=0 WHERE user_id='a'");
   await reject("UPDATE strava_tokens SET refresh_lease_token='half' WHERE user_id='a'");
   await reject("UPDATE push_subscriptions SET disclosure='PRIVATE' WHERE id='pa'");
-  await db.exec("INSERT INTO web_push_challenges(id,user_id,subscription_id,proof_hash,expected_revision,operation_id,expires_at) VALUES('challenge','a','pa','" + 'a'.repeat(64) + "',0,'operation','2099-01-01')");
+  await db.exec(`INSERT INTO web_push_claims(endpoint_hash,incarnation,state,claim_revision) VALUES('${'a'.repeat(64)}','00000000-0000-4000-8000-000000000001','VACANT',0);
+    INSERT INTO web_push_challenges(id,user_id,subscription_id,endpoint_hash,expected_incarnation,proof_hash,expected_revision,operation_id,expires_at)
+    VALUES('challenge','a','pa','${'a'.repeat(64)}','00000000-0000-4000-8000-000000000001','${'a'.repeat(64)}',0,'operation','2099-01-01')`);
   const buffer = Buffer.alloc(32, 7);
   await db.run(`INSERT INTO web_push_setup_operations(challenge_id,endpoint_hash,client_nonce_hash,session_hash,request_hash,auth_epoch,retain_until_ms)
     VALUES('challenge',?,?,?,?,'00000000-0000-4000-8000-000000000000',123456)`, [buffer,buffer,buffer,buffer]);
@@ -110,7 +113,8 @@ async function sharedChecks(fixture, dialect) {
     INSERT INTO activity_notification_events(id,user_id,run_id,notification_id,state) VALUES('event','a','old','notice','ACTIVE');
     INSERT INTO notification_deliveries(id,user_id,event_id,notification_id,transport,target_id,target_generation,disclosure,state,expires_at)
      VALUES('delivery','a','event','notice','WEB_PUSH','pa','generation','GENERIC','PENDING','2099-01-01');
-    INSERT INTO web_push_claims(endpoint_hash,proof_hash,subscription_id) VALUES('${'b'.repeat(64)}','${'c'.repeat(64)}','pa');`);
+    INSERT INTO web_push_claims(endpoint_hash,incarnation,state,claim_revision,proof_hash,subscription_id,last_operation_id,confirm_hash)
+    VALUES('${'b'.repeat(64)}','00000000-0000-4000-8000-000000000002','ACTIVE',1,'${'c'.repeat(64)}','pa','confirmed',${dialect==='sqlite' ? "X'"+'07'.repeat(32)+"'" : "decode('"+'07'.repeat(32)+"','hex')"});`);
   await reject("UPDATE notification_deliveries SET target_id='pb' WHERE id='delivery'");
   await reject("UPDATE notification_deliveries SET state='ACCEPTED' WHERE id='delivery'");
   await reject("UPDATE web_push_challenges SET subscription_id='pb' WHERE id='challenge'");
@@ -132,11 +136,18 @@ async function sharedChecks(fixture, dialect) {
     assert.equal(Number((await db.get("SELECT count(*) AS n FROM web_push_setup_rate_buckets WHERE dimension='USER'")).n), 1);
     assert.ok(await db.get("SELECT 1 AS present FROM web_push_setup_rate_buckets WHERE dimension='USER' AND key_hash=?", [account.pushSetupUserRateKey('b')]));
   } finally { if (previous === undefined) delete process.env.WEB_PUSH_SETUP_RATE_SECRET; else process.env.WEB_PUSH_SETUP_RATE_SECRET = previous; }
-  for (const [sql, params] of account.ACCOUNT_DELETE_QUERIES.slice(0,9)) await db.run(sql, account.bindUserId(params,'a'));
+  // This low-level fixture already serializes all mutations; route owner locks
+  // and complete erasure are independently exercised by the actual PG route.
+  await db.exec('BEGIN');
+  await account.neutralizeOwnedWebPushAuthority(db,'a');
+  for (const [sql, params] of account.ACCOUNT_DELETE_QUERIES.slice(0,8)) await db.run(sql, account.bindUserId(params,'a'));
+  await db.exec('COMMIT');
   // Existing runs.user_id is not CASCADE: production account erase explicitly
   // deletes its activity history before the final user row.
   await db.exec("DELETE FROM provider_activity_links WHERE user_id='a'; DELETE FROM runs WHERE user_id='a'; DELETE FROM users WHERE id='a';");
-  for (const table of ['web_push_setup_operations', 'web_push_challenges', 'provider_event_jobs', 'strava_ingress_bindings', 'run_save_eligibility', 'provider_activity_links','web_push_claims','notification_deliveries','activity_notification_events']) assert.equal(Number((await db.get(`SELECT count(*) AS n FROM ${table}`)).n), 0, table);
+  for (const table of ['web_push_setup_operations', 'web_push_challenges', 'provider_event_jobs', 'strava_ingress_bindings', 'run_save_eligibility', 'provider_activity_links','notification_deliveries','activity_notification_events']) assert.equal(Number((await db.get(`SELECT count(*) AS n FROM ${table}`)).n), 0, table);
+  assert.equal(Number((await db.get('SELECT count(*) AS n FROM web_push_claims')).n),2,'neutral endpoint authority is retained without owner/proof residue');
+  assert.equal(Number((await db.get("SELECT count(*) AS n FROM web_push_claims WHERE state='VACANT' AND claim_revision=0 AND subscription_id IS NULL AND proof_hash IS NULL AND last_operation_id IS NULL AND confirm_hash IS NULL")).n),2);
   assert.equal((await db.get("SELECT user_id FROM push_subscriptions WHERE id='pb'")).user_id, 'b');
   console.log(`PASS ${dialect} actual-base upgrade/rerun/bootstrap/quarantine/indexes/owner/constraints/cascades`);
 }
@@ -216,7 +227,7 @@ async function sqliteRestorationFailures() {
     const originalError=new Error('synthetic migration fault');
     const rollbackError=new Error('synthetic rollback fault');
     let rollbackCalls=0;
-    const wrapped={get isTransaction(){return fixture.native.isTransaction;},prepare:sql=>fixture.native.prepare(sql),exec:sql=>{
+    const wrapped={function:(...args)=>fixture.native.function(...args),get isTransaction(){return fixture.native.isTransaction;},prepare:sql=>fixture.native.prepare(sql),exec:sql=>{
       if(mode==='off-throws' && sql==='PRAGMA foreign_keys=OFF;'){fixture.native.exec(sql);throw originalError;}
       if(sql==='CREATE TABLE IF NOT EXISTS schema_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT UNIQUE NOT NULL, executed_at TEXT DEFAULT CURRENT_TIMESTAMP)')throw originalError;
       if(sql==='ROLLBACK'){rollbackCalls++;if(mode==='rollback-throws')throw rollbackError;}
@@ -256,7 +267,7 @@ async function postgres() {
     await admin.query(`CREATE DATABASE "${name}"`); created = true;
     root.pathname = '/' + name; pool = new Pool({ connectionString:root.href });
     const query = (sql, params = []) => { let i=0; return pool.query(sql.replace(/\?/g, () => `$${++i}`), params); };
-    const db = { exec:sql => pool.query(sql), run:query, all:async(sql,p) => (await query(sql,p)).rows, get:async(sql,p) => (await query(sql,p)).rows[0] };
+    const db = { exec:sql => pool.query(sql), run:async(sql,p)=>({changes:(await query(sql,p)).rowCount}), all:async(sql,p) => (await query(sql,p)).rows, get:async(sql,p) => (await query(sql,p)).rows[0] };
     await db.exec(baseSql(false));
     await migration.migrateBackgroundSyncPostgres(pool);
     assert.equal(Number((await db.get('SELECT count(*) AS n FROM run_save_eligibility')).n),0);

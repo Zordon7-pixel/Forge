@@ -3,13 +3,14 @@ const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const crypto  = require('crypto');
 const {
+  pool,
   dbGet,
   dbAll,
   dbRun,
-  withTransaction,
   withUserMutation,
   withPlanningInputMutation,
 } = require('../db');
+const { createWorkerDatabase } = require('../db/backgroundSyncWorker');
 const auth    = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { isMailConfigured, sendPasswordResetEmail } = require('../services/mail');
@@ -20,6 +21,7 @@ const {
   bindUserId,
   buildExportSql,
   erasePushSetupUserRate,
+  neutralizeOwnedWebPushAuthority,
 } = require('../lib/accountDataCoverage');
 const { computeStreak, serverUtcAnchorCandidates } = require('../lib/streak');
 const backendPackage = require('../../package.json');
@@ -646,6 +648,9 @@ router.get('/me/export', auth, async (req, res) => {
 });
 
 router.delete('/account', auth, async (req, res) => {
+  let erasureDatabase;
+  const abort = new AbortController();
+  const disconnected = () => { if (!res.writableEnded) abort.abort(); };
   try {
     const userId = req.user.id;
     const { password, confirm } = req.body || {};
@@ -657,7 +662,16 @@ router.delete('/account', auth, async (req, res) => {
       return res.status(400).json({ error: 'Password confirmation is required.' });
     }
 
-    await withTransaction(async (tx) => {
+    // Request-local bounds and cancellation; the borrowed shared pool is never
+    // ended. This constructs no queue, polling loop, or worker.
+    if (!pool || typeof pool.connect !== 'function') {
+      return res.status(503).json({ error: 'Account deletion is temporarily unavailable.' });
+    }
+    erasureDatabase = createWorkerDatabase({ pool });
+    req.once?.('aborted', disconnected);
+    res.once?.('close', disconnected);
+    if (req.aborted) abort.abort();
+    await erasureDatabase.withOwnerMutation(userId, async (tx) => {
       const user = await tx.get('SELECT id, password_hash FROM users WHERE id = ?', [userId]);
       if (!user) {
         const err = new Error('Account not found');
@@ -670,7 +684,7 @@ router.delete('/account', auth, async (req, res) => {
         throw err;
       }
 
-      await erasePushSetupUserRate(tx, userId);
+      await neutralizeOwnedWebPushAuthority(tx, userId);
       await cleanupOwnedSocialChallenges(tx, userId);
       for (const [sql, params] of ACCOUNT_SOCIAL_DELETE_QUERIES) {
         await tx.run(sql, bindUserId(params, userId));
@@ -687,7 +701,8 @@ router.delete('/account', auth, async (req, res) => {
       }
 
       await tx.run('DELETE FROM users WHERE id = ?', [userId]);
-    }, { userIds: [userId], userLock: 'update', requireUserIds: [userId] });
+      await erasePushSetupUserRate(tx, userId);
+    }, { signal: abort.signal });
     res.json({ ok: true });
   } catch (err) {
     if (err.code === 'ACCOUNT_NOT_FOUND' || err.code === 'AUTH_ACCOUNT_DELETED') {
@@ -696,8 +711,17 @@ router.delete('/account', auth, async (req, res) => {
     if (err.code === 'PASSWORD_CONFIRMATION_FAILED') {
       return res.status(401).json({ error: 'Password confirmation failed.' });
     }
+    if (err.code?.startsWith('STRAVA_WORKER_') || ['55P03','57014','25P03'].includes(err.code)) {
+      // Uncertain commit is unavailable, never a claimed rollback or success.
+      console.error('[auth/delete-account] transaction unavailable');
+      return res.status(503).json({ error: 'Account deletion is temporarily unavailable.' });
+    }
     console.error('[auth/delete-account] failed:', err.message);
     return res.status(500).json({ error: 'Failed to delete account' });
+  } finally {
+    req.removeListener?.('aborted', disconnected);
+    res.removeListener?.('close', disconnected);
+    await erasureDatabase?.close();
   }
 });
 

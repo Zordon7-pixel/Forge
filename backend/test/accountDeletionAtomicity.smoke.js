@@ -48,6 +48,7 @@ function createScenario({ failOnSql = null } = {}) {
   }
 
   const db = {
+    pool: Object.freeze({fixture:'strict-account-erasure',connect:()=>{throw new Error('Unexpected real pool acquisition');}}),
     dbGet: async (sql, params) => {
       assert.match(sql, /^SELECT id, password_hash FROM users WHERE id = \?$/);
       assert.deepEqual(params, [USER_ID]);
@@ -67,6 +68,11 @@ function createScenario({ failOnSql = null } = {}) {
       const workingState = clone(durableState);
       const tx = {
         all: async (sql, params) => {
+          if (/FROM web_push_claims c JOIN push_subscriptions p|SELECT id FROM push_subscriptions WHERE|SELECT id FROM web_push_challenges WHERE|FROM web_push_setup_operations o JOIN web_push_challenges c|SELECT id FROM notification_deliveries WHERE/.test(sql)) {
+            assert.deepEqual(params,[USER_ID]);
+            assert.match(sql,/ORDER BY (?:c.endpoint_hash|id|o.challenge_id) FOR UPDATE(?: OF [co])?$/);
+            return [];
+          }
           assert.match(sql, /FROM challenges c/);
           assert.deepEqual(params, [USER_ID]);
           return workingState.challenge && workingState.ownerMembership
@@ -141,6 +147,8 @@ async function runAccountDeletionAtomicitySmoke() {
   const authRoutePath = require.resolve('../src/routes/auth');
   const originalDbModule = require.cache[dbModulePath];
   const originalAuthRoute = require.cache[authRoutePath];
+  const boundedPath = require.resolve('../src/db/backgroundSyncWorker');
+  const originalBounded = require.cache[boundedPath];
   const originalConsoleError = console.error;
   const failure = createScenario({ failOnSql: 'DELETE FROM app_feedback' });
   const loggedErrors = [];
@@ -154,6 +162,15 @@ async function runAccountDeletionAtomicitySmoke() {
     paths: [],
   };
   delete require.cache[authRoutePath];
+  let closed=0;
+  require.cache[boundedPath]={id:boundedPath,filename:boundedPath,loaded:true,exports:{createWorkerDatabase:({pool})=>{
+    const fixture=require.cache[dbModulePath].exports;
+    assert.equal(pool,fixture.pool,'route borrows its existing application pool');
+    return {withOwnerMutation:async(userId,fn,{signal})=>{
+      assert.equal(userId,USER_ID);assert.ok(signal instanceof AbortSignal);
+      return fixture.withTransaction(fn,{userIds:[USER_ID],userLock:'update',requireUserIds:[USER_ID]});
+    },close:async()=>{closed++;}};
+  }}};
 
   try {
     const authRouter = require('../src/routes/auth');
@@ -193,6 +210,7 @@ async function runAccountDeletionAtomicitySmoke() {
     assert.equal(successMetrics.commits, 1);
     assert.equal(successMetrics.rollbacks, 0);
     assert.equal(successMetrics.outsideTransactionRuns, 0);
+    assert.equal(closed,2,'each success/failure closes its request-local wrapper');
     assert.equal(success.durableState.user, false);
     assert.equal(success.transactionRuns.at(-1)?.sql, 'DELETE FROM users WHERE id = ?');
     assert.deepEqual(success.transactionRuns.at(-1)?.params, [USER_ID]);
@@ -207,6 +225,7 @@ async function runAccountDeletionAtomicitySmoke() {
     if (originalAuthRoute) require.cache[authRoutePath] = originalAuthRoute;
     if (originalDbModule) require.cache[dbModulePath] = originalDbModule;
     else delete require.cache[dbModulePath];
+    if(originalBounded)require.cache[boundedPath]=originalBounded;else delete require.cache[boundedPath];
   }
 }
 

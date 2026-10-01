@@ -307,6 +307,7 @@ async function preflight(db, dialect) {
   return { original, recorded: Boolean(recorded) };
 }
 async function validateRecordedSchema(db, dialect, original) {
+  const authority = Boolean(await db.get('SELECT version FROM schema_migrations WHERE version=?', [WEB_PUSH_AUTHORITY_VERSION]));
   for (const [table, extra] of Object.entries({ strava_tokens: ['connection_generation','token_revision','refresh_lease_token','refresh_lease_until'], push_subscriptions: ['active','generation','disclosure'] })) {
     if (extra.some(name => !original[table].includes(name))) throw blocked('RECORDED_SCHEMA_INCOMPLETE');
   }
@@ -324,11 +325,12 @@ async function validateRecordedSchema(db, dialect, original) {
   if (requiredIndexes.some(name => !indexes.some(row => row.name === name))) throw blocked('RECORDED_INDEX_MISSING');
   const requiredTriggers = dialect === 'postgres'
     ? ['bg_binding_owner_guard','bg_retire_token_binding','bg_erase_user_binding','bg_delete_target_claim','bg_activation_immutable']
-    : ['bg_binding_insert','bg_binding_update','bg_token_delete','bg_token_update','bg_user_delete','bg_target_delete','bg_activation_immutable','bg_activation_no_delete'];
+    : ['bg_binding_insert','bg_binding_update','bg_token_delete','bg_token_update','bg_user_delete',authority ? 'bg_delete_target_claim' : 'bg_target_delete','bg_activation_immutable','bg_activation_no_delete'];
   const triggers = await db.all(dialect === 'postgres'
     ? "SELECT t.tgname AS name FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() AND NOT t.tgisinternal AND t.tgenabled='O'"
     : "SELECT name FROM sqlite_master WHERE type='trigger'");
   if (requiredTriggers.some(name => !triggers.some(row => row.name === name))) throw blocked('RECORDED_TRIGGER_MISSING');
+  await validateWebPushAuthority(db, dialect, authority);
 }
 
 // The activation instant is historical authority, never a rerun/reset clock.
@@ -669,6 +671,359 @@ async function applyProviderLimits(db, dialect) {
 
 // A retry episode is not the original slot age or the frequently updated hint
 // clock. This additive migration activates no consumer and never resets pause.
+// Exact approved correction-v2 affected DDL (f75a7d0a489c60ba...462c2ad4).
+// Separate marker: old migrations keep their original meaning and authority.
+const WEB_PUSH_AUTHORITY_VERSION = 'background-web-push-authority-control-v1';
+const WEB_PUSH_AUTHORITY_PG = `DROP TRIGGER bg_delete_target_claim ON push_subscriptions;
+DROP TABLE web_push_setup_operations;
+DROP TABLE web_push_challenges;
+DROP TABLE web_push_claims;
+
+CREATE TABLE web_push_claims (
+ endpoint_hash TEXT PRIMARY KEY CHECK(endpoint_hash ~ '^[a-f0-9]{64}$'),
+ incarnation TEXT NOT NULL UNIQUE CHECK(incarnation ~ '^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'),
+ state TEXT NOT NULL CHECK(state IN ('ACTIVE','VACANT')),
+ claim_revision BIGINT NOT NULL CHECK(claim_revision BETWEEN 0 AND 9000000000000000),
+ proof_hash TEXT CHECK(proof_hash IS NULL OR proof_hash ~ '^[a-f0-9]{64}$'),
+ subscription_id TEXT UNIQUE REFERENCES push_subscriptions(id) ON DELETE RESTRICT,
+ last_operation_id TEXT,
+ confirm_hash BYTEA CHECK(confirm_hash IS NULL OR octet_length(confirm_hash)=32),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+ CHECK((state='VACANT' AND claim_revision=0 AND proof_hash IS NULL
+        AND subscription_id IS NULL AND last_operation_id IS NULL AND confirm_hash IS NULL)
+    OR (state='ACTIVE' AND claim_revision BETWEEN 1 AND 9000000000000000
+        AND proof_hash IS NOT NULL AND subscription_id IS NOT NULL
+        AND last_operation_id IS NOT NULL AND confirm_hash IS NOT NULL))
+);
+CREATE INDEX bg_claim_vacant_due ON web_push_claims(state,updated_at,endpoint_hash);
+
+CREATE FUNCTION bg_push_authority_transition_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.state<>'VACANT' THEN RAISE EXCEPTION 'BG_ACTIVE_AUTHORITY_DELETE'; END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.endpoint_hash<>OLD.endpoint_hash OR NEW.incarnation=OLD.incarnation THEN
+  RAISE EXCEPTION 'BG_AUTHORITY_TRANSITION';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER bg_push_authority_transition_guard BEFORE UPDATE OR DELETE ON web_push_claims
+ FOR EACH ROW EXECUTE FUNCTION bg_push_authority_transition_guard();
+
+CREATE TABLE web_push_challenges (
+ id TEXT PRIMARY KEY,
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ subscription_id TEXT NOT NULL,
+ endpoint_hash TEXT NOT NULL REFERENCES web_push_claims(endpoint_hash) ON DELETE RESTRICT
+   CHECK(endpoint_hash ~ '^[a-f0-9]{64}$'),
+ expected_incarnation TEXT NOT NULL CHECK(expected_incarnation ~ '^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'),
+ proof_hash TEXT NOT NULL CHECK(proof_hash ~ '^[a-f0-9]{64}$'),
+ expected_revision BIGINT NOT NULL CHECK(expected_revision BETWEEN 0 AND 9000000000000000),
+ operation_id TEXT NOT NULL,
+ expires_at TIMESTAMPTZ NOT NULL,
+ consumed_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+ FOREIGN KEY(user_id,subscription_id) REFERENCES push_subscriptions(user_id,id) ON DELETE CASCADE,
+ UNIQUE(user_id,operation_id),
+ CHECK(expires_at>created_at)
+);
+CREATE INDEX bg_challenge_authority ON web_push_challenges(endpoint_hash,id);
+CREATE INDEX bg_challenge_retention ON web_push_challenges(created_at,id);
+
+CREATE TABLE web_push_setup_operations (
+ challenge_id TEXT PRIMARY KEY REFERENCES web_push_challenges(id) ON DELETE CASCADE,
+ endpoint_hash BYTEA NOT NULL CHECK(octet_length(endpoint_hash)=32),
+ client_nonce_hash BYTEA NOT NULL CHECK(octet_length(client_nonce_hash)=32),
+ session_hash BYTEA NOT NULL CHECK(octet_length(session_hash)=32),
+ request_hash BYTEA NOT NULL CHECK(octet_length(request_hash)=32),
+ auth_epoch TEXT NOT NULL CHECK(length(auth_epoch)=36),
+ send_state TEXT NOT NULL DEFAULT 'RESERVED'
+   CHECK(send_state IN ('RESERVED','ATTEMPTED','ACCEPTED','FAILED','UNKNOWN')),
+ send_attempted_at_ms BIGINT,
+ cancelled_at_ms BIGINT,
+ handoff_hash BYTEA CHECK(handoff_hash IS NULL OR octet_length(handoff_hash)=32),
+ handoff_client_id TEXT CHECK(handoff_client_id IS NULL OR length(handoff_client_id) BETWEEN 1 AND 256),
+ handoff_until_ms BIGINT,
+ handoff_consumed_at_ms BIGINT,
+ handoff_count INTEGER NOT NULL DEFAULT 0 CHECK(handoff_count BETWEEN 0 AND 3),
+ failed_confirm_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_confirm_count BETWEEN 0 AND 5),
+ confirm_hash BYTEA CHECK(confirm_hash IS NULL OR octet_length(confirm_hash)=32),
+ result_generation TEXT,
+ result_revision BIGINT CHECK(result_revision IS NULL OR result_revision BETWEEN 1 AND 9000000000000000),
+ result_incarnation TEXT CHECK(result_incarnation IS NULL OR result_incarnation ~ '^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'),
+ retain_until_ms BIGINT NOT NULL CHECK(retain_until_ms>0),
+ CHECK((send_state='RESERVED' AND send_attempted_at_ms IS NULL)
+    OR (send_state<>'RESERVED' AND send_attempted_at_ms IS NOT NULL)),
+ CHECK((handoff_hash IS NULL AND handoff_client_id IS NULL AND handoff_until_ms IS NULL AND handoff_consumed_at_ms IS NULL)
+    OR (handoff_hash IS NOT NULL AND handoff_client_id IS NOT NULL AND handoff_until_ms IS NOT NULL)),
+ CHECK((confirm_hash IS NULL AND result_generation IS NULL AND result_revision IS NULL AND result_incarnation IS NULL)
+    OR (confirm_hash IS NOT NULL AND result_generation IS NOT NULL AND result_revision IS NOT NULL AND result_incarnation IS NOT NULL))
+);
+
+CREATE TABLE web_push_delivery_control (
+ id TEXT PRIMARY KEY CHECK(id='web_push'),
+ state TEXT NOT NULL CHECK(state IN ('ACTIVE','CONFIG_PAUSED')),
+ revision BIGINT NOT NULL CHECK(revision BETWEEN 1 AND 9000000000000000),
+ config_epoch TEXT NOT NULL CHECK(config_epoch ~ '^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'),
+ configuration_identity TEXT CHECK(configuration_identity IS NULL OR configuration_identity ~ '^[a-f0-9]{64}$'),
+ pause_reason TEXT CHECK(pause_reason IS NULL OR pause_reason IN ('CONFIG_UNVERIFIED','HTTP_401','HTTP_403','REVISION_EXHAUSTED')),
+ paused_at TIMESTAMPTZ,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+ CHECK((state='ACTIVE' AND configuration_identity IS NOT NULL AND pause_reason IS NULL AND paused_at IS NULL)
+    OR (state='CONFIG_PAUSED' AND pause_reason IS NOT NULL AND paused_at IS NOT NULL)),
+ CHECK(pause_reason IS NULL OR pause_reason<>'CONFIG_UNVERIFIED' OR configuration_identity IS NULL)
+);
+
+-- Existing notification_deliveries and all its FKs/indexes remain in place.
+-- Preflight requires it empty; no fabricated historical terminal clock.
+ALTER TABLE notification_deliveries ADD COLUMN terminal_at TIMESTAMPTZ;
+ALTER TABLE notification_deliveries ADD COLUMN admitted_lease_token TEXT
+ CHECK(admitted_lease_token IS NULL OR
+  (state='LEASED' AND lease_token IS NOT NULL AND admitted_lease_token=lease_token));
+
+
+-- These guards do NOT auto-clear the marker. All state writers must SET it
+-- NULL alongside lease clearing, including existing savedRunEvents.cancelPending.
+CREATE FUNCTION bg_delivery_admission_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.attempts IS DISTINCT FROM OLD.attempts
+    OR (OLD.admitted_lease_token IS NULL AND NEW.admitted_lease_token IS NOT NULL) THEN
+  IF NOT (OLD.state='LEASED' AND NEW.state='LEASED'
+      AND OLD.lease_token IS NOT NULL AND NEW.lease_token=OLD.lease_token
+      AND OLD.admitted_lease_token IS NULL
+      AND NEW.admitted_lease_token IS NOT NULL
+      AND NEW.admitted_lease_token=OLD.lease_token
+      AND OLD.attempts<12 AND NEW.attempts=OLD.attempts+1) THEN
+   RAISE EXCEPTION 'BG_DELIVERY_ADMISSION_TRANSITION';
+  END IF;
+ END IF;
+ IF OLD.admitted_lease_token IS NOT NULL
+    AND NEW.state='LEASED' AND NEW.lease_token IS NOT DISTINCT FROM OLD.lease_token
+    AND NEW.admitted_lease_token IS DISTINCT FROM OLD.admitted_lease_token THEN
+  RAISE EXCEPTION 'BG_DELIVERY_ADMISSION_REUSE';
+ END IF;
+ IF NEW.lease_token IS DISTINCT FROM OLD.lease_token AND NEW.admitted_lease_token IS NOT NULL THEN
+  RAISE EXCEPTION 'BG_DELIVERY_ADMISSION_NEW_LEASE';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER bg_delivery_admission_guard BEFORE UPDATE ON notification_deliveries
+ FOR EACH ROW EXECUTE FUNCTION bg_delivery_admission_guard();
+
+CREATE OR REPLACE FUNCTION bg_delete_target_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ UPDATE web_push_claims SET state='VACANT', incarnation=gen_random_uuid()::text,
+  claim_revision=0, proof_hash=NULL, subscription_id=NULL,
+  last_operation_id=NULL, confirm_hash=NULL, updated_at=clock_timestamp()
+ WHERE subscription_id=OLD.id;
+ RETURN OLD;
+END $$;
+CREATE TRIGGER bg_delete_target_claim BEFORE DELETE ON push_subscriptions
+ FOR EACH ROW EXECUTE FUNCTION bg_delete_target_claim();
+
+CREATE OR REPLACE FUNCTION bg_delivery_terminal_clock() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='INSERT' AND NEW.terminal_at IS NOT NULL THEN
+  RAISE EXCEPTION 'BG_DELIVERY_CLOCK_SERVER_OWNED';
+ END IF;
+ IF TG_OP='UPDATE' AND OLD.state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED')
+    AND NEW.state<>OLD.state THEN RAISE EXCEPTION 'BG_DELIVERY_TERMINAL_IMMUTABLE'; END IF;
+ IF NEW.state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED') THEN
+  IF TG_OP='UPDATE' THEN
+   IF OLD.state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED') THEN
+    IF NEW.state<>OLD.state THEN RAISE EXCEPTION 'BG_DELIVERY_TERMINAL_IMMUTABLE'; END IF;
+    NEW.terminal_at:=OLD.terminal_at;
+   ELSE NEW.terminal_at:=clock_timestamp(); END IF;
+  ELSE NEW.terminal_at:=clock_timestamp(); END IF;
+ ELSE NEW.terminal_at:=NULL; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER bg_delivery_terminal_clock BEFORE INSERT OR UPDATE ON notification_deliveries
+ FOR EACH ROW EXECUTE FUNCTION bg_delivery_terminal_clock();
+ALTER TABLE notification_deliveries ADD CONSTRAINT bg_delivery_terminal_shape
+ CHECK((state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED'))=(terminal_at IS NOT NULL));
+CREATE INDEX bg_delivery_terminal_purge ON notification_deliveries(terminal_at,id)
+ WHERE state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED');
+
+INSERT INTO web_push_delivery_control
+ (id,state,revision,config_epoch,configuration_identity,pause_reason,paused_at)
+ VALUES ('web_push','CONFIG_PAUSED',1,gen_random_uuid()::text,NULL,'CONFIG_UNVERIFIED',clock_timestamp());`;
+const WEB_PUSH_AUTHORITY_SQLITE = `DROP TRIGGER bg_target_delete;
+DROP TABLE web_push_setup_operations;
+DROP TABLE web_push_challenges;
+DROP TABLE web_push_claims;
+
+CREATE TABLE web_push_claims (
+ endpoint_hash TEXT PRIMARY KEY CHECK((length(endpoint_hash)=64 AND endpoint_hash NOT GLOB '*[^0-9a-f]*')),
+ incarnation TEXT NOT NULL UNIQUE CHECK((length(incarnation)=36 AND incarnation=lower(incarnation) AND substr(incarnation,9,1)='-' AND substr(incarnation,14,1)='-' AND substr(incarnation,19,1)='-' AND substr(incarnation,24,1)='-' AND length(replace(incarnation,'-',''))=32 AND replace(incarnation,'-','') NOT GLOB '*[^0-9a-f]*' AND substr(incarnation,15,1)='4' AND substr(incarnation,20,1) IN ('8','9','a','b'))),
+ state TEXT NOT NULL CHECK(state IN ('ACTIVE','VACANT')),
+ claim_revision BIGINT NOT NULL CHECK(claim_revision BETWEEN 0 AND 9000000000000000),
+ proof_hash TEXT CHECK(proof_hash IS NULL OR (length(proof_hash)=64 AND proof_hash NOT GLOB '*[^0-9a-f]*')),
+ subscription_id TEXT UNIQUE REFERENCES push_subscriptions(id) ON DELETE RESTRICT,
+ last_operation_id TEXT,
+ confirm_hash BLOB CHECK(confirm_hash IS NULL OR (typeof(confirm_hash)='blob' AND length(confirm_hash)=32)),
+ updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ CHECK(typeof(claim_revision)='integer'),
+ CHECK((state='VACANT' AND claim_revision=0 AND proof_hash IS NULL
+        AND subscription_id IS NULL AND last_operation_id IS NULL AND confirm_hash IS NULL)
+    OR (state='ACTIVE' AND claim_revision BETWEEN 1 AND 9000000000000000
+        AND proof_hash IS NOT NULL AND subscription_id IS NOT NULL
+        AND last_operation_id IS NOT NULL AND confirm_hash IS NOT NULL))
+);
+CREATE INDEX bg_claim_vacant_due ON web_push_claims(state,updated_at,endpoint_hash);
+
+CREATE TRIGGER bg_push_authority_transition_guard BEFORE UPDATE ON web_push_claims
+ WHEN NEW.endpoint_hash<>OLD.endpoint_hash OR NEW.incarnation=OLD.incarnation
+ BEGIN SELECT RAISE(ABORT,'BG_AUTHORITY_TRANSITION'); END;
+CREATE TRIGGER bg_push_authority_delete_guard BEFORE DELETE ON web_push_claims
+ WHEN OLD.state<>'VACANT'
+ BEGIN SELECT RAISE(ABORT,'BG_ACTIVE_AUTHORITY_DELETE'); END;
+
+CREATE TABLE web_push_challenges (
+ id TEXT PRIMARY KEY,
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ subscription_id TEXT NOT NULL,
+ endpoint_hash TEXT NOT NULL REFERENCES web_push_claims(endpoint_hash) ON DELETE RESTRICT
+   CHECK((length(endpoint_hash)=64 AND endpoint_hash NOT GLOB '*[^0-9a-f]*')),
+ expected_incarnation TEXT NOT NULL CHECK((length(expected_incarnation)=36 AND expected_incarnation=lower(expected_incarnation) AND substr(expected_incarnation,9,1)='-' AND substr(expected_incarnation,14,1)='-' AND substr(expected_incarnation,19,1)='-' AND substr(expected_incarnation,24,1)='-' AND length(replace(expected_incarnation,'-',''))=32 AND replace(expected_incarnation,'-','') NOT GLOB '*[^0-9a-f]*' AND substr(expected_incarnation,15,1)='4' AND substr(expected_incarnation,20,1) IN ('8','9','a','b'))),
+ proof_hash TEXT NOT NULL CHECK((length(proof_hash)=64 AND proof_hash NOT GLOB '*[^0-9a-f]*')),
+ expected_revision BIGINT NOT NULL CHECK(typeof(expected_revision)='integer' AND expected_revision BETWEEN 0 AND 9000000000000000),
+ operation_id TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ consumed_at TEXT,
+ created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ FOREIGN KEY(user_id,subscription_id) REFERENCES push_subscriptions(user_id,id) ON DELETE CASCADE,
+ UNIQUE(user_id,operation_id),
+ CHECK(expires_at>created_at)
+);
+CREATE INDEX bg_challenge_authority ON web_push_challenges(endpoint_hash,id);
+CREATE INDEX bg_challenge_retention ON web_push_challenges(created_at,id);
+
+CREATE TABLE web_push_setup_operations (
+ challenge_id TEXT PRIMARY KEY REFERENCES web_push_challenges(id) ON DELETE CASCADE,
+ endpoint_hash BLOB NOT NULL CHECK((typeof(endpoint_hash)='blob' AND length(endpoint_hash)=32)),
+ client_nonce_hash BLOB NOT NULL CHECK((typeof(client_nonce_hash)='blob' AND length(client_nonce_hash)=32)),
+ session_hash BLOB NOT NULL CHECK((typeof(session_hash)='blob' AND length(session_hash)=32)),
+ request_hash BLOB NOT NULL CHECK((typeof(request_hash)='blob' AND length(request_hash)=32)),
+ auth_epoch TEXT NOT NULL CHECK(length(auth_epoch)=36),
+ send_state TEXT NOT NULL DEFAULT 'RESERVED'
+   CHECK(send_state IN ('RESERVED','ATTEMPTED','ACCEPTED','FAILED','UNKNOWN')),
+ send_attempted_at_ms BIGINT,
+ cancelled_at_ms BIGINT,
+ handoff_hash BLOB CHECK(handoff_hash IS NULL OR (typeof(handoff_hash)='blob' AND length(handoff_hash)=32)),
+ handoff_client_id TEXT CHECK(handoff_client_id IS NULL OR length(handoff_client_id) BETWEEN 1 AND 256),
+ handoff_until_ms BIGINT,
+ handoff_consumed_at_ms BIGINT,
+ handoff_count INTEGER NOT NULL DEFAULT 0 CHECK(handoff_count BETWEEN 0 AND 3),
+ failed_confirm_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_confirm_count BETWEEN 0 AND 5),
+ confirm_hash BLOB CHECK(confirm_hash IS NULL OR (typeof(confirm_hash)='blob' AND length(confirm_hash)=32)),
+ result_generation TEXT,
+ result_revision BIGINT CHECK(result_revision IS NULL OR result_revision BETWEEN 1 AND 9000000000000000),
+ result_incarnation TEXT CHECK(result_incarnation IS NULL OR (length(result_incarnation)=36 AND result_incarnation=lower(result_incarnation) AND substr(result_incarnation,9,1)='-' AND substr(result_incarnation,14,1)='-' AND substr(result_incarnation,19,1)='-' AND substr(result_incarnation,24,1)='-' AND length(replace(result_incarnation,'-',''))=32 AND replace(result_incarnation,'-','') NOT GLOB '*[^0-9a-f]*' AND substr(result_incarnation,15,1)='4' AND substr(result_incarnation,20,1) IN ('8','9','a','b'))),
+ retain_until_ms BIGINT NOT NULL CHECK(retain_until_ms>0),
+ CHECK((send_state='RESERVED' AND send_attempted_at_ms IS NULL)
+    OR (send_state<>'RESERVED' AND send_attempted_at_ms IS NOT NULL)),
+ CHECK((handoff_hash IS NULL AND handoff_client_id IS NULL AND handoff_until_ms IS NULL AND handoff_consumed_at_ms IS NULL)
+    OR (handoff_hash IS NOT NULL AND handoff_client_id IS NOT NULL AND handoff_until_ms IS NOT NULL)),
+ CHECK((confirm_hash IS NULL AND result_generation IS NULL AND result_revision IS NULL AND result_incarnation IS NULL)
+    OR (confirm_hash IS NOT NULL AND result_generation IS NOT NULL AND result_revision IS NOT NULL AND result_incarnation IS NOT NULL))
+);
+
+CREATE TABLE web_push_delivery_control (
+ id TEXT PRIMARY KEY CHECK(id='web_push'),
+ state TEXT NOT NULL CHECK(state IN ('ACTIVE','CONFIG_PAUSED')),
+ revision BIGINT NOT NULL CHECK(revision BETWEEN 1 AND 9000000000000000),
+ config_epoch TEXT NOT NULL CHECK((length(config_epoch)=36 AND config_epoch=lower(config_epoch) AND substr(config_epoch,9,1)='-' AND substr(config_epoch,14,1)='-' AND substr(config_epoch,19,1)='-' AND substr(config_epoch,24,1)='-' AND length(replace(config_epoch,'-',''))=32 AND replace(config_epoch,'-','') NOT GLOB '*[^0-9a-f]*' AND substr(config_epoch,15,1)='4' AND substr(config_epoch,20,1) IN ('8','9','a','b'))),
+ configuration_identity TEXT CHECK(configuration_identity IS NULL OR (length(configuration_identity)=64 AND configuration_identity NOT GLOB '*[^0-9a-f]*')),
+ pause_reason TEXT CHECK(pause_reason IS NULL OR pause_reason IN ('CONFIG_UNVERIFIED','HTTP_401','HTTP_403','REVISION_EXHAUSTED')),
+ paused_at TEXT,
+ updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ CHECK(typeof(revision)='integer'),
+ CHECK((state='ACTIVE' AND configuration_identity IS NOT NULL AND pause_reason IS NULL AND paused_at IS NULL)
+    OR (state='CONFIG_PAUSED' AND pause_reason IS NOT NULL AND paused_at IS NOT NULL)),
+ CHECK(pause_reason IS NULL OR pause_reason<>'CONFIG_UNVERIFIED' OR configuration_identity IS NULL)
+);
+
+-- Existing notification_deliveries and all its FKs/indexes remain in place.
+-- Preflight requires it empty; no fabricated historical terminal clock.
+ALTER TABLE notification_deliveries ADD COLUMN terminal_at TEXT;
+ALTER TABLE notification_deliveries ADD COLUMN admitted_lease_token TEXT
+ CHECK(admitted_lease_token IS NULL OR
+  (state='LEASED' AND lease_token IS NOT NULL AND admitted_lease_token=lease_token));
+
+
+-- Explicit clears are required; SQLite CHECK is evaluated before any AFTER
+-- trigger could repair an old cancellation statement. No BEFORE self-UPDATE trick.
+CREATE TRIGGER bg_delivery_admission_guard BEFORE UPDATE ON notification_deliveries
+ BEGIN
+ SELECT CASE WHEN
+  (NEW.attempts IS NOT OLD.attempts
+   OR (OLD.admitted_lease_token IS NULL AND NEW.admitted_lease_token IS NOT NULL))
+  AND NOT (OLD.state='LEASED' AND NEW.state='LEASED'
+      AND OLD.lease_token IS NOT NULL AND NEW.lease_token IS OLD.lease_token
+      AND OLD.admitted_lease_token IS NULL
+      AND NEW.admitted_lease_token IS NOT NULL
+      AND NEW.admitted_lease_token IS OLD.lease_token
+      AND OLD.attempts<12 AND NEW.attempts=OLD.attempts+1)
+ THEN RAISE(ABORT,'BG_DELIVERY_ADMISSION_TRANSITION') END;
+ SELECT CASE WHEN OLD.admitted_lease_token IS NOT NULL
+   AND NEW.state='LEASED' AND NEW.lease_token IS OLD.lease_token
+   AND NEW.admitted_lease_token IS NOT OLD.admitted_lease_token
+ THEN RAISE(ABORT,'BG_DELIVERY_ADMISSION_REUSE') END;
+ SELECT CASE WHEN NEW.lease_token IS NOT OLD.lease_token
+   AND NEW.admitted_lease_token IS NOT NULL
+ THEN RAISE(ABORT,'BG_DELIVERY_ADMISSION_NEW_LEASE') END;
+END;
+
+-- Every SQLite connection MUST register zero-argument, non-deterministic
+-- forge_web_push_incarnation() -> node:crypto.randomUUID() before this DDL
+-- or any target deletion. No Math.random/randomblob substitute. Missing
+-- function makes deletion fail, not silently lose authority. No IO in function.
+CREATE TRIGGER bg_delete_target_claim BEFORE DELETE ON push_subscriptions
+ FOR EACH ROW BEGIN
+ UPDATE web_push_claims SET state='VACANT', incarnation=forge_web_push_incarnation(),
+  claim_revision=0, proof_hash=NULL, subscription_id=NULL,
+  last_operation_id=NULL, confirm_hash=NULL,
+  updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ WHERE subscription_id=OLD.id;
+END;
+
+CREATE TRIGGER bg_delivery_terminal_immutable BEFORE UPDATE OF state,terminal_at ON notification_deliveries
+ WHEN OLD.state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED')
+ BEGIN
+ SELECT CASE WHEN NEW.state<>OLD.state
+ OR (OLD.terminal_at IS NOT NULL AND NEW.terminal_at IS NOT OLD.terminal_at)
+ OR (OLD.terminal_at IS NULL AND NEW.terminal_at IS NOT strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+ THEN RAISE(ABORT,'BG_DELIVERY_TERMINAL_IMMUTABLE') END;
+END;
+CREATE TRIGGER bg_delivery_insert_clock_owned BEFORE INSERT ON notification_deliveries
+ WHEN NEW.terminal_at IS NOT NULL
+ BEGIN SELECT RAISE(ABORT,'BG_DELIVERY_CLOCK_SERVER_OWNED'); END;
+CREATE TRIGGER bg_delivery_terminal_insert AFTER INSERT ON notification_deliveries
+ BEGIN
+ UPDATE notification_deliveries SET terminal_at=
+ CASE WHEN NEW.state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED')
+ THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END WHERE id=NEW.id;
+END;
+CREATE TRIGGER bg_delivery_terminal_update AFTER UPDATE OF state ON notification_deliveries
+ WHEN OLD.state NOT IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED')
+ BEGIN
+ UPDATE notification_deliveries SET terminal_at=
+ CASE WHEN NEW.state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED')
+ THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END WHERE id=NEW.id;
+END;
+CREATE TRIGGER bg_delivery_nonterminal_clock BEFORE UPDATE OF terminal_at ON notification_deliveries
+ WHEN NEW.state NOT IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED') AND NEW.terminal_at IS NOT NULL
+ BEGIN SELECT RAISE(ABORT,'BG_DELIVERY_TERMINAL_SHAPE'); END;
+CREATE INDEX bg_delivery_terminal_purge ON notification_deliveries(terminal_at,id)
+ WHERE state IN ('ACCEPTED','CANCELLED','DEAD','EXPIRED');
+
+INSERT INTO web_push_delivery_control
+ (id,state,revision,config_epoch,configuration_identity,pause_reason,paused_at)
+ VALUES ('web_push','CONFIG_PAUSED',1,forge_web_push_incarnation(),NULL,'CONFIG_UNVERIFIED',
+ strftime('%Y-%m-%dT%H:%M:%fZ','now'));`;
+
 const EPISODE_MIGRATION_VERSION = 'background-sync-event-episode-v1';
 const EPISODE_SQLITE_COLUMN = "episode_started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP CONSTRAINT bg_jobs_episode_finite CHECK(typeof(episode_started_at)='text' AND julianday(episode_started_at) IS NOT NULL)";
 function jobsBody(dialect, episode) {
@@ -771,6 +1126,149 @@ async function migrateEpisodeSqlite(database) {
     }
   }
 }
+const AUTHORITY_TABLES = ['web_push_claims','web_push_challenges','web_push_setup_operations','notification_deliveries'];
+// Whitespace outside SQL literals is cosmetic; whitespace inside a literal is
+// authority and must not be erased when comparing trigger/catalog definitions.
+function authoritySqlIdentity(sql) {
+  return String(sql).match(/'(?:''|[^'])*'|"(?:""|[^"])*"|[^'"\s]+/g)?.join('').replace(/;$/, '') || '';
+}
+function authorityTableSql(dialect, successor, table) {
+  const old = dialect === 'postgres' ? POSTGRES_SQL + '\n' + SETUP_SQL : sqliteSql() + '\n' + SETUP_SQL.replace(/BYTEA/g,'BLOB');
+  const current = dialect === 'postgres' ? WEB_PUSH_AUTHORITY_PG : WEB_PUSH_AUTHORITY_SQLITE;
+  const source = successor && table !== 'notification_deliveries' ? current : old;
+  const match = source.match(new RegExp(`CREATE TABLE(?: IF NOT EXISTS)? ${table} \\([\\s\\S]*?\\n\\);`));
+  if (!match) throw blocked('WEB_PUSH_REFERENCE');
+  return match[0].replace(' IF NOT EXISTS','');
+}
+function registerWebPushIncarnation(database) {
+  if (typeof database.function !== 'function') throw blocked('SQLITE_UUID_REGISTRATION');
+  database.function('forge_web_push_incarnation', {deterministic:false}, () => require('node:crypto').randomUUID());
+}
+function authorityTriggerSource(dialect, successor) {
+  if (successor) return dialect === 'postgres' ? WEB_PUSH_AUTHORITY_PG : WEB_PUSH_AUTHORITY_SQLITE;
+  if (dialect === 'sqlite') return SQLITE_TRIGGERS.match(/CREATE TRIGGER bg_target_delete[\s\S]*?END;/)[0];
+  return POSTGRES_SQL.match(/CREATE OR REPLACE FUNCTION bg_delete_target_claim\(\)[\s\S]*?END \$\$;/)[0]
+    + '\n' + POSTGRES_SQL.match(/CREATE TRIGGER bg_delete_target_claim[\s\S]*?EXECUTE FUNCTION[^;]+;/)[0];
+}
+async function validateWebPushAuthority(db, dialect, successor) {
+  const tables = [...AUTHORITY_TABLES, ...(successor ? ['web_push_delivery_control'] : [])];
+  const current = dialect === 'postgres' ? WEB_PUSH_AUTHORITY_PG : WEB_PUSH_AUTHORITY_SQLITE;
+  const controlExists = (await columns(db,dialect,'web_push_delivery_control')).length > 0;
+  if (controlExists !== successor) throw blocked('WEB_PUSH_PARTIAL_SCHEMA');
+  if(dialect==='postgres'&&!successor&&await db.get(`SELECT p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname=current_schema() AND p.proname IN ('bg_push_authority_transition_guard','bg_delivery_admission_guard','bg_delivery_terminal_clock') LIMIT 1`))throw blocked('WEB_PUSH_PARTIAL_SCHEMA');
+  if (dialect === 'sqlite') {
+    const {DatabaseSync} = require('node:sqlite');
+    const expected = new DatabaseSync(':memory:');
+    try {
+      registerWebPushIncarnation(expected);
+      expected.exec('CREATE TABLE push_subscriptions(id TEXT PRIMARY KEY,user_id TEXT,UNIQUE(user_id,id));');
+      for (const table of AUTHORITY_TABLES) expected.exec(authorityTableSql(dialect,false,table));
+      expected.exec(authorityTriggerSource(dialect,false));
+      expected.exec('CREATE INDEX bg_delivery_due ON notification_deliveries(state,available_at,id);');
+      if (successor) expected.exec(current);
+      const catalog = connection => connection.all(`SELECT type,name,tbl_name,sql FROM sqlite_master
+        WHERE (tbl_name IN (${tables.map(()=>'?').join(',')}) AND sql IS NOT NULL)
+        OR (type='trigger' AND name IN ('bg_target_delete','bg_delete_target_claim')) ORDER BY type,name`,tables);
+      const normalize = rows => rows.map(row=>({...row,sql:authoritySqlIdentity(row.sql.replace(' IF NOT EXISTS',''))}));
+      if (JSON.stringify(normalize(await catalog(db))) !== JSON.stringify(normalize(await catalog(sqliteAdapter(expected))))) throw blocked('WEB_PUSH_CATALOG');
+    } finally { expected.close(); }
+  } else {
+    // Compile all affected references in pg_temp, including their FK parents.
+    // Never alter/drop a real constraint to manufacture a matching catalog.
+    const prefix='bg_wp_expected_';
+    const parents=['users','push_subscriptions','activity_notification_events'];
+    const names=[...parents,...tables];
+    const rewrite = sql => {
+      let out=sql;
+      for(const name of names)out=out.replace(new RegExp(`\\b${name}\\b`,'g'),prefix+name);
+      return out;
+    };
+    const normalize = value => String(value).replace(/pg_temp\./g,'').replace(/bg_wp_expected_/g,'');
+    let referenceComplete=false;
+    try {
+      await db.exec(`CREATE TEMP TABLE ${prefix}users(id TEXT PRIMARY KEY) ON COMMIT DROP;
+        CREATE TEMP TABLE ${prefix}push_subscriptions(id TEXT PRIMARY KEY,user_id TEXT,UNIQUE(user_id,id)) ON COMMIT DROP;
+        CREATE TEMP TABLE ${prefix}activity_notification_events(id TEXT PRIMARY KEY,user_id TEXT,notification_id TEXT,UNIQUE(user_id,id,notification_id)) ON COMMIT DROP;`);
+      for(const table of tables)await db.exec(rewrite(authorityTableSql(dialect,successor,table)).replace('CREATE TABLE','CREATE TEMP TABLE').replace(/;$/,' ON COMMIT DROP;'));
+      if(successor) {
+        for(const match of current.matchAll(/ALTER TABLE notification_deliveries[\s\S]*?;/g))await db.exec(rewrite(match[0]));
+      }
+      const attrs = table => db.all(`SELECT a.attname,format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull,
+        pg_get_expr(d.adbin,d.adrelid) AS default_value FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+        WHERE a.attrelid=?::regclass AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum`,[table]);
+      const constraints = async table => (await db.all(`SELECT contype,convalidated,condeferrable,condeferred,pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint WHERE conrelid=?::regclass`,[table])).map(row=>({...row,definition:normalize(row.definition)})).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      for(const table of tables) {
+        if(JSON.stringify(await attrs(table))!==JSON.stringify(await attrs('pg_temp.'+prefix+table))
+          || JSON.stringify(await constraints(table))!==JSON.stringify(await constraints('pg_temp.'+prefix+table)))throw blocked('WEB_PUSH_CATALOG');
+        if(await db.get(`SELECT 1 FROM pg_index WHERE indrelid=?::regclass AND (NOT indisvalid OR NOT indisready) LIMIT 1`,[table]))throw blocked('WEB_PUSH_INDEX');
+      }
+      const triggerSql=authorityTriggerSource(dialect,successor);
+      const expectedTriggers=[...triggerSql.matchAll(/CREATE TRIGGER (\w+) (BEFORE [\s\S]*?) FOR EACH ROW EXECUTE FUNCTION (\w+)\(\);/g)]
+        .map(match=>({name:match[1],definition:authoritySqlIdentity(match[0].replace('BEFORE UPDATE OR DELETE','BEFORE DELETE OR UPDATE'))})).sort((a,b)=>a.name.localeCompare(b.name));
+      const actualTriggers=await db.all(`SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,t.tgenabled,t.tgconstraint,
+        p.prosrc,p.prosecdef,p.proconfig,p.provolatile,l.lanname,p.proname
+        FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+        JOIN pg_proc p ON p.oid=t.tgfoid JOIN pg_language l ON l.oid=p.prolang
+        WHERE n.nspname=current_schema() AND NOT t.tgisinternal AND
+        (c.relname IN (${tables.map(()=>'?').join(',')}) OR t.tgname IN ('bg_target_delete','bg_delete_target_claim')) ORDER BY t.tgname`,tables);
+      if(actualTriggers.length!==expectedTriggers.length)throw blocked('WEB_PUSH_TRIGGER');
+      for(let i=0;i<actualTriggers.length;i++) {
+        const row=actualTriggers[i],expected=expectedTriggers[i];
+        const body=triggerSql.match(new RegExp(`CREATE (?:OR REPLACE )?FUNCTION ${row.proname}\\(\\) RETURNS trigger LANGUAGE plpgsql AS \\$\\$([\\s\\S]*?)\\$\\$;`))?.[1];
+        if(row.name!==expected.name || row.tgenabled!=='O' || Number(row.tgconstraint)!==0 || row.prosecdef || row.proconfig!==null || row.provolatile!=='v' || row.lanname!=='plpgsql'
+          || !body || authoritySqlIdentity(row.prosrc)!==authoritySqlIdentity(body)
+          || authoritySqlIdentity(row.definition.replace(/public\./g,''))!==expected.definition)throw blocked('WEB_PUSH_TRIGGER');
+      }
+      const indexSql='CREATE INDEX bg_delivery_due ON notification_deliveries(state,available_at,id);\n'+(successor ? current : '');
+      const indexes=[...indexSql.matchAll(/CREATE INDEX (\w+) ON (\w+)([\s\S]*?);/g)];
+      for(const match of indexes) {
+        await db.exec(`CREATE INDEX ${prefix+match[1]} ON ${prefix+match[2]}${match[3]}`);
+        const row=await db.get(`SELECT pg_get_indexdef(to_regclass(?)) AS actual,pg_get_indexdef(to_regclass(?)) AS expected`,[match[1],'pg_temp.'+prefix+match[1]]);
+        if(!row?.actual || normalize(row.actual.replace(/public\./g,''))!==normalize(row.expected))throw blocked('WEB_PUSH_INDEX');
+      }
+      referenceComplete=true;
+    } finally {
+      // On a catalog failure the owning transaction rolls back these objects.
+      // No CASCADE: unexpected dependencies fail closed as well.
+      if(referenceComplete) {
+        for(const table of [...tables].reverse())await db.exec(`DROP TABLE pg_temp.${prefix+table}`);
+        for(const table of [...parents].reverse())await db.exec(`DROP TABLE pg_temp.${prefix+table}`);
+      }
+    }
+  }
+  if(successor && !await db.get("SELECT id FROM web_push_delivery_control WHERE id='web_push'"))throw blocked('WEB_PUSH_CONTROL_MISSING');
+}
+async function applyWebPushAuthority(db,dialect) {
+  const recorded=Boolean(await db.get('SELECT version FROM schema_migrations WHERE version=?',[WEB_PUSH_AUTHORITY_VERSION]));
+  await validateWebPushAuthority(db,dialect,recorded);
+  if(recorded)return;
+  for(const table of AUTHORITY_TABLES)if(await db.get(`SELECT 1 AS present FROM ${table} LIMIT 1`))throw blocked('WEB_PUSH_NONEMPTY_PREDECESSOR');
+  if(await db.get('SELECT id FROM push_subscriptions WHERE active LIMIT 1'))throw blocked('WEB_PUSH_ACTIVE_PREDECESSOR');
+  await db.exec(dialect==='postgres' ? WEB_PUSH_AUTHORITY_PG : WEB_PUSH_AUTHORITY_SQLITE);
+  await validateWebPushAuthority(db,dialect,true);
+  await db.run('INSERT INTO schema_migrations(version) VALUES(?)',[WEB_PUSH_AUTHORITY_VERSION]);
+}
+async function migrateWebPushAuthoritySqlite(database) {
+  if(database.isTransaction)throw blocked('SQLITE_TRANSACTION_ACTIVE');
+  const db=sqliteAdapter(database);let begun=false,migrationError;
+  if((await db.get('PRAGMA foreign_keys')).foreign_keys!==1)throw blocked('SQLITE_FOREIGN_KEYS_DISABLED');
+  try {
+    await db.exec('PRAGMA foreign_keys=OFF');
+    await db.exec('BEGIN EXCLUSIVE');begun=true;
+    await applyWebPushAuthority(db,'sqlite');
+    if((await db.all('PRAGMA foreign_key_check')).length)throw blocked('SQLITE_FOREIGN_KEYS');
+    await db.exec('COMMIT');begun=false;
+  } catch(error) {
+    migrationError=error;
+    if(begun&&database.isTransaction)try{await db.exec('ROLLBACK');}catch(rollbackError){migrationError=new AggregateError([error,rollbackError],'Web push authority rollback failed');}
+    throw migrationError;
+  } finally {
+    try{await db.exec('PRAGMA foreign_keys=ON');if((await db.get('PRAGMA foreign_keys')).foreign_keys!==1)throw blocked('SQLITE_FOREIGN_KEYS_RESTORE');}
+    catch(restoreError){const error=blocked('SQLITE_FOREIGN_KEYS_RESTORE');error.cause=migrationError ? new AggregateError([migrationError,restoreError]) : restoreError;throw error;}
+  }
+}
 async function migrateBackgroundSyncPostgres(pool) {
   const result = await migrateBackgroundBasePostgres(pool);
   const client = await pool.connect(); const db = pgAdapter(client);
@@ -780,12 +1278,14 @@ async function migrateBackgroundSyncPostgres(pool) {
     await applyFence(db, 'postgres');
     await applyProviderLimits(db, 'postgres');
     await applyEpisode(db, 'postgres');
+    await applyWebPushAuthority(db, 'postgres');
     await db.exec('COMMIT');
     return result;
   } catch (error) { await db.exec('ROLLBACK'); throw error; }
   finally { client.release(); }
 }
 async function migrateBackgroundSyncSqlite(database) {
+  registerWebPushIncarnation(database);
   const result = await migrateBackgroundBaseSqlite(database);
   const db = sqliteAdapter(database); let begun = false;
   if ((await db.get('PRAGMA foreign_keys')).foreign_keys !== 1) throw blocked('SQLITE_FOREIGN_KEYS_DISABLED');
@@ -796,6 +1296,7 @@ async function migrateBackgroundSyncSqlite(database) {
     if ((await db.all('PRAGMA foreign_key_check')).length) throw blocked('SQLITE_FOREIGN_KEYS');
     await db.exec('COMMIT'); begun = false;
     await migrateEpisodeSqlite(database);
+    await migrateWebPushAuthoritySqlite(database);
     return result;
   } catch (error) {
     if (begun && database.isTransaction) await db.exec('ROLLBACK');
@@ -803,5 +1304,5 @@ async function migrateBackgroundSyncSqlite(database) {
   }
 }
 
-module.exports = { MIGRATION_VERSION, FENCE_MIGRATION_VERSION, LIMITS_MIGRATION_VERSION, EPISODE_MIGRATION_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
+module.exports = { MIGRATION_VERSION, FENCE_MIGRATION_VERSION, LIMITS_MIGRATION_VERSION, EPISODE_MIGRATION_VERSION, WEB_PUSH_AUTHORITY_VERSION, migrateBackgroundSyncPostgres, migrateBackgroundSyncSqlite,
   _test: { providerId, bootstrapLinks, POSTGRES_SQL, SETUP_SQL, OWNED_TABLES } };

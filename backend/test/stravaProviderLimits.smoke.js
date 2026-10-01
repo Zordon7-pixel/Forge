@@ -39,7 +39,7 @@ async function malformedSchemas(make){
    }else if(mode==='fault'){
     await stripLimits(f);const before=await state(f),fail=new Error('synthetic additive limit failure');
     if(f.dialect==='sqlite'){
-     const wrapped={get isTransaction(){return f.native.isTransaction;},prepare:s=>f.native.prepare(s),exec:s=>{if(s.includes('ADD COLUMN observed_day_cap'))throw fail;return f.native.exec(s);}};
+     const wrapped={function:(...args)=>f.native.function(...args),get isTransaction(){return f.native.isTransaction;},prepare:s=>f.native.prepare(s),exec:s=>{if(s.includes('ADD COLUMN observed_day_cap'))throw fail;return f.native.exec(s);}};
      await assert.rejects(()=>schema.migrateBackgroundSyncSqlite(wrapped),e=>e===fail);
      assert.equal(f.native.prepare('PRAGMA foreign_keys').get().foreign_keys,1);
     }else{
