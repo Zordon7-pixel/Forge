@@ -80,6 +80,18 @@ async function main() {
       native.prepare("UPDATE push_subscriptions SET user_id='b',generation='successor',keys_auth=? WHERE id='a1'").run(randomBytes(16).toString('base64url'));
       const rebound=row('a1');f.state.finish();await pending;assert.deepEqual(row('a1'),rebound,'late result cannot alter successor generation');
     }
+    // The current subscription route can rotate keys without rotating generation.
+    // Fence each captured field independently, after actual transport admission.
+    for(const status of [404,410]) for(const field of ['endpoint','keys_p256dh','keys_auth','bothKeys']) {
+      reset();const f=sender({status,hold:true});const pending=f.send('a');await tick();assert.equal(f.state.calls.length,1);
+      const next=createECDH('prime256v1');next.generateKeys();
+      const replacements={endpoint:'https://fcm.googleapis.com/send/successor',keys_p256dh:next.getPublicKey().toString('base64url'),keys_auth:randomBytes(16).toString('base64url')};
+      if(field==='bothKeys') native.prepare("UPDATE push_subscriptions SET keys_p256dh=?,keys_auth=? WHERE id='a1'").run(replacements.keys_p256dh,replacements.keys_auth);
+      else native.prepare(`UPDATE push_subscriptions SET ${field}=? WHERE id='a1'`).run(replacements[field]);
+      const successor=row('a1');assert.equal(successor.generation,'generation-a');assert.equal(successor.user_id,'a');
+      f.state.finish();assert.deepEqual(await pending,{sent:0});
+      assert.deepEqual(row('a1'),successor,`late ${status} preserves same-generation ${field} successor`);
+    }
     for(const mutation of ["UPDATE push_subscriptions SET generation='new' WHERE id='a1'",
       "UPDATE push_subscriptions SET user_id='b',generation='new' WHERE id='a1'",
       "UPDATE push_subscriptions SET active=0 WHERE id='a1'",

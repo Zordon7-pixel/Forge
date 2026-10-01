@@ -43,15 +43,25 @@ function validateEndpoint(endpoint) {
 }
 
 const excluded = new BlockList();
+// Source-controlled union of IANA special-purpose prefixes, checked 2026-10-01
+// against both complete registries (last updated 2025-10-09):
+// https://www.iana.org/assignments/iana-ipv4-special-registry/
+// https://www.iana.org/assignments/iana-ipv6-special-registry/
+// Deny even globally reachable exceptions. Parent prefixes include all their
+// specific entries; multicast/reserved space is additionally denied. No runtime fetch.
 for (const [address, prefix] of [
   ['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],
-  ['172.16.0.0',12],['192.0.0.0',24],['192.0.2.0',24],['192.88.99.0',24],['192.168.0.0',16],
+  ['172.16.0.0',12],['192.0.0.0',24],['192.0.2.0',24],['192.31.196.0',24],['192.52.193.0',24],
+  ['192.88.99.0',24],['192.168.0.0',16],['192.175.48.0',24],
   ['198.18.0.0',15],['198.51.100.0',24],['203.0.113.0',24],['224.0.0.0',4],['240.0.0.0',4],
 ]) excluded.addSubnet(address, prefix, 'ipv4');
 // Only global unicast space is eligible; special-purpose allocations fail closed.
+// This positive boundary excludes the registry's ::/128, ::1/128, mapped /96,
+// 64:ff9b::/96, 64:ff9b:1::/48, 100::/64, 100:0:0:1::/64, 5f00::/16,
+// fc00::/7 and fe80::/10. The following are all registry blocks within it.
 const globalV6 = new BlockList();
 globalV6.addSubnet('2000::', 3, 'ipv6');
-for (const [address, prefix] of [['2001::',23],['2001:db8::',32],['2002::',16],['3fff::',20]]) {
+for (const [address, prefix] of [['2001::',23],['2001:db8::',32],['2002::',16],['2620:4f:8000::',48],['3fff::',20]]) {
   excluded.addSubnet(address, prefix, 'ipv6');
 }
 function publicAddress(address) {
