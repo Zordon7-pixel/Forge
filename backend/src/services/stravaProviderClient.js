@@ -7,6 +7,9 @@ const REQUEST_MS = 20000;
 const BODY_BYTES = 4 * 1024 * 1024;
 const QUARTER_MS = 900000;
 const DAY_MS = 86400000;
+const rejectedResponses=new WeakMap();
+// Status authority cannot be manufactured by a callback body or Error.status.
+function providerRejection(error){return rejectedResponses.get(error)||null;}
 function failure(code, status = 503, retryAt) {
   return Object.assign(new Error('Strava is temporarily unavailable'), { code, status, retryAt });
 }
@@ -109,6 +112,7 @@ function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => 
   }
   function endpoint(operation, input) {
     const headers = { Accept: 'application/json' };
+    const objectId=['activity','streams'].includes(operation)?String(input.activityId):null;
     let url, method = 'GET', body;
     if (operation === 'token') {
       const { clientId, clientSecret, code, refreshToken } = input;
@@ -122,14 +126,15 @@ function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => 
       headers.Authorization = `Bearer ${input.accessToken}`;
       if (operation === 'activities') url = 'https://www.strava.com/api/v3/athlete/activities?per_page=20';
       else if (operation === 'athlete') url = 'https://www.strava.com/api/v3/athlete';
-      else if (['activity','streams'].includes(operation) && /^[1-9][0-9]{0,29}$/.test(String(input.activityId))) {
-        url = `https://www.strava.com/api/v3/activities/${input.activityId}${operation==='streams'?'/streams?keys=latlng,altitude,time&key_by_type=true':''}`;
+      else if (['activity','streams'].includes(operation) && /^[1-9][0-9]{0,29}$/.test(objectId)) {
+        url = `https://www.strava.com/api/v3/activities/${objectId}${operation==='streams'?'/streams?keys=latlng,altitude,time&key_by_type=true':''}`;
       } else throw failure('STRAVA_REQUEST_INVALID',400);
     }
-    return {url,options:{method,headers,body,redirect:'error'}};
+    return {url,objectId,options:{method,headers,body,redirect:'error'}};
   }
-  async function request(operation, input = {}, { signal, waitForSpacing = true } = {}) {
-    const {url,options} = endpoint(operation,input);
+  async function request(operation, input = {}, { signal, waitForSpacing = true, beforeNetwork } = {}) {
+    const {url,objectId,options} = endpoint(operation,input);
+    if(beforeNetwork!==undefined&&typeof beforeNetwork!=='function')throw failure('STRAVA_REQUEST_INVALID',400);
     if (signal?.aborted) throw failure('STRAVA_REQUEST_ABORTED');
     let ticket;
     try { ticket = await reserve(); }
@@ -156,6 +161,10 @@ function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => 
       ticket = await reserve();
     }
     if (signal?.aborted) throw failure('STRAVA_REQUEST_ABORTED');
+    // This private worker hook follows a known reservation COMMIT. Its own
+    // bounded job→control transaction must commit before any HTTP is opened.
+    if(beforeNetwork)await beforeNetwork(Object.freeze({operation,objectId}));
+    if (signal?.aborted) throw failure('STRAVA_REQUEST_ABORTED');
     const controller = new AbortController();
     let timer, rejectDeadline;
     const deadline = new Promise((_,reject) => { rejectDeadline=reject; });
@@ -177,14 +186,21 @@ function createStravaProviderClient({ withTransaction, fetchImpl = (...args) => 
           controller.signal.addEventListener('abort',cancelReader,{once:true});
           try { while(true) { const part=await reader.read();if(part.done)break;size+=part.value.byteLength;
             if(size>BODY_BYTES)throw failure('STRAVA_RESPONSE_TOO_LARGE',502);chunks.push(Buffer.from(part.value)); }
-            text=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks));
+            // A bounded completed negative response does not require JSON or
+            // valid UTF-8; truncated/oversized/timed-out bodies remain unknown.
+            if(response.ok)text=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks));
           } finally { controller.signal.removeEventListener('abort',cancelReader);cancelReader(); }
         } else {
           text=await response.text(); if(Buffer.byteLength(text)>BODY_BYTES)throw failure('STRAVA_RESPONSE_TOO_LARGE',502);
         }
         if(controller.signal.aborted)throw failure('STRAVA_REQUEST_ABORTED');
+        if(!response.ok){
+          if(!Number.isInteger(response.status)||response.status<400||response.status>599)throw failure('STRAVA_RESPONSE_INVALID',502);
+          const rejected=failure('STRAVA_PROVIDER_REJECTED',response.status);
+          rejectedResponses.set(rejected,Object.freeze({status:response.status,operation,objectId}));
+          throw rejected;
+        }
         let payload;try{payload=JSON.parse(text);}catch{throw failure('STRAVA_RESPONSE_INVALID',502);}
-        if(!response.ok)throw failure('STRAVA_PROVIDER_REJECTED',response.status);
         if(payload===null || typeof payload!=='object')throw failure('STRAVA_RESPONSE_INVALID',502);
         if(operation==='activities' && (!Array.isArray(payload) || payload.length>20 || payload.some(row=>!row || typeof row!=='object' || Array.isArray(row))))throw failure('STRAVA_RESPONSE_INVALID',502);
         if(operation!=='activities' && Array.isArray(payload))throw failure('STRAVA_RESPONSE_INVALID',502);
@@ -199,4 +215,4 @@ function getStravaProviderClient() {
   if(!shared)shared=createStravaProviderClient({withTransaction:require('../db').withTransaction});
   return shared;
 }
-module.exports={createStravaProviderClient,getStravaProviderClient,REQUEST_MS,BODY_BYTES};
+module.exports={createStravaProviderClient,getStravaProviderClient,providerRejection,REQUEST_MS,BODY_BYTES};

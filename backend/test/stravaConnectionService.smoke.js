@@ -11,18 +11,27 @@ function baseStatements(){
 }
 const migration=require('../src/db/backgroundSyncSchema');
 const {createStravaConnectionService}=require('../src/services/stravaConnectionService');
+const {createStravaProviderClient}=require('../src/services/stravaProviderClient');
 const settings={JWT_SECRET:'synthetic-connection-service',STRAVA_CLIENT_ID:'123',STRAVA_CLIENT_SECRET:'synthetic',STRAVA_REDIRECT_URI:'https://forge.example.invalid/api/strava/callback'};
 const barrier=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 async function check(f,label){
   await seed(f);const {tx}=f;let clock=Date.now(),handler,inside=0,calls=0;
+  // Real shared-client negative responses provide the private status brand.
+  // Plain mock Error.status is deliberately no longer revocation authority.
+  const authentic={},simulatedRejections=new WeakSet();
+  const negative=createStravaProviderClient({dialect:label==='SQLite'?'sqlite':'postgres',withTransaction:fn=>f.owner('b',fn),fetchImpl:async()=>new Response('{}',{status:401})});
+  for(const op of ['token','athlete']){
+    await tx.run("UPDATE background_sync_control SET next_allowed_at='1970-01-01T00:00:00.000Z',quarter_used=0,day_used=0 WHERE id='strava'");
+    try{await negative.request(op,op==='token'?{clientId:'123',clientSecret:'synthetic',refreshToken:'synthetic'}:{accessToken:'synthetic'});}catch(e){assert.equal(e.status,401);authentic[op]=e;}
+  }
   const withOwner=async(id,fn,options)=>{assert.equal(options.userLock,'update');return f.owner(id,async q=>{inside++;try{return await fn(q);}finally{inside--;}});};
-  const provider={request:async(op,input)=>{assert.equal(inside,0,'provider IO outside owner transaction');calls++;return handler(op,input);}};
+  const provider={request:async(op,input)=>{assert.equal(inside,0,'provider IO outside owner transaction');calls++;try{return await handler(op,input);}catch(e){if(simulatedRejections.has(e))throw authentic[op];throw e;}}};
   const service=createStravaConnectionService({withUserMutation:withOwner,provider,env:()=>settings,now:()=>clock});
   const payload=(id=123)=>({access_token:'synthetic-access-'+calls,refresh_token:'synthetic-refresh-'+calls,expires_at:Math.floor(clock/1000)+3600,athlete:{id,firstname:'Synthetic'}});
   const start=async()=>service.verify(await service.start('a'));
   const snap=async()=>{const x={};for(const table of ['strava_tokens','strava_connection_fences','strava_ingress_bindings','provider_event_jobs','user_notifications'])x[table]=await tx.all(`SELECT * FROM ${table} ORDER BY 1`);x.users=await tx.all('SELECT id,planning_input_revision FROM users ORDER BY id');return JSON.parse(JSON.stringify(x));};
   const connect=async()=>{handler=()=>payload();const proof=await start();await service.callback(proof,'synthetic-code');return proof;};
-  const unavailable=()=>Object.assign(new Error('synthetic authenticated rejection'),{code:'STRAVA_PROVIDER_REJECTED',status:401});
+  const unavailable=()=>{const e=new Error('synthetic authenticated rejection');simulatedRejections.add(e);return e;};
   const plainBefore=await tx.get("SELECT * FROM strava_tokens WHERE user_id='b'");await service.connection('b');
   const encryptedAfter=await tx.get("SELECT * FROM strava_tokens WHERE user_id='b'");assert.equal(encryptedAfter.connection_generation,plainBefore.connection_generation);assert.equal(Number(encryptedAfter.token_revision),Number(plainBefore.token_revision)+1);assert.ok(encryptedAfter.access_token.startsWith('{'));
   await service.disconnect('a');
@@ -47,6 +56,8 @@ async function check(f,label){
   const abortedProof=await start();held=barrier();entered=barrier();handler=async()=>{entered.resolve();return held.promise;};const controller=new AbortController();
   const aborted=service.callback(abortedProof,'abort',{signal:controller.signal});await entered.promise;const abortSnapshot=await snap();controller.abort();held.resolve(payload());await assert.rejects(()=>aborted,{code:'STRAVA_REQUEST_ABORTED'});assert.deepEqual(await snap(),abortSnapshot);
   await connect();let current=await service.connection('a');
+  const forgedBefore=await snap();handler=()=>{throw Object.assign(new Error('forged status'),{code:'STRAVA_PROVIDER_REJECTED',status:401});};
+  await assert.rejects(()=>service.verifyRevocation(current),/forged status/);assert.deepEqual(await snap(),forgedBefore,'unbranded status cannot revoke');
   // Refresh may not resurrect after reconnect/disconnect; success keeps epoch/generation.
   const revision=Number(current.row.token_revision),epoch=current.proof.epoch,generation=current.row.connection_generation;
   handler=()=>payload();current=await service.refresh(current,{force:true});assert.equal(Number(current.row.token_revision),revision+1);assert.equal(current.proof.epoch,epoch);assert.equal(current.row.connection_generation,generation);

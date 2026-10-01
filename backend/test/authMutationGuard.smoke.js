@@ -143,7 +143,7 @@ async function runAuthMutationGuardSmoke() {
   const strava = fs.readFileSync(path.join(root, 'src/routes/strava.js'), 'utf8');
   const connection = fs.readFileSync(path.join(root, 'src/services/stravaConnectionService.js'), 'utf8');
   assert.match(strava, /connections\.callback\(proof, code/,'Strava callback delegates to the fenced lifecycle service');
-  assert.match(connection, /withUserMutation\(userId,fn,\{userLock:'update'\}\)/,'Strava lifecycle uses real owner UPDATE authority');
+  assert.match(connection, /withUserMutation\(userId,fn,\{userLock:'update',\.\.\.\(signal\?\{signal\}:\{\}\)\}\)/,'Strava lifecycle retains owner UPDATE authority and forwards only its captured AbortSignal (behavior: stravaWorkerConcurrency/stravaConnectionService)');
   assert.match(connection, /await lifecycle\.consume\(tx,proof/,'Strava callback consumes current owner epoch inside the transaction (behavior: stravaConnectionService)');
 }
 
