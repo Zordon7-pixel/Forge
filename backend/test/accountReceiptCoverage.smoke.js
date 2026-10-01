@@ -21,7 +21,8 @@ async function runAccountReceiptCoverageSmoke() {
   const dbPath = require.resolve('../src/db');
   const authPath = require.resolve('../src/routes/auth');
   const middlewarePath = require.resolve('../src/middleware/auth');
-  const cached = [dbPath, authPath, middlewarePath].map(id => [id, require.cache[id]]);
+  const boundedPath = require.resolve('../src/db/backgroundSyncWorker');
+  const cached = [dbPath, authPath, middlewarePath,boundedPath].map(id => [id, require.cache[id]]);
   const originalConsoleError = console.error;
   const errors = [];
   let failBeforeUserDelete = false;
@@ -29,6 +30,7 @@ async function runAccountReceiptCoverageSmoke() {
   let rollbacks = 0;
   const receiptDeletes = [];
   const sqlErrors = [];
+  let wrappers=0,closed=0,passwordReads=0;
   try {
     sqlite.exec('PRAGMA foreign_keys = ON; CREATE TABLE users (id TEXT PRIMARY KEY, password_hash TEXT);');
     for (const user of [OWNER, OTHER]) {
@@ -70,6 +72,7 @@ async function runAccountReceiptCoverageSmoke() {
     const unrelatedDeletes = new Set([...ACCOUNT_SOCIAL_DELETE_QUERIES, ...ACCOUNT_DELETE_QUERIES]
       .map(([sql]) => sql).filter(sql => !receiptSql(sql)));
     const db = {
+      pool: Object.freeze({connect:()=>{throw new Error('Receipt fixture must not acquire a real PG connection');}}),
       dbGet: async (sql, params) => {
         assert.match(sql, /FROM users WHERE id = \?/);
         return sqlite.prepare('SELECT id FROM users WHERE id = ?').get(...params);
@@ -81,9 +84,20 @@ async function runAccountReceiptCoverageSmoke() {
         sqlite.exec('BEGIN');
         try {
           const result = await fn({
-            get: async (sql, params) => sql === "SELECT 1 AS present FROM web_push_setup_rate_buckets WHERE dimension='USER' LIMIT 1"
-              ? null : sqlite.prepare(sql).get(...params), // Unrelated empty setup fixture; receipt queries remain real.
+            get: async (sql, params) => {
+              if(sql === "SELECT 1 AS present FROM web_push_setup_rate_buckets WHERE dimension='USER' LIMIT 1")return null;
+              assert.equal(sql,'SELECT id, password_hash FROM users WHERE id = ?');assert.deepEqual(params,[OWNER]);passwordReads++;
+              return sqlite.prepare(sql).get(...params);
+            }, // Unrelated empty setup fixture; receipt queries remain real.
             all: async (sql, params) => {
+              const emptyAuthority = new Set([
+                'SELECT c.endpoint_hash,c.incarnation,c.subscription_id FROM web_push_claims c JOIN push_subscriptions p ON p.id=c.subscription_id WHERE p.user_id=? ORDER BY c.endpoint_hash FOR UPDATE OF c',
+                'SELECT id FROM push_subscriptions WHERE user_id=? ORDER BY id FOR UPDATE',
+                'SELECT id FROM web_push_challenges WHERE user_id=? ORDER BY id FOR UPDATE',
+                'SELECT o.challenge_id FROM web_push_setup_operations o JOIN web_push_challenges c ON c.id=o.challenge_id WHERE c.user_id=? ORDER BY o.challenge_id FOR UPDATE OF o',
+                'SELECT id FROM notification_deliveries WHERE user_id=? ORDER BY id FOR UPDATE',
+              ]);
+              if(emptyAuthority.has(sql.replace(/\s+/g,' ').trim())){assert.deepEqual(params,[OWNER]);return [];}
               assert.match(sql, /FROM challenges c/);
               assert.deepEqual(params, [OWNER]);
               return []; // No social fixtures; receipt SQL below always executes in SQLite.
@@ -117,6 +131,13 @@ async function runAccountReceiptCoverageSmoke() {
       },
     };
     require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: db };
+    require.cache[boundedPath]={id:boundedPath,filename:boundedPath,loaded:true,exports:{createWorkerDatabase:({pool})=>{
+      assert.equal(pool,db.pool);wrappers++;
+      return {withOwnerMutation:async(owner,fn,{signal})=>{
+        assert.equal(owner,OWNER);assert.ok(signal instanceof AbortSignal);assert.equal(signal.aborted,false);
+        return db.withTransaction(fn,{userIds:[OWNER],userLock:'update',requireUserIds:[OWNER]});
+      },close:async()=>{closed++;}};
+    }}};
     delete require.cache[authPath];
     delete require.cache[middlewarePath];
     const router = require('../src/routes/auth');
@@ -168,6 +189,7 @@ async function runAccountReceiptCoverageSmoke() {
     assert.equal(receiptDeletes.length, 4);
     for (const table of TABLES) assert.deepEqual(rows(table), before[table].filter(row => row.user_id === OTHER));
     assert.deepEqual(sqlite.prepare('SELECT id FROM users').all().map(row => row.id), [OTHER]);
+    assert.equal(passwordReads,2);assert.equal(wrappers,2);assert.equal(closed,2,'success and rollback both close their borrowed wrapper');
   } finally {
     console.error = originalConsoleError;
     for (const [id, module] of cached) {

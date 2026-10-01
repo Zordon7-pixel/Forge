@@ -73,7 +73,7 @@ async function malformed(make){
         if(mode==='fault'){
           const before=plain(await job(f)),err=new Error('synthetic episode copy failure');
           if(f.dialect==='sqlite'){
-            const wrapper={get isTransaction(){return f.native.isTransaction;},prepare:s=>f.native.prepare(s),exec:s=>{if(s.includes('INSERT INTO bg_episode_jobs')){f.native.exec(s);throw err;}return f.native.exec(s);}};
+            const wrapper={function:(...args)=>f.native.function(...args),get isTransaction(){return f.native.isTransaction;},prepare:s=>f.native.prepare(s),exec:s=>{if(s.includes('INSERT INTO bg_episode_jobs')){f.native.exec(s);throw err;}return f.native.exec(s);}};
             await assert.rejects(()=>migration.migrateBackgroundSyncSqlite(wrapper),e=>e===err);
             assert.equal(f.native.prepare('PRAGMA foreign_keys').get().foreign_keys,1);
           }else{
@@ -131,7 +131,7 @@ async function fileLock(){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'forge-episode-')),file=path.join(dir,'episode.sqlite'),f=sqlite(file);let blocker;
   try{await seed(f);await strip(f);await insertOld(f);blocker=new DatabaseSync(file);
     const before=plain(await job(f));let engaged=false;
-    const wrapped={get isTransaction(){return f.native.isTransaction;},prepare:s=>f.native.prepare(s),exec:s=>{
+    const wrapped={function:(...args)=>f.native.function(...args),get isTransaction(){return f.native.isTransaction;},prepare:s=>f.native.prepare(s),exec:s=>{
       if(s==='BEGIN EXCLUSIVE'){blocker.exec('BEGIN EXCLUSIVE');engaged=true;}
       return f.native.exec(s);
     }};

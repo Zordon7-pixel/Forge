@@ -113,8 +113,10 @@ async function runAuthMutationGuardSmoke() {
     'password-reset issuance must reject writes for a concurrently deleted account');
   assert.match(authSource, /const reset = await withUserMutation\(record\.user_id,[\s\S]*password_reset_tokens[\s\S]*FOR UPDATE/,
     'password-reset consumption must lock and consume the token in the guarded user transaction');
-  assert.match(authSource, /userLock: 'update', requireUserIds: \[userId\]/,
-    'account deletion must acquire its update lock before reading the password row');
+  assert.match(authSource, /erasureDatabase = createWorkerDatabase\(\{ pool \}\)[\s\S]*await erasureDatabase\.withOwnerMutation\(userId, async \(tx\) => \{\s*const user = await tx\.get\('SELECT id, password_hash FROM users WHERE id = \?'/,
+    'account deletion must enter bounded authenticated owner UPDATE authority before reading its password row');
+  assert.match(authSource,/finally \{\s*req\.removeListener\?\.\('aborted', disconnected\);\s*res\.removeListener\?\.\('close', disconnected\);\s*await erasureDatabase\?\.close\(\)/,
+    'account deletion must remove request cancellation listeners and close its borrowed wrapper on every exit');
   assert.doesNotMatch(authSource, /password_hash FROM users WHERE id = \? FOR UPDATE/,
     'account deletion must not upgrade a pre-existing key-share lock');
   assert.ok((groupRunSource.match(/userIds: \[req\.user\.id,[^\n]+userLock: 'update'/g) || []).length >= 2,
