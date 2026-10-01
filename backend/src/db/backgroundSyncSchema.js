@@ -1190,7 +1190,13 @@ async function validateWebPushAuthority(db, dialect, successor) {
       await db.exec(`CREATE TEMP TABLE ${prefix}users(id TEXT PRIMARY KEY) ON COMMIT DROP;
         CREATE TEMP TABLE ${prefix}push_subscriptions(id TEXT PRIMARY KEY,user_id TEXT,UNIQUE(user_id,id)) ON COMMIT DROP;
         CREATE TEMP TABLE ${prefix}activity_notification_events(id TEXT PRIMARY KEY,user_id TEXT,notification_id TEXT,UNIQUE(user_id,id,notification_id)) ON COMMIT DROP;`);
-      for(const table of tables)await db.exec(rewrite(authorityTableSql(dialect,successor,table)).replace('CREATE TABLE','CREATE TEMP TABLE').replace(/;$/,' ON COMMIT DROP;'));
+      for(const table of tables) {
+        // Let PostgreSQL derive constraint-backed index names from the real
+        // table name before isolating the reference. Prefixing first can make
+        // its 63-byte name truncation differ from the actual catalog.
+        await db.exec(rewrite(authorityTableSql(dialect,successor,table)).replace('CREATE TABLE '+prefix+table,'CREATE TEMP TABLE '+table).replace(/;$/,' ON COMMIT DROP;'));
+        await db.exec(`ALTER TABLE pg_temp.${table} RENAME TO ${prefix+table}`);
+      }
       if(successor) {
         for(const match of current.matchAll(/ALTER TABLE notification_deliveries[\s\S]*?;/g))await db.exec(rewrite(match[0]));
       }
@@ -1225,8 +1231,21 @@ async function validateWebPushAuthority(db, dialect, successor) {
       const indexes=[...indexSql.matchAll(/CREATE INDEX (\w+) ON (\w+)([\s\S]*?);/g)];
       for(const match of indexes) {
         await db.exec(`CREATE INDEX ${prefix+match[1]} ON ${prefix+match[2]}${match[3]}`);
-        const row=await db.get(`SELECT pg_get_indexdef(to_regclass(?)) AS actual,pg_get_indexdef(to_regclass(?)) AS expected`,[match[1],'pg_temp.'+prefix+match[1]]);
-        if(!row?.actual || normalize(row.actual.replace(/public\./g,''))!==normalize(row.expected))throw blocked('WEB_PUSH_INDEX');
+      }
+      // Compare both directions, including PostgreSQL's implicit primary and
+      // unique indexes. A valid extra index is unsupported catalog state too;
+      // it must not be silently dropped by the predecessor transformation.
+      const indexCatalog = async (table,reference=false) => (await db.all(`SELECT c.relname AS name,
+        i.indisunique,i.indisprimary,i.indisexclusion,i.indimmediate,i.indisvalid,i.indisready,i.indislive,i.indnullsnotdistinct,
+        pg_get_indexdef(i.indexrelid) AS definition FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
+        WHERE i.indrelid=?::regclass`,[table])).map(row=>({...row,name:reference?normalize(row.name):row.name,
+          // Rewrite only the compiled reference's identifier header, never
+          // actual index names or predicate/expression string literals.
+          definition:row.definition.replace(/^(CREATE (?:UNIQUE )?INDEX )(\w+)( ON )(?:(?:public|pg_temp)\.)?(\w+)( USING )/,
+            (_,create,name,on,target,using)=>create+(reference?normalize(name):name)+on+(reference?normalize(target):target)+using)}))
+        .sort((a,b)=>a.name.localeCompare(b.name));
+      for(const table of tables) {
+        if(JSON.stringify(await indexCatalog(table))!==JSON.stringify(await indexCatalog('pg_temp.'+prefix+table,true)))throw blocked('WEB_PUSH_INDEX');
       }
       referenceComplete=true;
     } finally {

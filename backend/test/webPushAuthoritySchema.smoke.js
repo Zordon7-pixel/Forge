@@ -169,10 +169,57 @@ async function sqliteAuthorityBeginFailure() {
   }finally{if(locker.isTransaction)locker.exec('ROLLBACK');locker.close();f.close();for(const suffix of ['','-wal','-shm','-journal'])if(fs.existsSync(file+suffix))fs.unlinkSync(file+suffix);fs.rmdirSync(dir);}
   console.log('PASS actual second-connection D2a failed BEGIN restores FK and preserves original lock failure');
 }
+async function postgresIndexCatalogNegatives() {
+  const affected={web_push_claims:'updated_at',web_push_challenges:'id',web_push_setup_operations:'challenge_id',notification_deliveries:'id'};
+  const catalog=f=>f.db.all(`SELECT t.relname AS table_name,c.relname AS name,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,
+    pg_get_indexdef(i.indexrelid) AS definition FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
+    JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname='public' AND t.relname IN ('web_push_claims','web_push_challenges','web_push_setup_operations','notification_deliveries','web_push_delivery_control')
+    ORDER BY t.relname,c.relname`);
+  for(const successor of [false,true]) {
+    const extras={...affected,...(successor?{web_push_delivery_control:'id'}:{})};
+    const cases=[...Object.keys(extras).map(table=>({name:'extra-'+table,sql:`CREATE INDEX ${table==='web_push_claims'?(successor?'d2a_unexpected_claim_index':'bg_claim_vacant_due'):'d2a_unexpected_index'} ON ${table}(${extras[table]})`})),
+      {name:'missing',sql:'DROP INDEX bg_delivery_due'},
+      {name:'order',sql:'DROP INDEX bg_delivery_due; CREATE INDEX bg_delivery_due ON notification_deliveries(available_at,state,id)'},
+      {name:'sort-direction',sql:'DROP INDEX bg_delivery_due; CREATE INDEX bg_delivery_due ON notification_deliveries(state,available_at DESC,id)'},
+      {name:'expression',sql:'DROP INDEX bg_delivery_due; CREATE INDEX bg_delivery_due ON notification_deliveries(lower(state),available_at,id)'},
+      {name:'predicate',sql:"DROP INDEX bg_delivery_due; CREATE INDEX bg_delivery_due ON notification_deliveries(state,available_at,id) WHERE state='PENDING'"},
+      {name:'uniqueness',sql:'DROP INDEX bg_delivery_due; CREATE UNIQUE INDEX bg_delivery_due ON notification_deliveries(state,available_at,id)'},
+      {name:'primary-identity',sql:'ALTER INDEX web_push_claims_pkey RENAME TO d2a_renamed_primary'},
+      {name:'reference-prefix-is-not-real-identity',sql:'ALTER INDEX web_push_claims_pkey RENAME TO bg_wp_expected_web_push_claims_pkey'},
+      {name:'unique-identity',sql:'ALTER INDEX web_push_claims_subscription_id_key RENAME TO d2a_renamed_unique'}];
+    for(const test of cases) {
+      const f=await postgres();try {
+        if(successor)await f.migrate();
+        const supported=await catalog(f);
+        assert.ok(supported.some(row=>row.indisprimary),'actual constraint-backed primary indexes included');
+        assert.ok(supported.some(row=>row.indisunique&&!row.indisprimary),'actual constraint-backed unique indexes included');
+        await f.db.exec(test.sql);
+        const before=plain(await catalog(f)),migrations=plain(await f.db.all('SELECT * FROM schema_migrations ORDER BY id'));
+        await assert.rejects(()=>f.migrate(),e=>e.code?.startsWith('BACKGROUND_SCHEMA_'),`${successor?'successor':'predecessor'} ${test.name}`);
+        assert.deepEqual(plain(await catalog(f)),before,'refusal never drops/repairs unknown or altered indexes');
+        assert.deepEqual(plain(await f.db.all('SELECT * FROM schema_migrations ORDER BY id')),migrations,'refusal never records or changes a marker');
+        assert.equal(Boolean(await f.db.get('SELECT version FROM schema_migrations WHERE version=?',[marker])),successor);
+      }finally{await f.close();}
+    }
+  }
+  // A failed real concurrent unique build leaves PostgreSQL's own invalid /
+  // unready catalog state. No direct pg_catalog writes or mocked flags.
+  const f=await postgres();try {
+    await f.migrate();
+    for(let i=1;i<=2;i++)await f.db.run("INSERT INTO web_push_claims(endpoint_hash,incarnation,state,claim_revision) VALUES(?,?,'VACANT',0)",[String(i).repeat(64),uuid(i)]);
+    await assert.rejects(()=>f.db.exec('CREATE UNIQUE INDEX CONCURRENTLY d2a_failed_unique_build ON web_push_claims(state)'),e=>e.code==='23505');
+    const invalid=(await catalog(f)).find(row=>row.name==='d2a_failed_unique_build');
+    assert.equal(invalid.indisvalid,false);assert.equal(invalid.indisready,false);
+    const before=plain(await catalog(f));await assert.rejects(()=>f.migrate(),{code:'BACKGROUND_SCHEMA_WEB_PUSH_INDEX'});
+    assert.deepEqual(plain(await catalog(f)),before);
+  }finally{await f.close();}
+  console.log('PASS complete PG index inventories: every affected predecessor/successor table, extra/missing/order/predicate/unique/constraint-backed names and actual invalid-unready build; no repair or marker write');
+}
 async function runWebPushAuthoritySchemaSmoke({pg=false}={}) {
   for(const work of [upgrade,admissions]){const f=sqlite();try{await work(f);}finally{f.close();}}
   await negatives(async()=>sqlite());await successorNegatives(async()=>sqlite());await sqliteConnections();await sqliteAuthorityBeginFailure();
-  if(pg){for(const work of [upgrade,admissions]){const f=await postgres();try{await work(f);}finally{await f.close();}}await negatives(postgres);await successorNegatives(postgres);
+  if(pg){for(const work of [upgrade,admissions]){const f=await postgres();try{await work(f);}finally{await f.close();}}await negatives(postgres);await successorNegatives(postgres);await postgresIndexCatalogNegatives();
     const f=await postgres();try{await Promise.all([f.migrate(),f.migrate()]);assert.equal(Number((await f.db.get('SELECT count(*) AS n FROM schema_migrations WHERE version=?',[marker])).n),1);}finally{await f.close();}
     console.log('PASS separate PG clients concurrent predecessor migration/rerun serialized to one marker');
   }
