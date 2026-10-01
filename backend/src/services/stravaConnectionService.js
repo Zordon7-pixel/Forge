@@ -2,14 +2,15 @@
 const crypto=require('node:crypto');
 const lifecycle=require('./stravaConnectionLifecycle');
 const {createUserNotificationInTransaction}=require('./notifications');
-const {getStravaProviderClient}=require('./stravaProviderClient');
+const {getStravaProviderClient,providerRejection}=require('./stravaProviderClient');
 const REFRESH_LEASE_MS=60000; // Separate from the event job's120s lease; HTTP is bounded20s.
 function error(code='STRAVA_CONNECTION_STALE',status=409) {
   return Object.assign(new Error('Strava connection is unavailable'),{code,status});
 }
-function createStravaConnectionService({withUserMutation,provider,env=()=>process.env,now=()=>Date.now()}) {
+function createStravaConnectionService({withUserMutation,provider,env=()=>process.env,now=()=>Date.now(),beforeNetwork,finalizeVerifiedRevocation}) {
   const captures=new WeakSet();
-  const owner=(userId,fn)=>withUserMutation(userId,fn,{userLock:'update'});
+  const owner=(userId,fn,signal)=>withUserMutation(userId,fn,{userLock:'update',...(signal?{signal}:{})});
+  const requestOptions=signal=>({signal,...(beforeNetwork?{beforeNetwork}:{})});
   function config() {
     const values=env();
     for(const key of ['JWT_SECRET','STRAVA_CLIENT_ID','STRAVA_CLIENT_SECRET','STRAVA_REDIRECT_URI'])
@@ -56,8 +57,8 @@ function createStravaConnectionService({withUserMutation,provider,env=()=>proces
   async function callback(proof,code,{signal}={}) {
     const settings=config();
     if(typeof code!=='string'||!code.trim()||code.length>2048)throw error('STRAVA_CODE_INVALID',400);
-    await owner(proof.user_id,tx=>lifecycle.assertAttempt(tx,proof,Math.floor(now()/1000)));
-    const payload=tokens(await provider.request('token',{clientId:settings.STRAVA_CLIENT_ID,clientSecret:settings.STRAVA_CLIENT_SECRET,code},{signal}),{athleteRequired:true});
+    await owner(proof.user_id,tx=>lifecycle.assertAttempt(tx,proof,Math.floor(now()/1000)),signal);
+    const payload=tokens(await provider.request('token',{clientId:settings.STRAVA_CLIENT_ID,clientSecret:settings.STRAVA_CLIENT_SECRET,code},requestOptions(signal)),{athleteRequired:true});
     if(signal?.aborted)throw error('STRAVA_REQUEST_ABORTED',503);
     const generation=crypto.randomUUID(),athleteId=String(payload.athlete.id);
     const athleteName=[payload.athlete.firstname,payload.athlete.lastname].filter(v=>typeof v==='string').join(' ').trim().slice(0,200)||null;
@@ -71,7 +72,7 @@ function createStravaConnectionService({withUserMutation,provider,env=()=>proces
         connection_generation=excluded.connection_generation,token_revision=1,refresh_lease_token=NULL,refresh_lease_until=NULL`,
         [proof.user_id,access,refresh,payload.expires_at,athleteId,athleteName,generation]);
       await tx.run('INSERT INTO strava_ingress_bindings(id,user_id,athlete_id) VALUES(?,?,?)',[generation,proof.user_id,athleteId]);
-    });
+    },signal);
     return {athleteName};
   }
   async function read(tx,userId,{upgrade=true}={}) {
@@ -90,7 +91,7 @@ function createStravaConnectionService({withUserMutation,provider,env=()=>proces
     const capture=Object.freeze({row:Object.freeze({...row,access_token:access.token,refresh_token:refresh.token}),proof,userId});
     captures.add(capture);return capture;
   }
-  async function connection(userId){config();return owner(userId,tx=>read(tx,userId));}
+  async function connection(userId,{signal}={}){config();return owner(userId,tx=>read(tx,userId),signal);}
   function trusted(capture){if(!captures.has(capture))throw error();}
   async function refresh(capture,{force=false,signal}={}) {
     trusted(capture);const settings=config();
@@ -102,15 +103,15 @@ function createStravaConnectionService({withUserMutation,provider,env=()=>proces
       if(row.refresh_lease_token!==null && Date.parse(row.refresh_lease_until)>now())throw error('STRAVA_REFRESH_BUSY',503);
       changed(await tx.run(`UPDATE strava_tokens SET refresh_lease_token=?,refresh_lease_until=? WHERE user_id=? AND connection_generation=? AND token_revision=?`,
         [lease,new Date(until).toISOString(),capture.userId,row.connection_generation,row.token_revision]));
-    });
+    },signal);
     let payload;
     try {
-      payload=tokens(await provider.request('token',{clientId:settings.STRAVA_CLIENT_ID,clientSecret:settings.STRAVA_CLIENT_SECRET,refreshToken:capture.row.refresh_token},{signal}),{athleteId:capture.row.athlete_id});
+      payload=tokens(await provider.request('token',{clientId:settings.STRAVA_CLIENT_ID,clientSecret:settings.STRAVA_CLIENT_SECRET,refreshToken:capture.row.refresh_token},requestOptions(signal)),{athleteId:capture.row.athlete_id});
     } catch(failure) {
       // Release only our lease; never erase credentials on token-endpoint401.
       await owner(capture.userId,tx=>tx.run(`UPDATE strava_tokens SET refresh_lease_token=NULL,refresh_lease_until=NULL
         WHERE user_id=? AND connection_generation=? AND token_revision=? AND refresh_lease_token=?`,
-        [capture.userId,capture.row.connection_generation,capture.row.token_revision,lease])).catch(()=>{throw error('STRAVA_REFRESH_RECOVERY_REQUIRED',503);});
+        [capture.userId,capture.row.connection_generation,capture.row.token_revision,lease]),signal).catch(()=>{throw error('STRAVA_REFRESH_RECOVERY_REQUIRED',503);});
       throw failure;
     }
     const access=encrypt(payload.access_token),refreshToken=encrypt(payload.refresh_token);
@@ -123,28 +124,37 @@ function createStravaConnectionService({withUserMutation,provider,env=()=>proces
         WHERE user_id=? AND connection_generation=? AND token_revision=? AND refresh_lease_token=?`,
         [access,refreshToken,payload.expires_at,capture.userId,capture.row.connection_generation,capture.row.token_revision,lease]));
       return read(tx,capture.userId,{upgrade:false});
-    });
+    },signal);
   }
   async function verifyRevocation(capture,{signal}={}) {
     trusted(capture);let current=capture;
     try {current=await refresh(capture,{signal});}
-    catch(e){if(!['STRAVA_PROVIDER_REJECTED'].includes(e.code)||![400,401,403].includes(e.status))throw e;}
+    catch(e){const rejected=providerRejection(e);if(rejected?.operation!=='token'||![400,401,403].includes(rejected.status))throw e;}
     if(current.proof.epoch!==capture.proof.epoch)throw error();
     try {
-      const athlete=await provider.request('athlete',{accessToken:current.row.access_token},{signal});
+      const athlete=await provider.request('athlete',{accessToken:current.row.access_token},requestOptions(signal));
       if(!validId(athlete.id)||String(athlete.id)!==String(current.row.athlete_id))throw error('STRAVA_ATHLETE_RESPONSE_INVALID',502);
       return false;
     } catch(e) {
       // Only this dedicated authenticated current-athlete verification can
       // establish revocation. A list/stream/token401 is never sufficient.
-      if(e.code!=='STRAVA_PROVIDER_REJECTED'||![401,403].includes(e.status))throw e;
+      const rejected=providerRejection(e);
+      if(rejected?.operation!=='athlete'||![401,403].includes(rejected.status))throw e;
     }
     if(signal?.aborted)throw error('STRAVA_REQUEST_ABORTED',503);
-    await owner(current.userId,async tx=>{
+    let invoked=false;
+    const commitRevocation=async tx=>{
+      if(invoked||signal?.aborted)throw error('STRAVA_CONNECTION_STALE');
+      invoked=true;
       await lifecycle.revokeVerified(tx,current.proof);
       await createUserNotificationInTransaction(tx,current.userId,{type:'connection',title:'Strava disconnected',
         body:'Reconnect Strava to keep background activity sync active.',href:'/more',sourceKey:`strava:deauthorization:${current.row.connection_generation}`});
-    });
+    };
+    // The closure contains the private authenticated proof. Worker construction
+    // injects owner→binding→job validation before invoking it in the SAME TX.
+    if(finalizeVerifiedRevocation)await finalizeVerifiedRevocation(current.userId,commitRevocation,{signal});
+    else await owner(current.userId,commitRevocation,signal);
+    if(!invoked)throw error('STRAVA_CONNECTION_STALE');
     return true;
   }
   const disconnect=userId=>owner(userId,tx=>lifecycle.disconnect(tx,userId));
