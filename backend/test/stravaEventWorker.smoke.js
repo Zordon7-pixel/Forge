@@ -59,6 +59,94 @@ async function negative(f,kind){
   assert.equal(await count(f,'runs'),1);assert.equal(await count(f,'activity_notification_events'),0);
   assert.equal(Number((await f.tx.get("SELECT planning_input_revision FROM users WHERE id='a'")).planning_input_revision),0);await w.close();
 }
+const invalidFetched=[
+  ['calendar-september31',{start_date:'2026-09-31T12:00:00Z'}],
+  ['calendar-nonleap',{start_date:'2026-02-29T12:00:00Z'}],
+  ['calendar-century',{start_date:'2100-02-29T12:00:00Z'}],
+  ['calendar-month0',{start_date:'2026-00-01T12:00:00Z'}],
+  ['calendar-month13',{start_date:'2026-13-01T12:00:00Z'}],
+  ['calendar-day0',{start_date:'2026-01-00T12:00:00Z'}],
+  ['calendar-year0',{start_date:'0000-01-01T12:00:00Z'}],
+  ['calendar-hour24',{start_date:'2026-09-30T24:00:00Z'}],
+  ['calendar-minute60',{start_date:'2026-09-30T12:60:00Z'}],
+  ['calendar-leapsecond',{start_date:'2026-09-30T12:00:60Z'}],
+  ['time-no-zone',{start_date:'2026-09-30T12:00:00'}],
+  ['time-unknown-zone',{start_date:'2026-09-30T12:00:00-00:00'}],
+  ['time-offset24',{start_date:'2026-09-30T12:00:00+24:00'}],
+  ['time-offset-minute60',{start_date:'2026-09-30T12:00:00+01:60'}],
+  ['time-offset-compact',{start_date:'2026-09-30T12:00:00+0100'}],
+  ['time-date-only',{start_date:'2026-09-30'}],
+  ['time-space',{start_date:'2026-09-30 12:00:00Z'}],
+  ['time-whitespace',{start_date:' 2026-09-30T12:00:00Z'}],
+  ['time-rfc2822',{start_date:'Wed, 30 Sep 2026 12:00:00 GMT'}],
+  ['time-submillisecond',{start_date:'2026-09-30T12:00:00.1234Z'}],
+  ['time-empty-fraction',{start_date:'2026-09-30T12:00:00.Z'}],
+  ['time-number',{start_date:1790769600000}],
+  ['time-object',{start_date:{value:'2026-09-30T12:00:00Z'}}],
+  ['local-invalid-calendar',{start_date_local:'2026-09-31T08:00:00'}],
+  ['local-date-only',{start_date_local:'2026-09-30'}],
+  ['local-malformed',{start_date_local:[]}],
+  ['type-run-ride',{type:'Run',sport_type:'Ride'}],
+  ['type-ride-run',{type:'Ride',sport_type:'Run'}],
+  ['type-virtual-trail',{type:'VirtualRun',sport_type:'TrailRun'}],
+  ['type-run-virtual',{type:'Run',sport_type:'VirtualRun'}],
+  ['type-unrecognized',{type:'NotReallyRunning',sport_type:undefined}],
+  ['sport-unrecognized',{type:undefined,sport_type:'NotReallyRunning'}],
+  ['type-wrong-case',{type:'run',sport_type:'Run'}],
+  ['type-blank',{type:'',sport_type:'Run'}],
+  ['sport-blank',{type:'Run',sport_type:''}],
+  ['type-object',{type:{type:'Run'},sport_type:'Run'}],
+  ['sport-array',{type:'Run',sport_type:['Run']}],
+  ['type-nonrun-conflict',{type:'Ride',sport_type:'Swim'}],
+];
+async function fetchedNegative(f,change){
+  await prepare(f);
+  await f.tx.run("INSERT INTO push_subscriptions(id,user_id,endpoint,keys_p256dh,keys_auth,active) VALUES('invalid-target','a','https://synthetic.invalid/invalid','s','s',TRUE)");
+  const before=await snapshot(f.tx);let calls=0;
+  const w=worker(f,async()=>{calls++;return response(activity(change));});
+  try{
+    assert.equal((await w.runOnce())[0].status,'RETRY');assert.equal(calls,1,'invalid detail never requests optional streams');
+    const j=await job(f,'9001');assert.equal(j.state,'RETRY');assert.equal(Number(j.processed_revision),0);assert.equal(Number(j.attempts),1);
+    const after=await snapshot(f.tx);
+    for(const table of Object.keys(before))if(table!=='provider_event_jobs')assert.deepEqual(after[table],before[table],`invalid fetched data preserves ${table}`);
+    assert.equal(await count(f,'notification_deliveries'),0);assert.equal(await count(f,'activity_notification_events'),0);
+  }finally{await w.close();}
+}
+const validFetched=[
+  ['run',{type:'Run',sport_type:'Run'}],
+  ['trail',{type:'Run',sport_type:'TrailRun'}],
+  ['virtual',{type:'VirtualRun',sport_type:'VirtualRun'}],
+  ['legacy-run-only',{sport_type:undefined}],
+  ['sport-trail-only',{type:undefined,sport_type:'TrailRun'}],
+  ['sport-virtual-only',{type:null,sport_type:'VirtualRun'}],
+  ['legacy-virtual-only',{type:'VirtualRun',sport_type:null}],
+  ['known-zero',{distance:0,moving_time:0,elapsed_time:0}],
+  ['leap-day',{start_date:'2024-02-29T23:59:59Z'}],
+  ['century-leap',{start_date:'2000-02-29T00:00:00Z'}],
+  ['positive-offset',{start_date:'2026-01-01T00:15:00+05:30'}],
+  ['negative-offset',{start_date:'2026-12-31T23:59:59-03:30'}],
+  ['fraction1',{start_date:'2026-09-30T12:00:00.1Z'}],
+  ['fraction2',{start_date:'2026-09-30T12:00:00.12+00:00'}],
+  ['fraction3',{start_date:'2026-09-30T12:00:00.123-04:00'}],
+  ['local-wall-time',{start_date:'2026-09-30T12:00:00Z',start_date_local:'2026-09-30T08:00:00'}],
+  ['local-absent',{start_date:'2026-09-30T12:00:00Z',start_date_local:undefined}],
+  ['local-null',{start_date:'2026-09-30T12:00:00Z',start_date_local:null}],
+  ['ride-refinement',{type:'Ride',sport_type:'MountainBikeRide'},false],
+  ['ebike-refinement',{type:'EBikeRide',sport_type:'EMountainBikeRide'},false],
+  ['nonrun-single',{type:undefined,sport_type:'Swim'},false],
+];
+async function fetchedPositive(f,change,isRun=true){
+  await prepare(f);const payload=activity(change);let calls=0;
+  const w=worker(f,async()=>{calls++;return response(payload);});
+  try{
+    assert.equal((await w.runOnce())[0].status,isRun?'SAVED':'NO_RUN');assert.equal(calls,1);
+    assert.equal((await job(f,'9001')).state,'DONE');
+    const row=await f.tx.get("SELECT * FROM runs WHERE id='strava_a_9001'");
+    assert.equal(Boolean(row),isRun);
+    if(isRun){assert.equal(row.health_start_at,new Date(payload.start_date).toISOString());assert.equal(Number(row.duration_seconds),payload.moving_time);assert.equal(Number(row.distance_miles),Number((payload.distance/1609.34).toFixed(3)));}
+    assert.equal(Number((await f.tx.get("SELECT planning_input_revision FROM users WHERE id='a'")).planning_input_revision),isRun?1:0);
+  }finally{await w.close();}
+}
 async function unavailable(f,kind){
   await prepare(f);
   if(kind!=='absent')await f.db.withPlanningMutation('a',tx=>persistStravaActivity(tx,'a',activity(),f.expected));
@@ -130,6 +218,7 @@ async function shutdown(f){
   await assert.rejects(()=>w.runOnce(),{code:'STRAVA_WORKER_CLOSED'});assert.throws(()=>w.start(),{code:'STRAVA_WORKER_CLOSED'});await w.close();
 }
 const cases=[['token-detail-stream-save-replay',success],...['error','quota','pause','budget'].map(k=>['optional-'+k,f=>optional(f,k)]),...['id','athlete','missingAthlete','missingTime','missingType','missingMetrics','malformed','nonrun'].map(k=>['invalid-'+k,f=>negative(f,k)]),...['existing','absent','deleted'].map(k=>['404-'+k,f=>unavailable(f,k)]),...['forged','network','429'].map(k=>['failure-'+k,f=>failure(f,k)]),...[200,401,403].map(k=>['athlete-'+k,f=>revocation(f,k)]),...[200,401].map(k=>['activity-401-athlete-'+k,f=>activityUnauthorized(f,k)]),['first-quota',firstQuota],...['lease','dirty','delete','reconnect'].map(k=>['race-'+k,f=>race(f,k)]),['shutdown',shutdown]];
+cases.push(...invalidFetched.map(([name,change])=>['fetched-reject-'+name,f=>fetchedNegative(f,change)]),...validFetched.map(([name,change,isRun])=>['fetched-accept-'+name,f=>fetchedPositive(f,change,isRun)]));
 async function run(dialect){
   const base=new URL('postgresql://forge_background_test@127.0.0.1:55449/forge_background_test');let admin;
   if(dialect==='postgres'){admin=new Pool({connectionString:base.href});assert.deepEqual((await admin.query('SELECT current_database() AS db,current_user AS role,inet_server_port() AS port')).rows[0],{db:'forge_background_test',role:'forge_background_test',port:55449});}
