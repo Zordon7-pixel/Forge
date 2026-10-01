@@ -166,6 +166,39 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 4002;
 const HOST = process.env.HOST || (process.env.RAILWAY_ENVIRONMENT ? '0.0.0.0' : '127.0.0.1');
+let listener, shuttingDown;
+const sockets = new Set();
+function shutdown() {
+  if (shuttingDown) return shuttingDown;
+  shuttingDown = (async () => {
+    const deadline = setTimeout(() => {
+      for (const socket of sockets) socket.destroy();
+      console.error('[shutdown] bounded drain expired');
+      process.exit(1);
+    }, 5000);
+    try {
+      await Promise.all([
+        new Promise((resolve, reject) => {
+          if (!listener) return resolve();
+          listener.close(error => error ? reject(error) : resolve());
+          listener.closeIdleConnections?.();
+        }),
+        require('./db/backgroundSyncIntake').closeIntakePool(),
+        require('./db').pool.end(),
+      ]);
+      clearTimeout(deadline);
+      process.exit(0);
+    } catch (_error) {
+      clearTimeout(deadline);
+      for (const socket of sockets) socket.destroy();
+      console.error('[shutdown] database or listener drain unavailable');
+      process.exit(1);
+    }
+  })();
+  return shuttingDown;
+}
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
 
 initDb()
   .then(async () => {
@@ -173,15 +206,21 @@ initDb()
       await require('./db/migrate').runAlwaysMigrations();
     } catch (err) {
       console.error('[FATAL] Always migrations failed:', err);
-      process.exit(1);
+      return process.exit(1);
     }
 
     // Seed demo data after DB is ready
     try { await require('./db/seed').runSeed(); } catch (e) { console.error('Seed error:', e.message); }
     try { await require('./db/exercises-seed').seedExercises(); } catch (e) { console.error('Exercise seed error:', e.message); }
-    app.listen(PORT, HOST, () => {
+    if (shuttingDown) return;
+    // HARD DORMANCY: no worker construction/start/claim, regardless of env,
+    // paused=false, migration markers, queued jobs or historical activation_at.
+    // A separately reviewed complete-B1 activation artifact is still required.
+    console.log('[strava/worker] STRAVA_WORKER_DORMANT_ACTIVATION_REQUIRED');
+    listener = app.listen(PORT, HOST, () => {
       console.log(`FORGE running on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
     });
+    listener.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
   })
   .catch(err => {
     console.error('[FATAL] DB init failed:', err);
