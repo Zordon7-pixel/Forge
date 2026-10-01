@@ -16,6 +16,38 @@ function id(value){
   if(Number.isSafeInteger(value)&&value>0)return String(value);
   throw unavailable('STRAVA_ACTIVITY_INVALID');
 }
+// Closed provider vocabulary, not substring/title inference. type is deprecated
+// ActivityType; sport_type may be a finer SportType. Unknown combinations retry.
+// https://developers.strava.com/docs/reference/#api-models-ActivityType
+// https://developers.strava.com/docs/reference/#api-models-SportType
+const ACTIVITY_TYPES=new Set('AlpineSki BackcountrySki Canoeing Crossfit EBikeRide Elliptical Golf Handcycle Hike IceSkate InlineSkate Kayaking Kitesurf NordicSki Ride RockClimbing RollerSki Rowing Run Sail Skateboard Snowboard Snowshoe Soccer StairStepper StandUpPaddling Surfing Swim Velomobile VirtualRide VirtualRun Walk WeightTraining Wheelchair Windsurf Workout Yoga'.split(' '));
+const SPORT_TYPES=new Set([...ACTIVITY_TYPES,...'Badminton Basketball Cricket Dance EMountainBikeRide GravelRide HighIntensityIntervalTraining MountainBikeRide Padel PhysicalTherapy Pickleball Pilates Racquetball Squash TableTennis Tennis TrailRun VirtualRow Volleyball'.split(' ')]);
+const FINER_TYPES=Object.freeze({TrailRun:'Run',MountainBikeRide:'Ride',GravelRide:'Ride',EMountainBikeRide:'EBikeRide',VirtualRow:'Rowing'});
+function fetchedRunType(activity){
+  const type=activity.type,sport=activity.sport_type;
+  if(type!=null&&(typeof type!=='string'||!ACTIVITY_TYPES.has(type)))throw unavailable('STRAVA_ACTIVITY_INVALID');
+  if(sport!=null&&(typeof sport!=='string'||!SPORT_TYPES.has(sport)))throw unavailable('STRAVA_ACTIVITY_INVALID');
+  if(type==null&&sport==null)throw unavailable('STRAVA_ACTIVITY_INVALID');
+  if(type!=null&&sport!=null&&type!==sport&&FINER_TYPES[sport]!==type)throw unavailable('STRAVA_ACTIVITY_INVALID');
+  return ['Run','TrailRun','VirtualRun'].includes(sport??type);
+}
+function validFetchedTime(value,{local=false}={}){
+  // Supported ISO8601 extended form, seconds and at most millisecond precision.
+  // start_date is an instant: no missing/unknown offset, rollover, leap-second,
+  // 24:00, whitespace or permissive Date.parse alternate grammar. Local wall
+  // time is validated independently, never interpreted as the UTC instant.
+  if(typeof value!=='string')return false;
+  const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
+  if(!m)return false;
+  const [,year,month,day,hour,minute,second,,zone]=m;
+  const y=Number(year),mo=Number(month),d=Number(day);
+  const leap=y%4===0&&(y%100!==0||y%400===0);
+  if(y<1||mo<1||mo>12||d<1||d>[31,leap?29:28,31,30,31,30,31,31,30,31,30,31][mo-1]
+    ||Number(hour)>23||Number(minute)>59||Number(second)>59)return false;
+  if(!zone)return local;
+  if(zone==='-00:00'||(zone!=='Z'&&(Number(zone.slice(1,3))>23||Number(zone.slice(4,6))>59)))return false;
+  return Number.isFinite(Date.parse(value));
+}
 function createStravaEventWorker({database,fetchImpl,env=()=>process.env}={}){
   const db=database||createWorkerDatabase(),queue=createStravaEventQueue({database:db});
   const controller=new AbortController();let closed=false,started=false,timer,cycle,closing,lastMaintenance=-Infinity;
@@ -59,13 +91,13 @@ function createStravaEventWorker({database,fetchImpl,env=()=>process.env}={}){
         }
         throw error;
       }
-      if(id(activity.id)!==handle.objectId||id(activity.athlete?.id)!==handle.athleteId
-        ||typeof (activity.type||activity.sport_type)!=='string'||!(activity.type||activity.sport_type).trim())throw unavailable('STRAVA_ACTIVITY_INVALID');
-      const isRun=String(activity.type||activity.sport_type).toLowerCase().includes('run');
+      if(id(activity.id)!==handle.objectId||id(activity.athlete?.id)!==handle.athleteId)throw unavailable('STRAVA_ACTIVITY_INVALID');
+      const isRun=fetchedRunType(activity);
       if(isRun){
         // Do not let the legacy normalizer's date/zero fallbacks fabricate a
         // run from an incomplete provider response. Optional metrics stay optional.
-        if(typeof activity.start_date!=='string'||!Number.isFinite(Date.parse(activity.start_date))
+        if(!validFetchedTime(activity.start_date)
+          ||(activity.start_date_local!=null&&!validFetchedTime(activity.start_date_local,{local:true}))
           ||typeof activity.distance!=='number'||!Number.isFinite(activity.distance)||activity.distance<0||activity.distance>1000000
           ||typeof activity.moving_time!=='number'||!Number.isFinite(activity.moving_time)||activity.moving_time<0||activity.moving_time>172800)throw unavailable('STRAVA_ACTIVITY_INVALID');
         const normalized=normalizeStravaRun(activity);
