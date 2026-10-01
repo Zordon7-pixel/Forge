@@ -43,7 +43,9 @@ function createLegacyPushSender({ all = dbAll, get = dbGet, run = dbRun, send = 
       } catch (error) {
         if (transport.expiredEndpoint(error)) {
           await storage(() => run(`UPDATE push_subscriptions SET active = FALSE
-            WHERE id = ? AND user_id = ? AND generation = ? AND active = TRUE`, [sub.id, userId, sub.generation]));
+            WHERE id = ? AND user_id = ? AND generation = ? AND active = TRUE
+              AND endpoint = ? AND keys_p256dh = ? AND keys_auth = ?`,
+          [sub.id, userId, sub.generation, sub.endpoint, sub.keys_p256dh, sub.keys_auth]));
         } else {
           if (transport.configurationFailure(error)) configurationFailed = true;
           log(transport.configurationFailure(error) ? 'WEB_PUSH_CONFIGURATION_FAILED' : 'WEB_PUSH_DELIVERY_FAILED');
