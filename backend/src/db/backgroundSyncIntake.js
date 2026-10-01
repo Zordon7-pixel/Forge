@@ -73,8 +73,9 @@ function createIntakeTransaction(pool) {
   };
 }
 
-let intakePool, transaction;
+let intakePool, transaction, closing;
 function getIntakeTransaction() {
+  if (closing) throw unavailable();
   if (!transaction) {
     intakePool = new Pool({ connectionString: process.env.DATABASE_URL,
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
@@ -84,4 +85,14 @@ function getIntakeTransaction() {
   }
   return transaction;
 }
-module.exports = { createIntakeTransaction, getIntakeTransaction, LIMITS };
+function closeIntakePool() {
+  if (closing) return closing;
+  closing = (async () => {
+    if (!intakePool) return;
+    let timer;
+    try { await Promise.race([intakePool.end(), new Promise((_, reject) => { timer = setTimeout(() => reject(unavailable()), 5000); })]); }
+    finally { clearTimeout(timer); }
+  })();
+  return closing;
+}
+module.exports = { createIntakeTransaction, getIntakeTransaction, closeIntakePool, LIMITS };
