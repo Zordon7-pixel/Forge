@@ -171,7 +171,8 @@ async function sqliteAuthorityBeginFailure() {
 }
 async function postgresIndexCatalogNegatives() {
   const affected={web_push_claims:'updated_at',web_push_challenges:'id',web_push_setup_operations:'challenge_id',notification_deliveries:'id'};
-  const catalog=f=>f.db.all(`SELECT t.relname AS table_name,c.relname AS name,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,
+  const catalog=f=>f.db.all(`SELECT t.relname AS table_name,t.relreplident,c.relname AS name,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,
+    i.indisclustered,i.indisreplident,i.indnatts,i.indnkeyatts,i.indkey::text,i.indcollation::text,i.indclass::text,i.indoption::text,
     pg_get_indexdef(i.indexrelid) AS definition FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
     JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace
     WHERE n.nspname='public' AND t.relname IN ('web_push_claims','web_push_challenges','web_push_setup_operations','notification_deliveries','web_push_delivery_control')
@@ -187,16 +188,24 @@ async function postgresIndexCatalogNegatives() {
       {name:'uniqueness',sql:'DROP INDEX bg_delivery_due; CREATE UNIQUE INDEX bg_delivery_due ON notification_deliveries(state,available_at,id)'},
       {name:'primary-identity',sql:'ALTER INDEX web_push_claims_pkey RENAME TO d2a_renamed_primary'},
       {name:'reference-prefix-is-not-real-identity',sql:'ALTER INDEX web_push_claims_pkey RENAME TO bg_wp_expected_web_push_claims_pkey'},
-      {name:'unique-identity',sql:'ALTER INDEX web_push_claims_subscription_id_key RENAME TO d2a_renamed_unique'}];
+      {name:'unique-identity',sql:'ALTER INDEX web_push_claims_subscription_id_key RENAME TO d2a_renamed_unique'},
+      ...Object.keys(extras).flatMap(table=>[
+        {name:'cluster-'+table,sql:`ALTER TABLE ${table} CLUSTER ON ${table}_pkey`,exactIndexError:true},
+        {name:'replica-index-'+table,sql:`ALTER TABLE ${table} REPLICA IDENTITY USING INDEX ${table}_pkey`,exactIndexError:true},
+        {name:'replica-nothing-'+table,sql:`ALTER TABLE ${table} REPLICA IDENTITY NOTHING`,exactIndexError:true},
+        {name:'replica-full-'+table,sql:`ALTER TABLE ${table} REPLICA IDENTITY FULL`,exactIndexError:true}
+      ]),
+      {name:'cluster-explicit-index',sql:'ALTER TABLE notification_deliveries CLUSTER ON bg_delivery_due',exactIndexError:true}];
     for(const test of cases) {
       const f=await postgres();try {
         if(successor)await f.migrate();
         const supported=await catalog(f);
         assert.ok(supported.some(row=>row.indisprimary),'actual constraint-backed primary indexes included');
         assert.ok(supported.some(row=>row.indisunique&&!row.indisprimary),'actual constraint-backed unique indexes included');
+        assert.ok(supported.every(row=>!row.indisclustered&&!row.indisreplident&&row.relreplident==='d'),'supported actual catalog uses default clustering/replica identity');
         await f.db.exec(test.sql);
         const before=plain(await catalog(f)),migrations=plain(await f.db.all('SELECT * FROM schema_migrations ORDER BY id'));
-        await assert.rejects(()=>f.migrate(),e=>e.code?.startsWith('BACKGROUND_SCHEMA_'),`${successor?'successor':'predecessor'} ${test.name}`);
+        await assert.rejects(()=>f.migrate(),e=>test.exactIndexError?e.code==='BACKGROUND_SCHEMA_WEB_PUSH_INDEX':e.code?.startsWith('BACKGROUND_SCHEMA_'),`${successor?'successor':'predecessor'} ${test.name}`);
         assert.deepEqual(plain(await catalog(f)),before,'refusal never drops/repairs unknown or altered indexes');
         assert.deepEqual(plain(await f.db.all('SELECT * FROM schema_migrations ORDER BY id')),migrations,'refusal never records or changes a marker');
         assert.equal(Boolean(await f.db.get('SELECT version FROM schema_migrations WHERE version=?',[marker])),successor);
@@ -215,6 +224,7 @@ async function postgresIndexCatalogNegatives() {
     assert.deepEqual(plain(await catalog(f)),before);
   }finally{await f.close();}
   console.log('PASS complete PG index inventories: every affected predecessor/successor table, extra/missing/order/predicate/unique/constraint-backed names and actual invalid-unready build; no repair or marker write');
+  console.log('PASS 38 PG semantic-flag negatives: every affected predecessor/successor table CLUSTER and REPLICA IDENTITY INDEX/NOTHING/FULL, plus explicit index CLUSTER; exact error, prepared catalog and markers preserved');
 }
 async function runWebPushAuthoritySchemaSmoke({pg=false}={}) {
   for(const work of [upgrade,admissions]){const f=sqlite();try{await work(f);}finally{f.close();}}

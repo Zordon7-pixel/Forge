@@ -1237,6 +1237,8 @@ async function validateWebPushAuthority(db, dialect, successor) {
       // it must not be silently dropped by the predecessor transformation.
       const indexCatalog = async (table,reference=false) => (await db.all(`SELECT c.relname AS name,
         i.indisunique,i.indisprimary,i.indisexclusion,i.indimmediate,i.indisvalid,i.indisready,i.indislive,i.indnullsnotdistinct,
+        i.indisclustered,i.indisreplident,i.indnatts,i.indnkeyatts,
+        i.indkey::text,i.indcollation::text,i.indclass::text,i.indoption::text,
         pg_get_indexdef(i.indexrelid) AS definition FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
         WHERE i.indrelid=?::regclass`,[table])).map(row=>({...row,name:reference?normalize(row.name):row.name,
           // Rewrite only the compiled reference's identifier header, never
@@ -1245,6 +1247,12 @@ async function validateWebPushAuthority(db, dialect, successor) {
             (_,create,name,on,target,using)=>create+(reference?normalize(name):name)+on+(reference?normalize(target):target)+using)}))
         .sort((a,b)=>a.name.localeCompare(b.name));
       for(const table of tables) {
+        // CLUSTER / REPLICA IDENTITY are not encoded by pg_get_indexdef.
+        // Compare table-level NONE/FULL as well as each index's flags. OIDs
+        // identifying these relations and indcheckxmin (a transient MVCC/HOT
+        // safety horizon) are deliberately not schema identities.
+        const replication = name => db.get('SELECT relreplident FROM pg_class WHERE oid=?::regclass',[name]);
+        if(JSON.stringify(await replication(table))!==JSON.stringify(await replication('pg_temp.'+prefix+table)))throw blocked('WEB_PUSH_INDEX');
         if(JSON.stringify(await indexCatalog(table))!==JSON.stringify(await indexCatalog('pg_temp.'+prefix+table,true)))throw blocked('WEB_PUSH_INDEX');
       }
       referenceComplete=true;
