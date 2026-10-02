@@ -113,8 +113,10 @@ async function runAuthMutationGuardSmoke() {
     'password-reset issuance must reject writes for a concurrently deleted account');
   assert.match(authSource, /const reset = await withUserMutation\(record\.user_id,[\s\S]*password_reset_tokens[\s\S]*FOR UPDATE/,
     'password-reset consumption must lock and consume the token in the guarded user transaction');
-  assert.match(authSource, /userLock: 'update', requireUserIds: \[userId\]/,
-    'account deletion must acquire its update lock before reading the password row');
+  assert.match(authSource, /erasureDatabase = createWorkerDatabase\(\{ pool \}\)[\s\S]*await erasureDatabase\.withOwnerMutation\(userId, async \(tx\) => \{\s*const user = await tx\.get\('SELECT id, password_hash FROM users WHERE id = \?'/,
+    'account deletion must enter bounded authenticated owner UPDATE authority before reading its password row');
+  assert.match(authSource,/finally \{\s*req\.removeListener\?\.\('aborted', disconnected\);\s*res\.removeListener\?\.\('close', disconnected\);\s*await erasureDatabase\?\.close\(\)/,
+    'account deletion must remove request cancellation listeners and close its borrowed wrapper on every exit');
   assert.doesNotMatch(authSource, /password_hash FROM users WHERE id = \? FOR UPDATE/,
     'account deletion must not upgrade a pre-existing key-share lock');
   assert.ok((groupRunSource.match(/userIds: \[req\.user\.id,[^\n]+userLock: 'update'/g) || []).length >= 2,
@@ -136,10 +138,15 @@ async function runAuthMutationGuardSmoke() {
   const inviteRowLockIndex = socialFriendsSource.indexOf('WHERE id = ? AND owner_id = ? AND token_hash = ?');
   assert.ok(invitePreviewIndex >= 0 && invitePreviewIndex < inviteUserLockIndex && inviteUserLockIndex < inviteRowLockIndex,
     'invite resolution must lock users before locking and consuming the invite row');
-  for (const route of ['whoop.js', 'oura.js', 'strava.js']) {
+  for (const route of ['whoop.js', 'oura.js']) {
     const source = fs.readFileSync(path.join(root, 'src/routes', route), 'utf8');
     assert.match(source, /withUserMutation\(/, `${route} OAuth callback must reject deleted-account writes`);
   }
+  const strava = fs.readFileSync(path.join(root, 'src/routes/strava.js'), 'utf8');
+  const connection = fs.readFileSync(path.join(root, 'src/services/stravaConnectionService.js'), 'utf8');
+  assert.match(strava, /connections\.callback\(proof, code/,'Strava callback delegates to the fenced lifecycle service');
+  assert.match(connection, /withUserMutation\(userId,fn,\{userLock:'update',\.\.\.\(signal\?\{signal\}:\{\}\)\}\)/,'Strava lifecycle retains owner UPDATE authority and forwards only its captured AbortSignal (behavior: stravaWorkerConcurrency/stravaConnectionService)');
+  assert.match(connection, /await lifecycle\.consume\(tx,proof/,'Strava callback consumes current owner epoch inside the transaction (behavior: stravaConnectionService)');
 }
 
 if (require.main === module) {

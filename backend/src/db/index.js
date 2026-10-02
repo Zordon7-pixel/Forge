@@ -1323,6 +1323,19 @@ async function initDb() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_exercise_image_requests_status_seen ON exercise_image_requests(status, last_seen_at DESC)');
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS strava_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id TEXT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        access_token TEXT,
+        refresh_token TEXT,
+        expires_at BIGINT,
+        athlete_id BIGINT,
+        athlete_name TEXT,
+        connected_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS push_subscriptions (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
