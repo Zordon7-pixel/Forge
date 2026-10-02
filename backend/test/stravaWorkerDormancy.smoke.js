@@ -34,6 +34,9 @@ async function child(mode){
       if(request==='./db/migrate')return {runAlwaysMigrations:async()=>{}};
       if(request==='./db/seed')return {runSeed:async()=>{}};
       if(request==='./db/exercises-seed')return {seedExercises:async()=>{}};
+      // This route exports a factory. Load it unchanged: construction performs
+      // no database acquisition, worker creation, or provider request.
+      if(request==='./routes/pushSetup')return original.apply(this,arguments);
       if(request.startsWith('./routes/'))return express.Router();
       if(request==='./services/stravaEventWorker')return {createStravaEventWorker:()=>{claims++;throw Error('production factory forbidden');}};
     }
