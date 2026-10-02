@@ -9,7 +9,7 @@ const https = require('node:https');
 const tls = require('node:tls');
 const { execFileSync } = require('node:child_process');
 const webpush = require('web-push');
-const { createWebPushTransport, validateEndpoint, publicAddress, expiredEndpoint, DEADLINE_MS } = require('../src/services/webPushTransport');
+const { createWebPushTransport, createSetupExpiryAuthority, validateEndpoint, publicAddress, expiredEndpoint, DEADLINE_MS } = require('../src/services/webPushTransport');
 
 const vapidDetails = { ...webpush.generateVAPIDKeys(), subject: 'mailto:synthetic@example.invalid' };
 const ecdh = createECDH('prime256v1'); ecdh.generateKeys();
@@ -63,6 +63,26 @@ async function rejectsCode(promise, code) {
 }
 
 async function main() {
+  for(const options of [{setupExpiryAuthority:{}},{setupExpiryAuthority:300},{ttl:1},{expiresAt:Date.now()+300000}]) {
+    const f=fixture();await rejectsCode(createWebPushTransport(f)(subscription,payload,{vapidDetails,...options}),'WEB_PUSH_SETUP_AUTHORITY_INVALID');
+    assert.equal(f.seen.resolutions.length,0);assert.equal(f.seen.requests.length,0);
+  }
+  for(const remaining of [1,7999]) {
+    const f=fixture(),clock=fakeClock();
+    await rejectsCode(createWebPushTransport({...f,...clock})(subscription,payload,{vapidDetails,setupExpiryAuthority:createSetupExpiryAuthority(0,remaining)}),'WEB_PUSH_SETUP_EXPIRED');
+    assert.equal(f.seen.resolutions.length,0);assert.equal(f.seen.requests.length,0);
+  }
+  for(const [remaining,ttl] of [[8000,0],[8999,0],[9000,1],[300000,292]]) {
+    const f=fixture(),clock=fakeClock();
+    await createWebPushTransport({...f,...clock})(subscription,payload,{vapidDetails,setupExpiryAuthority:createSetupExpiryAuthority(0,remaining)});
+    assert.equal(Number(f.seen.requests[0].headers.TTL),ttl);assert.equal(f.seen.requests.length,1);assert.equal(clock.timers.size,0);
+  }
+  {
+    const f=fixture(),clock=fakeClock();
+    await rejectsCode(createWebPushTransport({...f,...clock})(subscription,payload,{vapidDetails,setupExpiryAuthority:createSetupExpiryAuthority(0,9000),beforeSend:async()=>{clock.advance(8000);return true;}}),'WEB_PUSH_TIMEOUT');
+    assert.equal(f.seen.requests.length,0);
+  }
+  for(const malformed of [[-1,300000],[0,0],[0,300001],[0,Infinity],[0,1.5]])assert.throws(()=>createSetupExpiryAuthority(...malformed),/WEB_PUSH_SETUP_AUTHORITY_INVALID/);
   // Independent boundary table covering the union of both complete IANA
   // special-purpose registries (2025-10-09), including reachable exceptions.
   // Parent ranges intentionally cover their more-specific registry entries.

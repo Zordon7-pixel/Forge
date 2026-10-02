@@ -10,6 +10,17 @@ const webpush = require('web-push');
 const DEADLINE_MS = 8000;
 const RESPONSE_BYTES = 8192;
 const httpFailures = new WeakSet();
+const setupExpiries = new WeakMap();
+// Internal server authority, never a route/body TTL or wall-clock deadline.
+function createSetupExpiryAuthority(observedBeforeMs, remainingMs) {
+  if (!Number.isFinite(observedBeforeMs) || observedBeforeMs < 0
+    || !Number.isSafeInteger(remainingMs) || remainingMs <= 0 || remainingMs > 300000) {
+    throw failure('WEB_PUSH_SETUP_AUTHORITY_INVALID');
+  }
+  const authority = Object.freeze(Object.create(null));
+  setupExpiries.set(authority, observedBeforeMs + remainingMs);
+  return authority;
+}
 function failure(code, statusCode) {
   const error = new Error(code);
   error.code = code;
@@ -73,7 +84,8 @@ function publicAddress(address) {
 // Dependency injection is an internal synthetic-test seam, never request options.
 function createWebPushTransport({ resolverFactory = () => new dns.Resolver(), request = https.request,
   now = () => performance.now(), schedule = setTimeout, unschedule = clearTimeout } = {}) {
-  return function send(subscription, payload, { vapidDetails, signal, beforeSend } = {}) {
+  return function send(subscription, payload, options = {}) {
+    const { vapidDetails, signal, beforeSend, setupExpiryAuthority } = options;
     const started = now();
     return new Promise((resolve, reject) => {
       let settled = false, timer, resolver, req, response, agent;
@@ -106,15 +118,26 @@ function createWebPushTransport({ resolverFactory = () => new dns.Resolver(), re
       deadline();
       (async () => {
         try {
+          if (Object.keys(options).some(key => !['vapidDetails','signal','beforeSend','setupExpiryAuthority'].includes(key))
+            || (setupExpiryAuthority !== undefined && !setupExpiries.has(setupExpiryAuthority))) {
+            throw failure('WEB_PUSH_SETUP_AUTHORITY_INVALID');
+          }
+          const setupDeadline = setupExpiryAuthority === undefined ? null : setupExpiries.get(setupExpiryAuthority);
+          const checkExpiry = () => {
+            if (setupDeadline !== null && (setupDeadline < started + DEADLINE_MS || now() >= setupDeadline)) {
+              throw failure('WEB_PUSH_SETUP_EXPIRED');
+            }
+          };
+          checkExpiry();
           const target = validateEndpoint(subscription?.endpoint);
           if (typeof payload !== 'string' || Buffer.byteLength(payload) > 4096) throw failure('WEB_PUSH_PAYLOAD_INVALID');
           // The installed library owns encryption and VAPID generation. Never use its sender.
           let details;
-          try {
+          const generate = ttl => { try {
             if (!vapidDetails?.publicKey || !vapidDetails?.privateKey || !vapidDetails?.subject) throw new Error('missing configuration');
-            details = webpush.generateRequestDetails(subscription, payload, { vapidDetails, TTL: 300 });
-          }
-          catch { throw failure('WEB_PUSH_REQUEST_INVALID'); }
+            return webpush.generateRequestDetails(subscription, payload, { vapidDetails, TTL: ttl });
+          } catch { throw failure('WEB_PUSH_REQUEST_INVALID'); } };
+          if (setupDeadline === null) details = generate(300);
           if (!alive()) return;
           resolver = resolverFactory();
           const lookup = family => new Promise((yes, no) => {
@@ -132,6 +155,10 @@ function createWebPushTransport({ resolverFactory = () => new dns.Resolver(), re
           const address = addresses[0], family = isIP(address);
           if (beforeSend && await beforeSend() !== true) throw failure('WEB_PUSH_TARGET_STALE');
           if (!alive()) return;
+          checkExpiry();
+          if (setupDeadline !== null) details = generate(Math.min(300, Math.floor((setupDeadline - (started + DEADLINE_MS)) / 1000)));
+          if (!alive()) return;
+          checkExpiry();
           const pinnedLookup = (hostname, options, callback) => {
             if (typeof options === 'function') { callback = options; options = {}; }
             if (hostname !== target.host) { callback(failure('WEB_PUSH_DNS_UNSAFE')); return; }
@@ -162,10 +189,12 @@ function createWebPushTransport({ resolverFactory = () => new dns.Resolver(), re
           });
           req.on('error', () => finish(failure('WEB_PUSH_NETWORK_FAILED')));
           if (!alive()) { req.destroy(); return; }
+          checkExpiry();
           req.end(details.body);
         } catch (error) {
           const allowed = ['WEB_PUSH_ENDPOINT_INVALID','WEB_PUSH_PAYLOAD_INVALID','WEB_PUSH_REQUEST_INVALID',
-            'WEB_PUSH_DNS_FAILED','WEB_PUSH_DNS_UNSAFE','WEB_PUSH_TARGET_STALE'];
+            'WEB_PUSH_DNS_FAILED','WEB_PUSH_DNS_UNSAFE','WEB_PUSH_TARGET_STALE',
+            'WEB_PUSH_SETUP_AUTHORITY_INVALID','WEB_PUSH_SETUP_EXPIRED'];
           finish(failure(allowed.includes(error?.code) ? error.code : 'WEB_PUSH_NETWORK_FAILED'));
         }
       })();
@@ -173,5 +202,5 @@ function createWebPushTransport({ resolverFactory = () => new dns.Resolver(), re
   };
 }
 
-module.exports = { createWebPushTransport, send: createWebPushTransport(), validateEndpoint, publicAddress, expiredEndpoint, configurationFailure,
+module.exports = { createWebPushTransport, createSetupExpiryAuthority, send: createWebPushTransport(), validateEndpoint, publicAddress, expiredEndpoint, configurationFailure,
   DEADLINE_MS, RESPONSE_BYTES };

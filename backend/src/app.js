@@ -32,6 +32,10 @@ app.use((_req, res, next) => {
 // Trust Railway's reverse proxy so express-rate-limit can read X-Forwarded-For correctly
 app.set('trust proxy', 1);
 
+// Self-contained POST-only setup must terminate before broad CORS, the general
+// JSON parser and the SPA. This does not start any background worker.
+app.use('/push-setup/v1', require('./routes/pushSetup').createPushSetupRouter());
+
 // Frontend static files served AFTER API routes to avoid intercepting /api/* paths
 const dist = path.join(__dirname, '../../frontend/dist');
 
