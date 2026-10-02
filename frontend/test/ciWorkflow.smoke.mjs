@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import vm from 'node:vm'
 import YAML from 'yaml'
+import serviceWorkerConfig from '../playwright.service-worker.config.mjs'
 
 const read = path => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8')
 const source = read('../../.github/workflows/forge-qa.yml')
@@ -107,7 +108,13 @@ assert.equal(frontendScripts['test:e2e:sw'], 'playwright test --config=playwrigh
 for (const name of ['compact-mobile-320', 'iphone-17']) assert(normalConfig.includes(`name: '${name}'`))
 assert(normalConfig.includes('retries: process.env.CI ? 1 : 0'))
 assert(normalConfig.includes('forbidOnly: Boolean(process.env.CI)'))
-assert(swConfig.includes("testMatch: 'serviceWorker.spec.mjs'"))
+const validateServiceWorkerSuites = config => assert.deepEqual(config.testMatch, ['serviceWorker.spec.mjs', 'pushSetup.spec.mjs'])
+validateServiceWorkerSuites(serviceWorkerConfig)
+for (const testMatch of [
+  ['serviceWorker.spec.mjs'], ['pushSetup.spec.mjs'],
+  ['serviceWorker.spec.mjs', 'pushSetup.spec.mjs', 'pushSetup.spec.mjs'],
+  ['serviceWorker.spec.mjs', 'pushSetup.spec.mjs', 'extra.spec.mjs'],
+]) assert.throws(() => validateServiceWorkerSuites({ ...serviceWorkerConfig, testMatch }))
 
 // Byte-for-byte protection for the native job and live-shell revision semantics.
 const native = source.slice(source.indexOf('  ios-native-compile:'), source.indexOf('  production-shell-qa:'))
