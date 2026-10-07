@@ -30,6 +30,7 @@ export function createPushSetupCoordinator({ readConfig, onChange = () => {} }) 
   let generation = 0, disposed = false, busy = false, operation = null, handshake = null, configuration = null
   let nextSecret = null, confirmation = null, confirmed = null, recoveryRevoke = false
   let expiryTimer = null
+  let awaitingFirstController = typeof navigator !== 'undefined' && Boolean(navigator.serviceWorker) && !navigator.serviceWorker.controller
   let snapshot = { state: 'checking', supported: true, configured: false, busy: false, proofAvailable: false }
   const requests = new Set(), ports = new Set()
   const current = () => !disposed && isAuthSessionCurrent(session) && epoch && getPushSetupAuthEpoch() === epoch
@@ -151,7 +152,14 @@ export function createPushSetupCoordinator({ readConfig, onChange = () => {} }) 
   }
   const unsubscribe = subscribeAuthSession(() => interrupt())
   const unsubscribeEpoch = subscribePushSetupEpoch(() => interrupt())
-  const workerChange = () => interrupt()
+  const workerChange = () => {
+    // The settings control may mount before the first worker claims this page.
+    // Re-sample that initial read only; never resume an established setup flow.
+    const initialize = awaitingFirstController && navigator.serviceWorker.controller && !handshake && !operation && !busy
+    awaitingFirstController = false
+    interrupt()
+    if (initialize && current()) void init()
+  }
   const pageHide = () => { generation++; clearExpiry(); eraseSecrets(); for (const abort of requests) abort.abort(); for (const cancel of [...ports]) cancel(); busy = false; terminal('verification-required') }
   const pageShow = event => { if (event.persisted && current()) void init() }
   const proofMessage = (event) => {

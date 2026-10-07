@@ -270,6 +270,36 @@ test('mounted settings remains truthful with browser presence and no eligible op
   expect(api.requestsFor('POST', '/push-setup/v1/issue-create')).toHaveLength(0)
 })
 
+test('mounted settings rechecks first worker control without reload or notification permission', async ({ page, context }) => {
+  const api = await installAuthenticatedApi({ addInitScript: page.addInitScript.bind(page), route: context.route.bind(context) }, { responses: [
+    ['GET /api/strava/status', { connected: false }],
+    ['GET /api/notifications/push/config', { configured: true, publicKey: 'BA' }],
+  ] })
+  await page.addInitScript(() => {
+    // Hold first registration until the mounted control has observed no worker.
+    // This forces the CI ordering with the real worker and real PushManager.
+    const register = navigator.serviceWorker.register.bind(navigator.serviceWorker)
+    const released = new Promise(resolve => { window.__releaseFirstWorker = resolve })
+    navigator.serviceWorker.register = async (...args) => { await released; return register(...args) }
+  })
+  await page.goto('/more')
+  const permissionBefore = await page.evaluate(() => Notification.permission)
+  expect(permissionBefore).not.toBe('granted')
+  await page.getByText('Data & alerts', { exact: true }).click()
+  await expect(page.getByText('Update Forge to finish enabling notifications. Your notification settings have not changed.', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => navigator.serviceWorker.controller)).toBeNull()
+  await page.evaluate(() => window.__releaseFirstWorker())
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => true))
+  await expect(page.getByText('This browser is not subscribed. Previous server setup, if any, cannot be verified here.', { exact: true })).toBeVisible()
+  expect(await page.evaluate(async () => ({
+    controlled: Boolean(navigator.serviceWorker.controller),
+    permission: Notification.permission,
+    subscription: await (await navigator.serviceWorker.ready).pushManager.getSubscription(),
+  }))).toEqual({ controlled: true, permission: permissionBefore, subscription: null })
+  expect(api.unexpectedRequests).toEqual([])
+  expect(api.requestsFor('POST', '/push-setup/v1/issue-create')).toHaveLength(0)
+})
+
 test('mounted pending settings protects reload and controller change never reports enabled', async ({ page, context }) => {
   await context.grantPermissions(['notifications'])
   await installAuthenticatedApi({ addInitScript: page.addInitScript.bind(page), route: context.route.bind(context) }, { responses: [

@@ -15,7 +15,7 @@ window.PushManager = class {}
 window.Notification = globalThis.Notification = { permission: 'granted', requestPermission: async () => 'granted' }
 const session = { token: 'synthetic-session', generation: 0 }, epoch = randomUUID()
 const listeners = new Set(), rows = new Map(), calls = [], states = []
-let current = true, responseHook, configHook, unsubscribes = 0, confirmCalls = 0, statusState = 'RESERVED'
+let current = true, responseHook, configHook, stateHook, unsubscribes = 0, confirmCalls = 0, statusState = 'RESERVED'
 const subscription = { endpoint: 'https://fcm.googleapis.com/synthetic', keys: { p256dh: 'public-test-key', auth: 'test-auth' } }
 const controller = { postMessage(message, ports) {
   const port = ports?.[0]
@@ -65,7 +65,7 @@ globalThis.fetch = async (url, config) => {
   else throw Error('Unexpected action')
   return new Response(JSON.stringify(result), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
-const make = () => createPushSetupCoordinator({ readConfig: async () => { await configHook?.(); return { configured: true, publicKey: 'BA' } }, onChange: s => states.push(s) })
+const make = () => createPushSetupCoordinator({ readConfig: async () => { await configHook?.(); return { configured: true, publicKey: 'BA' } }, onChange: s => { states.push(s); stateHook?.(s) } })
 
 let flow = make()
 await flow.init(); assert.equal(calls.length, 0); assert.equal(flow.snapshot().state, 'browser-subscription-present-server-unverified')
@@ -137,5 +137,39 @@ await flow.enable()
 releaseConfig(); await oldInit
 assert.equal(flow.snapshot().state, 'setup-pending'); assert.equal(rows.size, 1)
 configHook = null; flow.dispose()
+await new Promise(resolve => setImmediate(resolve)) // Finish the preceding disposal's detached cancellation.
+
+// A control mounted before the first worker claim must re-sample read-only.
+// Exercise both a completed and a still-pending predecessor initialization.
+const getRegistration = serviceWorker.getRegistration
+serviceWorker.getRegistration = async () => ({ active: controller, scope: 'https://forge.test/', pushManager: { getSubscription: async () => null } })
+for (const pendingConfig of [false, true]) {
+  rows.clear(); calls.length = 0; states.length = 0; serviceWorker.controller = null
+  let configReads = 0, release
+  configHook = () => {
+    if (++configReads === 1 && pendingConfig) return new Promise(resolve => { release = resolve })
+  }
+  flow = make()
+  const predecessor = flow.init()
+  if (!pendingConfig) { await predecessor; assert.equal(flow.snapshot().state, 'update-required') }
+  let timer
+  const sampled = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(Error('First controller did not trigger a fresh subscription sample')), 2000)
+    stateHook = state => { if (state.state === 'browser-subscription-absent-server-unverified') resolve() }
+  })
+  serviceWorker.controller = controller
+  serviceWorker.dispatchEvent(new Event('controllerchange'))
+  try { await sampled } finally { clearTimeout(timer); stateHook = null }
+  assert.equal(flow.snapshot().state, 'browser-subscription-absent-server-unverified')
+  assert.equal(configReads, 2)
+  if (release) { release(); await predecessor }
+  assert.equal(flow.snapshot().state, 'browser-subscription-absent-server-unverified', 'the interrupted predecessor cannot overwrite the fresh sample')
+  assert.deepEqual(calls, [], 'first control cannot issue, confirm, revoke or cancel')
+  serviceWorker.dispatchEvent(new Event('controllerchange'))
+  assert.equal(flow.snapshot().state, 'verification-required', 'later controller changes still fence the flow')
+  assert.equal(configReads, 2, 'later changes cannot automatically resume setup')
+  flow.dispose()
+}
+serviceWorker.getRegistration = getRegistration; configHook = null
 assert.equal(listeners.size, 0)
 console.log('PUSH SETUP real coordinator synthetic-boundary gesture/order/response-loss/secret/revoke/controller tests PASS')
