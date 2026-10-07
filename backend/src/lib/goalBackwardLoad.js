@@ -211,8 +211,12 @@ function resolveSession(session = {}, index = 0) {
 function aggregateWeeklyStress(sessions = []) {
   const source = Array.isArray(sessions) ? sessions : [];
   const resolved = source.map(resolveSession);
+  return aggregateResolvedStress(resolved, Array.isArray(sessions));
+}
+
+function aggregateResolvedStress(resolved, validCollection = true) {
   const violations = resolved.filter((entry) => !entry.valid).map((entry) => entry.violation);
-  if (!Array.isArray(sessions)) violations.push({ code: 'INVALID_SESSION_COLLECTION' });
+  if (!validCollection) violations.push({ code: 'INVALID_SESSION_COLLECTION' });
   const grouped = new Map();
   for (const entry of resolved) {
     if (!entry.valid) continue;
@@ -264,6 +268,32 @@ function aggregateWeeklyStress(sessions = []) {
       violation.code === 'WORKOUT_FAMILY_UNRESOLVED' ? 'WORKOUT_FAMILY_UNRESOLVED' : 'CROSS_MODAL_FATIGUE_LIMIT'
     )))],
   };
+}
+
+// Evaluate overlapping calendar windows in one pass over the prescriptions.
+// Nothing survives this invocation: each call revalidates current dose/hash
+// inputs, and callers cannot supply previously resolved or trusted stress.
+function evaluateStressWindows(sessions, windows) {
+  const source = Array.isArray(sessions) ? sessions : [];
+  const resolved = source.map(resolveSession);
+  return windows.map(window => {
+    const entries = source.flatMap((session, index) => {
+      const date = session?.scheduled_local_date;
+      if (window.start_date && !(date >= window.start_date && date <= window.end_date)
+        || window.exclude_rest && session?.workout_family === 'rest') return [];
+      return [{ source: session, resolved: resolved[index] }];
+    }).map((entry, index) => {
+      // Legacy anonymous-session IDs are relative to each filtered collection.
+      const s = entry.source || {};
+      if (s.session_id !== undefined && s.session_id !== null
+        || s.sessionId !== undefined && s.sessionId !== null
+        || s.id !== undefined && s.id !== null) return entry.resolved;
+      const key = entry.resolved.valid ? 'session' : 'violation';
+      return { ...entry.resolved, [key]: { ...entry.resolved[key], session_id: `session-${index + 1}` } };
+    });
+    const aggregate = aggregateResolvedStress(entries, Array.isArray(sessions));
+    return { aggregate, rolling: (window.rolling_options || []).map(options => validateRollingAggregate(aggregate, options)) };
+  });
 }
 
 function integerMedian(values = []) {
@@ -469,7 +499,10 @@ function rollingWindow(days, startDate) {
 }
 
 function validateRollingHardDays(sessions = [], options = {}) {
-  const aggregate = aggregateWeeklyStress(sessions);
+  return validateRollingAggregate(aggregateWeeklyStress(sessions), options);
+}
+
+function validateRollingAggregate(aggregate, options) {
   if (!aggregate.valid) {
     return {
       valid: false,
@@ -653,6 +686,7 @@ function buildGoalBackwardWorkloadEvidence(input = {}) {
 
 module.exports = {
   aggregateWeeklyStress,
+  evaluateStressWindows,
   buildGoalBackwardWorkloadEvidence,
   calculateFatigueCeilings,
   evaluateStressBudget,

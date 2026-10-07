@@ -191,3 +191,99 @@ for (const mutate of [s => { delete s.running_dose_accounting_version; }, s => {
   assert.equal(resolveSessionStress(changed).valid, false, 'Malformed canonical allocation cannot lower load');
 }
 console.log('PROGRAM DOSE POLICY UNIT CHECKS OK: canonical strength partition, full reference, monotonicity, downgrade/tamper and easy actual-dose consumers');
+
+
+// Overlapping windows must not repeat prescription validation per date/event.
+// Compare the batched evaluation with the independent single-window APIs,
+// including invalid graphs, anonymous IDs, boundary dates and fresh mutations.
+const { evaluateStressWindows, validateRollingHardDays } = require('../src/lib/goalBackwardLoad');
+const { addDays } = require('../src/lib/racePlanPolicy');
+const stressWindows = [
+  { rolling_options: [{}, { event_local_date: '2026-09-14', training_age_class: 'ESTABLISHED', spacing_valid: true }] },
+  ...Array.from({ length: 7 }, (_, i) => ({ start_date: addDays('2026-09-08', i - 6), end_date: addDays('2026-09-08', i), exclude_rest: true })),
+];
+function compareStressWindows(sessions) {
+  const actual = evaluateStressWindows(sessions, stressWindows);
+  stressWindows.forEach((window, index) => {
+    const subset = sessions.filter(s => (!window.start_date || s?.scheduled_local_date >= window.start_date && s?.scheduled_local_date <= window.end_date)
+      && (!window.exclude_rest || s?.workout_family !== 'rest'));
+    assert.deepEqual(actual[index].aggregate, aggregateWeeklyStress(subset));
+    assert.deepEqual(actual[index].rolling, (window.rolling_options || []).map(options => validateRollingHardDays(subset, options)));
+  });
+  return actual;
+}
+const windowSources = [small, full, lower,
+  { workout_family: 'race', scheduled_local_date: '2026-09-14' },
+  { workout_family: 'rest', scheduled_local_date: '2026-09-08' },
+  { workout_family: 'unknown', scheduled_local_date: '2026-09-09' },
+  { workout_family: 'easy_run', scheduled_local_date: 'invalid' }, null];
+compareStressWindows(windowSources);
+const mutableDose = structuredClone(small);
+const validWindows = compareStressWindows([mutableDose]);
+mutableDose.steps[0].target.duration_s += 60;
+const invalidWindows = compareStressWindows([mutableDose]);
+assert.equal(validWindows[0].aggregate.valid, true);
+assert.equal(invalidWindows[0].aggregate.valid, false, 'A later call must authenticate the current prescription, never a retained result');
+const inheritedDose = Object.freeze(Object.create(structuredClone(small)));
+compareStressWindows([inheritedDose]);
+Object.getPrototypeOf(inheritedDose).running_dose.pool_hash = 'tampered';
+assert.equal(compareStressWindows([inheritedDose])[0].aggregate.valid, false);
+
+// Exercise the production placement seam: one session, seven overlapping
+// trailing windows and two owned events still resolve its dose exactly once.
+const { validateAdaptivePlacement } = require('../src/lib/adaptiveCoachingValidation');
+const placedRun = structuredClone(small);
+placedRun.scheduled_start_at = '2026-09-08T06:00:00Z';
+placedRun.content_hash = canonicalWorkoutHash(placedRun);
+const policy = { capacities: { run: 7, lift: 7 }, objectives: [],
+  dose_policy: { running_duration_ceiling_s: 100000, running_distance_ceiling_m: 100000 },
+  weekly_stress_budget: Array(8).fill(100),
+  owned_events: [{ event_local_date: '2026-09-13' }, { event_local_date: '2026-09-14' }] };
+const placementConstraints = { start_date: '2026-09-08', end_date: '2026-09-14', day_count: 7,
+  occupied_sessions: [], blocked_dates: [], locks: [], manual_edits: [], rolling_policy: policy,
+  run: [{ date: '2026-09-08', start_at: '2026-09-08T06:00:00Z', end_at: '2026-09-08T23:00:00Z' }], lift: [] };
+const placementState = { training_age_class: 'ESTABLISHED', recovery_state: 'NORMAL', safety_action: 'NORMAL',
+  adaptive_foundation: { max_session_minutes: 180 } };
+const originalRunningDose = running.runningPrescribedDose;
+let doseResolutions = 0;
+running.runningPrescribedDose = (...args) => { doseResolutions++; return originalRunningDose(...args); };
+try {
+  assert.equal(validateAdaptivePlacement([placedRun], placementConstraints, placementState, policy).valid, true);
+  assert.equal(doseResolutions, 1, 'Overlapping windows/events must share a single fresh validation pass');
+  placedRun.running_dose.pool_hash = 'tampered';
+  doseResolutions = 0;
+  assert.equal(validateAdaptivePlacement([placedRun], placementConstraints, placementState, policy).valid, false);
+  assert.equal(doseResolutions, 1, 'Every new placement call revalidates tampered input');
+} finally { running.runningPrescribedDose = originalRunningDose; }
+console.log('STRESS WINDOW REGRESSION OK: single fresh dose pass, legacy equivalence, tamper rejection');
+
+const { requiredInterferenceSeparations, longestRequiredSeparation } = require('../src/lib/goalBackwardValidators');
+const pairSources = [small, larger, lower, quality].map(s => structuredClone(s));
+for (const training_age_class of ['BEGINNER', 'ESTABLISHED']) {
+  const options = { training_age_class };
+  const expected = [];
+  for (let leftIndex = 0; leftIndex < pairSources.length; leftIndex++) {
+    for (let rightIndex = leftIndex + 1; rightIndex < pairSources.length; rightIndex++) {
+      expected.push({ leftIndex, rightIndex,
+        required: longestRequiredSeparation(pairSources[leftIndex], pairSources[rightIndex], options) });
+    }
+  }
+  assert.deepEqual(requiredInterferenceSeparations(pairSources, options), expected);
+}
+const sparsePairs = new Array(3); sparsePairs[1] = small;
+assert.deepEqual(requiredInterferenceSeparations(sparsePairs), [
+  { leftIndex: 0, rightIndex: 1, required: null },
+  { leftIndex: 0, rightIndex: 2, required: null },
+  { leftIndex: 1, rightIndex: 2, required: null },
+]);
+const runPairs = Array.from({ length: 4 }, () => structuredClone(small));
+doseResolutions = 0;
+running.runningPrescribedDose = (...args) => { doseResolutions++; return originalRunningDose(...args); };
+try {
+  assert.equal(requiredInterferenceSeparations(runPairs).length, 6);
+  assert.equal(doseResolutions, 4, 'Pair enumeration must classify each current prescription once, not twice per pair');
+  doseResolutions = 0;
+  validateInterference(runPairs);
+  assert.equal(doseResolutions, 4, 'The production interference validator must use linear classification');
+} finally { running.runningPrescribedDose = originalRunningDose; }
+console.log('INTERFERENCE REGRESSION OK: pair equivalence and linear prescription classification');
