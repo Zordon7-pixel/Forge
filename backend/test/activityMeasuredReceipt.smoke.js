@@ -215,6 +215,26 @@ async function main() {
     }
     assert.equal(prepared.foundation.athlete_state.adaptive_foundation.completion_pairs.length,3);
     const pairs = prepared.foundation.athlete_state.adaptive_foundation.completion_pairs;
+    const measuredSource = prepareInput.source.snapshot.physical_sources.measured_receipts;
+    const historyOnly = receipts.pairs(measuredSource, null, prepareInput.source.snapshot, prepareInput.historicalEvidence);
+    const pairHash = values => canonicalHash([...values].sort((a,b)=>a.prescribed_session.session_id.localeCompare(b.prescribed_session.session_id)));
+    assert.equal(pairHash(historyOnly), pairHash(pairs), 'historical identity pairs independent observed values without active authority');
+    assert.equal(pairHash(receipts.pairs(measuredSource, prepareInput.accepted, prepareInput.source.snapshot, prepareInput.historicalEvidence)), pairHash(pairs),
+      'active/history duplicate identity does not double a physical activity');
+    assert.equal(receipts.pairs(measuredSource, prepareInput.accepted, prepareInput.source.snapshot, {sets:[],sourceFailed:false}).length,0,
+      'active copy cannot bypass rejected historical acquisition');
+    for (const [field, value] of [['plan_id','wrong'],['plan_revision',99],['session_id','wrong'],
+      ['session_revision',99],['session_hash','0'.repeat(64)],['activity_kind','wrong']]) {
+      const altered = structuredClone(measuredSource);
+      altered.usable[0].payload.binding[field] = value;
+      assert.equal(receipts.pairs(altered, null, prepareInput.source.snapshot, prepareInput.historicalEvidence).length, 2,
+        `history pairing requires exact ${field}`);
+    }
+    assert.deepEqual(realPrepare({ ...prepareInput, accepted: null, acceptedReason: 'ACCEPTED_SOURCE_UNAVAILABLE' }).availability.occupied_sessions, [],
+      'historical identity cannot supply active occupancy');
+    assert.equal(realPrepare({ ...prepareInput, accepted: null, acceptedReason: 'ACCEPTED_SOURCE_UNAVAILABLE' }).blockedReason,
+      'ACCEPTED_SOURCE_UNAVAILABLE', 'history never repairs invalid active authority');
+
     assert.equal(pairs.find(p=>p.prescribed_session.workout_family==='threshold_run').observation.observed_work_duration_s,1140);
     assert.equal(pairs.find(p=>p.prescribed_session.kind==='lift').observation.observed_duration_s,4500);
     assert.equal(prepared.foundation.artifacts[0].payload_json.physical_sources.measured_receipts.rows.length,3);

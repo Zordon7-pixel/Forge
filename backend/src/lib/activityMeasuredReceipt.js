@@ -171,11 +171,27 @@ async function load({ tx, userId, observationInstant, sessionScope = null }) {
   }
   return { rows, chain_receipts, bindings, usable };
 }
-function pairs(receipts, accepted, snapshot) {
-  const out = [];
+function pairs(receipts, accepted, snapshot, historicalEvidence = null) {
+  const out = [], physicalIds = new Set();
+  // Generation's history acquisition is authoritative for measured identity,
+  // including rejections. An active copy cannot bypass an ambiguous/missing
+  // history match. Other internal callers retain single-set compatibility.
+  const sets = historicalEvidence
+    ? (historicalEvidence.sourceFailed ? [] : historicalEvidence.sets || []) : accepted ? [accepted] : [];
+  const identities = new Map();
+  for (const set of sets) {
+    const key = JSON.stringify([set.plan_id, set.plan_revision]);
+    if (!identities.has(key)) identities.set(key, new Map());
+    // The active set may also appear in history. Only identical copies collapse.
+    identities.get(key).set(canonicalHash(set), set);
+  }
   for (const { row, payload } of receipts?.usable || []) {
     let session;
-    try { session = linked(payload.binding, accepted); } catch { continue; }
+    const unique = [...(identities.get(JSON.stringify([payload.binding.plan_id, payload.binding.plan_revision]))?.values() || [])];
+    if (unique.length !== 1) continue;
+    try { session = linked(payload.binding, unique[0]); } catch { continue; }
+    const physicalId = `${row.activity_kind}:${row.activity_id}`;
+    if (physicalIds.has(physicalId)) continue;
     const actual = payload.actual;
     const protectedRun = ['threshold_run','interval_run','race_rhythm_run','steady_run','long_aerobic'].includes(session.workout_family);
     const complete = payload.completeness === 'COMPLETE' && (!protectedRun || positive(actual.work_duration_s));
@@ -185,6 +201,7 @@ function pairs(receipts, accepted, snapshot) {
     if (row.activity_kind === 'run' && (!activity || activity.evidence_ids.length !== 1 || activity.quality_state !== 'COMPLETE'
       || activity.correction_evidence_ids?.length || Math.abs(activity.duration_s - actual.duration_s) > 1
       || Math.abs(activity.distance_m - actual.distance_m) > 2)) continue;
+    physicalIds.add(physicalId);
     out.push({ prescribed_session: session, observation: { athlete_id: row.user_id,
       linked_session_id: session.session_id, evidence_id: row.activity_kind === 'run' ? row.activity_id : row.id,
       source_evidence_ids: row.activity_kind === 'run' ? [row.activity_id] : [row.id],
