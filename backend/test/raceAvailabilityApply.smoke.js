@@ -163,8 +163,25 @@ async function main() {
  assert.equal((await plans.applyPlanCandidate(f.owner,on.id,applyBody,options('on'))).replay,true);
  assert.deepEqual(snapshot(),oldApplied);
  db.prepare('UPDATE plan_generation_candidates SET planning_snapshot_json=? WHERE id=? AND user_id=?').run(stored,on.id,f.owner);
- await assert.rejects(plans.previewPlanForUser(f.owner,weekly,options('on')),e=>e.details?.reason_code==='CANONICAL_STRENGTH_LINK_ABSENT');
+ const retainedPairs=prepared.foundation.athlete_state.adaptive_foundation.completion_pairs;
+ prepared=null;result=null; // Require fresh post-replacement diagnostics, not the preceding apply's result.
+ await assert.rejects(plans.previewPlanForUser(f.owner,weekly,options('on')),{
+  code:'GOAL_BACKWARD_GENERATION_FAILED',status:409,details:{reason_code:'REQUIRED_EXPOSURE_UNPLACEABLE'},
+ });
+ const pairs=prepared.foundation.athlete_state.adaptive_foundation.completion_pairs;
+ assert.equal(pairs.length,3);assert.deepEqual(pairs,retainedPairs);
+ assert.deepEqual(pairs.map(p=>p.prescribed_session).sort((a,b)=>a.session_id.localeCompare(b.session_id)),
+  [...f.set.sessions].sort((a,b)=>a.session_id.localeCompare(b.session_id)));
+ assert.ok(pairs.every(p=>p.observation.measured_receipt_id && p.observation.quality_state==='COMPLETE'));
+ assert.equal(prepared.source_support.source_limited,false);
+ assert.deepEqual(prepared.source_support.limits.find(l=>l.objective==='strength_prescription_completion'),{
+  objective:'strength_prescription_completion',required:true,status:'SUPPORTED',reason_code:'MEASURED_STRENGTH_LINKED',
+  measurement_scope:'TOTAL_SET_CAP_AND_ACCEPTED_REPERTOIRE',individual_exercise_completion_verified:false,
+ });
+ assert.equal(prepared.blockedReason,null);
+ assert.equal(result.applicable,false);assert.equal(result.status,'INFEASIBLE');
+ assert.ok(result.deferred_objectives.some(o=>o.role==='PRIMARY_KEY' && o.reason_codes.includes('REQUIRED_EXPOSURE_UNPLACEABLE')));
  assert.deepEqual(snapshot(),after);
- console.log('race availability weekly real 4+4 apply, guards, rollback, replay passed; post-replacement source limitation retained');
+ console.log('race availability weekly real 4+4 apply, guards, rollback, replay passed; post-replacement measured history and strength support retained; separate scheduling rejection writes nothing');
 }
 if(require.main===module) main().catch(e=>{console.error(e);process.exitCode=1;}).finally(close);
