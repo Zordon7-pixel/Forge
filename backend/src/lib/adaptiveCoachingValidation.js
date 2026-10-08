@@ -1,6 +1,6 @@
 const { capacitiesFor } = require('./adaptiveCoachingObjectives');
-const { aggregateWeeklyStress, evaluateStressBudget, validateRollingHardDays } = require('./goalBackwardLoad');
-const { validateGoalBackwardCandidate, validateInterference, validateConstraints, longestRequiredSeparation } = require('./goalBackwardValidators');
+const { evaluateStressWindows, evaluateStressBudget } = require('./goalBackwardLoad');
+const { validateGoalBackwardCandidate, validateInterference, validateConstraints, requiredInterferenceSeparations } = require('./goalBackwardValidators');
 const { validateCanonicalSession } = require('./canonicalWorkout');
 const { addDays, daysBetween, canonicalHash } = require('./racePlanPolicy');
 const { EXERCISES_BY_ID } = require('./strengthDoseAccounting');
@@ -59,14 +59,14 @@ function validateAdaptivePlacement(sessions, constraints, state, weeklyObjective
   }
   const active = all.filter(s => s.workout_family !== 'rest');
   if (new Set(all.map(s => s.session_id)).size !== all.length) violations.push({ code: 'DUPLICATE_SESSION_ID' });
-  for (let i = 0; i < active.length; i++) for (let j = i + 1; j < active.length; j++) {
+  for (const { leftIndex: i, rightIndex: j, required: separation } of requiredInterferenceSeparations(active, { training_age_class: state.training_age_class })) {
     const a = active[i], b = active[j];
     // Existing neighboring work constrains the candidate, but cannot be repaired here.
     if (i < constraints.occupied_sessions.length && j < constraints.occupied_sessions.length) continue;
     const [first, second] = Date.parse(a.scheduled_start_at) <= Date.parse(b.scheduled_start_at) ? [a, b] : [b, a];
     const hours = (Date.parse(second.scheduled_start_at) - Date.parse(first.scheduled_start_at) - duration(first) * 1000) / 3600000;
     const same = first.scheduled_local_date === second.scheduled_local_date;
-    const physiologicalMinimum = longestRequiredSeparation(first, second, { training_age_class: state.training_age_class })?.hours || 0;
+    const physiologicalMinimum = separation?.hours || 0;
     const required = Math.max(physiologicalMinimum, demanding(first) && demanding(second) ? 48
       : (lowerBody(first) && demanding(second) || lowerBody(second) && demanding(first)) ? 24
         : same ? 6 : 0);
@@ -96,25 +96,35 @@ function validateAdaptivePlacement(sessions, constraints, state, weeklyObjective
     recovery_state: state.recovery_state, safety_action: state.safety_action,
     mandatory_hyrox_cluster: weeklyObjectives.objectives.some(o => o.candidate_families.includes('hyrox_partial_simulation')) };
   const interference = validateInterference(all, options);
-  const rollingResults = [validateRollingHardDays(all, { ...options, spacing_valid: interference.valid }),
-    ...(weeklyObjectives.owned_events || []).map(goal => validateRollingHardDays(all, { ...options,
+  const rollingOptions = [{ ...options, spacing_valid: interference.valid },
+    ...(weeklyObjectives.owned_events || []).map(goal => ({ ...options,
       spacing_valid: interference.valid, event_local_date: goal.event_local_date,
       athlete_id: state.athlete_id, active_goals: weeklyObjectives.owned_events }))];
+  const trailingWindows = constraints.rolling_policy
+    ? Array.from({ length: constraints.day_count }, (_, i) => {
+      const date = addDays(constraints.start_date, i);
+      return { start_date: addDays(date, -6), end_date: date, exclude_rest: true };
+    }) : [];
+  const [whole, current, ...trailingStress] = evaluateStressWindows(all, [
+    { rolling_options: rollingOptions },
+    { start_date: constraints.start_date, end_date: constraints.end_date }, ...trailingWindows,
+  ]);
+  const rollingResults = whole.rolling;
   const rolling = { valid: rollingResults.every(r => r.valid), violations: rollingResults.flatMap(r => r.violations) };
-  const aggregate = aggregateWeeklyStress(all.filter(inWindow));
+  const aggregate = current.aggregate;
   const budget = evaluateStressBudget(aggregate, { normal_ceiling_vector: weeklyObjectives.weekly_stress_budget,
     authorized_ceiling_vector: weeklyObjectives.weekly_stress_budget });
   const occupiedDates = new Set(active.filter(inWindow).map(s => s.scheduled_local_date));
   if (occupiedDates.size === 7) violations.push({ code: 'REQUIRED_RECOVERY_DAY' });
   if (constraints.rolling_policy) {
     const policy = constraints.rolling_policy;
-    for (let date = constraints.start_date; date <= constraints.end_date; date = addDays(date, 1)) {
-      const trailing = active.filter(s => s.scheduled_local_date >= addDays(date, -6) && s.scheduled_local_date <= date);
+    for (const [index, window] of trailingWindows.entries()) {
+      const trailing = active.filter(s => s.scheduled_local_date >= window.start_date && s.scheduled_local_date <= window.end_date);
       for (const modality of ['run', 'lift']) if (trailing.filter(s => capacitiesFor(s.workout_family).includes(modality)).length > policy.capacities[modality]) violations.push({ code: 'FREQUENCY_IS_CAPACITY', modality });
       const runs = trailing.filter(s => capacitiesFor(s.workout_family).includes('run'));
       if (runs.reduce((n, s) => n + duration(s), 0) > policy.dose_policy.running_duration_ceiling_s
         || policy.dose_policy.running_distance_ceiling_m !== null && runs.reduce((n, s) => n + (s.running_distance_m ?? s.derived_totals.distance_m), 0) > policy.dose_policy.running_distance_ceiling_m) violations.push({ code: 'OBSERVED_RUNNING_DOSE_EXCEEDED' });
-      const stress = aggregateWeeklyStress(trailing);
+      const stress = trailingStress[index].aggregate;
       const rollingBudget = evaluateStressBudget(stress, { normal_ceiling_vector: policy.weekly_stress_budget, authorized_ceiling_vector: policy.weekly_stress_budget });
       violations.push(...stress.violations, ...rollingBudget.violations);
       if (new Set(trailing.map(s => s.scheduled_local_date)).size === 7) violations.push({ code: 'REQUIRED_RECOVERY_DAY' });

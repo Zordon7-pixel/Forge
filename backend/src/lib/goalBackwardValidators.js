@@ -319,8 +319,25 @@ function startTimeMillis(session) {
 }
 
 function longestRequiredSeparation(left, right, options = {}) {
-  const a = classifyInterferencePredicates(left);
-  const b = classifyInterferencePredicates(right);
+  return separationForPredicates(classifyInterferencePredicates(left), classifyInterferencePredicates(right), options);
+}
+
+// Pair enumeration classifies each current session once, then compares the
+// resulting predicates. No prescription or validation result is retained.
+function requiredInterferenceSeparations(sessions, options = {}) {
+  if (sessions.length < 2) return [];
+  const predicates = Array.from(sessions, classifyInterferencePredicates);
+  const pairs = [];
+  for (let leftIndex = 0; leftIndex < sessions.length; leftIndex++) {
+    for (let rightIndex = leftIndex + 1; rightIndex < sessions.length; rightIndex++) {
+      pairs.push({ leftIndex, rightIndex,
+        required: separationForPredicates(predicates[leftIndex], predicates[rightIndex], options) });
+    }
+  }
+  return pairs;
+}
+
+function separationForPredicates(a, b, options) {
   const policy = GOAL_BACKWARD_PLANNING_POLICY_V1.interference;
   const age = String(options.training_age_class || '').toUpperCase();
   const requirements = [];
@@ -414,37 +431,34 @@ function validateInterference(sessions = [], options = {}) {
       violations.push({ code: 'WORKOUT_FAMILY_UNRESOLVED', session_id: sessionId(session, index) });
     }
   });
-  for (let leftIndex = 0; leftIndex < source.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < source.length; rightIndex += 1) {
-      const left = source[leftIndex];
-      const right = source[rightIndex];
-      const required = longestRequiredSeparation(left, right, options);
-      if (!required) continue;
-      const leftStart = startTimeMillis(left);
-      const rightStart = startTimeMillis(right);
-      if (leftStart === null || rightStart === null) continue;
-      const actualHours = Math.abs(rightStart - leftStart) / 3600000;
-      if (actualHours >= required.hours) continue;
-      const intentional = left.intentional_stack === true || right.intentional_stack === true
-        || (options.intentional_stack_session_ids || []).includes(sessionId(left, leftIndex))
-        || (options.intentional_stack_session_ids || []).includes(sessionId(right, rightIndex));
-      if (intentional && sessionLocalDate(left) === sessionLocalDate(right)) {
-        const stackViolations = validateIntentionalStack(left, right, source, options);
-        if (!stackViolations.length) continue;
-        violations.push(...stackViolations.map((violation) => ({
-          ...violation,
-          session_ids: [sessionId(left, leftIndex), sessionId(right, rightIndex)],
-        })));
-        continue;
-      }
-      violations.push({
-        code: 'INTERFERENCE_SPACING',
-        rule: required.rule,
+  for (const { leftIndex, rightIndex, required } of requiredInterferenceSeparations(source, options)) {
+    const left = source[leftIndex];
+    const right = source[rightIndex];
+    if (!required) continue;
+    const leftStart = startTimeMillis(left);
+    const rightStart = startTimeMillis(right);
+    if (leftStart === null || rightStart === null) continue;
+    const actualHours = Math.abs(rightStart - leftStart) / 3600000;
+    if (actualHours >= required.hours) continue;
+    const intentional = left.intentional_stack === true || right.intentional_stack === true
+      || (options.intentional_stack_session_ids || []).includes(sessionId(left, leftIndex))
+      || (options.intentional_stack_session_ids || []).includes(sessionId(right, rightIndex));
+    if (intentional && sessionLocalDate(left) === sessionLocalDate(right)) {
+      const stackViolations = validateIntentionalStack(left, right, source, options);
+      if (!stackViolations.length) continue;
+      violations.push(...stackViolations.map((violation) => ({
+        ...violation,
         session_ids: [sessionId(left, leftIndex), sessionId(right, rightIndex)],
-        actual_separation_hours: actualHours,
-        minimum_separation_hours: required.hours,
-      });
+      })));
+      continue;
     }
+    violations.push({
+      code: 'INTERFERENCE_SPACING',
+      rule: required.rule,
+      session_ids: [sessionId(left, leftIndex), sessionId(right, rightIndex)],
+      actual_separation_hours: actualHours,
+      minimum_separation_hours: required.hours,
+    });
   }
   const unique = [...new Map(violations.map((violation) => [
     [violation.code, violation.rule, violation.reason, violation.scheduled_local_date, ...(violation.session_ids || [])].join(':'),
@@ -1712,6 +1726,7 @@ module.exports = {
   canonicalPrescriptionHash,
   classifyInterferencePredicates,
   longestRequiredSeparation,
+  requiredInterferenceSeparations,
   compareMaterialChange,
   validateGoalBackwardCandidate,
   validateGoalBackwardAdaptationCandidate,
