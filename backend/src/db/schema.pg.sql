@@ -795,6 +795,17 @@ CREATE TABLE IF NOT EXISTS activity_comments (
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS strava_tokens (
+  id SERIAL PRIMARY KEY,
+  user_id TEXT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  access_token TEXT,
+  refresh_token TEXT,
+  expires_at BIGINT,
+  athlete_id BIGINT,
+  athlete_name TEXT,
+  connected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

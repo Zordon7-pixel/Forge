@@ -13,11 +13,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deterministic-qa:
+  deterministic-support-qa:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Verify event checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git rev-parse HEAD
+          sha256sum backend/package-lock.json frontend/package-lock.json
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -29,8 +36,8 @@ jobs:
         run: |
           npm --prefix frontend ci
           npm --prefix backend ci
-      - name: Run deterministic smoke suites
-        run: npm run qa:smoke
+      - name: Run frontend smoke suite
+        run: npm --prefix frontend run test:smoke
       - name: Verify account-data coverage
         run: npm --prefix backend run check:account-data
       - name: Audit production dependencies
@@ -39,6 +46,94 @@ jobs:
           npm --prefix backend audit --audit-level=high
       - name: Build frontend
         run: npm --prefix frontend run build
+
+  backend-smoke-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: base-0
+            arguments: --ci-shard-index 0 --ci-shard-count 4
+          - label: base-1
+            arguments: --ci-shard-index 1 --ci-shard-count 4
+          - label: base-2
+            arguments: --ci-shard-index 2 --ci-shard-count 4
+          - label: base-3
+            arguments: --ci-shard-index 3 --ci-shard-count 4
+          - label: route-positive
+            arguments: --ci-route-positive
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Verify event checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git rev-parse HEAD
+          sha256sum backend/package-lock.json frontend/package-lock.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - name: Install dependencies
+        run: |
+          npm --prefix frontend ci
+          npm --prefix backend ci
+      - name: Run assigned backend invocations
+        run: |
+          mkdir -p "$RUNNER_TEMP/forge-smoke-receipts"
+          node backend/scripts/run-smoke-suite.js ${{ matrix.arguments }} --receipt "$RUNNER_TEMP/forge-smoke-receipts/${{ matrix.label }}.json"
+      - name: Upload exact backend receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-backend-smoke-${{ matrix.label }}-${{ github.sha }}
+          path: ${{ runner.temp }}/forge-smoke-receipts/${{ matrix.label }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # Keep the required deterministic check identity; no partial union is green.
+  deterministic-qa:
+    if: ${{ always() }}
+    needs: [deterministic-support-qa, backend-smoke-qa]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Verify event checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git rev-parse HEAD
+          sha256sum backend/package-lock.json frontend/package-lock.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - name: Install dependencies
+        run: |
+          npm --prefix frontend ci
+          npm --prefix backend ci
+      - name: Download exact backend receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: forge-backend-smoke-*-${{ github.sha }}
+          path: ${{ runner.temp }}/forge-smoke-receipts
+          merge-multiple: false
+      - name: Require complete independent backend union and support success
+        env:
+          SUPPORT_RESULT: ${{ needs.deterministic-support-qa.result }}
+          BACKEND_RESULT: ${{ needs.backend-smoke-qa.result }}
+        run: node backend/scripts/verify-smoke-receipts.js --receipts-dir "$RUNNER_TEMP/forge-smoke-receipts"
 
   browser-qa:
     runs-on: ubuntu-latest

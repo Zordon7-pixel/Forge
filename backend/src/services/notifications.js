@@ -23,28 +23,33 @@ function notificationSourceFromKey(sourceKey) {
   return 'forged_hybrid';
 }
 
-async function createUserNotification(userId, payload = {}) {
+async function createUserNotificationInTransaction(tx, userId, payload = {}) {
   if (!userId) throw new Error('Notification user is required');
   const normalized = normalizeNotification(payload);
   const id = uuidv4();
-  const insertResult = await dbRun(
+  const insertResult = await tx.run(
     `INSERT INTO user_notifications (id, user_id, type, title, body, href, source_key)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (user_id, source_key) DO NOTHING`,
     [id, userId, normalized.type, normalized.title, normalized.body, normalized.href, normalized.sourceKey]
   );
-  const notification = await dbGet(
+  const notification = await tx.get(
     `SELECT id, type, title, body, href, source_key, read_at, created_at
      FROM user_notifications
      WHERE user_id = ? AND source_key = ?`,
     [userId, normalized.sourceKey]
   );
-  const pushResult = Number(insertResult?.changes || 0) > 0
+  return { notification, inserted: Number(insertResult?.changes || 0) > 0, normalized, generatedId: id };
+}
+
+async function createUserNotification(userId, payload = {}) {
+  const { notification, inserted, normalized, generatedId } = await createUserNotificationInTransaction({run:dbRun,get:dbGet},userId,payload);
+  const pushResult = inserted
     ? await push.sendToUser(userId, {
       title: normalized.title,
       body: normalized.body,
       url: normalized.href || '/',
-      notificationId: notification?.id || id,
+      notificationId: notification?.id || generatedId,
       type: normalized.type,
       source: notificationSourceFromKey(normalized.sourceKey),
     })
@@ -52,4 +57,4 @@ async function createUserNotification(userId, payload = {}) {
   return { notification, push: pushResult };
 }
 
-module.exports = { createUserNotification, normalizeNotification, notificationSourceFromKey };
+module.exports = { createUserNotification, createUserNotificationInTransaction, normalizeNotification, notificationSourceFromKey };
