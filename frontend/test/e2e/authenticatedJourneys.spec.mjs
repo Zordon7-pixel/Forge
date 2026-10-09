@@ -1,6 +1,7 @@
 import { fork } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
+import { waitForPlanCatalogSavedRacesReady } from './support/routeReadiness.mjs'
 import { adaptivePreviewPublicFixture, adaptivePreviewNow } from '../fixtures/adaptivePreviewPublic.mjs'
 import {
   createQaToken,
@@ -3648,6 +3649,33 @@ test('race-goal rollback regex permits truthful active-plan copy and rejects fal
   }
 })
 
+test('PlanCatalog readiness rejects shell-only held initial data and accepts explicit release', async ({ page }) => {
+  const racesResponse = Promise.withResolvers()
+  const races = [{ id: 'readiness-race', race_name: 'Readiness race', race_date: '2026-11-01',
+    event_kind: 'run_race', status: 'upcoming', distance_miles: 10 }]
+  await setQaBrowserClock(page, '2026-09-20')
+  const state = await installAuthenticatedApi(page, {
+    responses: [['GET /api/races', () => racesResponse.promise]],
+  })
+  try {
+    await page.goto('/plan-catalog')
+    await expect(page.locator('main').getByRole('heading', {
+      name: 'Build around your race.', level: 1, exact: true,
+    })).toBeVisible()
+    await expect.poll(() => state.requestsFor('GET', '/api/races').length).toBeGreaterThan(0)
+    await expect(page.getByLabel('Use a saved race', { exact: true })).toHaveCount(0)
+    // Exercise the real helper through its normal assertion deadline. Neither
+    // the authenticated shell nor the mounted route is initial-data readiness.
+    await expect(waitForPlanCatalogSavedRacesReady(page)).rejects.toThrow(/Use a saved race/)
+    racesResponse.resolve({ races })
+    await waitForPlanCatalogSavedRacesReady(page)
+    await expect(page.getByLabel('Use a saved race').locator('option[value="readiness-race"]')).toHaveCount(1)
+    expect([...new Set(state.unexpectedRequests)]).toEqual([])
+  } finally {
+    racesResponse.resolve({ races })
+  }
+})
+
 // Two variants mock closed failure rendering. The real variant forwards generation
 // to the mounted SQLite handler; account/setup responses remain mocked.
 for (const transport of ['mocked evidence failure', 'mocked beyond-42-day horizon', 'real local SQLite HTTP']) test(`Race calendar explains closed failure with four runs and four lifts from seven lift days (${transport})`, async ({ page }) => {
@@ -3693,6 +3721,7 @@ for (const transport of ['mocked evidence failure', 'mocked beyond-42-day horizo
       }],
     ]) })
     await page.goto('/plan-catalog')
+    await waitForPlanCatalogSavedRacesReady(page)
     await expect(page.getByText(/If the current planner cannot cover the full period/)).toBeVisible()
     await page.getByLabel('Use a saved race').selectOption('army')
     await page.getByRole('button', { name: /Maintain strength/ }).click()
