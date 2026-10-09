@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { installAuthenticatedApi } from './support/mockApi.mjs'
+import { waitForHistoryReady } from './support/routeReadiness.mjs'
 
 const run = {
   id: 'coach-takeaway-run',
@@ -16,6 +17,27 @@ const expectedViewports = {
   'compact-mobile-320': { width: 320, height: 568 },
   'iphone-17': { width: 402, height: 874 },
 }
+
+test('History readiness rejects a held initial load and accepts a route without takeaways', async ({ page }) => {
+  const historyResponse = Promise.withResolvers()
+  const apiState = await installAuthenticatedApi(page, {
+    responses: [['GET /api/runs', () => historyResponse.promise]],
+  })
+  try {
+    await page.goto('/history')
+    await expect(page.locator('main')).toBeVisible()
+    await expect(page.getByText(/^Loading history\.{0,3}$/)).toBeVisible()
+    // Hold actual route data, not a timer. Shell visibility must not pass readiness.
+    // The helper must fail within its normal assertion budget while data is held.
+    await expect(waitForHistoryReady(page)).rejects.toThrow(/History/)
+    historyResponse.resolve({ runs: [] })
+    await waitForHistoryReady(page)
+    await expect(page.getByRole('heading', { name: 'Coach Takeaways', exact: true })).toHaveCount(0)
+    expect([...new Set(apiState.unexpectedRequests)]).toEqual([])
+  } finally {
+    historyResponse.resolve({ runs: [] })
+  }
+})
 
 test('Coach Takeaways stays compact and contained at exact mobile widths', async ({ page }, testInfo) => {
   const expectedViewport = expectedViewports[testInfo.project.name]
@@ -34,6 +56,7 @@ test('Coach Takeaways stays compact and contained at exact mobile widths', async
   })
 
   await page.goto(`/history?runId=${run.id}`)
+  await waitForHistoryReady(page)
   const heading = page.getByRole('heading', { name: 'Coach Takeaways', exact: true })
   await expect(heading).toBeVisible()
   const card = heading.locator('xpath=ancestor::section')

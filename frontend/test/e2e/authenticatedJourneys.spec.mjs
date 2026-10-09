@@ -2894,7 +2894,10 @@ test('the current plan item opens its existing calendar without changing navigat
 
     await expect(section).toBeFocused()
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(beforeScrollY)
-    await expect.poll(() => section.evaluate((element) => {
+    // Sample current DOM state without a locator's nested element-resolution wait.
+    await expect.poll(() => page.evaluate(() => {
+      const element = document.querySelector('#current-plan-calendar')
+      if (!element) return false
       const sectionTop = element.getBoundingClientRect().top
       const scrollMarginTop = Number.parseFloat(getComputedStyle(element).scrollMarginTop) || 0
       return Math.abs(sectionTop - scrollMarginTop) < 1
