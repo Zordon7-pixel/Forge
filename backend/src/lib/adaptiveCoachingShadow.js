@@ -44,9 +44,10 @@ async function loadGenerationSource({ tx, userId, planningDateISO, observationIn
     return { checkIns: [], sourceFailed: true, observationInstant };
   }
 }
-function observedBinding(state, source, { accepted = null, acceptedReason = null } = {}) {
+function observedBinding(state, source, { accepted = null, acceptedReason = null, historicalEvidence = null } = {}) {
   return hash({ input_hash: state.inputHash, revision: state.planningInputRevision,
     constraints: state.planningConstraints, accepted, acceptedReason,
+    historical_evidence: historicalEvidence?.binding ?? null,
     snapshot: source?.snapshot?.canonical_hash ?? null, source_failed: source?.sourceFailed ?? true,
     links: (source?.rawRuns || []).map(r => [r.id, r.plan_session_id ?? null, r.planned_session_json ?? null]) });
 }
@@ -65,8 +66,7 @@ function midnight(date, timezone) {
   if (localDate(instant, timezone) !== date) fail('OCCUPANCY_UNAVAILABLE');
   return instant;
 }
-function completionPairs(source, accepted, state, userId) {
-  if (!accepted) return [];
+function completionPairs(source, accepted, state, userId, historicalEvidence) {
   const raw = new Map(source.rawRuns.map(r => [String(r.id), r]));
   const activities = source.snapshot.canonical_activities;
   const sources = new Map(activities.map(a => [a.canonical_activity_id, a.evidence_ids.map(id => raw.get(id)).filter(Boolean)]));
@@ -74,16 +74,18 @@ function completionPairs(source, accepted, state, userId) {
     date: a.local_activity_date || localDate(a.observed_at, source.snapshot.timezone),
     distance_miles: a.distance_m === null ? null : a.distance_m / 1609.344, duration_seconds: a.duration_s,
     explicitly_unlinked: sources.get(a.canonical_activity_id).some(r => require('./plannedRunMatch').isExplicitlyUnlinkedRun(r.planned_session_json)) }));
-  const sessions = accepted.sessions.filter(s => s.kind === 'run' && s.scheduled_local_date < source.snapshot.planning_date_local);
+  const sessions = (accepted?.sessions || []).filter(s => s.kind === 'run' && s.scheduled_local_date < source.snapshot.planning_date_local);
   // Empty completedIds: a progress checkbox cannot authenticate interval work or actual dose.
   const receipts = runCompletionEvidence(sessions, { athleteId: userId, canonicalRuns, sources }, [],
-    { planId: accepted.plan_id });
+    { planId: accepted?.plan_id });
   const measuredReceipts = source.snapshot.physical_sources?.measured_receipts;
-  const measuredPairs = require('./activityMeasuredReceipt').pairs(measuredReceipts, accepted, source.snapshot);
+  const measuredPairs = require('./activityMeasuredReceipt').pairs(measuredReceipts, accepted, source.snapshot, historicalEvidence);
   // Any measured successor, including failed/partial/stale, suppresses aggregate
   // fallback for that bound session. Older success cannot resurrect after correction.
   const measuredSessions = new Set((measuredReceipts?.rows || []).map(r => r.session_id));
-  return [...measuredPairs, ...receipts.filter(r => !measuredSessions.has(r.sessionId) && r.attempted && !r.reason).map(r => {
+  const measuredPhysicalIds = new Set(measuredPairs.flatMap(pair => pair.observation.source_evidence_ids));
+  return [...measuredPairs, ...receipts.filter(r => !measuredSessions.has(r.sessionId) && r.attempted && !r.reason
+    && !activities.find(a => a.canonical_activity_id === r.activityId)?.evidence_ids.some(id => measuredPhysicalIds.has(id))).map(r => {
     const activity = activities.find(a => a.canonical_activity_id === r.activityId);
     return { prescribed_session: sessions.find(s => s.session_id === r.sessionId), observation: {
       athlete_id: userId, linked_session_id: r.sessionId, evidence_id: activity.evidence_ids[0],
@@ -99,8 +101,8 @@ function completionPairs(source, accepted, state, userId) {
     } };
   })];
 }
-function prepare({ userId, state, source, accepted, acceptedReason = null, goals, trainingAgeClass, priorPlanRevision = null, resolvedMode = 'off' }) {
-  if (!source?.snapshot || source.sourceFailed) fail('SOURCE_UNAVAILABLE');
+function prepare({ userId, state, source, accepted, acceptedReason = null, historicalEvidence = null, goals, trainingAgeClass, priorPlanRevision = null, resolvedMode = 'off' }) {
+  if (!source?.snapshot || source.sourceFailed || historicalEvidence?.sourceFailed) fail('SOURCE_UNAVAILABLE');
   const snapshot = source.snapshot;
   if (source.load.load_input_state === 'STALE') fail('SOURCE_STALE');
   if (source.load.load_input_state === 'FAILED') fail('SOURCE_UNAVAILABLE');
@@ -112,7 +114,7 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
   const availableDays = [...new Set([...(state.target.trainingDays || []), ...(state.target.liftEligibleWeekdays || [])])];
   const foundation = buildAdaptiveCoachingFoundation({ snapshot, context: state.context, goals, priorPlanRevision,
     races: state.races.map(r => ({ race_id: String(r.id), athlete_id: userId })),
-    completionPairs: completionPairs(source, accepted, state, userId),
+    completionPairs: completionPairs(source, accepted, state, userId, historicalEvidence),
     stateOptions: { trainingAgeClass, availableDays,
       timeConstraints: Object.fromEntries(snapshot.evidence.filter(e => e.evidence_type === 'subjective_readiness'
         && e.quality_state === 'COMPLETE' && e.freshness_class === 'FRESH'
@@ -151,7 +153,7 @@ function prepare({ userId, state, source, accepted, acceptedReason = null, goals
       }
     }
   }
-  return freeze({ foundation, availability, calendarWindow, blockedReason, source_support: require('./adaptiveCoachingSources').sourceSupport(foundation), observed_binding: observedBinding(state, source, { accepted, acceptedReason }),
+  return freeze({ foundation, availability, calendarWindow, blockedReason, source_support: require('./adaptiveCoachingSources').sourceSupport(foundation), observed_binding: observedBinding(state, source, { accepted, acceptedReason, historicalEvidence }),
     binding: { input_hash: state.inputHash, planning_input_revision: state.planningInputRevision,
       lock_revision: constraints.lock_revision, edit_revision: constraints.edit_revision,
       constraint_fingerprint: constraints.constraint_fingerprint },

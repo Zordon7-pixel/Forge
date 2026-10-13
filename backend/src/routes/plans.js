@@ -80,7 +80,7 @@ const {
   validateCanonicalSession,
   validateCanonicalSessionSet,
 } = require('../lib/canonicalWorkout');
-const { canonicalPrescriptionHash, compareMaterialChange } = require('../lib/goalBackwardValidators');
+const { compareMaterialChange } = require('../lib/goalBackwardValidators');
 const { validateInterference } = require('../lib/goalBackwardValidators');
 const { validateRollingHardDays } = require('../lib/goalBackwardLoad');
 const { buildProgramContract, sourceBoundTaperRunAdjustment, reconcileProgramWeek, validateRollingProgramDose } = require('../lib/programContract');
@@ -2830,6 +2830,10 @@ async function loadCandidateInputState(userId, request, clock, tx, { adaptiveGen
       observationInstant: adaptivePlanningInstants.get(clock) || null,
       timezone: isIanaTimezone(profile.timezone) ? profile.timezone : 'UTC' }) : null;
   const context = await buildConcurrentContext(userId, profile, resolved.target, tx, adaptiveGenerationSource);
+  const historicalEvidence = adaptiveGenerationSource && !adaptiveGenerationSource.sourceFailed
+    ? await require('../lib/adaptiveAcceptedHistory').loadHistoricalEvidence({ tx, userId,
+      receipts: adaptiveGenerationSource.measured.receipt?.measured_receipts,
+      observationInstant: adaptiveGenerationSource.observationInstant }) : null;
   const active = await getActivePlanForUser(userId, tx, {
     includeFuture: true,
     planningDateLocal: clock.planningDateLocal,
@@ -2868,6 +2872,7 @@ async function loadCandidateInputState(userId, request, clock, tx, { adaptiveGen
   return {
     active,
     activeCanonicalCarryForwardSource,
+    historicalEvidence,
     activePlan,
     context,
     inputHash: prefixedHash(snapshot),
@@ -3049,7 +3054,10 @@ async function pruneExpiredPlanCandidates(tx, userId, {
   const params = [userId, cutoff];
   if (excludeCandidateId) params.push(excludeCandidateId);
   return tx.run(
-    `DELETE FROM plan_generation_candidates WHERE user_id=? AND expires_at<?${exclusion}`,
+    // Applied candidates are acceptance proofs, not expiring previews. Deleting
+    // them detaches their canonical artifacts and breaks both active authority
+    // and receipt-referenced history at the next replacement.
+    `DELETE FROM plan_generation_candidates WHERE user_id=? AND expires_at<?${exclusion} AND status<>'applied'`,
     params
   );
 }
@@ -3342,74 +3350,7 @@ function goalBackwardRetainedWorkComparator(state, activeAppliedPlan, userId) {
     }) })) })) };
 }
 
-const CANONICAL_SESSION_SET_PAYLOAD_KEYS = Object.freeze([
-  'canonical_workout_schema_version', 'canonical_sessions_materialized',
-  'plan_id', 'plan_revision', 'decision_id', 'decision_hash', 'candidate_id',
-  'candidate_skeleton_hash', 'candidate_hash', 'material_change_baseline_binding_hash',
-  'sessions', 'session_content_hashes', 'derived_totals', 'content_hash',
-]);
-const CANONICAL_SESSION_SET_ARTIFACT_KEYS = new Set([
-  'plan_generation_candidate_ref', ...CANONICAL_SESSION_SET_PAYLOAD_KEYS,
-  'selected_candidate_id', 'selected_candidate_hash',
-]);
-const ACTIVE_CANONICAL_CARRY_SOURCE_KEYS = Object.freeze([
-  'artifact_id', 'artifact_user_id', 'artifact_kind', 'artifact_decision_id',
-  'artifact_candidate_id', 'artifact_schema_version', 'artifact_policy_version',
-  'artifact_revision', 'artifact_content_hash', 'artifact_payload_json',
-  'candidate_id', 'candidate_decision_id', 'candidate_selected_hash',
-  'candidate_material_change_json', 'candidate_applied_user_plan_id', 'candidate_status',
-  'assignment_id', 'assignment_user_id', 'assignment_plan_id',
-  'assignment_plan_revision', 'assignment_status',
-]);
-const ACTIVE_CANONICAL_CARRY_JSON_KEYS = new Set([
-  'artifact_payload_json', 'candidate_material_change_json',
-]);
-
-function exactHashIdentity(value) {
-  return isCanonicalHash(value) ? value.replace(/^sha256:/, '') : null;
-}
-
-function storedOwnJsonSnapshot(value) {
-  try {
-    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    return ownDataJsonSnapshot(parsed) || ownMaterializedProgramSnapshot(parsed);
-  } catch (_error) {
-    return null;
-  }
-}
-
-function ownStoredCanonicalCarrySource(value) {
-  try {
-    const snapshot = ownDataJsonSnapshot(value, { maximumDepth: 64, maximumNodes: 50000 })
-      || ownMaterializedProgramSnapshot(value);
-    if (!snapshot || Array.isArray(snapshot)) return null;
-    const keys = Object.keys(snapshot);
-    if (keys.length !== ACTIVE_CANONICAL_CARRY_SOURCE_KEYS.length
-      || keys.some((key) => !ACTIVE_CANONICAL_CARRY_SOURCE_KEYS.includes(key))) return null;
-    const source = Object.create(null);
-    for (const key of ACTIVE_CANONICAL_CARRY_SOURCE_KEYS) {
-      if (!Object.hasOwn(snapshot, key)) return null;
-      const field = snapshot[key];
-      if (ACTIVE_CANONICAL_CARRY_JSON_KEYS.has(key)) {
-        const json = storedOwnJsonSnapshot(field);
-        if (!json || Array.isArray(json)) return null;
-        source[key] = json;
-        continue;
-      }
-      if (field !== null && !['string', 'number', 'boolean'].includes(typeof field)) return null;
-      source[key] = field;
-    }
-    return Object.freeze(source);
-  } catch (_error) {
-    return null;
-  }
-}
-
-function invalidGoalExpansionCarrySource(reason) {
-  const error = new Error(`Active canonical goal-expansion source is invalid: ${reason}`);
-  error.code = 'GOAL_EXPANSION_CARRY_FORWARD_SOURCE_INVALID';
-  throw error;
-}
+const { authenticateActive: authenticatedGoalExpansionSessionSet, invalidGoalExpansionCarrySource } = require('../lib/adaptiveAcceptedHistory');
 
 function canonicalCarryGoalIds(session) {
   if (!Object.hasOwn(session, 'goal_ids')) return null;
@@ -3425,107 +3366,6 @@ function canonicalCarryGoalIds(session) {
     normalized = sorted;
   }
   return normalized;
-}
-
-function authenticatedGoalExpansionSessionSet({
-  userId,
-  state,
-  activeAppliedPlan,
-  activeSource,
-}) {
-  const plan = ownDataJsonSnapshot(activeAppliedPlan) || ownMaterializedProgramSnapshot(activeAppliedPlan);
-  const source = ownStoredCanonicalCarrySource(activeSource);
-  if (!plan || !source) invalidGoalExpansionCarrySource('OWN_DATA_SNAPSHOT_INVALID');
-  const payload = storedOwnJsonSnapshot(source.artifact_payload_json);
-  const materialChange = storedOwnJsonSnapshot(source.candidate_material_change_json);
-  if (!payload || !materialChange) invalidGoalExpansionCarrySource('ARTIFACT_PAYLOAD_INVALID');
-  const payloadKeys = Object.keys(payload);
-  const versionedKeys = Object.hasOwn(payload, 'program_storage_version')
-    ? ['prescribed_dose_versions', 'program_contract', 'program_storage_version']
-    : Object.hasOwn(payload, 'prescribed_dose_versions') ? ['prescribed_dose_versions'] : [];
-  const allowedKeys = new Set([...CANONICAL_SESSION_SET_ARTIFACT_KEYS, ...versionedKeys]);
-  if (Object.hasOwn(payload, 'program_storage_version')
-    && payload.program_storage_version !== require('../lib/goalBackwardContracts').PROGRAM_ARTIFACT_STORAGE_VERSION
-    || payloadKeys.length !== allowedKeys.size
-    || payloadKeys.some((key) => !allowedKeys.has(key))) {
-    invalidGoalExpansionCarrySource('ARTIFACT_SCHEMA_INVALID');
-  }
-  const sessionSet = Object.fromEntries([...CANONICAL_SESSION_SET_PAYLOAD_KEYS, ...versionedKeys].map((key) => [key, payload[key]]));
-  const validation = validateCanonicalSessionSet(sessionSet);
-  const artifactHash = exactHashIdentity(source.artifact_content_hash);
-  const selectedHash = exactHashIdentity(source.candidate_selected_hash);
-  const payloadSelectedHash = exactHashIdentity(payload.selected_candidate_hash);
-  const planSelectedHash = exactHashIdentity(plan.selected_candidate_hash);
-  const planSessionSetHash = exactHashIdentity(plan.canonical_session_set_hash);
-  const expectedPrescriptionHash = exactHashIdentity(materialChange.candidate_prescription_hash);
-  const actualPrescriptionHash = exactHashIdentity(canonicalPrescriptionHash(plan));
-  const assignmentPlanRevision = source.assignment_plan_revision;
-  const identityChecks = [
-    ['SESSION_SET_INVALID', validation.valid],
-    ['OWNER_ID_INVALID', typeof userId === 'string' && Boolean(userId)],
-    ['ARTIFACT_OWNER_MISMATCH', source.artifact_user_id === userId],
-    ['ARTIFACT_KIND_MISMATCH', source.artifact_kind === 'canonical_session_set'],
-    ['ARTIFACT_ID_INVALID', typeof source.artifact_id === 'string' && Boolean(source.artifact_id)],
-    ['ARTIFACT_SCHEMA_MISMATCH', source.artifact_schema_version === '1'],
-    ['ARTIFACT_POLICY_INVALID', typeof source.artifact_policy_version === 'string'
-      && Boolean(source.artifact_policy_version)],
-    ['ARTIFACT_REVISION_INVALID', Number.isSafeInteger(source.artifact_revision)
-      && source.artifact_revision >= 1],
-    ['CANDIDATE_STATUS_MISMATCH', source.candidate_status === 'applied'],
-    ['ASSIGNMENT_ID_MISMATCH', source.assignment_id === source.candidate_applied_user_plan_id
-      && source.assignment_id === state.activePlan?.userPlanId],
-    ['ASSIGNMENT_OWNER_MISMATCH', source.assignment_user_id === userId],
-    ['ASSIGNMENT_PLAN_MISMATCH', source.assignment_plan_id === state.activePlan?.trainingPlanId],
-    ['ASSIGNMENT_STATUS_MISMATCH', source.assignment_status === 'active'],
-    ['ASSIGNMENT_REVISION_INVALID', Number.isSafeInteger(assignmentPlanRevision)
-      && assignmentPlanRevision >= 1],
-    ['ARTIFACT_CANDIDATE_MISMATCH', source.artifact_candidate_id === source.candidate_id],
-    ['ARTIFACT_DECISION_MISMATCH', source.artifact_decision_id === source.candidate_decision_id
-      && source.artifact_decision_id === sessionSet.decision_id],
-    ['PAYLOAD_CANDIDATE_MISMATCH', exactHashIdentity(payload.plan_generation_candidate_ref)
-      === exactHashIdentity(prefixedHash(source.candidate_id))
-      && payload.selected_candidate_id === sessionSet.candidate_id],
-    ['ARTIFACT_CONTENT_HASH_MISMATCH', artifactHash === exactHashIdentity(prefixedHash(payload))],
-    ['CANDIDATE_HASH_MISSING', Boolean(selectedHash)],
-    ['CANDIDATE_HASH_MISMATCH', selectedHash === payloadSelectedHash
-      && selectedHash === exactHashIdentity(sessionSet.candidate_hash)
-      && selectedHash === planSelectedHash],
-    ['SESSION_SET_HASH_MISMATCH', planSessionSetHash === exactHashIdentity(sessionSet.content_hash)],
-    ['PLAN_SCHEMA_MISMATCH', plan.canonical_workout_schema_version === 1],
-    ['PLAN_IDENTITY_MISMATCH', plan.plan_id === sessionSet.plan_id
-      && plan.plan_revision === sessionSet.plan_revision
-      && plan.plan_revision === assignmentPlanRevision
-      && plan.plan_revision === state.activePlan?.planVersion],
-    ['PLAN_DECISION_MISMATCH', plan.decision_id === sessionSet.decision_id
-      && exactHashIdentity(plan.decision_hash) === exactHashIdentity(sessionSet.decision_hash)],
-    ['PLAN_CANDIDATE_MISMATCH', plan.selected_candidate_id === sessionSet.candidate_id],
-    ['PRESCRIPTION_HASH_MISMATCH', Boolean(expectedPrescriptionHash)
-      && expectedPrescriptionHash === actualPrescriptionHash],
-  ];
-  const failedIdentityCheck = identityChecks.find(([, valid]) => !valid)?.[0];
-  if (failedIdentityCheck) invalidGoalExpansionCarrySource(failedIdentityCheck);
-  const reconstructed = planSchema.buildCanonicalPlanFromSessionSet(sessionSet);
-  if (plan.engineVersion === 'adaptive-joint-solver-v1' && reconstructed) {
-    reconstructed.weeks = reconstructed.weeks.map(week => ({ ...week,
-      phase: plan.weeks.find(item => item.week === week.week)?.phase,
-      purpose: plan.purpose, weekly_objectives: plan.calendar_windows?.find(window => window.start_date >= week.startDate
-        && window.start_date <= addPolicyDays(week.startDate, 6))?.weekly_objectives || plan.weekly_objectives }));
-  }
-  const materializedProgram = sessionSet.program_storage_version
-    && require('../lib/planCandidateLifecycle').validatedCompleteProgramPlan(plan);
-  const sourceSessions = new Map(sessionSet.sessions.map(session => [session.session_id, session]));
-  const decoratedSources = new Map(planSchema.withRemovalSessionIdentities(reconstructed).weeks
-    .flatMap(week => week.days.flatMap(day => day.sessions.map(session => [session.session_id, session.removal_session_id]))));
-  const programSessionsMatch = materializedProgram && plan.weeks.every(week => week.days.every(day => day.sessions.every(session => {
-    const { removal_session_id, ...prescription } = session;
-    return (!removal_session_id || removal_session_id === decoratedSources.get(session.session_id))
-      && canonicalStringify(prescription) === canonicalStringify(sourceSessions.get(session.session_id));
-  })));
-  if (!reconstructed || (materializedProgram ? !programSessionsMatch
-    : canonicalStringify(plan.weeks) !== canonicalStringify(reconstructed.weeks))) {
-    invalidGoalExpansionCarrySource('PLAN_SESSION_BYTES_MISMATCH');
-  }
-  return { plan, sessionSet };
 }
 
 function goalBackwardGoalExpansionCarryForwardMaterial(
@@ -6119,12 +5959,13 @@ function emitPlanReleaseTelemetry({
 }
 
 function adaptiveAcceptedInput(userId, state) {
-  if (!state.active) return { accepted: null, acceptedReason: null };
+  const historicalEvidence = state.historicalEvidence || null;
+  if (!state.active) return { accepted: null, acceptedReason: null, historicalEvidence };
   try {
     return { accepted: authenticatedGoalExpansionSessionSet({ userId, state,
       activeAppliedPlan: goalBackwardActiveAppliedPlan(state, parsePlan(state.active.row)),
-      activeSource: state.activeCanonicalCarryForwardSource }).sessionSet, acceptedReason: null };
-  } catch (error) { return { accepted: null, acceptedReason: adaptiveShadow.reason(error) }; }
+      activeSource: state.activeCanonicalCarryForwardSource }).sessionSet, acceptedReason: null, historicalEvidence };
+  } catch (error) { return { accepted: null, acceptedReason: adaptiveShadow.reason(error), historicalEvidence }; }
 }
 
 function prepareAdaptiveCandidateInput(userId, initial, { bindPlanRevision = false, resolvedMode = 'off' } = {}) {
