@@ -15,22 +15,44 @@ function verifyWebhookToken(value, secret = process.env.JWT_SECRET) {
 }
 
 function normalizeWebhookEvent(body = {}) {
-  const objectId = String(body.object_id || '').trim();
-  const ownerId = String(body.owner_id || '').trim();
-  const subscriptionId = String(body.subscription_id || '').trim();
-  const objectType = String(body.object_type || '').trim().toLowerCase();
-  const aspectType = String(body.aspect_type || '').trim().toLowerCase();
-  if (!/^\d{1,30}$/.test(objectId) || !/^\d{1,30}$/.test(ownerId) || !/^\d{1,30}$/.test(subscriptionId)) return null;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const allowed = new Set(['object_id', 'owner_id', 'subscription_id', 'object_type', 'aspect_type', 'event_time', 'updates']);
+  if (Object.keys(body).some(key => !allowed.has(key))) return null;
+  const objectId = safeWebhookId(body.object_id);
+  const ownerId = safeWebhookId(body.owner_id);
+  const subscriptionId = safeWebhookId(body.subscription_id);
+  const objectType = body.object_type;
+  const aspectType = body.aspect_type;
+  if (!objectId || !ownerId || !subscriptionId) return null;
   if (!['activity', 'athlete'].includes(objectType)) return null;
   if (!['create', 'update', 'delete'].includes(aspectType)) return null;
-  return {
-    objectId,
-    ownerId,
-    subscriptionId,
-    objectType,
-    aspectType,
-    updates: body.updates && typeof body.updates === 'object' && !Array.isArray(body.updates) ? body.updates : {},
-  };
+  if (!Number.isSafeInteger(body.event_time) || body.event_time < 0) return null;
+  const input = body.updates === undefined ? {} : body.updates;
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length > 16) return null;
+  const updates = Object.create(null);
+  for (const key of Object.keys(input).sort()) {
+    const value = input[key];
+    if (!/^[a-z_]{1,40}$/.test(key) || !['string', 'boolean', 'number'].includes(typeof value)
+      || (typeof value === 'number' && !Number.isFinite(value))
+      || (typeof value === 'string' && value.length > 512)) return null;
+    updates[key] = value;
+  }
+  if (Buffer.byteLength(JSON.stringify(updates)) > 2048) return null;
+  const event = { objectId, ownerId, subscriptionId, objectType, aspectType, eventTime: body.event_time, updates };
+  return { ...event, fingerprint: crypto.createHash('sha256').update(JSON.stringify(event)).digest('hex') };
 }
 
-module.exports = { getWebhookVerifyToken, normalizeWebhookEvent, verifyWebhookToken };
+function safeWebhookId(value) {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? String(value) : null;
+  return typeof value === 'string' && /^[1-9]\d{0,15}$/.test(value) && Number.isSafeInteger(Number(value)) ? value : null;
+}
+
+// Exact method/path only; mount BEFORE the application's general 10MB parser.
+function mountStravaWebhookParser(app) {
+  app.post('/api/strava/webhook', require('express').json({ limit: '16kb', strict: true, inflate: false }), (error, _req, res, next) => {
+    if (!error) return next();
+    return res.status(error.status === 413 ? 413 : 400).json({ error: 'Invalid webhook body' });
+  });
+}
+
+module.exports = { getWebhookVerifyToken, normalizeWebhookEvent, verifyWebhookToken, safeWebhookId, mountStravaWebhookParser };

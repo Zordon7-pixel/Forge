@@ -63,7 +63,13 @@ const ACCOUNT_EXPORT_TABLES = [
   { key: 'health_sync', table: 'health_sync', orderBy: 'synced_at DESC' },
   { key: 'readiness_scores', table: 'readiness_scores', orderBy: 'score_date DESC' },
   { key: 'user_hr_profile', table: 'user_hr_profile', orderBy: 'updated_at DESC' },
-  { key: 'push_subscriptions', table: 'push_subscriptions', columns: 'id, user_id, endpoint, created_at', orderBy: 'created_at DESC' },
+  { key: 'push_subscriptions', table: 'push_subscriptions', columns: 'id, user_id, created_at, active, generation, disclosure', orderBy: 'created_at DESC' },
+  { key: 'strava_ingress_bindings', table: 'strava_ingress_bindings', columns: 'id, user_id, athlete_id, created_at', orderBy: 'created_at DESC' },
+  { key: 'provider_event_jobs', table: 'provider_event_jobs', where: 'binding_id IN (SELECT id FROM strava_ingress_bindings WHERE user_id = ?)', columns: 'id, object_type, object_id, state, attempts, first_seen_at, updated_at', orderBy: 'first_seen_at DESC' },
+  { key: 'provider_activity_links', table: 'provider_activity_links', orderBy: 'updated_at DESC' },
+  { key: 'run_save_eligibility', table: 'run_save_eligibility', orderBy: 'created_at DESC' },
+  { key: 'activity_notification_events', table: 'activity_notification_events', orderBy: 'created_at DESC' },
+  { key: 'notification_deliveries', table: 'notification_deliveries', columns: 'id, user_id, event_id, notification_id, transport, state, attempts, created_at, accepted_at', orderBy: 'created_at DESC' },
   { key: 'user_notifications', table: 'user_notifications', orderBy: 'created_at DESC' },
   { key: 'custom_exercises', table: 'exercises', where: 'created_by_user_id = ?', columns: 'id, name, muscle_group, secondary_muscles, instructions, how_to_image_url, is_system, created_by_user_id, approved, created_at', orderBy: 'created_at DESC' },
   { key: 'strava_connection', table: 'strava_tokens', columns: 'user_id, expires_at, athlete_id, athlete_name, connected_at', orderBy: 'connected_at DESC' },
@@ -73,7 +79,62 @@ const ACCOUNT_EXPORT_TABLES = [
 
 const ACCOUNT_SECRET_TABLES = [
   'password_reset_tokens',
+  'strava_connection_fences',
+  'web_push_claims', 'web_push_challenges', 'web_push_setup_operations',
 ];
+
+// Their ownership is a reviewed join, not an absent user_id exemption.
+const ACCOUNT_INDIRECT_OWNED_TABLES = ['provider_event_jobs', 'web_push_claims', 'web_push_setup_operations'];
+const ACCOUNT_AGGREGATE_TABLES = {
+  web_push_delivery_control: 'Shared delivery configuration control; no account data or export authority.',
+  background_sync_control: 'Shared provider quota and activation; no account data.',
+  web_push_setup_rate_buckets: 'Bounded aggregate counters; USER HMAC removed by erasePushSetupUserRate, other dimensions have no owner link.',
+};
+
+function pushSetupUserRateKey(userId, secret = process.env.WEB_PUSH_SETUP_RATE_SECRET) {
+  if (typeof secret !== 'string' || Buffer.byteLength(secret) < 32) {
+    throw new Error('Web push setup rate key is unavailable');
+  }
+  return require('node:crypto').createHmac('sha256', secret)
+    .update('forge:web-push-setup-rate:v1:USER\0').update(String(userId)).digest();
+}
+
+async function erasePushSetupUserRate(tx, userId) {
+  // No setup consumer exists in B1a. Do not demand a new deployment secret
+  // merely to erase an account while the scoped counter table is empty.
+  if (!await tx.get("SELECT 1 AS present FROM web_push_setup_rate_buckets WHERE dimension='USER' LIMIT 1")) return;
+  await tx.run("DELETE FROM web_push_setup_rate_buckets WHERE dimension='USER' AND key_hash=?", [pushSetupUserRateKey(userId)]);
+}
+
+// Receives the authenticated owner's already-locked transaction. Neutral
+// authority is not deletion-exempt: erase every owner/proof/result association
+// while preserving the absence incarnation against foreign pending challenges.
+async function neutralizeOwnedWebPushAuthority(tx, userId) {
+  const lock = tx.dialect === 'sqlite' ? '' : ' FOR UPDATE';
+  const claims = await tx.all(`SELECT c.endpoint_hash,c.incarnation,c.subscription_id
+    FROM web_push_claims c JOIN push_subscriptions p ON p.id=c.subscription_id
+    WHERE p.user_id=? ORDER BY c.endpoint_hash${lock ? ' FOR UPDATE OF c' : ''}`, [userId]);
+  const targets = await tx.all(`SELECT id FROM push_subscriptions WHERE user_id=? ORDER BY id${lock}`, [userId]);
+  const owned = new Set(targets.map(row=>row.id));
+  for (const claim of claims) if (!owned.has(claim.subscription_id)) throw new Error('Web push authority changed');
+  await tx.all(`SELECT id FROM web_push_challenges WHERE user_id=? ORDER BY id${lock}`, [userId]);
+  await tx.all(`SELECT o.challenge_id FROM web_push_setup_operations o JOIN web_push_challenges c ON c.id=o.challenge_id
+    WHERE c.user_id=? ORDER BY o.challenge_id${lock ? ' FOR UPDATE OF o' : ''}`, [userId]);
+  await tx.all(`SELECT id FROM notification_deliveries WHERE user_id=? ORDER BY id${lock}`, [userId]);
+  for (const claim of claims) {
+    const result = await tx.run(`UPDATE web_push_claims SET state='VACANT',incarnation=?,claim_revision=0,
+      proof_hash=NULL,subscription_id=NULL,last_operation_id=NULL,confirm_hash=NULL,
+      updated_at=${tx.dialect === 'sqlite' ? "strftime('%Y-%m-%dT%H:%M:%fZ','now')" : 'clock_timestamp()'}
+      WHERE endpoint_hash=? AND incarnation=? AND subscription_id=? AND state='ACTIVE'
+      AND subscription_id IN (SELECT id FROM push_subscriptions WHERE user_id=?)`,
+    [require('node:crypto').randomUUID(),claim.endpoint_hash,claim.incarnation,claim.subscription_id,userId]);
+    if (Number(result.changes)!==1) throw new Error('Web push authority changed');
+  }
+}
+
+const ACCOUNT_CALLABLE_CLEANUP = Object.freeze([
+  Object.freeze({table:'web_push_claims',execute:neutralizeOwnedWebPushAuthority}),
+]);
 
 const ACCOUNT_SOCIAL_DELETE_QUERIES = [
   ['DELETE FROM group_runs WHERE owner_id = ?', [0]],
@@ -87,6 +148,14 @@ const ACCOUNT_SOCIAL_DELETE_QUERIES = [
 ];
 
 const ACCOUNT_DELETE_QUERIES = [
+  ['DELETE FROM provider_event_jobs WHERE binding_id IN (SELECT id FROM strava_ingress_bindings WHERE user_id = ?)', [0]],
+  ['DELETE FROM strava_ingress_bindings WHERE user_id = ?', [0]],
+  ['DELETE FROM notification_deliveries WHERE user_id = ?', [0]],
+  ['DELETE FROM activity_notification_events WHERE user_id = ?', [0]],
+  ['DELETE FROM provider_activity_links WHERE user_id = ?', [0]],
+  ['DELETE FROM run_save_eligibility WHERE user_id = ?', [0]],
+  ['DELETE FROM web_push_setup_operations WHERE challenge_id IN (SELECT id FROM web_push_challenges WHERE user_id = ?)', [0]],
+  ['DELETE FROM web_push_challenges WHERE user_id = ?', [0]],
   ['DELETE FROM password_reset_tokens WHERE user_id = ?', [0]],
   ['DELETE FROM push_subscriptions WHERE user_id = ?', [0]],
   ['DELETE FROM user_notifications WHERE user_id = ?', [0]],
@@ -140,6 +209,7 @@ const ACCOUNT_DELETE_QUERIES = [
   ['DELETE FROM oura_data WHERE user_id = ?', [0]],
   ['DELETE FROM oura_tokens WHERE user_id = ?', [0]],
   ['DELETE FROM strava_tokens WHERE user_id = ?', [0]],
+  ['DELETE FROM strava_connection_fences WHERE user_id = ?', [0]],
   ['DELETE FROM garmin_sleep WHERE user_id = ?', [0]],
   ['DELETE FROM watch_sync WHERE user_id = ?', [0]],
   ['DELETE FROM health_sync WHERE user_id = ?', [0]],
@@ -171,8 +241,14 @@ function buildExportSql({ table, columns = '*', where = 'user_id = ?', orderBy }
 module.exports = {
   ACCOUNT_EXPORT_TABLES,
   ACCOUNT_SECRET_TABLES,
+  ACCOUNT_INDIRECT_OWNED_TABLES,
+  ACCOUNT_AGGREGATE_TABLES,
   ACCOUNT_SOCIAL_DELETE_QUERIES,
   ACCOUNT_DELETE_QUERIES,
+  ACCOUNT_CALLABLE_CLEANUP,
   bindUserId,
   buildExportSql,
+  pushSetupUserRateKey,
+  erasePushSetupUserRate,
+  neutralizeOwnedWebPushAuthority,
 };

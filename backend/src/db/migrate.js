@@ -665,6 +665,8 @@ async function runAlwaysMigrations() {
 
   await seedRaceCatalog();
   await seedShoeCatalog();
+  // One transaction/authority, after all required base tables, before listen.
+  await require('./backgroundSyncSchema').migrateBackgroundSyncPostgres(pg.initPool());
 }
 
 /**

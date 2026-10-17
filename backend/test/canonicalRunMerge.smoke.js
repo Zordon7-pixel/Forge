@@ -328,9 +328,14 @@ async function runCanonicalRunMergeSmoke() {
   const db = {
     async all(sql) {
       if (sql.includes("health_source='forged_hybrid'")) return [canonicalRun];
+      if (sql.includes('FROM run_save_eligibility') || sql.includes('FROM activity_notification_events')) return [];
       throw new Error(`Unexpected all query: ${sql}`);
     },
-    async get(sql) {
+    async get(sql, params) {
+      if (sql === 'SELECT * FROM runs WHERE id=? AND user_id=?') {
+        assert.equal(params[1], 'athlete-1');
+        return [canonicalRun, importedRun].find(row => row.id === params[0]) || null;
+      }
       if (sql.includes('activity_likes')) return { interaction_count: 0 };
       if (sql.includes('plan_adjustment_proposals')) return null;
       if (sql.includes('FROM user_plans') || sql.includes('FROM training_plans')) return null;
@@ -705,9 +710,11 @@ async function runCanonicalRunMergeSmoke() {
   const equivalentProposalDb = {
     async all(sql) {
       if (sql.includes("health_source='forged_hybrid'")) return [canonicalRun];
+      if (sql.includes('FROM run_save_eligibility') || sql.includes('FROM activity_notification_events')) return [];
       throw new Error(`Unexpected all query: ${sql}`);
     },
-    async get(sql) {
+    async get(sql, params) {
+      if (sql === 'SELECT * FROM runs WHERE id=? AND user_id=?') return db.get(sql, params);
       if (sql.includes('activity_likes')) return { interaction_count: 0 };
       if (sql.includes('plan_adjustment_proposals')) {
         equivalentProposalLookup += 1;
@@ -761,6 +768,7 @@ async function runCanonicalRunMergeSmoke() {
   const explicitManualPlanDb = {
     ...equivalentProposalDb,
     async all(sql) {
+      if (sql.includes('FROM run_save_eligibility') || sql.includes('FROM activity_notification_events')) return [];
       if (sql.includes("health_source='forged_hybrid'")) {
         return [{
           ...canonicalRun,

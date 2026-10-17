@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import { webcrypto } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { ACTIVE_RUN_SESSION_KEY } from '../src/lib/activeRunSession.js'
 import { reloadSafety, ServiceWorkerUpdateManager } from '../src/lib/serviceWorkerUpdate.js'
@@ -31,6 +32,8 @@ function buildWorkerHarness() {
   }
 
   const sandbox = {
+    crypto: webcrypto,
+    performance,
     URL,
     Request,
     Response,
@@ -120,7 +123,7 @@ async function dispatchFetch(harness, pathname, init = {}) {
 }
 
 async function runServiceWorkerCacheSmoke() {
-  assert.match(source, /const CACHE = 'forge-v9'/, 'cache version advances for controlled activation')
+  assert.match(source, /const CACHE = 'forge-v10'/, 'cache version advances for controlled activation')
   assert.match(source, /hasExpectedAssetType\(url, response\)/, 'static responses are type-checked before caching')
 
   const installation = buildWorkerHarness()
@@ -146,9 +149,9 @@ async function runServiceWorkerCacheSmoke() {
   )
 
   const activation = buildWorkerHarness()
-  activation.setCacheNames(['forge-v4', 'forge-v5', 'forge-v6', 'forge-v7', 'forge-v8', 'forge-v9', 'forge-api-v1', 'forge-api-v2'])
+  activation.setCacheNames(['forge-v4', 'forge-v5', 'forge-v6', 'forge-v7', 'forge-v8', 'forge-v9', 'forge-v10', 'forge-api-v1', 'forge-api-v2'])
   await dispatchLifecycle(activation, 'activate')
-  assert.deepEqual(activation.deletes, ['forge-v4', 'forge-v5', 'forge-v6', 'forge-v7', 'forge-v8', 'forge-api-v1'], 'activation deletes stale app caches and the unpartitioned API cache')
+  assert.deepEqual(activation.deletes, ['forge-v4', 'forge-v5', 'forge-v6', 'forge-v7', 'forge-v8', 'forge-v9', 'forge-api-v1'], 'activation deletes stale app caches and the unpartitioned API cache')
 
   const messagedActivation = buildWorkerHarness()
   let activationWork
@@ -164,7 +167,7 @@ async function runServiceWorkerCacheSmoke() {
     ports: [{ postMessage(value) { reportedVersion = value } }],
   })
   assert.equal(reportedVersion?.type, 'FORGE_SW_VERSION')
-  assert.equal(reportedVersion?.revision, 'forge-v9', 'worker reports its cache revision for loop-bounded adoption')
+  assert.equal(reportedVersion?.revision, 'forge-v10', 'worker reports its cache revision for loop-bounded adoption')
 
   const isolatedApi = buildWorkerHarness()
   isolatedApi.setResponse(new Response('{"units":"imperial"}', {

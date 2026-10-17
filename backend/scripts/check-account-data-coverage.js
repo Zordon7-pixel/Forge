@@ -6,7 +6,10 @@ const {
   ACCOUNT_DELETE_QUERIES,
   ACCOUNT_EXPORT_TABLES,
   ACCOUNT_SECRET_TABLES,
+  ACCOUNT_INDIRECT_OWNED_TABLES,
   ACCOUNT_SOCIAL_DELETE_QUERIES,
+  ACCOUNT_CALLABLE_CLEANUP,
+  neutralizeOwnedWebPushAuthority,
 } = require('../src/lib/accountDataCoverage');
 
 const root = path.resolve(__dirname, '..');
@@ -23,6 +26,7 @@ function walk(dir) {
 
 function collectUserOwnedTables() {
   const tables = new Map();
+  for (const table of ACCOUNT_INDIRECT_OWNED_TABLES) tables.set(table, ['src/lib/accountDataCoverage.js (joined ownership)']);
   for (const file of walk(srcDir)) {
     const content = fs.readFileSync(file, 'utf8');
     const createTablePattern = /CREATE TABLE IF NOT EXISTS\s+([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)/g;
@@ -42,6 +46,12 @@ function collectDeleteTables() {
   for (const [sql] of [...ACCOUNT_SOCIAL_DELETE_QUERIES, ...ACCOUNT_DELETE_QUERIES]) {
     const match = String(sql).match(/(?:DELETE FROM|UPDATE)\s+([a-zA-Z0-9_]+)/i);
     if (match) tables.add(match[1]);
+  }
+  for(const entry of ACCOUNT_CALLABLE_CLEANUP) {
+    if(entry.table!=='web_push_claims' || entry.execute!==neutralizeOwnedWebPushAuthority || typeof entry.execute!=='function') {
+      throw new Error('Unrecognized callable account cleanup authority');
+    }
+    tables.add(entry.table);
   }
   return tables;
 }
@@ -83,6 +93,11 @@ const { runAccountDeletionAtomicitySmoke } = require('../test/accountDeletionAto
 const { runAuthMutationGuardSmoke } = require('../test/authMutationGuard.smoke');
 
 runAccountDeletionAtomicitySmoke()
+  .then(async()=>{
+    // Execute the registered authority, not a fake DELETE or table exemption.
+    const {runWebPushAuthorityErasureSmoke}=require('../test/webPushAuthorityErasure.smoke');
+    await runWebPushAuthorityErasureSmoke();
+  })
   .then(() => runAuthMutationGuardSmoke())
   .then(() => {
     console.log(`Account data coverage OK: ${userOwnedTables.size} user-owned tables checked.`);

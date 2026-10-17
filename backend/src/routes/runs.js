@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { dbGet, dbAll, dbRun, withPlanningInputMutation } = require('../db');
+const { retireSavedRun } = require('../services/savedRunEvents');
 const auth   = require('../middleware/auth');
 const { v4: uuidv4, validate: uuidValidate } = require('uuid');
 const { generateRunFeedback, generateLoadWarning, generateRunBrief } = require('../services/ai');
@@ -1244,6 +1245,7 @@ router.delete('/:id', auth, async (req, res) => {
         'DELETE FROM community_posts WHERE run_id=? AND user_id=?',
         [req.params.id, req.user.id]
       );
+      await retireSavedRun(tx, req.user.id, req.params.id);
       await tx.run('DELETE FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       await autoUpdatePRs.recomputeRunPrCategories(req.user.id, prRows.map((row) => row.label), { tx });
     });
