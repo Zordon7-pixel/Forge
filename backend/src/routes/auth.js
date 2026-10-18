@@ -195,7 +195,7 @@ router.post('/reset-password', async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   try {
     const user = await dbGet(
-      `SELECT id, name, email, sex, age, weight_lbs, max_heart_rate, weekly_miles_current, goal_type,
+      `SELECT id, name, email, friend_handle, sex, age, weight_lbs, max_heart_rate, weekly_miles_current, goal_type,
        goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality,
        run_days_per_week, lift_days_per_week, run_eligible_weekdays, lift_eligible_weekdays, injury_mode, injury_description, injury_date,
        injury_limitations, units, is_pro, subscription_status, subscription_ends_at FROM users WHERE id = ?`,
