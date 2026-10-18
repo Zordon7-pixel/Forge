@@ -52,12 +52,20 @@ async function main() {
   const load = () => source.loadMeasuredSources(args);
   const get = async id => (await load()).receipt.sessions.find(s => s.session_id === id);
   const post = body => request('POST', '/workouts/strength', body);
+  // Pre-existing placeholders (including another owner's) must never be rewritten.
+  const legacyIds = [owner, foreign].map(user => {
+    const legacyId = randomUUID();
+    db.prepare('INSERT INTO workout_sessions (id,user_id,started_at,ended_at,total_seconds) VALUES (?,?,?,?,0)')
+      .run(legacyId, user, '2026-09-01', '2026-09-01');
+    return legacyId;
+  });
+  const legacyRows = legacyIds.map(stored);
   assert.equal((await request('POST', '/workouts/strength', { sets }, null)).status, 401);
   const historical = await post({ completed_at: '2026-09-20T09:00:00-04:00', sets });
   assert.equal(historical.status, 201);
   const id = historical.data.session.id, original = stored(id), originalSets = setRows(id);
   assert.equal(original.started_at, '2026-09-20T09:00:00-04:00');
-  assert.equal(original.ended_at, original.started_at); assert.equal(original.total_seconds, 0);
+  assert.equal(original.ended_at, original.started_at); assert.equal(original.total_seconds, null);
   assert.equal(original.created_at, '2026-09-27 12:00:00'); assert(originalSets.every(s => s.logged_at === original.created_at));
   let observed = await get(id);
   assert.equal(observed.measured_set_count, 2); assert.equal(observed.measurement_state, 'KNOWN_LOWER_BOUND');
@@ -184,6 +192,57 @@ async function main() {
   assert.equal((await source.loadMeasuredSources({ ...args, tx: correctiveTx })).reason_code, 'SOURCE_CORRECTION_UNSUPPORTED');
   for (const table of ['training_plans', 'user_plans', 'activity_measured_receipts', 'provider_import_receipts'])
     assert.equal(db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n, 0);
+
+  // G2: completed-log start/end evidence is the sole source of persisted duration.
+  const start = '2026-09-20T09:00:00-04:00', end = '2026-09-20T09:45:30-04:00';
+  const payload = { name: 'Recorded strength', sets, total_volume: 1600,
+    exercises_completed: 1, personal_records_hit: 0, completed_at: end };
+  for (const [started_at, ended_at, seconds] of [
+    [start, end, 2730],
+    [start, '2026-09-20T13:45:30Z', 2730],
+    ['2026-09-20T23:50:00Z', '2026-09-21T00:10:00Z', 1200],
+    ['2024-02-29T12:00:00Z', '2024-02-29T12:00:01Z', 1],
+    ['2026-09-20T13:00:00.100Z', '2026-09-20T13:00:02.700Z', 3],
+  ]) {
+    const result = await post({ ...payload, completed_at: undefined, started_at, ended_at, total_seconds: 999 });
+    assert.equal(result.status, 201);
+    const sessionId = result.data.session.id, row = stored(sessionId);
+    assert.deepEqual(result.data, { session: { id: sessionId, name: payload.name,
+      total_volume: 1600, exercises_completed: 1, personal_records_hit: 0 } }, 'response stays compatible');
+    assert.equal(row.total_seconds, seconds); assert.equal(row.started_at, started_at); assert.equal(row.ended_at, ended_at);
+    assert.equal(row.user_id, owner); assert.equal(setRows(sessionId).length, 2);
+    assert(setRows(sessionId).every(set => set.user_id === owner));
+    assert.equal(Object.hasOwn(row, 'total_volume'), false, 'volume remains derived from sets');
+    if (started_at === start) {
+      assert.deepEqual((await get(sessionId)).log_observation.duration_s, { state: 'KNOWN', value: seconds });
+    }
+    assert.equal((await request('GET', `/workouts/${sessionId}`, undefined, foreign)).status, 404);
+    assert.deepEqual((await request('GET', `/workouts/${sessionId}/sets`, undefined, foreign)).data, { sets: [] });
+  }
+  const invalidPairs = [
+    {}, { started_at: start }, { ended_at: end },
+    { started_at: start, ended_at: start }, { started_at: end, ended_at: start },
+    { started_at: '2026-09-20T13:00:00.000Z', ended_at: '2026-09-20T13:00:00.100Z' },
+    { started_at: '1900-01-01T00:00:00Z', ended_at: end }, // INTEGER overflow
+    ...[null, '', ' ', 0, 1234567890, true, {}, [], 'invalid', '2026-02-30T12:00:00Z',
+      '2025-02-29T12:00:00Z', '2026-09-20', '2026-09-20T12:00:00',
+      '2026-09-20T24:00:00Z', '2026-09-20T12:60:00Z', '2026-09-20T12:00:60Z',
+      '2026-09-20T12:00:00+25:00'].flatMap(value => [
+      { started_at: value, ended_at: end }, { started_at: start, ended_at: value },
+    ]),
+  ];
+  for (const pair of invalidPairs) {
+    const result = await post({ ...payload, ...pair, total_seconds: 2700, duration_minutes: 45 });
+    assert.equal(result.status, 201, JSON.stringify(pair));
+    const row = stored(result.data.session.id);
+    assert.equal(row.total_seconds, null, JSON.stringify(pair));
+    assert.equal(row.started_at, end, 'legacy occurrence marker retained without inventing duration');
+    assert.equal(row.ended_at, end);
+  }
+  const absent = await post({ sets });
+  assert.equal(absent.status, 201); assert.equal(stored(absent.data.session.id).total_seconds, null);
+  assert.deepEqual(legacyIds.map(stored), legacyRows, 'all legacy zero-second rows remain byte-equivalent');
+  console.log(`STRENGTH DURATION G2 OK: 5 valid pairs, ${invalidPairs.length} absent/invalid pairs, legacy zeros, response/sets/owner compatibility`);
   console.log('STRENGTH LOG ACQUISITION OK: authenticated historical/contemporaneous/timed logs; chronology, null duration, owner, edits/deletion, correction, deterministic receipt; no completed-prescription authority');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => { server?.close(); db.close(); global.Date = RealDate; });

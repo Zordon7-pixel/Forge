@@ -30,6 +30,18 @@ remain separate; known sets can coexist with unknown duration. This is not
 canonical adherence, tolerance, complete coverage or progression authority. The
 first-plan strength source gate and all initial-dose policies are unchanged.
 
+### Completed-log duration — t_acfb9614 (patched; not deployed)
+
+`POST /api/workouts/strength` optionally accepts explicit `started_at` and
+`ended_at` timestamps with timezone offsets. Valid positive pairs retain those
+timestamps and elapsed seconds rounded to the existing INTEGER precision;
+missing/invalid pairs, values rounding to zero and INTEGER overflow store NULL.
+`completed_at` retains its legacy occurrence-marker behavior and never supplies
+duration. No migration/backfill or volume column is added; old zero rows remain
+untouched. At this base LogLift uses `/workouts/start` then ActiveWorkout's
+`/:id/end`, not the completed-log POST. Gates: `strengthLogAcquisition.smoke.js`,
+`logLiftSaveFlow.smoke.mjs`, `activeWorkoutMobile.smoke.mjs`.
+
 ## What This App Is
 
 Forge is a coaching app for **hybrid runners/lifters** — people balancing running, strength work, readiness, and recovery. Do not position it as a generic athlete tracker.
