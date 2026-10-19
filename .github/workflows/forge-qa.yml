@@ -1,17 +1,97 @@
-name: C1 bounded Linux diagnosis (temporary)
+name: Forged Hybrid QA
+
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
-permissions:
-  contents: read
+  schedule:
+    - cron: '17 */6 * * *'
+
+concurrency:
+  group: forge-qa-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  c1-diagnosis:
-    if: github.ref == 'refs/heads/oracle/t_f8fc63a7-c1-linux'
+  deterministic-qa:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        preset: [default, no-hint]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - name: Install dependencies
+        run: |
+          npm --prefix frontend ci
+          npm --prefix backend ci
+      - name: Install Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Run deterministic smoke suites
+        run: npm run qa:smoke
+      - name: Verify account-data coverage
+        run: npm --prefix backend run check:account-data
+      - name: Audit production dependencies
+        run: |
+          npm --prefix frontend audit --audit-level=high
+          npm --prefix backend audit --audit-level=high
+      - name: Build frontend
+        run: npm --prefix frontend run build
+
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - name: Install dependencies
+        run: |
+          npm --prefix frontend ci
+          npm --prefix backend ci
+      - name: Install Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Run mobile browser journeys
+        run: npm run qa:browser
+      - name: Upload browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Keep the previous check identity while requiring both independent jobs.
+  deterministic-and-browser-qa:
+    if: ${{ always() }}
+    needs: [deterministic-qa, browser-qa]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require deterministic and browser success
+        env:
+          DETERMINISTIC_RESULT: ${{ needs.deterministic-qa.result }}
+          BROWSER_RESULT: ${{ needs.browser-qa.result }}
+        run: test "$DETERMINISTIC_RESULT" = success && test "$BROWSER_RESULT" = success
+
+  ios-native-compile:
+    if: github.event_name != 'schedule'
+    runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -19,24 +99,68 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm --prefix frontend ci
-      - name: Install same locked Chromium as canonical CI
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+      - name: Build and sync Capacitor iOS
+        run: |
+          npm --prefix frontend run build
+          cd frontend && npx cap sync ios
+      - name: Verify native contracts and generated project stability
+        run: |
+          npm run qa:native
+          git diff --exit-code -- frontend/ios frontend/capacitor.config.ts frontend/app.json
+      - name: Compile iOS app and Live Activity extension without signing
+        working-directory: frontend/ios/App
+        run: >-
+          xcodebuild
+          -workspace App.xcworkspace
+          -scheme App
+          -configuration Debug
+          -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/ForgeDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          build
+
+  production-shell-qa:
+    if: github.event_name != 'pull_request'
+    needs: [deterministic-qa, browser-qa, deterministic-and-browser-qa]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+      - name: Install Chromium
         working-directory: frontend
         run: npx playwright install --with-deps chromium
-      - name: Capture diagnostics then run unchanged acceptance assertions
-        env:
-          C1_DIAGNOSTIC_DIR: c1-diagnostic
-          C1_DIAGNOSTIC_PRESET: ${{ matrix.preset }}
+      - name: Export expected pushed revision and bundle identity
+        if: github.event_name != 'schedule'
         run: |
-          set -o pipefail
-          mkdir -p c1-diagnostic
-          uname -a > c1-diagnostic/platform.txt
-          cat /etc/os-release >> c1-diagnostic/platform.txt
-          node frontend/test/shareOverlaysC1.smoke.mjs 2>&1 | tee c1-diagnostic/run.log
-      - uses: actions/upload-artifact@v4
-        if: always()
+          npm --prefix frontend run build
+          echo "FORGE_QA_EXPECTED_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
+          node frontend/scripts/export-built-entry.mjs >> "$GITHUB_ENV"
+      - name: Wait for the pushed Railway shell
+        env:
+          FORGE_QA_BASE_URL: https://forge-production-773f.up.railway.app
+        run: npm --prefix frontend run wait:production
+      - name: Verify live production shell and service worker
+        env:
+          FORGE_QA_BASE_URL: https://forge-production-773f.up.railway.app
+        run: npm run qa:production
+      - name: Upload production browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          name: c1-linux-${{ matrix.preset }}
-          path: c1-diagnostic
-          if-no-files-found: error
-          retention-days: 14
+          name: forge-production-playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7

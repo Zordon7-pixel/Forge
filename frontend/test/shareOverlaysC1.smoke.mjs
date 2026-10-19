@@ -5,8 +5,6 @@
 // Each update writes exactly six baselines, never the entire matrix at once.
 // --compare=<overlay>: read-only comparison of that overlay's six goldens.
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -143,9 +141,7 @@ const server = await createServer({ root, configFile: false, envDir: join(scratc
 let browser
 try {
   await server.listen()
-  const diagnosticArgs = process.env.C1_DIAGNOSTIC_PRESET === 'no-hint'
-    ? ['--font-render-hinting=none', '--disable-lcd-text'] : []
-  browser = await chromium.launch({ headless: true, args: diagnosticArgs })
+  browser = await chromium.launch({ headless: true })
   const page = await browser.newPage({ viewport: { width: 1080, height: 1920 }, deviceScaleFactor: 1, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' })
   const errors = [], external = []
   page.on('pageerror', error => errors.push(error.message))
@@ -183,10 +179,8 @@ try {
         const m = ctx.measureText(value), transform = ctx.getTransform()
         const a = new DOMPoint(x - m.actualBoundingBoxLeft, y - m.actualBoundingBoxAscent).matrixTransform(transform)
         const b = new DOMPoint(x + m.actualBoundingBoxRight, y + m.actualBoundingBoxDescent).matrixTransform(transform)
-        calls.push({ text: String(value), x: a.x, right: b.x, top: a.y, bottom: b.y,
-          font: ctx.font, spacing: ctx.letterSpacing, origin: [x, y], transform: [...transform.toFloat64Array()],
-          width: m.width, align: ctx.textAlign })
-        if (!window.c1DiagnosticNoText) fillText(value, x, y, ...rest)
+        calls.push({ text: String(value), x: a.x, right: b.x, top: a.y, bottom: b.y })
+        fillText(value, x, y, ...rest)
       }
       ctx.drawImage = (image, x, y, w, h) => {
         if (image === window.logo) {
@@ -327,32 +321,6 @@ try {
       assert.equal(entryFor('iron-chips').supports(model), false)
     }
   })
-  if (process.env.C1_DIAGNOSTIC_DIR) {
-    const dir = process.env.C1_DIAGNOSTIC_DIR
-    mkdirSync(dir, { recursive: true })
-    const hash = data => createHash('sha256').update(data).digest('hex')
-    const report = { sha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-      node: process.version, platform: process.platform, arch: process.arch, browser: browser.version(), args: diagnosticArgs,
-      playwright: JSON.parse(readFileSync(join(root, 'node_modules/@playwright/test/package.json'))).version,
-      fonts: Object.fromEntries(['Anton-Regular.ttf', 'BarlowCondensed-SemiBold.ttf', 'BarlowCondensed-ExtraBold.ttf', 'JetBrainsMono.ttf']
-        .map(name => [name, hash(readFileSync(join(root, 'src/assets/share-fonts', name)))])),
-      loaded: await page.evaluate(() => [...document.fonts].map(f => ({ family: f.family, weight: f.weight, status: f.status }))), cases: [] }
-    for (const item of matrix) {
-      const result = await render(item.id, fixtures[item.id], item.theme, item.size, true)
-      bounds(result, item.size)
-      const expected = readFileSync(join(goldenDir, item.name))
-      const ratio = await page.evaluate(({ a, b, size }) => window.compare(a, b, size), { a: result.png, b: expected.toString('base64'), size: item.size })
-      writeFileSync(join(dir, item.name), Buffer.from(result.png, 'base64'))
-      await page.evaluate(() => { window.c1DiagnosticNoText = true })
-      const textless = await render(item.id, fixtures[item.id], item.theme, item.size, true)
-      await page.evaluate(() => { window.c1DiagnosticNoText = false })
-      writeFileSync(join(dir, 'textless-' + item.name), Buffer.from(textless.png, 'base64'))
-      report.cases.push({ ...item, width: result.width, height: result.height, calls: result.calls, plates: result.plates,
-        ratio, actualSha256: hash(Buffer.from(result.png, 'base64')), goldenSha256: hash(expected) })
-      console.log(`DIAGNOSTIC ${item.name}: ${(ratio * 100).toFixed(4)}%`)
-    }
-    writeFileSync(join(dir, 'provenance.json'), JSON.stringify(report, null, 2) + '\n')
-  }
   await check('18-case matrix: exact PNG dimensions, deterministic pixels, all Story text/brand safe', async () => {
     let written = 0, compared = 0
     for (const item of matrix) {

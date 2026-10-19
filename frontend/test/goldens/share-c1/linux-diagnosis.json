@@ -1,0 +1,1018 @@
+{
+  "schema": "forge-c1-linux-diagnosis-v1",
+  "status": "partial-baseline-phase-not-selected-by-acceptance",
+  "base": "170d5c4526e02562e3cbf20a614f5d16bb4292d4",
+  "evidenceDirectory": "/tmp/forge-c1-t_f8fc63a7",
+  "runs": [
+    {
+      "id": 39328096330,
+      "sha": "a36055c1d4a5c8db7674f3b335ec91204c8baa91",
+      "conclusion": "success reported incorrectly: tee masked failing test exit; NOT acceptance",
+      "artifacts": {
+        "default": 12223820477,
+        "noHint": 12223136635
+      }
+    },
+    {
+      "id": 39328319044,
+      "sha": "83725a5ebe0a0179b6fb64faa0b5ca03414d7af0",
+      "conclusion": "failure correctly propagated; each test exit 1",
+      "artifacts": {
+        "default": 12222713560,
+        "noHint": 12222484056
+      }
+    }
+  ],
+  "matrixAnalysis": [
+    {
+      "name": "iron-chips-light-feed.png",
+      "differentPixels": 21657,
+      "totalPixels": 1458000,
+      "ratio": 0.014853909465020576,
+      "textlessDifferentPixels": 210,
+      "outsideTextDifferentPixels": 210,
+      "maxOriginDeltaPx": 0.0003204345703125,
+      "maxPlateDeltaPx": 0.0003204345703125,
+      "maxMeasuredWidthDeltaPx": 0.314697265625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": true
+    },
+    {
+      "name": "iron-chips-light-story.png",
+      "differentPixels": 20920,
+      "totalPixels": 2073600,
+      "ratio": 0.010088734567901235,
+      "textlessDifferentPixels": 19,
+      "outsideTextDifferentPixels": 19,
+      "maxOriginDeltaPx": 0.0003204345703125,
+      "maxPlateDeltaPx": 0.0003156873981424724,
+      "maxMeasuredWidthDeltaPx": 0.314697265625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": true
+    },
+    {
+      "name": "iron-chips-dark-feed.png",
+      "differentPixels": 21458,
+      "totalPixels": 1458000,
+      "ratio": 0.014717421124828533,
+      "textlessDifferentPixels": 10,
+      "outsideTextDifferentPixels": 10,
+      "maxOriginDeltaPx": 0.0003204345703125,
+      "maxPlateDeltaPx": 0.0003204345703125,
+      "maxMeasuredWidthDeltaPx": 0.314697265625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": true
+    },
+    {
+      "name": "iron-chips-dark-story.png",
+      "differentPixels": 20986,
+      "totalPixels": 2073600,
+      "ratio": 0.010120563271604939,
+      "textlessDifferentPixels": 7,
+      "outsideTextDifferentPixels": 7,
+      "maxOriginDeltaPx": 0.0003204345703125,
+      "maxPlateDeltaPx": 0.0003156873981424724,
+      "maxMeasuredWidthDeltaPx": 0.314697265625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": true
+    },
+    {
+      "name": "iron-chips-color-feed.png",
+      "differentPixels": 21539,
+      "totalPixels": 1458000,
+      "ratio": 0.014772976680384088,
+      "textlessDifferentPixels": 124,
+      "outsideTextDifferentPixels": 124,
+      "maxOriginDeltaPx": 0.0003204345703125,
+      "maxPlateDeltaPx": 0.0003204345703125,
+      "maxMeasuredWidthDeltaPx": 0.314697265625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": true
+    },
+    {
+      "name": "iron-chips-color-story.png",
+      "differentPixels": 20962,
+      "totalPixels": 2073600,
+      "ratio": 0.010108989197530864,
+      "textlessDifferentPixels": 8,
+      "outsideTextDifferentPixels": 8,
+      "maxOriginDeltaPx": 0.0003204345703125,
+      "maxPlateDeltaPx": 0.0003156873981424724,
+      "maxMeasuredWidthDeltaPx": 0.314697265625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": true
+    },
+    {
+      "name": "strike-pr-light-feed.png",
+      "differentPixels": 22079,
+      "totalPixels": 1458000,
+      "ratio": 0.015143347050754458,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0.000152587890625,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.00201416015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "strike-pr-light-story.png",
+      "differentPixels": 21720,
+      "totalPixels": 2073600,
+      "ratio": 0.010474537037037037,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0.000152587890625,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.00201416015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "strike-pr-dark-feed.png",
+      "differentPixels": 22236,
+      "totalPixels": 1458000,
+      "ratio": 0.015251028806584362,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0.000152587890625,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.00201416015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "strike-pr-dark-story.png",
+      "differentPixels": 21935,
+      "totalPixels": 2073600,
+      "ratio": 0.010578221450617284,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0.000152587890625,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.00201416015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "strike-pr-color-feed.png",
+      "differentPixels": 22081,
+      "totalPixels": 1458000,
+      "ratio": 0.01514471879286694,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0.000152587890625,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.00201416015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "strike-pr-color-story.png",
+      "differentPixels": 21746,
+      "totalPixels": 2073600,
+      "ratio": 0.01048707561728395,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0.000152587890625,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.00201416015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "hybrid-split-light-feed.png",
+      "differentPixels": 24423,
+      "totalPixels": 1458000,
+      "ratio": 0.016751028806584363,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.17388916015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "hybrid-split-light-story.png",
+      "differentPixels": 23992,
+      "totalPixels": 2073600,
+      "ratio": 0.011570216049382716,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.17388916015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "hybrid-split-dark-feed.png",
+      "differentPixels": 24523,
+      "totalPixels": 1458000,
+      "ratio": 0.016819615912208506,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.17388916015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "hybrid-split-dark-story.png",
+      "differentPixels": 24042,
+      "totalPixels": 2073600,
+      "ratio": 0.011594328703703704,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.17388916015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "hybrid-split-color-feed.png",
+      "differentPixels": 24435,
+      "totalPixels": 1458000,
+      "ratio": 0.01675925925925926,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.17388916015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    },
+    {
+      "name": "hybrid-split-color-story.png",
+      "differentPixels": 23998,
+      "totalPixels": 2073600,
+      "ratio": 0.011573109567901235,
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.17388916015625,
+      "independentLinuxRepeatDifferentPixels": 0,
+      "staged": false
+    }
+  ],
+  "localEvidenceHashes": {
+    "analysis.log": "8219c607233cdf32b3ae712b68120634b34a2b58d4dbeabb74e8f89fd874643f",
+    "analyze.py": "6083b4829f51ff6415cb31a5ef0adcaffab7a827c8edd8e3d8009952da0e8b91",
+    "build.log": "f63138fba93c37102d7c1f657d78d20743386fc02484a19c5cdbfa7a7fbeda58",
+    "ci-workflow.log": "b46062c0ab1f80309162d2293cff66840908d9173c2ac863d1c6ef336141fd71",
+    "framework.log": "ba9bfe6f393d92d5bb9d7220a9a521e2d325579be62d1b42ed73bbec203aead8",
+    "linux/c1-linux-default/provenance.json": "2fe6518a9ae74aef24fa20f6b37178e86388c4ae07e4cd86515761650e98f03e",
+    "linux/c1-linux-default/run.log": "0ed547fcfeb8924180eb23001e29cbe01b976f6ef57feca6cc8b36d0b52ec882",
+    "linux/c1-linux-no-hint/provenance.json": "476c7359d05fd8224d7d2a3320b499ef17b8fac17ff9b4afb02ef1ec38cd8062",
+    "linux/c1-linux-no-hint/run.log": "de9a20993e93acde06d1aa41bfcd0d40ef679f49592ed9ed4400680eeddc906b",
+    "linux-repeat/c1-linux-default/provenance.json": "3018c1e6bad73ad3cb79f3da6de6ce1b6404aeb46b46cd101168e441f7172e6a",
+    "linux-repeat/c1-linux-default/run.log": "0ed547fcfeb8924180eb23001e29cbe01b976f6ef57feca6cc8b36d0b52ec882",
+    "linux-repeat/c1-linux-no-hint/provenance.json": "4a63afd2dc938460ae54990eba8d22e4e8dad93540c9781e1387920d95c4233e",
+    "linux-repeat/c1-linux-no-hint/run.log": "de9a20993e93acde06d1aa41bfcd0d40ef679f49592ed9ed4400680eeddc906b",
+    "linux-run-39328096330.log": "b86811c9e64558c320f07d54b76c8142e626db4fdf73221009619446dac65ef9",
+    "linux-run-39328319044.json": "dd89ffa8758ec949c74ae9993cba5452b91cb9ff5b2c5439e3f0333884d53fbe",
+    "linux-run-39328319044.log": "975c4503930ae501131095794d68da8c5036fe696aefd92db5d33962a96a6baa",
+    "mac-base.log": "d517ed84d1a4b513f4c430ad1f42de35df75fc88ee53573729fb64ac381f3bed",
+    "mac-default/provenance.json": "fb64aeb8d7c0f64f3761fc4a423d27e6fd742171537fa63a2c77b996f264228b",
+    "mac-diagnostic.log": "0e9c24afd9b2226b653c5b0d9f46934bf060cc8d409b0be030175e09a496b75b",
+    "mac-final-c1.log": "d517ed84d1a4b513f4c430ad1f42de35df75fc88ee53573729fb64ac381f3bed",
+    "mac-no-hint/provenance.json": "9d00ccdd564985a3b17a56cfc5624e0c0678e46062fd8e8c7e44b2a26114eb05",
+    "mac-no-hint.log": "0e9c24afd9b2226b653c5b0d9f46934bf060cc8d409b0be030175e09a496b75b",
+    "phasec.log": "8446cfe02b06b66f6c983f32708201e722b9f33b12cf7b5b80eac031de8b1fee",
+    "sharestats.log": "3b0219f8eedfebab92121b826f2cbb8ca673e0c19df9a48c3367bf9b39c3fa65",
+    "singleflight.log": "75f7854382236421efe8a1e76ff38b4503645beae11bb39c22c4ffc4f4a7d208"
+  },
+  "sourceHashes": {
+    "frontend/test/shareOverlaysC1.smoke.mjs": "e22277b44a14894b3dcb9d0a8c4f94fed3c274816dee3fd1fda7a0638e555762",
+    "frontend/src/lib/shareOverlaysC1.js": "453fbc11a4e19f99b6e3b41b5bf76b69bf6b53dd320203fc626453269289bf9d",
+    "frontend/src/lib/shareTheme.js": "4a402f8feb990e86b656aebd66ac189ae5638ca1a2b87d969c0739d64afa88ca",
+    "frontend/src/lib/shareTemplates.js": "c9054f037b37e19bfc53580e2c38fa3eb1c07fda5d03d3a7bb2cb2f4b469817e",
+    "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
+    "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
+    ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347"
+  },
+  "captures": {
+    "macDefault": {
+      "sha": "170d5c4526e02562e3cbf20a614f5d16bb4292d4",
+      "node": "v22.22.3",
+      "platform": "darwin",
+      "arch": "arm64",
+      "browser": "151.0.7922.34",
+      "args": [],
+      "playwright": "1.62.1",
+      "fonts": {
+        "Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+        "BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+        "BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+        "JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"
+      },
+      "loaded": [
+        {
+          "family": "Anton",
+          "weight": "400",
+          "status": "loaded"
+        },
+        {
+          "family": "\"Barlow Condensed\"",
+          "weight": "600",
+          "status": "loaded"
+        },
+        {
+          "family": "\"Barlow Condensed\"",
+          "weight": "800",
+          "status": "loaded"
+        },
+        {
+          "family": "\"JetBrains Mono\"",
+          "weight": "100 900",
+          "status": "loaded"
+        }
+      ],
+      "cases": [
+        {
+          "id": "iron-chips",
+          "theme": "light",
+          "size": "feed",
+          "name": "iron-chips-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "15718822e83d34d13e97ff062e8ffa23f53a502877007412b8c9ac2cd899dfdd",
+          "goldenSha256": "15718822e83d34d13e97ff062e8ffa23f53a502877007412b8c9ac2cd899dfdd"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "light",
+          "size": "story",
+          "name": "iron-chips-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "6963cf994753ea019852d819063b0439930444c95ff24f2b6f01ac2cf62fcfbd",
+          "goldenSha256": "6963cf994753ea019852d819063b0439930444c95ff24f2b6f01ac2cf62fcfbd"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "dark",
+          "size": "feed",
+          "name": "iron-chips-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "9eeeb7c5d8186dc20bdd6e65e0f10252440e2297157e733a26579bf562fc2fb1",
+          "goldenSha256": "9eeeb7c5d8186dc20bdd6e65e0f10252440e2297157e733a26579bf562fc2fb1"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "dark",
+          "size": "story",
+          "name": "iron-chips-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "70459cb13c86fde7ded9b07be770801ac0c842d58b1958886c000ee5f6823806",
+          "goldenSha256": "70459cb13c86fde7ded9b07be770801ac0c842d58b1958886c000ee5f6823806"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "color",
+          "size": "feed",
+          "name": "iron-chips-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "07cac5f2150e4f37696fb0082b3a5e5e3ed3f9a5f490992d3df30d7c2bff910e",
+          "goldenSha256": "07cac5f2150e4f37696fb0082b3a5e5e3ed3f9a5f490992d3df30d7c2bff910e"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "color",
+          "size": "story",
+          "name": "iron-chips-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "d39115767102f18930df10e2c5e4ae7e698c6aa04b85793d919ce3f1840d1ceb",
+          "goldenSha256": "d39115767102f18930df10e2c5e4ae7e698c6aa04b85793d919ce3f1840d1ceb"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "light",
+          "size": "feed",
+          "name": "strike-pr-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "8f4725ce4addba337a936b8e697afdabb202443be4bf995079f0e86e9048ed7e",
+          "goldenSha256": "8f4725ce4addba337a936b8e697afdabb202443be4bf995079f0e86e9048ed7e"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "light",
+          "size": "story",
+          "name": "strike-pr-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "ae26ada1d7bea74f755f9486a9eead91c9425d2aa4cb280106b3e07e01a7e1eb",
+          "goldenSha256": "ae26ada1d7bea74f755f9486a9eead91c9425d2aa4cb280106b3e07e01a7e1eb"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "dark",
+          "size": "feed",
+          "name": "strike-pr-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "a61778d2d10ec9eb663d847844f789db7e87e00c740c6a0a7499ef3380491e7a",
+          "goldenSha256": "a61778d2d10ec9eb663d847844f789db7e87e00c740c6a0a7499ef3380491e7a"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "dark",
+          "size": "story",
+          "name": "strike-pr-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "41a244ea5bc15c9216ed1e9aeb54e09df10f1e097f0f839d2503a3aa9c26058f",
+          "goldenSha256": "41a244ea5bc15c9216ed1e9aeb54e09df10f1e097f0f839d2503a3aa9c26058f"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "color",
+          "size": "feed",
+          "name": "strike-pr-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "305340b9b04c67b646d2b8b0190dcb8487cf578d9edc2d53f53d3181ec1dd00a",
+          "goldenSha256": "305340b9b04c67b646d2b8b0190dcb8487cf578d9edc2d53f53d3181ec1dd00a"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "color",
+          "size": "story",
+          "name": "strike-pr-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "73cadbe2e77fdc2f3943c66bd8562296694c0b08317c19636ab39cccee905a94",
+          "goldenSha256": "73cadbe2e77fdc2f3943c66bd8562296694c0b08317c19636ab39cccee905a94"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "light",
+          "size": "feed",
+          "name": "hybrid-split-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "69ce549f59c2f761af99dfbfab87d9cfef79e5cb7c146fd328740ca40249cfa9",
+          "goldenSha256": "69ce549f59c2f761af99dfbfab87d9cfef79e5cb7c146fd328740ca40249cfa9"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "light",
+          "size": "story",
+          "name": "hybrid-split-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "e9ad4441baaf8eea03a83cb99653f04cd64a5b00e78edaa3af4c35595cea150c",
+          "goldenSha256": "e9ad4441baaf8eea03a83cb99653f04cd64a5b00e78edaa3af4c35595cea150c"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "dark",
+          "size": "feed",
+          "name": "hybrid-split-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "797f7e3896adf761af30c540e589055a4515ac8c3f537f1ae0164c3bd4154d12",
+          "goldenSha256": "797f7e3896adf761af30c540e589055a4515ac8c3f537f1ae0164c3bd4154d12"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "dark",
+          "size": "story",
+          "name": "hybrid-split-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "8e5e8d947cacc7a10c5ff630db9b735bef38246dc22b6d08c67c92c4cb33e832",
+          "goldenSha256": "8e5e8d947cacc7a10c5ff630db9b735bef38246dc22b6d08c67c92c4cb33e832"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "color",
+          "size": "feed",
+          "name": "hybrid-split-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0,
+          "actualSha256": "2a82b59000582b420e0fd241230b468e4a16951a1b2ad97afa2b32b1eadc960d",
+          "goldenSha256": "2a82b59000582b420e0fd241230b468e4a16951a1b2ad97afa2b32b1eadc960d"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "color",
+          "size": "story",
+          "name": "hybrid-split-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0,
+          "actualSha256": "db9146a95044328f13f42b05d7f3c686dbef8b0090b583c04c6c7b82a3f0473d",
+          "goldenSha256": "db9146a95044328f13f42b05d7f3c686dbef8b0090b583c04c6c7b82a3f0473d"
+        }
+      ]
+    },
+    "linuxDefault": {
+      "sha": "83725a5ebe0a0179b6fb64faa0b5ca03414d7af0",
+      "node": "v22.23.3",
+      "platform": "linux",
+      "arch": "x64",
+      "browser": "151.0.7922.34",
+      "args": [],
+      "playwright": "1.62.1",
+      "fonts": {
+        "Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+        "BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+        "BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+        "JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"
+      },
+      "loaded": [
+        {
+          "family": "Anton",
+          "weight": "400",
+          "status": "loaded"
+        },
+        {
+          "family": "\"Barlow Condensed\"",
+          "weight": "600",
+          "status": "loaded"
+        },
+        {
+          "family": "\"Barlow Condensed\"",
+          "weight": "800",
+          "status": "loaded"
+        },
+        {
+          "family": "\"JetBrains Mono\"",
+          "weight": "100 900",
+          "status": "loaded"
+        }
+      ],
+      "cases": [
+        {
+          "id": "iron-chips",
+          "theme": "light",
+          "size": "feed",
+          "name": "iron-chips-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.023148148148148147,
+          "actualSha256": "cd9fbe718a8efc2005e9b9ae5fa50a2396b61f0bf91864ca273da06d1af75083",
+          "goldenSha256": "15718822e83d34d13e97ff062e8ffa23f53a502877007412b8c9ac2cd899dfdd"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "light",
+          "size": "story",
+          "name": "iron-chips-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.016340181327160495,
+          "actualSha256": "0ffceceec7b61b5f56a2d19109ee870f9bbef649ce4327f1788caea124dc3043",
+          "goldenSha256": "6963cf994753ea019852d819063b0439930444c95ff24f2b6f01ac2cf62fcfbd"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "dark",
+          "size": "feed",
+          "name": "iron-chips-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.02158641975308642,
+          "actualSha256": "9a1db6aa78a45299fb414c87a906ad368e9197fb6bbdd6e859b62e1359a7a46b",
+          "goldenSha256": "9eeeb7c5d8186dc20bdd6e65e0f10252440e2297157e733a26579bf562fc2fb1"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "dark",
+          "size": "story",
+          "name": "iron-chips-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.015433545524691358,
+          "actualSha256": "9e64d3459db11ffde668026f119115aa5842c491d0465de6008bfefaa6e43a8f",
+          "goldenSha256": "70459cb13c86fde7ded9b07be770801ac0c842d58b1958886c000ee5f6823806"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "color",
+          "size": "feed",
+          "name": "iron-chips-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.021651577503429355,
+          "actualSha256": "dc5cc189bdf1f2844573d9108e8dad201f5c50f5f41f3c3f521633824283d3bd",
+          "goldenSha256": "07cac5f2150e4f37696fb0082b3a5e5e3ed3f9a5f490992d3df30d7c2bff910e"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "color",
+          "size": "story",
+          "name": "iron-chips-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.015435474537037037,
+          "actualSha256": "7e89a4a691d8db80140179cc39a42e6d84cacc812fa7f204ea877015dc9c3f22",
+          "goldenSha256": "d39115767102f18930df10e2c5e4ae7e698c6aa04b85793d919ce3f1840d1ceb"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "light",
+          "size": "feed",
+          "name": "strike-pr-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.017746913580246913,
+          "actualSha256": "2766abcdf874fc474c5a88cb83a660ab98d70d94e8e01e588118b7658aaa92a9",
+          "goldenSha256": "8f4725ce4addba337a936b8e697afdabb202443be4bf995079f0e86e9048ed7e"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "light",
+          "size": "story",
+          "name": "strike-pr-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.01249951774691358,
+          "actualSha256": "afb14ac753eba3b98e0d4c34722909810de6ddfbb09c7ef67a24faf32747173f",
+          "goldenSha256": "ae26ada1d7bea74f755f9486a9eead91c9425d2aa4cb280106b3e07e01a7e1eb"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "dark",
+          "size": "feed",
+          "name": "strike-pr-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.017844307270233197,
+          "actualSha256": "dc1f8c9042835aa674be156903fbff34b31bd86992423ec2638908e76420f83c",
+          "goldenSha256": "a61778d2d10ec9eb663d847844f789db7e87e00c740c6a0a7499ef3380491e7a"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "dark",
+          "size": "story",
+          "name": "strike-pr-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.01255931712962963,
+          "actualSha256": "792d2127002c176b0b52dff29ab1d5e43e3dc1126db22e2a8f1f18d6c63d8e22",
+          "goldenSha256": "41a244ea5bc15c9216ed1e9aeb54e09df10f1e097f0f839d2503a3aa9c26058f"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "color",
+          "size": "feed",
+          "name": "strike-pr-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.01774485596707819,
+          "actualSha256": "d77154397f838915e97c0d3be9d90197dbff44535013965dce5665605583035c",
+          "goldenSha256": "305340b9b04c67b646d2b8b0190dcb8487cf578d9edc2d53f53d3181ec1dd00a"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "color",
+          "size": "story",
+          "name": "strike-pr-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.012494212962962962,
+          "actualSha256": "b5efca60ac1bf79e117c9888d36e6ff461e96fbfb32b2e15f7a0e7a525c616fe",
+          "goldenSha256": "73cadbe2e77fdc2f3943c66bd8562296694c0b08317c19636ab39cccee905a94"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "light",
+          "size": "feed",
+          "name": "hybrid-split-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.023054183813443072,
+          "actualSha256": "f1423d4d3ebd38e2fb2c4f21279920f292e871812db54f2871a61f0c66c3067b",
+          "goldenSha256": "69ce549f59c2f761af99dfbfab87d9cfef79e5cb7c146fd328740ca40249cfa9"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "light",
+          "size": "story",
+          "name": "hybrid-split-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.015838638117283952,
+          "actualSha256": "6bcdfa9c77c80776bc2e55919976a875a47bb9ea7aee99e33b526195de1e34ad",
+          "goldenSha256": "e9ad4441baaf8eea03a83cb99653f04cd64a5b00e78edaa3af4c35595cea150c"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "dark",
+          "size": "feed",
+          "name": "hybrid-split-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.02305281207133059,
+          "actualSha256": "05b6df1e3ea2d168c3dc6f35105f0c33b6ed3c8122921a364c694ab23b75b1ff",
+          "goldenSha256": "797f7e3896adf761af30c540e589055a4515ac8c3f537f1ae0164c3bd4154d12"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "dark",
+          "size": "story",
+          "name": "hybrid-split-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.01583670910493827,
+          "actualSha256": "d19065b811ec03d6fce08bdc143769bcd9cc916491c68c120a8ca18f747ad49e",
+          "goldenSha256": "8e5e8d947cacc7a10c5ff630db9b735bef38246dc22b6d08c67c92c4cb33e832"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "color",
+          "size": "feed",
+          "name": "hybrid-split-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.02306172839506173,
+          "actualSha256": "d2e291dc161ca7fa82e29d7465941a4cb949ee6feb64f11e69b4289ffdb27b56",
+          "goldenSha256": "2a82b59000582b420e0fd241230b468e4a16951a1b2ad97afa2b32b1eadc960d"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "color",
+          "size": "story",
+          "name": "hybrid-split-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.01584394290123457,
+          "actualSha256": "9a5ba6d0fd01f1bed0dcc32c49f74a1c907d48ca3250f02ecc9f3b3fce1f9f87",
+          "goldenSha256": "db9146a95044328f13f42b05d7f3c686dbef8b0090b583c04c6c7b82a3f0473d"
+        }
+      ]
+    },
+    "linuxNoHint": {
+      "sha": "83725a5ebe0a0179b6fb64faa0b5ca03414d7af0",
+      "node": "v22.23.3",
+      "platform": "linux",
+      "arch": "x64",
+      "browser": "151.0.7922.34",
+      "args": [
+        "--font-render-hinting=none",
+        "--disable-lcd-text"
+      ],
+      "playwright": "1.62.1",
+      "fonts": {
+        "Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+        "BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+        "BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+        "JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"
+      },
+      "loaded": [
+        {
+          "family": "Anton",
+          "weight": "400",
+          "status": "loaded"
+        },
+        {
+          "family": "\"Barlow Condensed\"",
+          "weight": "600",
+          "status": "loaded"
+        },
+        {
+          "family": "\"Barlow Condensed\"",
+          "weight": "800",
+          "status": "loaded"
+        },
+        {
+          "family": "\"JetBrains Mono\"",
+          "weight": "100 900",
+          "status": "loaded"
+        }
+      ],
+      "cases": [
+        {
+          "id": "iron-chips",
+          "theme": "light",
+          "size": "feed",
+          "name": "iron-chips-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.014853909465020576,
+          "actualSha256": "316dfd413c105ec03e32af3be6fc7f2658791b4d46bd98f91e5567d75b693415",
+          "goldenSha256": "15718822e83d34d13e97ff062e8ffa23f53a502877007412b8c9ac2cd899dfdd"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "light",
+          "size": "story",
+          "name": "iron-chips-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.010088734567901235,
+          "actualSha256": "c0b53a6292e155d63f6484106c0f403a317adb347129d8dae7cb9e9764b0f14e",
+          "goldenSha256": "6963cf994753ea019852d819063b0439930444c95ff24f2b6f01ac2cf62fcfbd"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "dark",
+          "size": "feed",
+          "name": "iron-chips-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.014717421124828533,
+          "actualSha256": "f6404c627bd0a8c48d283769fcf1b2fa54e6c9b309a2b682fc445c2f3be7ffaf",
+          "goldenSha256": "9eeeb7c5d8186dc20bdd6e65e0f10252440e2297157e733a26579bf562fc2fb1"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "dark",
+          "size": "story",
+          "name": "iron-chips-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.010120563271604939,
+          "actualSha256": "03b7f9101bcc318ed982105783dad1fb9a0327dd529af8429bcceea97c0fb872",
+          "goldenSha256": "70459cb13c86fde7ded9b07be770801ac0c842d58b1958886c000ee5f6823806"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "color",
+          "size": "feed",
+          "name": "iron-chips-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.014772976680384088,
+          "actualSha256": "13a294c85f6e5695457ca58791d4fecab71f21bcd57c3c24a2e97f5ee42fba96",
+          "goldenSha256": "07cac5f2150e4f37696fb0082b3a5e5e3ed3f9a5f490992d3df30d7c2bff910e"
+        },
+        {
+          "id": "iron-chips",
+          "theme": "color",
+          "size": "story",
+          "name": "iron-chips-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.010108989197530864,
+          "actualSha256": "5d51c4817a2f887b77aa33d1ae98fee0c5cbcb66269ff52f22c45f8fe7141948",
+          "goldenSha256": "d39115767102f18930df10e2c5e4ae7e698c6aa04b85793d919ce3f1840d1ceb"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "light",
+          "size": "feed",
+          "name": "strike-pr-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.015143347050754458,
+          "actualSha256": "b5e3cf30d36cf97dee177567e14b31fc4545f54ceacdacae0261a94ef103b2da",
+          "goldenSha256": "8f4725ce4addba337a936b8e697afdabb202443be4bf995079f0e86e9048ed7e"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "light",
+          "size": "story",
+          "name": "strike-pr-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.010474537037037037,
+          "actualSha256": "4618a6221d8fb7019978613b9377bba980fb0f185f401f0373624af35c7894eb",
+          "goldenSha256": "ae26ada1d7bea74f755f9486a9eead91c9425d2aa4cb280106b3e07e01a7e1eb"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "dark",
+          "size": "feed",
+          "name": "strike-pr-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.015251028806584362,
+          "actualSha256": "3acdaf2d908065a6c16ff52e2a0d2a041d9236cd44b4d8917ed4c64851ddbf25",
+          "goldenSha256": "a61778d2d10ec9eb663d847844f789db7e87e00c740c6a0a7499ef3380491e7a"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "dark",
+          "size": "story",
+          "name": "strike-pr-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.010578221450617284,
+          "actualSha256": "9efef41f5f57ea19a4ba29186ad09fd49c4ff994fa36d0c15cf06be106816ed7",
+          "goldenSha256": "41a244ea5bc15c9216ed1e9aeb54e09df10f1e097f0f839d2503a3aa9c26058f"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "color",
+          "size": "feed",
+          "name": "strike-pr-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.01514471879286694,
+          "actualSha256": "18fc2ccf797cdc97f208a343a6995d144e6ee44db0d817a2fd36a58143fbf00a",
+          "goldenSha256": "305340b9b04c67b646d2b8b0190dcb8487cf578d9edc2d53f53d3181ec1dd00a"
+        },
+        {
+          "id": "strike-pr",
+          "theme": "color",
+          "size": "story",
+          "name": "strike-pr-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.01048707561728395,
+          "actualSha256": "8483d0401f4bb5ebe1e75b7e8f87fe8237c07fb7c0f55bf9d12a5d8813272667",
+          "goldenSha256": "73cadbe2e77fdc2f3943c66bd8562296694c0b08317c19636ab39cccee905a94"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "light",
+          "size": "feed",
+          "name": "hybrid-split-light-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.016751028806584363,
+          "actualSha256": "d6c6abbf2425b8256224fdd1d97d9bc6fe8b387c21b210105a661fc78b56f828",
+          "goldenSha256": "69ce549f59c2f761af99dfbfab87d9cfef79e5cb7c146fd328740ca40249cfa9"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "light",
+          "size": "story",
+          "name": "hybrid-split-light-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.011570216049382716,
+          "actualSha256": "71d73273098115b07f2c228bb99b702db40582b2672b7e2a863728f3edafd48b",
+          "goldenSha256": "e9ad4441baaf8eea03a83cb99653f04cd64a5b00e78edaa3af4c35595cea150c"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "dark",
+          "size": "feed",
+          "name": "hybrid-split-dark-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.016819615912208506,
+          "actualSha256": "4b6d45476b474e790d74189d5573a846cf29253b71435a58f4c203c84daaef47",
+          "goldenSha256": "797f7e3896adf761af30c540e589055a4515ac8c3f537f1ae0164c3bd4154d12"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "dark",
+          "size": "story",
+          "name": "hybrid-split-dark-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.011594328703703704,
+          "actualSha256": "9701a4d6704806108692b5a32823ad5d3d2bd6324506636249bcb08782a804f4",
+          "goldenSha256": "8e5e8d947cacc7a10c5ff630db9b735bef38246dc22b6d08c67c92c4cb33e832"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "color",
+          "size": "feed",
+          "name": "hybrid-split-color-feed.png",
+          "width": 1080,
+          "height": 1350,
+          "ratio": 0.01675925925925926,
+          "actualSha256": "905bb763ac99db750f1e8854edef260375d436e97fd4ed7a4b0979bb368c92ae",
+          "goldenSha256": "2a82b59000582b420e0fd241230b468e4a16951a1b2ad97afa2b32b1eadc960d"
+        },
+        {
+          "id": "hybrid-split",
+          "theme": "color",
+          "size": "story",
+          "name": "hybrid-split-color-story.png",
+          "width": 1080,
+          "height": 1920,
+          "ratio": 0.011573109567901235,
+          "actualSha256": "aad98312bea84044269d103802d82858689cc2b3df155defb45f5388f53d6106",
+          "goldenSha256": "db9146a95044328f13f42b05d7f3c686dbef8b0090b583c04c6c7b82a3f0473d"
+        }
+      ]
+    }
+  },
+  "platforms": {
+    "mac": "macOS 27.0.1 (26A434), darwin arm64",
+    "linux": "Linux runnervm8k3b6 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux\nPRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+  }
+}
