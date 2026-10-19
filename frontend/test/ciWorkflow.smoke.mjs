@@ -14,6 +14,7 @@ const frontendScripts = JSON.parse(read('../package.json')).scripts
 const normalConfig = read('../playwright.config.mjs')
 const swConfig = read('../playwright.service-worker.config.mjs')
 const install = 'npm --prefix frontend ci\nnpm --prefix backend ci'
+const installChromium = 'npx playwright install --with-deps chromium'
 const verdict = 'test "$DETERMINISTIC_RESULT" = success && test "$BROWSER_RESULT" = success'
 const commands = job => job.steps.filter(step => step.run).map(step => step.run.trim())
 function validate(value) {
@@ -30,11 +31,11 @@ function validate(value) {
     assert.equal(job.steps[0].uses, 'actions/checkout@v7')
     assert.deepEqual(job.steps[1], { uses: 'actions/setup-node@v7', with: { 'node-version': 22, cache: 'npm', 'cache-dependency-path': 'frontend/package-lock.json\nbackend/package-lock.json\n' } })
     for (const step of job.steps.filter(step => step.run)) assert.equal(step.if, undefined)
+    assert.equal(job.steps.find(step => step.run === installChromium)?.['working-directory'], 'frontend')
   }
-  assert.deepEqual(commands(jobs['deterministic-qa']), [install, 'npm run qa:smoke', 'npm --prefix backend run check:account-data', 'npm --prefix frontend audit --audit-level=high\nnpm --prefix backend audit --audit-level=high', 'npm --prefix frontend run build'])
-  assert.deepEqual(commands(jobs['browser-qa']), [install, 'npx playwright install --with-deps chromium', 'npm run qa:browser'])
+  assert.deepEqual(commands(jobs['deterministic-qa']), [install, installChromium, 'npm run qa:smoke', 'npm --prefix backend run check:account-data', 'npm --prefix frontend audit --audit-level=high\nnpm --prefix backend audit --audit-level=high', 'npm --prefix frontend run build'])
+  assert.deepEqual(commands(jobs['browser-qa']), [install, installChromium, 'npm run qa:browser'])
   const browserSteps = jobs['browser-qa'].steps
-  assert.equal(browserSteps.find(step => step.run === 'npx playwright install --with-deps chromium')['working-directory'], 'frontend')
   const upload = browserSteps.find(step => step.uses === 'actions/upload-artifact@v4')
   assert.equal(upload.if, 'failure()')
   assert.equal(upload.with.name, 'forge-playwright-report')
@@ -95,8 +96,14 @@ for (const mutate of [
   value => value.jobs['browser-qa'].steps.splice(2, 1),
   value => { value.jobs['browser-qa'].steps[2].run = 'npm --prefix frontend ci' },
   value => { value.jobs['browser-qa'].steps[4].run = 'npm --prefix frontend run test:e2e' },
-  value => { value.jobs['deterministic-qa'].steps[3].run = 'echo skipped' },
-  value => { value.jobs['deterministic-qa'].steps[4].if = 'false' },
+  value => { value.jobs['deterministic-qa'].steps[4].run = 'echo skipped' },
+  value => { value.jobs['deterministic-qa'].steps[5].if = 'false' },
+  value => value.jobs['deterministic-qa'].steps.splice(3, 1),
+  value => { const steps = value.jobs['deterministic-qa'].steps; [steps[2], steps[3]] = [steps[3], steps[2]] },
+  value => { const steps = value.jobs['deterministic-qa'].steps; [steps[3], steps[4]] = [steps[4], steps[3]] },
+  value => { value.jobs['deterministic-qa'].steps[3]['working-directory'] = '.' },
+  value => { value.jobs['deterministic-qa'].steps[3].run = 'npx playwright install chromium' },
+  value => { value.jobs['deterministic-qa'].steps[3].if = 'false' },
   value => { value.jobs['production-shell-qa'].needs = ['deterministic-qa'] },
   value => { delete value.jobs['deterministic-and-browser-qa'].if },
   value => { value.jobs['browser-qa']['continue-on-error'] = true },
@@ -105,4 +112,4 @@ for (const mutate of [
   const changed = structuredClone(workflow); mutate(changed)
   assert.throws(() => validate(changed))
 }
-console.log('CI WORKFLOW GATE OK: independent bounded suites; locked coverage/dependencies; 16 aggregate outcomes; nine omission negatives; native bytes and production identities preserved')
+console.log('CI WORKFLOW GATE OK: independent bounded suites; locked coverage/dependencies; Chromium prerequisite before smoke; 16 aggregate outcomes; 15 omission/setup negatives; native bytes and production identities preserved')

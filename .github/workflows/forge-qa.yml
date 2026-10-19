@@ -29,6 +29,9 @@ jobs:
         run: |
           npm --prefix frontend ci
           npm --prefix backend ci
+      - name: Install Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
       - name: Run deterministic smoke suites
         run: npm run qa:smoke
       - name: Verify account-data coverage
