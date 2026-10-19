@@ -17,6 +17,8 @@ const swift = fs.readFileSync(path.join(root, 'frontend/ios/App/App/ForgeHealthP
 const healthService = fs.readFileSync(path.join(root, 'frontend/src/services/HealthService.js'), 'utf8');
 const recap = fs.readFileSync(path.join(root, 'frontend/src/components/RunDetailModal.jsx'), 'utf8');
 const shareStudio = fs.readFileSync(path.join(root, 'frontend/src/components/ActivityShareStudio.jsx'), 'utf8');
+const shareTemplates = fs.readFileSync(path.join(root, 'frontend/src/lib/shareTemplates.js'), 'utf8');
+const { THEMES } = require('../../frontend/src/lib/shareTheme.js');
 
 const decoded = decodeSummaryPolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
 assert.deepStrictEqual(decoded.slice(0, 3), [
@@ -104,8 +106,21 @@ assert(/Runs started in Forged Hybrid also record iPhone GPS and altitude/.test(
 assert(/isRun && !shareOpen && routePositions\.length >= 2/.test(recap), 'the interactive Leaflet map unmounts while the share studio is open');
 assert(/z-\[2000\][\s\S]*zIndex: 2000/.test(shareStudio), 'the share studio sits above all Leaflet panes and controls');
 assert(!/MapContainer/.test(shareStudio), 'share cards render one canvas route instead of nesting an interactive map');
-assert(/ROUTE_START_COLOR\s*=\s*'#22C55E'/.test(shareStudio), 'share routes mark the first coordinate in green');
-assert(/ROUTE_END_COLOR\s*=\s*'#EF4444'/.test(shareStudio), 'share routes mark the last coordinate in red');
+// Card B owns endpoint colors in shareTheme and draws them through shareTemplates.
+for (const [name, theme] of Object.entries(THEMES)) {
+  assert.strictEqual(theme.start, '#22C55E', `${name} share routes mark the first coordinate in green`);
+  assert.strictEqual(theme.end, '#EF4444', `${name} share routes mark the last coordinate in red`);
+}
+assert(/import\s*\{[^}]*\bdrawShareCard\b[^}]*\}\s*from\s*'\.\.\/lib\/shareTemplates'/.test(shareStudio)
+  && /await drawShareCard\(rendered, cardModel, \{ template, theme, size, photo, logo, showRoute \}\)/.test(shareStudio), 'share studio renders through the canonical template entry point');
+assert(/import\s*\{[^}]*\bTHEMES\b[^}]*\}\s*from\s*'\.\/shareTheme\.js'/.test(shareTemplates)
+  && /const tokens = THEMES\[theme\]/.test(shareTemplates)
+  && /legacyDraws\[id\]\(ctx, safeModel, \{ photo, logo, tokens, showRoute \}\)/.test(shareTemplates)
+  && /entry\.draw\(ctx, rendererModel\(model, options\.showRoute\), options\)/.test(shareTemplates), 'canonical renderer passes the selected production theme to its templates');
+assert(/route: \(ctx, model, \{ logo, tokens, showRoute \}\) => drawRouteTemplate\(ctx, model, showRoute \? model\.run\?\.route \|\| \[\] : \[\], logo, tokens\)/.test(shareTemplates)
+  && /function drawRouteTemplate\(ctx, model, route, logo, t\)[\s\S]*?drawRoute\(ctx, route, \{[^}]+\}, t\)/.test(shareTemplates), 'route template forwards theme tokens to the route renderer');
+assert(/const \[startX, startY\] = fitted\[0\][\s\S]*?ctx\.fillStyle = t\.start\s+ctx\.beginPath\(\)\s+ctx\.arc\(startX, startY, 13, 0, Math\.PI \* 2\)\s+ctx\.fill\(\)/.test(shareTemplates), 'route renderer fills the first coordinate with the canonical start color');
+assert(/const \[endX, endY\] = fitted\.at\(-1\)[\s\S]*?ctx\.fillStyle = t\.end\s+ctx\.beginPath\(\)\s+ctx\.arc\(endX, endY, 15, 0, Math\.PI \* 2\)\s+ctx\.fill\(\)/.test(shareTemplates), 'route renderer fills the last coordinate with the canonical end color');
 assert(/fetchRecentWorkoutHistory/.test(swift) && /mergeWorkoutHistory/.test(swift), 'native sync rechecks recent workouts for late HealthKit routes');
 
 console.log('Run recap data smoke passed');
