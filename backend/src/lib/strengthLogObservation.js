@@ -11,6 +11,17 @@ function instant(value) {
   const at = Date.parse(normalized);
   return Number.isFinite(at) ? at : null;
 }
+// Completed-log timing is optional client evidence. Never substitute recording
+// clocks, completed_at, requested minutes or a client total_seconds value.
+function completedLogTiming(body) {
+  const start = instant(body.started_at), end = instant(body.ended_at);
+  if (start === null || end === null || end <= start) return null;
+  const total_seconds = Math.round((end - start) / 1000);
+  // Match the existing whole-second storage and PostgreSQL INTEGER range.
+  // Sub-second pairs that round to zero remain unknown, never placeholder zero.
+  if (total_seconds <= 0 || total_seconds > 2147483647) return null;
+  return { started_at: body.started_at, ended_at: body.ended_at, total_seconds };
+}
 const number = (value, maximum, integer = false) => typeof value === 'number'
   && Number.isFinite(value) && value >= 0 && value <= maximum && (!integer || Number.isSafeInteger(value));
 const measure = value => ({ state: value === null ? 'UNKNOWN' : value === 0 ? 'VALID_ZERO' : 'KNOWN', value });
@@ -90,4 +101,4 @@ function validateCompletedLogInput(body, now) {
     numeric(set.weight_lbs, 2000, false);
   }
 }
-module.exports = { VERSION, dateOnly, instant, projectSessionLog, validateCompletedLogInput };
+module.exports = { VERSION, dateOnly, instant, completedLogTiming, projectSessionLog, validateCompletedLogInput };

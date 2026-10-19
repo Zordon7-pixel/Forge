@@ -6,20 +6,23 @@ const { v4: uuidv4 } = require('uuid');
 const { generateWorkoutFeedback } = require('../services/ai');
 const { requestExerciseImageIfMissing } = require('../lib/exerciseImageRequests');
 const { planningInputUnchanged } = require('../lib/planningRevision');
+const { validateCompletedLogInput, completedLogTiming } = require('../lib/strengthLogObservation');
 
 router.post('/strength', auth, async (req, res) => {
   try {
-    require('../lib/strengthLogObservation').validateCompletedLogInput(req.body, new Date().toISOString());
+    validateCompletedLogInput(req.body, new Date().toISOString());
     const { name, exercises, sets, total_volume, exercises_completed, personal_records_hit, completed_at } = req.body;
     const id = uuidv4();
-    const started_at = completed_at || new Date().toISOString();
+    const timing = completedLogTiming(req.body);
+    const started_at = timing?.started_at || completed_at || new Date().toISOString();
+    const ended_at = timing?.ended_at || started_at;
     const muscleGroups = [];
     const exerciseImageNames = [];
 
     const calories_burned = await withPlanningInputMutation(req.user.id, async (tx) => {
       await tx.run(
         'INSERT INTO workout_sessions (id, user_id, started_at, ended_at, muscle_groups, notes, total_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [id, req.user.id, started_at, started_at, JSON.stringify(muscleGroups), name || 'Strength Session', 0]
+        [id, req.user.id, started_at, ended_at, JSON.stringify(muscleGroups), name || 'Strength Session', timing?.total_seconds ?? null]
       );
 
       if (Array.isArray(sets)) {
