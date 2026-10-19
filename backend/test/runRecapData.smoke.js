@@ -116,7 +116,8 @@ assert(/import\s*\{[^}]*\bdrawShareCard\b[^}]*\}\s*from\s*'\.\.\/lib\/shareTempl
 assert(/import\s*\{[^}]*\bTHEMES\b[^}]*\}\s*from\s*'\.\/shareTheme\.js'/.test(shareTemplates)
   && /const tokens = THEMES\[theme\]/.test(shareTemplates)
   && /legacyDraws\[id\]\(ctx, safeModel, \{ photo, logo, tokens, showRoute \}\)/.test(shareTemplates)
-  && /entry\.draw\(ctx, rendererModel\(model, options\.showRoute\), options\)/.test(shareTemplates), 'canonical renderer passes the selected production theme to its templates');
+  // C1 resolves a logo before dispatch; the spread must still forward the selected theme.
+  && /entry\.draw\(ctx, rendererModel\(model, options\.showRoute\), \{ \.\.\.options, logo \}\)/.test(shareTemplates), 'canonical renderer passes the selected production theme to its templates');
 assert(/route: \(ctx, model, \{ logo, tokens, showRoute \}\) => drawRouteTemplate\(ctx, model, showRoute \? model\.run\?\.route \|\| \[\] : \[\], logo, tokens\)/.test(shareTemplates)
   && /function drawRouteTemplate\(ctx, model, route, logo, t\)[\s\S]*?drawRoute\(ctx, route, \{[^}]+\}, t\)/.test(shareTemplates), 'route template forwards theme tokens to the route renderer');
 assert(/const \[startX, startY\] = fitted\[0\][\s\S]*?ctx\.fillStyle = t\.start\s+ctx\.beginPath\(\)\s+ctx\.arc\(startX, startY, 13, 0, Math\.PI \* 2\)\s+ctx\.fill\(\)/.test(shareTemplates), 'route renderer fills the first coordinate with the canonical start color');
