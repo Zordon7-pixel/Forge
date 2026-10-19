@@ -1,5 +1,6 @@
 import { SIZES, THEMES, FONTS, alpha, loadShareFonts } from './shareTheme.js'
 import { rendererModel } from './shareStudioModel.js'
+import { C1_TEMPLATES, loadC1Logo } from './shareOverlaysC1.js'
 
 const CARD_WIDTH = SIZES.feed.w
 const CARD_HEIGHT = SIZES.feed.h
@@ -547,7 +548,7 @@ const legacyDraws = {
   overlay: (ctx, model, { logo, tokens, showRoute }) => drawOverlayTemplate(ctx, model, showRoute ? model.run?.route || [] : [], logo, tokens),
   photo: (ctx, model, { photo, logo, tokens }) => drawPhotoTemplate(ctx, model, photo, logo, tokens),
 }
-export const TEMPLATES = Object.freeze([
+const LEGACY_TEMPLATES = [
   ['route', 'Route'], ['log', 'Training Log'], ['ember', 'Ember'], ['contour', 'Contour'], ['overlay', 'Overlay'], ['photo', 'Photo'],
 ].map(([id, label]) => Object.freeze({
   id, label, supports: model => model?.kind === 'run',
@@ -577,7 +578,8 @@ export const TEMPLATES = Object.freeze([
       ctx.fillText(footerForModel(safeModel), 72, 1330, CARD_WIDTH - 144)
     } finally { ctx.restore() }
   },
-})))
+}))
+export const TEMPLATES = Object.freeze([...LEGACY_TEMPLATES, ...C1_TEMPLATES])
 
 export async function drawShareCard(canvas, model, options) {
   const entry = TEMPLATES.find(item => item.id === options.template && item.supports(model))
@@ -589,6 +591,7 @@ export async function drawShareCard(canvas, model, options) {
   canvas.height = dimensions.h
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('Share card could not be created')
-  entry.draw(ctx, rendererModel(model, options.showRoute), options)
+  const logo = C1_TEMPLATES.includes(entry) ? options.logo || await loadC1Logo() : options.logo
+  entry.draw(ctx, rendererModel(model, options.showRoute), { ...options, logo })
   return canvas
 }

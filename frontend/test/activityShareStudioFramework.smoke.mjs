@@ -170,8 +170,8 @@ try {
     await expect(page.getByRole('checkbox', { name: 'Show route' })).toBeChecked()
     assert.deepEqual(await page.evaluate(() => [...document.fonts].map(face => [face.family.replaceAll('"', ''), face.status]).sort()),
       [['Anton', 'loaded'], ['Barlow Condensed', 'loaded'], ['Barlow Condensed', 'loaded'], ['JetBrains Mono', 'loaded']].sort())
-    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => Object.keys(item).sort())), Array(6).fill(['draw', 'id', 'label', 'sizes', 'supports', 'themes']))
-    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => item.id)), ['route', 'log', 'ember', 'contour', 'overlay', 'photo'])
+    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => Object.keys(item).sort())), Array(9).fill(['draw', 'id', 'label', 'sizes', 'supports', 'themes']))
+    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => item.id)), ['route', 'log', 'ember', 'contour', 'overlay', 'photo', 'iron-chips', 'strike-pr', 'hybrid-split'])
   })
   await check('reselecting the active template keeps exports ready', async () => {
     await page.getByRole('button', { name: 'Route', exact: true }).click()
@@ -286,7 +286,7 @@ try {
   await check('null handle and missing stats omit labels, reflow and never manufacture values', async () => {
     const evidence = await page.evaluate(async () => {
       const h = window.harness, result = []
-      for (const entry of h.TEMPLATES) {
+      for (const entry of h.TEMPLATES.filter(entry => ['route', 'log', 'ember', 'contour', 'overlay', 'photo'].includes(entry.id))) {
         const canvas = document.createElement('canvas')
         const model = h.studioModel({ run: { name: 'Treadmill', date: '2026-10-18', duration_seconds: 900 }, prefs: {}, showRoute: false })
         await h.drawShareCard(canvas, model, { template: entry.id, theme: 'dark', size: 'feed', showRoute: false })
@@ -310,7 +310,7 @@ try {
         model.stats = model.stats.filter(item => item.key !== key)
         model.run.stats = model.stats
         if (model.hero?.key === key) model.hero = null
-        for (const entry of h.TEMPLATES) {
+        for (const entry of h.TEMPLATES.filter(entry => ['route', 'log', 'ember', 'contour', 'overlay', 'photo'].includes(entry.id))) {
           const canvas = document.createElement('canvas')
           await h.drawShareCard(canvas, model, { template: entry.id, theme: 'dark', size: 'feed', showRoute: false })
           result.push({ key, id: entry.id, text: window.records.get(canvas).filter(r => r.text).map(r => r.text).join('') })

@@ -1,6 +1,7 @@
 export const SIZES = Object.freeze({ feed: Object.freeze({ w: 1080, h: 1350 }), story: Object.freeze({ w: 1080, h: 1920 }) })
 export const BRAND = Object.freeze({ gold: '#EAB308', ember: '#F97316', coal: '#0C0A07', steel: '#16130D', whiteHot: '#FFF6DC' })
 export const FONTS = Object.freeze({ hero: 'Anton, sans-serif', label: '"Barlow Condensed", sans-serif', micro: '"JetBrains Mono", monospace' })
+export const STORY_SAFE = Object.freeze({ top: 250, bottom: 1580 })
 export function alpha(hex, opacity) {
   return `rgba(${[1, 3, 5].map(start => parseInt(hex.slice(start, start + 2), 16)).join(',')},${opacity})`
 }
