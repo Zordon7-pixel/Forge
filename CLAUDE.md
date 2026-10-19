@@ -5,6 +5,39 @@
 
 ---
 
+## Share overlay framework — t_38ab05ed (patched; not deployed)
+
+Card B moves only the six existing run layouts into `shareTemplates.js` with
+`{ id, label, supports, themes, sizes, draw }` entries. `shareTheme.js` owns the
+brand/theme tokens, Feed/Story dimensions and four bundled FontFace assets.
+Story fits the original layout uniformly between y=250 and y=1580; post-image
+resizing uses integer multiples of the source aspect ratio. Missing stats and
+HR zones are omitted. Footer identity comes only from ShareModel.handle.
+
+ActivityShareStudio accepts `model` or the existing `run` shim. The shim reads
+own handle/settings, validates available preference timezones and falls back to
+the device timezone (UTC only if the device timezone is unavailable). Show route
+starts ON for each mount, is not persisted, and OFF removes geometry/elevation
+profiles from the adapter output and the fresh allowlisted renderer model.
+Export waits for the current render; synchronous invalidation prevents an old
+ON image from being exported after OFF. No C1/C2 overlays or new entry points.
+
+Contract clarification: at base `6059766df7dda83772efa9bb7957399679f9ef2f`,
+released A accepts an options object, not a bare boolean. B validates the UI's
+showRoute as a primitive boolean and calls `fromRun(run, prefs, { showRoute })`.
+Passing bare `false` to that base would leave routes ON. A is unchanged. B does
+not compose hybrid models; supplied models are sanitized without retaining META.
+Route privacy zones/start-finish trimming remain a follow-up before Trace is
+made a default selection; enabled geometry is shown exactly as recorded.
+
+Local gates: `node frontend/test/activityShareStudioFramework.smoke.mjs`
+(22 groups, including 36 UI-export matrix cases, safe bounds, exact exported
+bytes, alpha, OFF/ON/reset, same-tick privacy, actual Save single-flight, photo,
+summary share/download, preferences and font failure fallback), existing
+`activityShareStudioPhaseC.smoke.mjs`, `activityShareStudioSingleFlight.smoke.mjs`,
+`shareStats.smoke.mjs`, and `npm --prefix frontend run build`.
+This is a local implementation candidate, not independent review or release.
+
 ## Sync CI acceptance maintenance — 2026-09-27
 
 The QA workflow runs deterministic/audit/build and complete mobile/SW browser
