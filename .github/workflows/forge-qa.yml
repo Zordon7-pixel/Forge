@@ -28,6 +28,7 @@ jobs:
           C1_DIAGNOSTIC_DIR: c1-diagnostic
           C1_DIAGNOSTIC_PRESET: ${{ matrix.preset }}
         run: |
+          set -o pipefail
           mkdir -p c1-diagnostic
           uname -a > c1-diagnostic/platform.txt
           cat /etc/os-release >> c1-diagnostic/platform.txt
