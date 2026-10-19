@@ -1,4 +1,4 @@
-Task t_f8fc63a7 — C1 cross-platform golden diagnosis, serialized phase 1
+Task t_f8fc63a7 — C1 cross-platform golden diagnosis, serialized phases 1 and 2
 Status: PARTIAL / NOT A CI REPAIR PASS / NOT FOR RELEASE
 Base: 170d5c4526e02562e3cbf20a614f5d16bb4292d4
 Branch: oracle/t_f8fc63a7-c1-linux
@@ -7,15 +7,16 @@ Outcome and scope
 -----------------
 The exact Ubuntu failure is reproduced and isolated to native browser text
 metrics/rasterization, including the plate geometry derived from those metrics.
-Six reviewed, repeat-verified Linux no-hint Iron Chips PNG candidates are retained
-in linux-x64-chromium-151-no-hint/. They are NOT selected by the current harness.
+Twelve reviewed, repeat-verified Linux no-hint PNG candidates (six Iron Chips
+and six Strike PR) are retained in linux-x64-chromium-151-no-hint/. They are
+NOT selected by the current harness. Six Hybrid Split candidates remain absent.
 The 18 original macOS goldens, product source, harness, package/lock files and
 canonical workflow are byte-identical to the dispatch base. Full Linux acceptance
 still fails. No threshold, comparator, test, assertion or aggregate was weakened.
 
-Why this phase stops here
--------------------------
-The session touched exactly ten tracked paths: two temporary diagnostic paths
+Why phase 1 stopped
+--------------------
+The phase 1 session touched exactly ten tracked paths: two temporary diagnostic paths
 (now restored), six new PNGs, this receipt and linux-diagnosis.json. The complete
 platform-baseline approach requires 18 new PNGs plus explicit fail-closed
 selection/provenance checks. It cannot fit this session's ten-file limit. No
@@ -54,7 +55,7 @@ Proven root cause and controlled experiment
   with its sub-0.001px coordinate differences. No-hint full-image differences
   outside the text footprint equal these small non-text counts exactly.
 * Two independent Ubuntu jobs per preset produce identical PNG SHA256s for all
-  18 cases. The six retained PNGs are copied from the SECOND no-hint artifact;
+  18 cases. The twelve retained PNGs are copied from the SECOND no-hint artifact;
   every hash matches both independent runs. These were not blindly regenerated.
 
 A single expected PNG cannot be within 0.1% exact-pixel mismatch of BOTH observed
@@ -136,9 +137,9 @@ Version-specific Chromium web-source retrieval failed; no conclusion depends
 on those unavailable pages. No production, secrets, Hermes/Kanban, main push,
 merge, release, deployment, Railway or C2 actions were performed.
 
-Exact next serialized phases (new sessions, <=10 tracked files each)
-------------------------------------------------------------------
-Phase 2: add ONLY the six Strike PR PNGs from corrected artifact 12222484056
+Serialized phase plan (phase 2 complete; phase 3 remains pending)
+---------------------------------------------------------------
+Phase 2 (completed as documented below): add ONLY the six Strike PR PNGs from corrected artifact 12222484056
   (strike-pr-{light,dark,color}-{feed,story}.png) to the same no-hint directory;
   update provenance/receipt as needed. Verify the raw artifact hashes, the
   independent first-run matches, exact dimensions, safe bounds and paired
@@ -163,3 +164,47 @@ Only after the complete exact-SHA Linux/macOS matrix passes may Hermes perform
 its independent QA/review/release duties. Eight final changed files in this
 phase (>2 files): flag for normal independent exact-SHA review when the complete
 candidate is ready. No safety-critical product change is included.
+
+Serialized phase 2 receipt (2026-10-19)
+---------------------------------------
+Parent verified clean: 928168ec330a05f110c92924b790fe2efeb32e36.
+Exactly eight changed paths: six Strike PR PNGs plus these two evidence records.
+The six strike-pr-{light,dark,color}-{feed,story}.png files were copied directly
+from artifact 12222484056 of corrected run 39328319044. No new rendering,
+regeneration or baseline blessing was performed. The complete file SHA256 list
+and dimensions are bound in linux-diagnosis.json phase2.files.
+
+Both historical ZIPs were downloaded again and verified for CRC/integrity and
+archive SHA256. Corrected archive: 83505c01bfff2cdbf553191fff662cc8d356f44c2555b95f88e3e4b75e68047f.
+Independent first archive 12223136635 (run 39328096330):
+c3b4e6c2a07ed6075d32bdae893480bd792bf85c03b54d2328632a85060063b8.
+Each installed PNG matches BOTH ZIP entries, both preserved capture files and
+both hash-bound provenance records byte-for-byte. Browser, launch flags, fonts,
+loaded faces and source identities match the existing diagnosis.
+
+All six decode as RGBA, feed 1080x1350 / story 1080x1920. Text and single brand
+remain inside x=0..1080 and y=0..1350 (feed) / y=250..1580 (story). Text content,
+order, font/spacing, alignment and transforms match the macOS capture. Maximum
+text-origin delta is 0.000152587890625px; measured-width delta 0.00201416015625px;
+plate delta is zero (Strike PR has no recorded plates). All six non-text images
+are pixel-identical; zero differing pixels lie outside the text footprint.
+The six preserved paired visual comparisons were reviewed again: equivalent
+layout/content, no clipping. Existing full-image mismatch counts are unchanged.
+
+Verification evidence: /tmp/forge-c1-t_f8fc63a7/phase2/
+  python3 /tmp/forge-c1-t_f8fc63a7/phase2/verify.py             exit 0
+  python3 /tmp/forge-c1-t_f8fc63a7/phase2/verify.py --installed exit 0
+  git diff --check                                          exit 0
+Verifier and reviewed contact-sheet SHA256s are in localEvidenceHashes. The
+installed check verifies exactly eight allowed paths, 12 retained candidates,
+all original Mac golden hashes and unchanged source/workflow/package hashes.
+Initial combined evidence/active-work reads were truncated; targeted reads
+recovered the required contents. Initial GitHub lookup failed to connect; scoped
+network access recovered and both archive downloads/hashes were verified.
+
+Linux acceptance remains intentionally INACTIVE until phase 3 supplies the
+remaining six PNGs, fail-closed provenance/selection and the required full matrix
+and negative gates. No harness, workflow, product, package/lock, original Mac
+golden, threshold, comparator, assertion or aggregate changed in this phase.
+Eight paths (>2): independent exact-SHA review is still required when the complete
+candidate is ready. No safety-critical product change; no review/pass is claimed.

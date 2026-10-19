@@ -11,7 +11,8 @@
       "artifacts": {
         "default": 12223820477,
         "noHint": 12223136635
-      }
+      },
+      "noHintArchiveSha256": "c3b4e6c2a07ed6075d32bdae893480bd792bf85c03b54d2328632a85060063b8"
     },
     {
       "id": 39328319044,
@@ -20,7 +21,8 @@
       "artifacts": {
         "default": 12222713560,
         "noHint": 12222484056
-      }
+      },
+      "noHintArchiveSha256": "83505c01bfff2cdbf553191fff662cc8d356f44c2555b95f88e3e4b75e68047f"
     }
   ],
   "matrixAnalysis": [
@@ -113,7 +115,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.00201416015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "strike-pr-light-story.png",
@@ -126,7 +128,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.00201416015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "strike-pr-dark-feed.png",
@@ -139,7 +141,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.00201416015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "strike-pr-dark-story.png",
@@ -152,7 +154,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.00201416015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "strike-pr-color-feed.png",
@@ -165,7 +167,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.00201416015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "strike-pr-color-story.png",
@@ -178,7 +180,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.00201416015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "hybrid-split-light-feed.png",
@@ -284,7 +286,9 @@
     "mac-no-hint.log": "0e9c24afd9b2226b653c5b0d9f46934bf060cc8d409b0be030175e09a496b75b",
     "phasec.log": "8446cfe02b06b66f6c983f32708201e722b9f33b12cf7b5b80eac031de8b1fee",
     "sharestats.log": "3b0219f8eedfebab92121b826f2cbb8ca673e0c19df9a48c3367bf9b39c3fa65",
-    "singleflight.log": "75f7854382236421efe8a1e76ff38b4503645beae11bb39c22c4ffc4f4a7d208"
+    "singleflight.log": "75f7854382236421efe8a1e76ff38b4503645beae11bb39c22c4ffc4f4a7d208",
+    "phase2/verify.py": "8326e986b454c81a7ef868498f1b677e0cf2eb668d4cb8ca58ad700663c44385",
+    "strike-pr-comparison.png": "013d01d5b3cde37e59223f03d7d94f639bfd95ebe3cb2bcb93b58a831cebe382"
   },
   "sourceHashes": {
     "frontend/test/shareOverlaysC1.smoke.mjs": "e22277b44a14894b3dcb9d0a8c4f94fed3c274816dee3fd1fda7a0638e555762",
@@ -1014,5 +1018,70 @@
   "platforms": {
     "mac": "macOS 27.0.1 (26A434), darwin arm64",
     "linux": "Linux runnervm8k3b6 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux\nPRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n"
+  },
+  "phase2": {
+    "parent": "928168ec330a05f110c92924b790fe2efeb32e36",
+    "baselineDirectory": "linux-x64-chromium-151-no-hint",
+    "sourceRun": 39328319044,
+    "sourceArtifact": 12222484056,
+    "independentRun": 39328096330,
+    "independentArtifact": 12223136635,
+    "acceptanceActive": false,
+    "retainedCases": 12,
+    "requiredCases": 18,
+    "files": [
+      {
+        "name": "strike-pr-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "b5e3cf30d36cf97dee177567e14b31fc4545f54ceacdacae0261a94ef103b2da"
+      },
+      {
+        "name": "strike-pr-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "4618a6221d8fb7019978613b9377bba980fb0f185f401f0373624af35c7894eb"
+      },
+      {
+        "name": "strike-pr-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "3acdaf2d908065a6c16ff52e2a0d2a041d9236cd44b4d8917ed4c64851ddbf25"
+      },
+      {
+        "name": "strike-pr-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "9efef41f5f57ea19a4ba29186ad09fd49c4ff994fa36d0c15cf06be106816ed7"
+      },
+      {
+        "name": "strike-pr-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "18fc2ccf797cdc97f208a343a6995d144e6ee44db0d817a2fd36a58143fbf00a"
+      },
+      {
+        "name": "strike-pr-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "8483d0401f4bb5ebe1e75b7e8f87fe8237c07fb7c0f55bf9d12a5d8813272667"
+      }
+    ],
+    "verification": {
+      "bothArchiveDigestsAndZipIntegrity": true,
+      "bytesMatchBothIndependentCaptures": true,
+      "exactDimensions": true,
+      "safeTextAndBrandBounds": true,
+      "singleBrandPerCase": true,
+      "pairedVisualInspection": "Six preserved macOS/Linux Strike PR pairs reviewed; equivalent content/layout, no clipping. Native text rasterization differences remain.",
+      "textlessDifferentPixels": 0,
+      "outsideTextDifferentPixels": 0,
+      "maxOriginDeltaPx": 0.000152587890625,
+      "maxPlateDeltaPx": 0,
+      "maxMeasuredWidthDeltaPx": 0.00201416015625,
+      "freshRenderingPerformed": false,
+      "command": "python3 /tmp/forge-c1-t_f8fc63a7/phase2/verify.py --installed",
+      "exit": 0
+    }
   }
 }
