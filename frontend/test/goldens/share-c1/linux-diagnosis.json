@@ -1,6 +1,6 @@
 {
   "schema": "forge-c1-linux-diagnosis-v1",
-  "status": "partial-baseline-phase-not-selected-by-acceptance",
+  "status": "complete-18-file-platform-baselines-with-fail-closed-acceptance",
   "base": "170d5c4526e02562e3cbf20a614f5d16bb4292d4",
   "evidenceDirectory": "/tmp/forge-c1-t_f8fc63a7",
   "runs": [
@@ -193,7 +193,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.17388916015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "hybrid-split-light-story.png",
@@ -206,7 +206,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.17388916015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "hybrid-split-dark-feed.png",
@@ -219,7 +219,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.17388916015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "hybrid-split-dark-story.png",
@@ -232,7 +232,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.17388916015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "hybrid-split-color-feed.png",
@@ -245,7 +245,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.17388916015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     },
     {
       "name": "hybrid-split-color-story.png",
@@ -258,7 +258,7 @@
       "maxPlateDeltaPx": 0,
       "maxMeasuredWidthDeltaPx": 0.17388916015625,
       "independentLinuxRepeatDifferentPixels": 0,
-      "staged": false
+      "staged": true
     }
   ],
   "localEvidenceHashes": {
@@ -288,7 +288,9 @@
     "sharestats.log": "3b0219f8eedfebab92121b826f2cbb8ca673e0c19df9a48c3367bf9b39c3fa65",
     "singleflight.log": "75f7854382236421efe8a1e76ff38b4503645beae11bb39c22c4ffc4f4a7d208",
     "phase2/verify.py": "8326e986b454c81a7ef868498f1b677e0cf2eb668d4cb8ca58ad700663c44385",
-    "strike-pr-comparison.png": "013d01d5b3cde37e59223f03d7d94f639bfd95ebe3cb2bcb93b58a831cebe382"
+    "strike-pr-comparison.png": "013d01d5b3cde37e59223f03d7d94f639bfd95ebe3cb2bcb93b58a831cebe382",
+    "phase3/verify.py": "8754dc7e1cd3a26920b3061bddecba0dcb3a702cd8c92ba7660565096303473a",
+    "hybrid-split-comparison.png": "c96d7eb4fff871182b211c710c9c9504c833a2fa70a8f825537bde3607274a40"
   },
   "sourceHashes": {
     "frontend/test/shareOverlaysC1.smoke.mjs": "e22277b44a14894b3dcb9d0a8c4f94fed3c274816dee3fd1fda7a0638e555762",
@@ -1083,5 +1085,302 @@
       "command": "python3 /tmp/forge-c1-t_f8fc63a7/phase2/verify.py --installed",
       "exit": 0
     }
+  },
+  "acceptance": {
+    "runtime": {
+      "browser": "chromium",
+      "version": "151.0.7922.34",
+      "playwright": "1.62.1",
+      "playwrightCore": "1.62.1",
+      "browsers": [
+        {
+          "name": "chromium",
+          "revision": "1234",
+          "version": "151.0.7922.34"
+        },
+        {
+          "name": "chromium-headless-shell",
+          "revision": "1234",
+          "version": "151.0.7922.34"
+        }
+      ],
+      "args": [
+        "--font-render-hinting=none",
+        "--disable-lcd-text"
+      ],
+      "context": {
+        "viewport": {
+          "width": 1080,
+          "height": 1920
+        },
+        "deviceScaleFactor": 1,
+        "locale": "en-US",
+        "timezoneId": "UTC",
+        "serviceWorkers": "block"
+      }
+    },
+    "sources": {
+      "frontend/src/lib/shareOverlaysC1.js": "453fbc11a4e19f99b6e3b41b5bf76b69bf6b53dd320203fc626453269289bf9d",
+      "frontend/src/lib/shareTheme.js": "4a402f8feb990e86b656aebd66ac189ae5638ca1a2b87d969c0739d64afa88ca",
+      "frontend/src/lib/shareTemplates.js": "c9054f037b37e19bfc53580e2c38fa3eb1c07fda5d03d3a7bb2cb2f4b469817e",
+      "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
+      "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
+      ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347",
+      "frontend/src/lib/shareStats.js": "b62d5566b9163563d071855b56ae7a9ea2e36c059590f8be1a2a2639a4b3fcc0",
+      "frontend/src/lib/shareStudioModel.js": "9625c8927585cecbe9c9139d209bf88b4012c7a7949b3b627043760c138895e7",
+      "frontend/src/assets/share-fonts/Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+      "frontend/src/assets/share-fonts/BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+      "frontend/src/assets/share-fonts/BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+      "frontend/src/assets/share-fonts/JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"
+    },
+    "fixtureSourceSha256": "ecbd8f59a3ef92701caf86a986d81d6ef9ba29640481193f542d5192cb34cb1e",
+    "renderSourceSha256": "507e2125ba11477277f6c4d4b88a795c6b3379aab0c9e7f2a20c60d1befc5e09",
+    "platforms": {
+      "darwin-arm64": {
+        "directory": ".",
+        "files": [
+          {
+            "name": "iron-chips-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "15718822e83d34d13e97ff062e8ffa23f53a502877007412b8c9ac2cd899dfdd"
+          },
+          {
+            "name": "iron-chips-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "6963cf994753ea019852d819063b0439930444c95ff24f2b6f01ac2cf62fcfbd"
+          },
+          {
+            "name": "iron-chips-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "9eeeb7c5d8186dc20bdd6e65e0f10252440e2297157e733a26579bf562fc2fb1"
+          },
+          {
+            "name": "iron-chips-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "70459cb13c86fde7ded9b07be770801ac0c842d58b1958886c000ee5f6823806"
+          },
+          {
+            "name": "iron-chips-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "07cac5f2150e4f37696fb0082b3a5e5e3ed3f9a5f490992d3df30d7c2bff910e"
+          },
+          {
+            "name": "iron-chips-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "d39115767102f18930df10e2c5e4ae7e698c6aa04b85793d919ce3f1840d1ceb"
+          },
+          {
+            "name": "strike-pr-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "8f4725ce4addba337a936b8e697afdabb202443be4bf995079f0e86e9048ed7e"
+          },
+          {
+            "name": "strike-pr-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "ae26ada1d7bea74f755f9486a9eead91c9425d2aa4cb280106b3e07e01a7e1eb"
+          },
+          {
+            "name": "strike-pr-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "a61778d2d10ec9eb663d847844f789db7e87e00c740c6a0a7499ef3380491e7a"
+          },
+          {
+            "name": "strike-pr-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "41a244ea5bc15c9216ed1e9aeb54e09df10f1e097f0f839d2503a3aa9c26058f"
+          },
+          {
+            "name": "strike-pr-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "305340b9b04c67b646d2b8b0190dcb8487cf578d9edc2d53f53d3181ec1dd00a"
+          },
+          {
+            "name": "strike-pr-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "73cadbe2e77fdc2f3943c66bd8562296694c0b08317c19636ab39cccee905a94"
+          },
+          {
+            "name": "hybrid-split-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "69ce549f59c2f761af99dfbfab87d9cfef79e5cb7c146fd328740ca40249cfa9"
+          },
+          {
+            "name": "hybrid-split-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "e9ad4441baaf8eea03a83cb99653f04cd64a5b00e78edaa3af4c35595cea150c"
+          },
+          {
+            "name": "hybrid-split-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "797f7e3896adf761af30c540e589055a4515ac8c3f537f1ae0164c3bd4154d12"
+          },
+          {
+            "name": "hybrid-split-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "8e5e8d947cacc7a10c5ff630db9b735bef38246dc22b6d08c67c92c4cb33e832"
+          },
+          {
+            "name": "hybrid-split-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "2a82b59000582b420e0fd241230b468e4a16951a1b2ad97afa2b32b1eadc960d"
+          },
+          {
+            "name": "hybrid-split-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "db9146a95044328f13f42b05d7f3c686dbef8b0090b583c04c6c7b82a3f0473d"
+          }
+        ]
+      },
+      "linux-x64": {
+        "directory": "linux-x64-chromium-151-no-hint",
+        "files": [
+          {
+            "name": "iron-chips-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "316dfd413c105ec03e32af3be6fc7f2658791b4d46bd98f91e5567d75b693415"
+          },
+          {
+            "name": "iron-chips-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "c0b53a6292e155d63f6484106c0f403a317adb347129d8dae7cb9e9764b0f14e"
+          },
+          {
+            "name": "iron-chips-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "f6404c627bd0a8c48d283769fcf1b2fa54e6c9b309a2b682fc445c2f3be7ffaf"
+          },
+          {
+            "name": "iron-chips-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "03b7f9101bcc318ed982105783dad1fb9a0327dd529af8429bcceea97c0fb872"
+          },
+          {
+            "name": "iron-chips-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "13a294c85f6e5695457ca58791d4fecab71f21bcd57c3c24a2e97f5ee42fba96"
+          },
+          {
+            "name": "iron-chips-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "5d51c4817a2f887b77aa33d1ae98fee0c5cbcb66269ff52f22c45f8fe7141948"
+          },
+          {
+            "name": "strike-pr-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "b5e3cf30d36cf97dee177567e14b31fc4545f54ceacdacae0261a94ef103b2da"
+          },
+          {
+            "name": "strike-pr-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "4618a6221d8fb7019978613b9377bba980fb0f185f401f0373624af35c7894eb"
+          },
+          {
+            "name": "strike-pr-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "3acdaf2d908065a6c16ff52e2a0d2a041d9236cd44b4d8917ed4c64851ddbf25"
+          },
+          {
+            "name": "strike-pr-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "9efef41f5f57ea19a4ba29186ad09fd49c4ff994fa36d0c15cf06be106816ed7"
+          },
+          {
+            "name": "strike-pr-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "18fc2ccf797cdc97f208a343a6995d144e6ee44db0d817a2fd36a58143fbf00a"
+          },
+          {
+            "name": "strike-pr-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "8483d0401f4bb5ebe1e75b7e8f87fe8237c07fb7c0f55bf9d12a5d8813272667"
+          },
+          {
+            "name": "hybrid-split-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "d6c6abbf2425b8256224fdd1d97d9bc6fe8b387c21b210105a661fc78b56f828"
+          },
+          {
+            "name": "hybrid-split-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "71d73273098115b07f2c228bb99b702db40582b2672b7e2a863728f3edafd48b"
+          },
+          {
+            "name": "hybrid-split-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "4b6d45476b474e790d74189d5573a846cf29253b71435a58f4c203c84daaef47"
+          },
+          {
+            "name": "hybrid-split-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "9701a4d6704806108692b5a32823ad5d3d2bd6324506636249bcb08782a804f4"
+          },
+          {
+            "name": "hybrid-split-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "905bb763ac99db750f1e8854edef260375d436e97fd4ed7a4b0979bb368c92ae"
+          },
+          {
+            "name": "hybrid-split-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "aad98312bea84044269d103802d82858689cc2b3df155defb45f5388f53d6106"
+          }
+        ]
+      }
+    }
+  },
+  "phase3": {
+    "parent": "2cdb3f3004b19dc65df8cac5cf9fa45ff2b8adf4",
+    "sourceRun": 39328319044,
+    "sourceArtifact": 12222484056,
+    "independentRun": 39328096330,
+    "independentArtifact": 12223136635,
+    "retainedCases": 18,
+    "acceptanceActive": true,
+    "verification": "phase3/verify.log: six Hybrid PNGs match both archives and provenance; exact dimensions, safe bounds, equal text origins/plates and textless pixels; paired visual inspection passed. Reverse Lunge row fitted font is 21.2644px macOS / 21.2643px Linux, as captured; no new baseline rendering.",
+    "evidenceDirectory": "/tmp/forge-c1-t_f8fc63a7/phase3",
+    "macAcceptance": {
+      "exit": 0,
+      "groups": 11,
+      "cases": 18,
+      "allRatios": 0,
+      "log": "phase3/mac-c1.log"
+    },
+    "exactShaAcceptanceReceipt": "phase3/FINAL-RECEIPT.json (written after commit; no self-referential SHA)"
   }
 }

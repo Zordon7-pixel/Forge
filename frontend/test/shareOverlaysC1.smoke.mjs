@@ -1,11 +1,13 @@
 // C1 only. No Trace/Full-Bleed coverage is claimed here.
 // --smoke: filtering + 18 in-memory renders; NEVER reads/writes golden PNGs.
 // Default: same gates plus mandatory pixel comparisons (missing goldens FAIL).
-// Later serial sessions: --update=iron-chips | --update=strike-pr | --update=hybrid-split
-// Each update writes exactly six baselines, never the entire matrix at once.
+// Explicit local --update=<overlay> writes six PNGs in the selected platform only.
+// It never updates approved provenance/hashes: independent review is still required.
 // --compare=<overlay>: read-only comparison of that overlay's six goldens.
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
@@ -122,7 +124,55 @@ if (filterOnly) {
 }
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const goldenDir = fileURLToPath(new URL('./goldens/share-c1/', import.meta.url))
+const goldenRoot = fileURLToPath(new URL('./goldens/share-c1/', import.meta.url))
+const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
+const launchArgs = ['--font-render-hinting=none', '--disable-lcd-text']
+const contextOptions = { viewport: { width: 1080, height: 1920 }, deviceScaleFactor: 1, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' }
+const approved = JSON.parse(readFileSync(join(goldenRoot, 'linux-diagnosis.json'), 'utf8')).acceptance
+// Pins the reviewed manifest, including both 18-file sets; changing metadata alone cannot bless pixels.
+const approvedDigest = '163576ddfcfb80ed114e3baa3d41c27541d0d8d63340236538e0f538cbee3216'
+function selectBaseline(platform, arch) {
+  const key = `${platform}-${arch}`
+  assert.ok(['darwin-arm64', 'linux-x64'].includes(key), `Unsupported C1 platform: ${key}`)
+  return key
+}
+function validateProvenance(manifest, runtime, read = readFileSync) {
+  assert.equal(sha256(JSON.stringify(manifest)), approvedDigest, 'Unapproved C1 provenance')
+  assert.deepEqual(runtime, manifest.runtime, 'C1 browser/Playwright/launch provenance mismatch')
+  for (const [path, digest] of Object.entries(manifest.sources)) {
+    assert.equal(sha256(read(join(root, '..', path))), digest, `C1 source/font provenance: ${path}`)
+  }
+  const source = read(fileURLToPath(import.meta.url), 'utf8').toString()
+  const fixtureSource = source.slice(source.indexOf('const prefs ='), source.indexOf('const entryFor ='))
+  const renderSource = source.slice(source.indexOf('\n  await page.evaluate(async () => {'), source.indexOf('\n  const render ='))
+  assert.equal(sha256(fixtureSource), manifest.fixtureSourceSha256, 'C1 fixture provenance')
+  assert.equal(sha256(renderSource), manifest.renderSourceSha256, 'C1 render/photo/comparator provenance')
+}
+function validateBaselines(manifest, key, read = readFileSync, list = readdirSync) {
+  const selected = manifest.platforms[key], dir = join(goldenRoot, selected.directory)
+  const names = matrix.map(item => item.name).sort()
+  assert.deepEqual(selected.files.map(item => item.name).sort(), names, 'Incomplete C1 baseline manifest')
+  assert.deepEqual(list(dir).filter(name => name.endsWith('.png')).sort(), names, 'Incomplete C1 baseline directory')
+  const bytes = new Map()
+  for (const item of matrix) {
+    const record = selected.files.find(file => file.name === item.name), png = read(join(dir, item.name))
+    assert.deepEqual([record.width, record.height], [1080, item.size === 'story' ? 1920 : 1350], `C1 manifest dimensions: ${item.name}`)
+    assert.ok(png.length >= 24 && png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) && png.toString('ascii', 12, 16) === 'IHDR', `C1 invalid PNG: ${item.name}`)
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [record.width, record.height], `C1 PNG dimensions: ${item.name}`)
+    assert.equal(sha256(png), record.sha256, `C1 baseline hash: ${item.name}`)
+    bytes.set(item.name, png)
+  }
+  return bytes
+}
+function validateUpdateMode(updating, env) {
+  assert.ok(!updating || (!env.CI && !env.GITHUB_ACTIONS), 'C1 golden updates are forbidden in CI')
+}
+validateUpdateMode(update, process.env)
+const platformKey = selectBaseline(process.platform, process.arch)
+const goldenDir = join(goldenRoot, approved.platforms[platformKey].directory)
+const require = createRequire(import.meta.url)
+const browserDescriptors = JSON.parse(readFileSync(join(root, 'node_modules/playwright-core/browsers.json'), 'utf8')).browsers
+let baselineBytes
 const scratch = mkdtempSync(join(tmpdir(), 'forge-c1-'))
 const entry = `
 import { drawShareCard, TEMPLATES } from '/src/lib/shareTemplates.js';
@@ -141,8 +191,55 @@ const server = await createServer({ root, configFile: false, envDir: join(scratc
 let browser
 try {
   await server.listen()
-  browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage({ viewport: { width: 1080, height: 1920 }, deviceScaleFactor: 1, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' })
+  browser = await chromium.launch({ headless: true, args: launchArgs })
+  const runtime = { browser: browser.browserType().name(), version: browser.version(),
+    playwright: require('@playwright/test/package.json').version,
+    playwrightCore: require('playwright-core/package.json').version,
+    browsers: ['chromium', 'chromium-headless-shell'].map(name => {
+      const descriptor = browserDescriptors.find(item => item.name === name)
+      return { name, revision: descriptor?.revision, version: descriptor?.browserVersion }
+    }), args: launchArgs, context: contextOptions }
+  validateProvenance(approved, runtime)
+  if (!smoke && !update) {
+    baselineBytes = validateBaselines(approved, platformKey)
+    await check('fail-closed selector, provenance, complete sets, dimensions, hashes and CI update negatives', () => {
+      const rejects = (name, work, pattern) => { assert.throws(work, pattern); console.log(`REJECT ${name}`) }
+      for (const [os, arch] of [['win32', 'x64'], ['linux', 'arm64'], ['darwin', 'x64'], ['unknown', 'unknown']]) {
+        rejects(`${os}-${arch}`, () => selectBaseline(os, arch), /Unsupported C1 platform/)
+      }
+      for (const key of ['darwin-arm64', 'linux-x64']) {
+        assert.equal(selectBaseline(...key.split('-')), key)
+        validateBaselines(approved, key)
+        const changed = structuredClone(approved); changed.platforms[key].files.pop()
+        rejects(`${key} incomplete manifest`, () => validateBaselines(changed, key), /Incomplete C1 baseline manifest/)
+        rejects(`${key} missing PNG`, () => validateBaselines(approved, key, readFileSync, dir => readdirSync(dir).filter(name => name !== matrix[0].name)), /Incomplete C1 baseline directory/)
+        rejects(`${key} extra PNG`, () => validateBaselines(approved, key, readFileSync, dir => [...readdirSync(dir), 'unexpected.png']), /Incomplete C1 baseline directory/)
+        rejects(`${key} missing directory`, () => validateBaselines(approved, key, readFileSync, () => readdirSync(join(scratch, 'absent'))), /ENOENT/)
+        for (const mutation of ['hash', 'dimensions']) {
+          rejects(`${key} wrong ${mutation}`, () => validateBaselines(approved, key, path => {
+            const png = Buffer.from(readFileSync(path))
+            if (mutation === 'hash') png[png.length - 1] ^= 1
+            else png.writeUInt32BE(1, 16)
+            return png
+          }), mutation === 'hash' ? /C1 baseline hash/ : /C1 PNG dimensions/)
+        }
+      }
+      for (const key of ['browser', 'version', 'playwright', 'playwrightCore', 'browsers', 'args', 'context']) {
+        rejects(`wrong runtime ${key}`, () => validateProvenance(approved, { ...runtime, [key]: 'wrong' }), /provenance mismatch/)
+      }
+      rejects('unapproved manifest', () => validateProvenance({ ...approved, fixtureSourceSha256: 'wrong' }, runtime), /Unapproved C1 provenance/)
+      for (const path of Object.keys(approved.sources)) {
+        rejects(`wrong source/font ${path}`, () => validateProvenance(approved, runtime, (file, ...args) => file === join(root, '..', path) ? Buffer.from('wrong') : readFileSync(file, ...args)), /source\/font provenance/)
+      }
+      for (const [before, after, label] of [["friend_handle: 'abc'", "friend_handle: 'changed'", 'fixture'], ['rgb(60,70,90)', 'rgb(61,70,90)', 'render/photo/comparator']]) {
+        rejects(`wrong ${label}`, () => validateProvenance(approved, runtime, (path, ...args) => path === fileURLToPath(import.meta.url) ? readFileSync(path, 'utf8').replaceAll(before, after) : readFileSync(path, ...args)), /C1 (fixture|render\/photo\/comparator) provenance/)
+      }
+      rejects('CI update', () => validateUpdateMode('iron-chips', { CI: 'true' }), /forbidden in CI/)
+      rejects('Actions update', () => validateUpdateMode('iron-chips', { GITHUB_ACTIONS: 'true' }), /forbidden in CI/)
+    })
+    console.log(`BASELINES ${platformKey}: 18 approved PNGs; browser ${runtime.version}; Playwright ${runtime.playwright}; provenance verified`)
+  }
+  const page = await browser.newPage(contextOptions)
   const errors = [], external = []
   page.on('pageerror', error => errors.push(error.message))
   await page.route('**/*', route => {
@@ -221,6 +318,8 @@ try {
     assert.doesNotMatch(texts(result).join('\n'), /^(--|0:00|NaN|undefined|null|NOT SHARED)$/mi)
   }
   await check('four bundled font faces loaded (no system fallback in golden renders)', async () => {
+    assert.deepEqual(await page.evaluate(() => [...document.fonts].map(face => [face.family.replaceAll('"', ''), face.weight, face.status]).sort()),
+      [['Anton', '400', 'loaded'], ['Barlow Condensed', '600', 'loaded'], ['Barlow Condensed', '800', 'loaded'], ['JetBrains Mono', '100 900', 'loaded']].sort())
     assert.deepEqual(await page.evaluate(() => [...document.fonts].map(face => [face.family.replaceAll('"', ''), face.status]).sort()),
       [['Anton', 'loaded'], ['Barlow Condensed', 'loaded'], ['Barlow Condensed', 'loaded'], ['JetBrains Mono', 'loaded']].sort())
   })
@@ -340,7 +439,7 @@ try {
         writeFileSync(join(goldenDir, item.name), Buffer.from(result.png, 'base64'))
         written++
       } else if (!smoke && !update && (!compare || compare === item.id)) {
-        const expected = readFileSync(join(goldenDir, item.name)).toString('base64')
+        const expected = baselineBytes.get(item.name).toString('base64')
         const ratio = await page.evaluate(({ a, b, size }) => window.compare(a, b, size), { a: result.png, b: expected, size: item.size })
         assert.ok(ratio <= 0.001, `${item.name}: ${(ratio * 100).toFixed(4)}% pixels differ (maximum 0.1%)`)
         console.log(`COMPARE ${item.name}: ${(ratio * 100).toFixed(4)}% pixels differ`)

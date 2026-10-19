@@ -1,3 +1,81 @@
+Task t_f8fc63a7 — final implementation phase 3
+Status: COMPLETE 18-FILE BASELINES / MACOS C1 PASS / EXACT-SHA LINUX RUN REQUIRED
+Parent: 2cdb3f3004b19dc65df8cac5cf9fa45ff2b8adf4
+Base: 170d5c4526e02562e3cbf20a614f5d16bb4292d4
+Branch: oracle/t_f8fc63a7-c1-linux
+
+This current receipt supersedes the historical partial-phase status below.
+All 18 Linux no-hint PNGs are now installed, including the six Hybrid Split
+files copied directly from corrected artifact 12222484056 (run 39328319044).
+Their bytes match independent artifact 12223136635 (run 39328096330), both
+archive digests, both raw provenance records and the existing per-case hashes.
+No PNG was regenerated or blessed. Both archives passed ZIP integrity checks.
+
+Hybrid Split verification: all six decode to RGBA 1080x1350 (feed) or 1080x1920
+(story); text/brand and plate safe bounds, content/order/alignment/transforms,
+single brand, and equal text origins/plate coordinates pass. All six textless
+images match exactly, with zero differing pixels outside text. The fitted
+Reverse Lunge row is 21.2644px on macOS and 21.2643px on Linux, with identical
+origin; maximum measured-width delta is the previously proven 0.17388916015625px.
+The six preserved paired visuals were reviewed: same content/layout, no clipping.
+
+The existing harness now always supplies --font-render-hinting=none and
+--disable-lcd-text. Only darwin-arm64 selects the unchanged original goldens;
+only linux-x64 selects linux-x64-chromium-151-no-hint. Every golden acceptance
+(including --compare) validates the complete selected 18-file set before renders:
+exact filenames, dimensions, SHA256s, browser identity/version/revision,
+Playwright/core versions, launch/context, bundled fonts, product/adapter source,
+fixture source and browser-render/photo/comparator source. The acceptance object
+in linux-diagnosis.json contains both full sets and their exact provenance;
+its digest is pinned independently in the harness. Historical capture hashes
+remain historical, including the original harness hash in sourceHashes.
+
+There is no platform fallback, automatic manifest update, missing-file creation
+in comparison mode, fuzzy comparator or threshold increase. The <=0.001 exact
+RGBA pixel ratio, 18 cases, safe zones, loaded-font assertions, privacy/allowlist,
+real-data assertions and aggregate inclusion are preserved. Explicit local
+--update=<overlay> still writes six files only in the selected platform; it
+cannot update the approved manifest and is rejected under CI/GITHUB_ACTIONS.
+--smoke and --filter-only retain their explicit non-acceptance semantics.
+
+In-harness negative checks prove rejection of unknown OS/architecture, wrong
+browser/version/revision/Playwright/launch/context, altered source/font/fixture/
+photo provenance, missing/extra/incomplete sets, wrong dimensions and hashes,
+and CI updates. The inherited changed-image and dimension comparator negatives
+remain active. No extra tracked test path was needed: exactly nine phase-3 paths
+(six PNGs, harness, and these two records). Canonical workflow is byte-identical
+to base, as are product, packages/lock, original macOS PNGs and aggregate runner.
+
+Local macOS full C1: exit 0, 11 groups, all 18 comparisons exactly 0.0000%,
+including the focused negatives. Remaining inherited gates and the exact-SHA
+approved workflow are recorded after commit in the external phase-3 receipt,
+so adding a run ID does not change the tested candidate SHA. Do not infer a
+Linux PASS from capture repeatability or this pre-run record.
+Evidence root: /tmp/forge-c1-t_f8fc63a7/phase3/
+  verify.py / verify.log: archive, byte, geometry and pixel verification
+  mac-c1.log: full macOS acceptance and explicit REJECT proof
+  commands.json / *.log: exact commands, exits and raw gate output
+  candidate.json: immutable SHA, parent/base, nine paths and workflow identity
+  linux-run-<id>.json / linux-run-<id>.log / linux-run-<id>-logs.zip:
+    actual GitHub terminal receipt and raw logs (written after dispatch)
+  FINAL-RECEIPT.json: final verified Linux job IDs, results and per-case summary
+The unchanged workflow includes a production-shell job expecting the feature
+SHA deployed; this task prohibits deployment. Any such failure must be reported
+separately, never described as overall workflow success or hidden by a CI edit.
+
+Transient failures reported during phase 3: initial diagnosis lookup used the
+wrong directory; large combined reads truncated and were recovered by bounded
+reads; font lookup used the wrong directory; the first verifier incorrectly
+required exact fitted font strings (the precise measured difference above was
+then verified); sandbox denied the local listener and scoped execution recovered;
+the initial photo negative mutated its own literal, corrected to mutate the
+actual fixture, and full C1 rerun passed. No external messaging/Kanban, merge,
+main push, production deployment, C2 or product changes are part of this phase.
+Nine changed files (>2): Hermes must route normal independent exact-SHA review.
+Spark is NOT RUN here (E6: over two files); no advisory/review PASS is claimed.
+
+HISTORICAL PHASE 1/2 RECEIPT (status below is superseded)
+=======================================================
 Task t_f8fc63a7 — C1 cross-platform golden diagnosis, serialized phases 1 and 2
 Status: PARTIAL / NOT A CI REPAIR PASS / NOT FOR RELEASE
 Base: 170d5c4526e02562e3cbf20a614f5d16bb4292d4
