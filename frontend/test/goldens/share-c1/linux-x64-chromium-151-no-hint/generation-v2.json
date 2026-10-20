@@ -1,0 +1,122 @@
+{
+  "schema": "share-generation-v2",
+  "platform": "linux-x64",
+  "directory": "linux-x64-chromium-151-no-hint",
+  "runtime": {
+    "browser": "chromium",
+    "version": "151.0.7922.34",
+    "playwright": "1.62.1",
+    "playwrightCore": "1.62.1",
+    "browsers": [
+      {
+        "name": "chromium",
+        "revision": "1234",
+        "version": "151.0.7922.34"
+      },
+      {
+        "name": "chromium-headless-shell",
+        "revision": "1234",
+        "version": "151.0.7922.34"
+      }
+    ],
+    "args": [
+      "--font-render-hinting=none",
+      "--disable-lcd-text"
+    ],
+    "context": {
+      "viewport": {
+        "width": 1080,
+        "height": 1920
+      },
+      "deviceScaleFactor": 1,
+      "locale": "en-US",
+      "timezoneId": "UTC",
+      "serviceWorkers": "block"
+    }
+  },
+  "fingerprints": {
+    "sources": {
+      "frontend/src/lib/shareOverlaysC1.js": "4e7fe063cf003adef45160ea79443c42be9f52e1af14c88d1824d77d31031852",
+      "frontend/src/lib/shareFullBleed.js": "2db87a82ef05199c40cbc8ed1e0bc7a5cfc28d1e8e28dd7d90f07339e3637885",
+      "frontend/src/lib/shareTheme.js": "4a402f8feb990e86b656aebd66ac189ae5638ca1a2b87d969c0739d64afa88ca",
+      "frontend/src/lib/shareTemplates.js": "40603f82d9b44a0ecedda97f769d2f574e052dcc47fda0645777f09cd00516c6",
+      "frontend/src/lib/shareStats.js": "d0d19d7c7b86993f5f83a68a2d21e376edd6aae0d54630a59c02bd8dba740015",
+      "frontend/src/lib/shareStudioModel.js": "a104ccb545da2932988bdb1dd2ff4a9d4cbcd93a9e0fa74a12ca07061a5382d0",
+      "frontend/src/components/ActivityShareStudio.jsx": "96130c746dec0f81f61d1461f80aba5d443b5708c76348de7e3e8f7a11e9330f",
+      "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
+      "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
+      ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347",
+      "frontend/src/assets/share-fonts/Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+      "frontend/src/assets/share-fonts/BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+      "frontend/src/assets/share-fonts/BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+      "frontend/src/assets/share-fonts/JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+      "frontend/test/shareOverlaysC1.smoke.mjs": "ae22a659f63fcd758cef5f6646207843897045bd34487a6c46a8c55473cb8618",
+      "frontend/test/shareGoldenProvenance.mjs": "1205f4dea770257d1412a30c4009aac30c80cc1b2a5437a4a0a6e4e0ddc59503"
+    },
+    "fixtureSourceSha256": "39a6c54daa021b8fe2f9b6f1d70afbb4ccf83e56868df1351bec28883674fcf4",
+    "renderSourceSha256": "a7c0029a2cb052e7537dcb898e0e610357d0452d2d16fe00f19e7bdabbb7b96f"
+  },
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "node": "v22.23.3"
+  },
+  "batches": {
+    "1": [
+      {
+        "name": "iron-chips-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "316dfd413c105ec03e32af3be6fc7f2658791b4d46bd98f91e5567d75b693415"
+      },
+      {
+        "name": "iron-chips-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "c0b53a6292e155d63f6484106c0f403a317adb347129d8dae7cb9e9764b0f14e"
+      },
+      {
+        "name": "iron-chips-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "f6404c627bd0a8c48d283769fcf1b2fa54e6c9b309a2b682fc445c2f3be7ffaf"
+      },
+      {
+        "name": "iron-chips-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "03b7f9101bcc318ed982105783dad1fb9a0327dd529af8429bcceea97c0fb872"
+      },
+      {
+        "name": "iron-chips-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "13a294c85f6e5695457ca58791d4fecab71f21bcd57c3c24a2e97f5ee42fba96"
+      },
+      {
+        "name": "iron-chips-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "5d51c4817a2f887b77aa33d1ae98fee0c5cbcb66269ff52f22c45f8fe7141948"
+      },
+      {
+        "name": "strike-pr-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "0eee6be6380f93ba7d9c327405c0a156440abca96c1a887b8e688e72d25d1563"
+      },
+      {
+        "name": "strike-pr-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "f054b8e68e3f15e90c858b132ac2380fa4eeedb72e05ca4b8f2fb8c53deb57c9"
+      },
+      {
+        "name": "strike-pr-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "3a7cf9b82af33c8ef60f896af399e60802503db3798f0148dafdf16f36f14462"
+      }
+    ]
+  }
+}
