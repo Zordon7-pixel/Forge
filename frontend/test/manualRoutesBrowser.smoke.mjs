@@ -192,13 +192,25 @@ try {
     await select.selectOption(privateRoute.id);await expect(page.locator('.planned-route-overlay')).toHaveCount(1)
     await page.evaluate(()=>{navigator.geolocation.getCurrentPosition=success=>success({coords:{latitude:40,longitude:-73,accuracy:5},timestamp:Date.now()})})
     await page.getByRole('button',{name:'Start Run',exact:true}).click();await expect(page.getByTestId('pause-run')).toBeVisible()
-    await page.evaluate(()=>{
-      window.emitPoint({coords:{latitude:40,longitude:-73,altitude:10,accuracy:5}})
-      window.emitPoint({coords:{latitude:40.001,longitude:-73.001,altitude:12,accuracy:5}})
+    const suppliedFixes=await page.evaluate(()=>{
+      const now=Date.now()
+      // Both fixes are fresh and in the past: ~11.12 m / 2 s = ~5.56 m/s,
+      // above the 5 m accuracy/jitter floor and below the 7 m/s speed ceiling.
+      const fixes=[
+        {coords:{latitude:40,longitude:-73,altitude:10,accuracy:5},timestamp:now-3000},
+        {coords:{latitude:40.0001,longitude:-73,altitude:12,accuracy:5},timestamp:now-1000},
+      ]
+      for(const fix of fixes) window.emitPoint(fix)
+      return fixes
     })
     await expect(page.locator('.recorded-route-overlay')).toHaveCount(1)
     const recorded=await persist()
     assert.equal(recorded.routeCoords.length,2);assert.equal(recorded.plannedRouteSelection.route.geometry.coordinates.length,10000)
+    assert.deepEqual(recorded.routeCoords,suppliedFixes.map(({coords,timestamp})=>[
+      coords.latitude,coords.longitude,coords.altitude,timestamp,coords.accuracy,0,null,
+    ]),'persisted vertices retain supplied fix timestamps/accuracy and one uninterrupted segment')
+    assert.equal(recorded.gpsGapCount,0);assert.equal(recorded.gpsGapSeconds,0);assert.equal(recorded.discardedSegment,false)
+    assert.equal(recorded.gps_source,'web_fallback')
     assert.notEqual(recorded.distanceMiles,42195/1609.344)
     await expect(page.locator('.planned-route-overlay')).toHaveAttribute('stroke-dasharray','7 9')
     await expect(page.locator('.recorded-route-overlay')).toHaveAttribute('stroke','#EAB308')
@@ -225,9 +237,12 @@ try {
     await expect(page.locator('.planned-route-overlay')).toHaveCount(0);await expect(page.locator('.recorded-route-overlay')).toHaveCount(1)
     assert.deepEqual((await persist()).routeCoords,recorded.routeCoords);missing=false
     await page.getByTestId('finish-run').click()
-    await expect.poll(()=>savedRunPayload?.route_coords.length).toBe(2)
+    await expect.poll(()=>savedRunPayload?.route_coords?.segments?.[0]?.points.length).toBe(2)
     await expect(page.getByText('Synthetic recap handoff',{exact:true})).toBeVisible()
-    assert.deepEqual(savedRunPayload.route_coords.map(p=>[p.lat,p.lon,p.alt,p.time,p.accuracy]),recorded.routeCoords)
+    assert.deepEqual(savedRunPayload.route_coords,{version:2,segments:[{gap:null,
+      points:recorded.routeCoords.map(([lat,lon,alt,time,accuracy])=>({lat,lon,alt,time,accuracy})),
+    }]})
+    assert.equal(savedRunPayload.gps_source,recorded.gps_source)
     assert.equal(savedRunPayload.distance_miles,recorded.distanceMiles)
     for(const key of ['plannedRouteSelection','privatePlanChoice','geometry','legs']) assert.equal(Object.hasOwn(savedRunPayload,key),false)
     assert.ok(savedRunPayload.elevation_gain<10,'only sampled altitude, not planned elevation')
