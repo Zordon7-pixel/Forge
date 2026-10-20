@@ -117,6 +117,62 @@
         "height": 1350,
         "sha256": "3a7cf9b82af33c8ef60f896af399e60802503db3798f0148dafdf16f36f14462"
       }
+    ],
+    "2": [
+      {
+        "name": "strike-pr-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "dbf5786675633bd6438eac31e241bc519d641c9c8a84e8e3135de74d008a4963"
+      },
+      {
+        "name": "strike-pr-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "a8bd85f4b3c7ee9f5fc8d80796ccbbaa5b9a8a2a844c4763e150ca042ea7c742"
+      },
+      {
+        "name": "strike-pr-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "f83f2d0b37acb5766d7e56e72550a9731b8e0356a319eaf0228cac9883a924b1"
+      },
+      {
+        "name": "hybrid-split-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "d6c6abbf2425b8256224fdd1d97d9bc6fe8b387c21b210105a661fc78b56f828"
+      },
+      {
+        "name": "hybrid-split-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "71d73273098115b07f2c228bb99b702db40582b2672b7e2a863728f3edafd48b"
+      },
+      {
+        "name": "hybrid-split-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "4b6d45476b474e790d74189d5573a846cf29253b71435a58f4c203c84daaef47"
+      },
+      {
+        "name": "hybrid-split-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "9701a4d6704806108692b5a32823ad5d3d2bd6324506636249bcb08782a804f4"
+      },
+      {
+        "name": "hybrid-split-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "905bb763ac99db750f1e8854edef260375d436e97fd4ed7a4b0979bb368c92ae"
+      },
+      {
+        "name": "hybrid-split-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "aad98312bea84044269d103802d82858689cc2b3df155defb45f5388f53d6106"
+      }
     ]
   }
 }
