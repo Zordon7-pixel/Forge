@@ -6,7 +6,7 @@ const fix = (meters, seconds, accuracy = 3) => ({ lat: 0, lon: meters / 111194.9
 function recorder(options = {}) {
   let state = createGpsTrace({ startedAtMs: start, ...options }), points = [], gaps = []
   return { get state() { return state }, points, gaps,
-    boundary() { state = traceBoundary(state) }, toggle(value) { state = setTraceAutoPause(state, value) },
+    boundary(reason) { state = traceBoundary(state, reason) }, toggle(value) { state = setTraceAutoPause(state, value) },
     push(point, now = point.timestampMs) { const result = acceptGpsFix(state, point, now); state = result.state;
       if (result.point) points.push(result.point); if (result.gap) gaps.push(result.gap); return result } }
 }
@@ -72,4 +72,130 @@ assert.equal(restored.autoPauseEnabled, true)
 let saturated = { ...cold.state, counts: { ...cold.state.counts, accuracy: 65535 } }
 assert.equal(acceptGpsFix(saturated, fix(0, 12, 300), start + 12000).state.counts.accuracy, 65535)
 assert.deepEqual(Object.keys(saturated.counts).sort(), ['accuracy','coordinates','jitter','order','speed','stale','timestamp'])
+
+// The exact rejected-candidate reproduction: 600 accepted synthetic 1 Hz fixes.
+// These exercise the exported policy, including the default-ON setting.
+function walking(speed, accuracy, reportedSpeed, autoPauseEnabled = true) {
+  const walk = recorder({ autoPauseEnabled })
+  for (let second = 0; second < 600; second++) {
+    const point = fix(second * speed, second, accuracy)
+    if (reportedSpeed !== undefined) point.speed = reportedSpeed
+    assert.equal(walk.push(point).accepted, true)
+    assert.equal(walk.state.autoPaused, false, `walking must not pause at second ${second}`)
+    assert.ok(walk.state.movementWindow.length <= 64)
+  }
+  const expected = 599 * speed
+  assert.ok(Math.abs(walk.state.distanceMeters - expected) / expected <= .05,
+    `walking ${speed}m/s accuracy ${accuracy}: ${walk.state.distanceMeters} vs ${expected}`)
+  assert.equal(splitTraceSegments(walk.points).length, 1)
+  assert.equal(walk.gaps.length, 0)
+  return walk
+}
+const witness = walking(1.4, 18, 1.4)
+console.log(JSON.stringify({ witness: '600 accepted 1Hz fixes, 1.4m/s, 18m accuracy',
+  expectedMeters: 599 * 1.4, countedMeters: witness.state.distanceMeters,
+  segments: splitTraceSegments(witness.points).length, autoPaused: witness.state.autoPaused }))
+for (const speed of [1, 1.1, 1.2, 1.3, 1.4, 1.5]) {
+  for (const accuracy of [10, 12, 15, 18, 20]) walking(speed, accuracy, speed)
+}
+// Both actual adapters can omit speed. No platform claim bypasses movement evidence.
+for (const reportedSpeed of [undefined, null, NaN, Infinity, -Infinity, -1, 0, 1.4, 7, 8, '1.4', {}, true]) {
+  walking(1.4, 18, reportedSpeed)
+  const still = recorder()
+  for (let second = 0; second <= 60; second++) {
+    still.push({ ...fix(second % 2 ? 1 : 0, second, 18), speed: reportedSpeed })
+  }
+  assert.equal(still.state.autoPaused, true)
+  assert.equal(still.state.distanceMeters, 0)
+  assert.equal(still.points.length, 1)
+}
+const settledJitter = recorder()
+for (let second = 0; second <= 20; second++) settledJitter.push(fix(0, second, 18))
+for (let second = 25; second <= 100; second += 5) {
+  assert.equal(settledJitter.push({ ...fix(second % 10 ? 15 : -15, second, 18), speed: 1.4 }).accepted, true)
+  assert.equal(settledJitter.state.autoPaused, true, 'an isolated wobble after a stationary history cannot resume')
+  assert.equal(settledJitter.state.distanceMeters, 0)
+}
+assert.equal(settledJitter.points.length, 1)
+walking(1, 20, undefined, false)
+
+// Inclusive product/readiness boundary, not the superseded 25m specification.
+for (const accuracy of [20, 20.000001, 20.01, 25]) {
+  const edge = recorder(), accepted = accuracy === 20
+  const result = edge.push(fix(0, 0, accuracy))
+  assert.equal(result.accepted, accepted)
+  assert.equal(edge.state.ready, accepted)
+  assert.equal(edge.points.length, accepted ? 1 : 0)
+  if (!accepted) assert.equal(result.reason, 'accuracy')
+}
+
+// Preserve the legitimate tail below the accuracy drawing radius BEFORE a true
+// stop. Resume must create a separate polyline and count no stationary connector.
+const stop = recorder()
+for (let second = 0; second <= 19; second++) stop.push(fix(second * 1.4, second, 18))
+const stopMeters = 19 * 1.4
+assert.ok(stop.state.distanceMeters < stopMeters - 1, 'fixture has an undrawn moving tail')
+for (let second = 20; second <= 29; second++) stop.push(fix(stopMeters, second, 18))
+assert.equal(stop.state.autoPaused, true)
+assert.ok(Math.abs(stop.state.distanceMeters - stopMeters) < .001, 'pre-pause distance is retained')
+assert.equal(stop.points.at(-1)[3], start + 19000, 'tail keeps the original moving timestamp')
+const stoppedDistance = stop.state.distanceMeters
+for (let second = 30; second <= 60; second++) stop.push(fix(stopMeters + (second % 2 ? 1 : -1), second, 18))
+assert.equal(stop.state.autoPaused, true)
+assert.equal(stop.state.distanceMeters, stoppedDistance)
+const stoppedState = stop.state
+for (const [point, now, reason] of [
+  [fix(1000, 61, 18), start + 61000, 'speed'],
+  [fix(stopMeters + 1, 61, 20.01), start + 61000, 'accuracy'],
+  [fix(stopMeters + 1, 61, 18), start + 67000, 'stale'],
+  [fix(stopMeters + 1, 62, 18), start + 61000, 'timestamp'],
+  [fix(stopMeters + 1, 60, 18), start + 60000, 'order'],
+]) {
+  assert.equal(stop.push({ ...point, speed: 7 }, now).reason, reason)
+  assert.equal(stop.state.autoPaused, true)
+  assert.equal(stop.state.distanceMeters, stoppedDistance)
+  assert.equal(stop.state.lastFix, stoppedState.lastFix)
+  assert.equal(stop.state.movementWindow, stoppedState.movementWindow)
+}
+let resumeResult
+for (let second = 61; second <= 90; second++) {
+  const wasPaused = stop.state.autoPaused
+  const result = stop.push(fix(stopMeters + (second - 60) * 1.4, second, 18))
+  if (wasPaused && !stop.state.autoPaused) resumeResult = result
+}
+assert.ok(resumeResult, 'accepted sustained walking resumes automatically')
+assert.equal(resumeResult.distanceMeters, 0)
+assert.equal(resumeResult.point[6], 'auto-resume')
+assert.equal(splitTraceSegments(stop.points).length, 2)
+const geometryMeters = splitTraceSegments(stop.points).reduce((sum, segment) => sum + segment.slice(1)
+  .reduce((subtotal, point, i) => subtotal + Math.abs(point[1] - segment[i][1]) * 111194.92664455874, 0), 0)
+assert.ok(Math.abs(geometryMeters - stop.state.distanceMeters) < .001, 'no distance-only chord across pause')
+
+// Manual/background/gap boundaries discard movement history and never count a
+// connector, even with a large displacement or an enticing reported speed.
+for (const reason of ['manual-pause', 'background', 'foreground', 'restore']) {
+  const boundary = recorder()
+  for (let second = 0; second <= 30; second++) boundary.push(fix(second * 1.4, second, 18))
+  const before = boundary.state.distanceMeters
+  boundary.boundary(reason)
+  const result = boundary.push({ ...fix(1000, 31, 18), speed: 7 })
+  assert.equal(result.distanceMeters, 0)
+  assert.equal(boundary.state.distanceMeters, before)
+  assert.equal(result.point[6], reason)
+  assert.equal(result.gap.reason, reason)
+  assert.equal(boundary.state.movementWindow.length, 1)
+  assert.equal(splitTraceSegments(boundary.points).length, 2)
+}
+for (const gapSeconds of [14.999, 15, 15.001]) {
+  const gap = recorder({ autoPauseEnabled: false })
+  gap.push(fix(0, 0)); const result = gap.push(fix(6, gapSeconds))
+  assert.equal(Boolean(result.gap), gapSeconds >= 15)
+  assert.equal(result.distanceMeters === 0, gapSeconds >= 15)
+}
+for (const speed of [7, 7.001]) {
+  const edge = recorder()
+  edge.push(fix(0, 0))
+  assert.equal(edge.push(fix(speed, 1)).accepted, speed === 7)
+}
+console.log('WALKING/STOP/BOUNDARY PASS: 30 walking cases, invalid speed fallback, stationary jitter, retained tail, true resume, rejection fencing, <=20m and <=7m/s')
 console.log('GPS TRACE PASS: quality/readiness, 300m spike, ±15m jitter, 2% distance, exact gaps, clock/pause/resume, bounded counts, recovery')

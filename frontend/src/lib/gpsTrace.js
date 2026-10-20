@@ -5,6 +5,7 @@ const COUNT_LIMIT = 65535
 const REASONS = ['coordinates', 'accuracy', 'timestamp', 'stale', 'order', 'speed', 'jitter']
 export function createGpsTrace({ startedAtMs, autoPauseEnabled = true } = {}) {
   return { startedAtMs, autoPauseEnabled, autoPaused: false, stationarySinceMs: null,
+    movementWindow: [], lastMovementFix: null,
     lastFix: null, anchor: null, segmentId: -1, boundary: null, ready: false,
     distanceMeters: 0, counts: Object.fromEntries(REASONS.map(reason => [reason, 0])) }
 }
@@ -27,7 +28,7 @@ export function metersBetween(a, b) {
   return 6371000 * 2 * Math.asin(Math.sqrt(Math.min(1, h)))
 }
 export function traceBoundary(state, reason = 'foreground') {
-  return { ...state, boundary: reason, stationarySinceMs: null }
+  return { ...state, boundary: reason, stationarySinceMs: null, movementWindow: [], lastMovementFix: null }
 }
 export function setTraceAutoPause(state, enabled) {
   return { ...state, autoPauseEnabled: enabled, autoPaused: enabled && state.autoPaused, stationarySinceMs: null }
@@ -45,6 +46,27 @@ export function runPauseLabel({ manualPaused, autoPaused, gpsIsPaused }) {
   if (autoPaused) return 'Auto-paused'
   return gpsIsPaused ? 'GPS paused' : null
 }
+// Independent of the drawn anchor/accuracy radius and of optional platform speed.
+// Net progress must dominate the travelled path: oscillating stationary fixes must
+// not accumulate into movement. Retain at most ten seconds / 64 accepted samples.
+function movementObservation(state, fix, breakSegment) {
+  const samples = breakSegment ? [] : (state.movementWindow || [])
+    .filter(point => fix.timestampMs - point.timestampMs <= 10000).slice(-63)
+  const window = [...samples, fix]
+  let pathMeters = 0, largestStepMeters = 0
+  for (let i = 1; i < window.length; i++) {
+    const stepMeters = metersBetween(window[i - 1], window[i])
+    pathMeters += stepMeters
+    largestStepMeters = Math.max(largestStepMeters, stepMeters)
+  }
+  const netMeters = metersBetween(window[0], fix)
+  const seconds = (fix.timestampMs - window[0].timestampMs) / 1000
+  const moving = window.length >= 3 && seconds >= 2 && netMeters >= 3
+    && netMeters / seconds >= 0.5 && netMeters >= pathMeters * 0.8
+    // A single wobble after many identical stationary observations is not a walk.
+    && largestStepMeters <= pathMeters * 0.9
+  return { window, moving }
+}
 export function acceptGpsFix(state, input, nowMs) {
   const reject = reason => ({ state: { ...state, counts: { ...state.counts,
     [reason]: Math.min(COUNT_LIMIT, state.counts[reason] + 1) } }, accepted: false, reason,
@@ -60,10 +82,17 @@ export function acceptGpsFix(state, input, nowMs) {
   if (previous && !breakSegment && metersBetween(previous, fix) / (gapMs / 1000) > 7) return reject('speed')
   const displacementMeters = state.anchor ? metersBetween(state.anchor, fix) : 0
   const jitter = Boolean(state.anchor) && !breakSegment && displacementMeters < Math.max(3, fix.accuracy)
-  const speedMps = previous && !breakSegment && !jitter ? metersBetween(previous, fix) / (gapMs / 1000) : 0
+  const speedMps = previous && !breakSegment ? metersBetween(previous, fix) / (gapMs / 1000) : 0
+  const movement = movementObservation(state, fix, breakSegment)
   let stationarySinceMs = state.stationarySinceMs
   let autoPaused = state.autoPaused
-  const genuineMovement = !breakSegment && !jitter && Boolean(previous) && speedMps >= 0.5
+  // Bootstrap a clear first step; once history exists, require coherent window
+  // progress. Neither decision consults the last DRAWN anchor or reported speed.
+  const clearFirstStep = movement.window.length === 2 && previous
+    && metersBetween(previous, fix) >= Math.max(3, previous.accuracy, fix.accuracy)
+  const genuineMovement = !breakSegment && Boolean(previous) && speedMps >= 0.5
+    && (clearFirstStep || movement.moving)
+  const lastMovementFix = breakSegment ? null : genuineMovement && !state.autoPaused ? fix : state.lastMovementFix
   if (!state.autoPauseEnabled) { autoPaused = false; stationarySinceMs = null }
   else if (!previous || breakSegment) stationarySinceMs = null
   else if (genuineMovement) { autoPaused = false; stationarySinceMs = null }
@@ -74,15 +103,22 @@ export function acceptGpsFix(state, input, nowMs) {
   // Resume uses a new anchor, so none of the distance traversed while paused is counted.
   const resumed = state.autoPaused && !autoPaused
   const newSegment = !state.anchor || breakSegment || resumed
-  const draw = newSegment || (!jitter && !autoPaused)
+  // Flush only previously confirmed, pre-pause movement still below the drawing
+  // radius. Use that observation's original timestamp/height, not stationary GPS
+  // or the resume location. This preserves the tail without a paused connector.
+  const pendingMovement = !state.autoPaused && autoPaused && lastMovementFix
+    && lastMovementFix.timestampMs > state.anchor?.timestampMs ? lastMovementFix : null
+  const drawnFix = pendingMovement || fix
+  const draw = newSegment || Boolean(pendingMovement) || (!jitter && !autoPaused)
   const segmentId = newSegment ? state.segmentId + 1 : state.segmentId
-  const distanceMeters = draw && !newSegment ? displacementMeters : 0
-  const point = draw ? [fix.lat, fix.lon, fix.altitudeMeters, fix.timestampMs, fix.accuracy, segmentId,
+  const distanceMeters = draw && !newSegment ? metersBetween(state.anchor, drawnFix) : 0
+  const point = draw ? [drawnFix.lat, drawnFix.lon, drawnFix.altitudeMeters, drawnFix.timestampMs, drawnFix.accuracy, segmentId,
     newSegment && state.segmentId >= 0 ? normalizeGapReason(state.boundary || (resumed ? 'auto-resume' : 'timeout')) : null] : null
   const gap = breakSegment ? { kind: 'gps-gap', reason: state.boundary || 'timeout',
     afterTimestampMs: previous?.timestampMs ?? null, beforeTimestampMs: fix.timestampMs, segmentId } : null
   return { accepted: true, point, gap, distanceMeters,
-    state: { ...state, ready: true, lastFix: fix, anchor: draw ? fix : state.anchor,
+    state: { ...state, ready: true, lastFix: fix, anchor: draw ? drawnFix : state.anchor,
+      movementWindow: movement.window, lastMovementFix: resumed ? null : lastMovementFix,
       boundary: null, segmentId, stationarySinceMs, autoPaused,
       distanceMeters: state.distanceMeters + distanceMeters,
       counts: jitter ? { ...state.counts, jitter: Math.min(COUNT_LIMIT, state.counts.jitter + 1) } : state.counts } }

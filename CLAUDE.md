@@ -5,263 +5,48 @@
 
 ---
 
-## Manual phone/watch canonical merge — t_765505f1 Phase 4 (local candidate)
+## Manual phone GPS and watch integration
 
-Required clean parent verified: `1865db1a2f49e2fcfc03c98491d12f1106a89106`.
-Branch `codex/t_765505f1/iphone-gps-trace`, isolated worktree
-`/Users/zordon/.hermes/kanban/workspaces/t_765505f1/forge`. Ten intended paths,
-including this receipt and QA-CHECKLIST. No dependency, lockfile, migration,
-generated bundle or native-source changes. Hermes owns QA, review and release;
-this is not card completion or device/release acceptance.
+`gpsTrace.js` owns phone quality/readiness, distance and segment policy. Accept only
+finite valid coordinates, accuracy 0–20m inclusive, fresh (<=5s), nonfuture,
+strictly increasing timestamps and implied speed <=7m/s. The <=20m contract is
+Bryan's October 20 15:39 addendum, superseding older 25m wording. Start stays usable
+before readiness; >=20s without an accepted fix shows nonmodal GPS paused.
 
-Local commit attempt: explicit ten-path `git add` exited 0; staged diff check
-exited 0. `git commit -m 'Merge phone completions with canonical watch runs'`
-exited 128: sandbox denied the canonical worktree index.lock at
-`/Volumes/Zordon Storage /openclaw-workspace/forge-app/.git/worktrees/forge8/index.lock`.
-No commit was created and no permission bypass was attempted. HEAD remains the
-required Phase 3 parent. Hermes must verify the final receipt and commit the
-bounded candidate using its permitted commit guard.
-Final receipt wording staging also exited 128 with the same index.lock denial.
-All ten candidate paths are staged; the last receipt correction is unstaged.
+Default-ON auto-pause uses accepted movement evidence independently of the drawn
+anchor: a bounded ten-second window checks net progress/path coherence even when
+platform speed is absent or invalid. Stationary jitter contributes no distance.
+After ten stationary seconds, retain confirmed pre-pause movement below the draw
+radius using its original timestamp. Resume, explicit boundaries and >=15s gaps
+must never add a paused/gap connector. Manual pause owns its clock; OFF disables
+automatic pauses. Fixed bounded diagnostic counters never contain coordinates.
 
-Actual seams and resulting behavior:
-- `/runs` POST formerly inserted independently of the existing import matcher.
-  It now calls `import.js` before insertion under the same owner UPDATE lock used
-  by `withPlanningInputMutation`. Matching reuses `scoreForgedRunMatch`: same
-  owner/date/activity kind, real activity starts within 5 minutes, existing
-  bounded duration/distance tolerances. Missing or conflicting timing, ambiguous
-  candidates, truncated candidate sets and conflicting user context fail closed.
-  The reverse path requires one unpaired trusted-source candidate. No permissions
-  or gps_source label establish watch authority.
-- First persisted run ID survives. Watch-first attaches segmented phone route only
-  if no usable watch route exists, plus diagnostics and missing nonconflicting
-  user context. `forged_recording_id` is an owner-scoped phone retry/GET alias.
-  Phone-first upgrades in the original `updateExistingRunHealth` path. Existing
-  import claims, old duplicate consolidation and reference safety gates remain.
-- Old import normalization treated Phase 2 route envelopes as empty, and the old
-  authority rule always kept phone geometry. Envelopes now retain all segments;
-  watch geometry replaces phone geometry as one source, even when watch reports
-  partial coverage. No geometry union, gap connector or planned-route fill.
-  Watch source priority still protects a higher-priority stored watch route.
-- Existing watch summary precedence supplies distance, duration/timing, HR/zones,
-  elevation, calories, cadence and other sensor fields. Field-level metric_sources
-  distinguish retained phone values from supplied watch values. Explicit zero
-  watch calories are supported. User-rated check-in effort remains protected by
-  the existing policy; watch HR-derived effort/load uses canonical zones/time.
-  Recap exposes separate synced-summary and route-source text without coordinates.
-- Every import previously returned changed=true. Updates now compare canonical
-  evidence and preserve planning revision on identical retries. Stored reads now
-  include end time and minimum HR so missing SELECT fields cannot cause phantom
-  changes. One real evidence change advances the owner revision once; enrichment
-  never adds a second run contribution. Existing totals/planning load read runs.
-- PR import refresh formerly only improved records. It now uses the existing
-  category recomputation for affected automatic records and derived manual
-  discrepancies, then evaluates canonical candidates. Manual record values are
-  preserved. PR write failures propagate within import transactions and roll back
-  evidence/claims/revision; unchanged retries skip recomputation.
+Tuple slot 5 is segment identity; live polylines use `splitTraceSegments`, and
+finished routes preserve the version-2 segment envelope throughout storage,
+recap, share and elevation. Never flatten segments or fill gaps with planned
+routes. Native/browser adapters retain source time; native distanceFilter is 0.
+Serialized watcher registration/removal fences stale callbacks and foreground
+restarts; failed removal retains ownership. Follow/Recenter/Overview remain
+separate map commands. Phone recording makes no ORS calls.
 
-Deterministic evidence (all synthetic, disposable SQLite; no live import):
-Use these environment values for commands below; existing installed packages were
-read for tooling only, with no install or dependency-directory mutation:
+Native readiness reports Background App Refresh, Always and Precise independently.
+The persisted one-time explainer never becomes a repeated start/foreground prompt;
+subsequent checks stay silent/nonblocking. `gps_source` is watcher-derived, not
+permission-derived. Native build/TestFlight and >=5-minute locked-screen physical
+phone acceptance require independent evidence; deterministic mocks cannot prove it.
 
-```sh
-export NODE_PATH='/Volumes/Zordon Storage /openclaw-workspace/forge-app/backend/node_modules'
-export FORGE_TEST_MODULE_ROOT='/Volumes/Zordon Storage /openclaw-workspace/forge-app/frontend'
-```
+`/runs` and watch import share owner locking and bounded identity matching; missing,
+conflicting or ambiguous evidence fails closed. The first canonical run ID survives;
+phone retry aliases stay owner-scoped. Watch summary metrics and whole-route
+geometry take precedence in either arrival order; phone diagnostics remain distinct.
+No route union, invented missing watch metrics, duplicate totals/load or planning
+revision on identical retry. PR corrections preserve manual values and failures
+roll back evidence/claims/revisions. No general historical-duplicate backfill.
 
-Every following command exited 0 on the candidate (PR SQL formatting was corrected
-and pr-recompute rerun). The new suite proves both orders with/without watch routes,
-late route arrival, strict owner/kind/time/duration/distance negatives, ambiguity,
-watch and phone retries, exact revisions 7→8→9 then stable, canonical totals/load,
-slower watch PR correction, replacement by an earlier run, manual discrepancy
-correction and rollback on actual PR-service failure. Its two synthetic PR-error
-messages are intentional negative fixtures. Controls include actual Swift-body
-SDK doubles; compilation is not real-device execution.
-
-```sh
-node backend/test/phoneWatchMerge.smoke.js
-node backend/test/canonicalRunMerge.smoke.js
-node backend/test/metricStreamImportRoutes.smoke.js --handlers
-node backend/test/healthImportConcurrency.smoke.js
-node backend/test/healthFixtureMatrix.smoke.js
-node backend/test/appleWatchMetricStreams.smoke.js
-node backend/test/garminImportCoverage.smoke.js
-node backend/test/runRecapData.smoke.js
-node backend/test/runEffort.smoke.js
-node backend/test/prTimeOverride.smoke.js
-node backend/scripts/pr-recompute-smoke.js
-node backend/test/planningMutationRoutes.smoke.js
-node backend/test/planningRevisionConcurrency.smoke.js
-node backend/test/planningPlanRoutes.smoke.js
-node backend/test/stablePlanPassiveAuthority.smoke.js
-node backend/test/canonicalCombinedCache.smoke.js
-node backend/test/activityIdentityLoadInput.smoke.js
-node backend/test/goalBackwardEvidence.smoke.js
-node backend/test/activityCompletionAuthority.smoke.js
-node backend/test/activityReconciliation.smoke.js
-node backend/test/metricStreamTruth.smoke.js
-node backend/test/accountReceiptCoverage.smoke.js
-node backend/test/accountDeletionAtomicity.smoke.js
-node backend/test/authMutationGuard.smoke.js
-node backend/scripts/check-account-data-coverage.js
-node backend/scripts/active-run-gps-gap-smoke.js
-node frontend/test/activeRunControls.smoke.mjs
-node frontend/test/activeRunGps.smoke.mjs
-node frontend/test/phoneRunPhase2.smoke.mjs
-node frontend/test/phoneRunPhase2.smoke.mjs --compile-browser
-node frontend/test/gpsTrace.smoke.mjs
-node frontend/test/phoneGpsWatcher.smoke.mjs
-node frontend/test/runLocationAccess.smoke.mjs
-node frontend/test/liveActivity.smoke.mjs
-node frontend/test/activeRunPlannedRoute.smoke.mjs
-node frontend/test/runCompletionPhaseA.smoke.mjs
-node frontend/test/deviceSourceTruth.smoke.mjs
-node frontend/test/shareStats.smoke.mjs
-node frontend/test/runRecapPhase1.smoke.mjs
-node frontend/test/runActivityBoundary.smoke.mjs
-node frontend/test/adaptiveManualRunCompletion.smoke.mjs
-node frontend/test/offlineQueuePolicy.smoke.mjs
-node frontend/test/runPlanImpact.smoke.mjs
-swiftc -frontend -parse frontend/ios/App/App/AppViewController.swift
-git diff --check
-```
-
-Unresolved checks, all exit 1 and NOT green:
-- `node backend/test/metricStreamImportRoutes.smoke.js` and
-  `node backend/test/runActualShoe.smoke.js`: sandbox denies 127.0.0.1 listen
-  (EPERM). The new optional stream `--handlers` mode passes the same registered
-  auth middleware/handlers/SQL assertions; it does not claim HTTP transport QA.
-- `node frontend/test/activitySyncRefresh.smoke.mjs`: worktree ESM vite missing.
-- `node backend/test/goalBackwardCanonical.smoke.js`: 14 groups pass before missing
-  worktree ESM @garmin/fitsdk. Not a full pass.
-- `node backend/test/forgedHybridH12.smoke.js`: 47 pass, one sync-runtime failure
-  caused by healthSyncLiveness's missing worktree ESM vite.
-- `node frontend/test/runIntegrity.smoke.mjs`: 50 pass, three obsolete ActiveRun
-  source-pattern assertions fail. Re-executed test source/read inputs from exact
-  parent via git show with unchanged runtime imports: identical 50/3 result.
-  No baseline assertions were weakened in this phase.
-
-Transient failures reported immediately: three guessed source paths absent;
-initial integration retry revision 11 instead of 9 (fixed missing stored fields);
-overstrict whole-row retry comparison included unrelated feedback claim time/JSON
-key order (canonical evidence and revisions tested separately); manual PR fixture
-omitted achieved_at and hit SQLite's absent to_char default (explicit fixture date
-fixed it); existing pr-recompute mock rejected changed SQL whitespace (restored).
-Raw synthetic gate logs are `/tmp/t_765505f1-phase4-*.log`; no coordinates are added
-to production logging. Exact-lock host QA, PostgreSQL/concurrent-device behavior,
-full browser/SPA and map-referrer QA, advisory disposition, independent exact-SHA
-review, native build/TestFlight provenance and physical iPhone/watch acceptance
-remain required. QA-CHECKLIST adds unchecked real-device ordering, route precedence
-and single totals/PR/load/revision acceptance; no device PASS is claimed.
-
-Scope limits: no reconciliation of preexisting duplicate histories beyond the
-existing safe consolidation path, no new schema/alias table, no fuzzy merge when
-phone distance is outside the trusted tolerance (including severe GPS loss), no
-merge that would discard conflicting user notes/plan choices. A missing watch
-metric is not invented; phone completion never overwrites established watch
-values. Reverse merge does not promote phone numeric estimates into missing watch
-fields. Conflicting user-context reconciliation remains a separate source decision
-if required before freeze. Flag >2-file scope, activity time/identity and PR changes
-for Hermes-owned independent review. No Kanban/Hermes calls, messages, secrets,
-production, push/merge/deploy/restart/install/EAS/TestFlight or external mutations.
-Railway pause preserved by no external action; job5feaddc2bfaf and t_59894b65 untouched.
-
-## Manual phone GPS trace — t_765505f1 Phase 1 (patched; local only)
-
-Local commit is blocked by the sandbox: `git add` exited 128 because it cannot
-create `/Volumes/Zordon Storage /openclaw-workspace/forge-app/.git/worktrees/forge8/index.lock`.
-No staging or commit occurred. Hermes must commit this exact reviewed ten-path
-patch from a context permitted to write the canonical Git metadata; no permission
-bypass, push, review request or external mutation was attempted.
-
-Starting base `00cf8ccc0f9ab2683ab9636c371c5646a9c3cfbc`, isolated branch
-`codex/t_765505f1/iphone-gps-trace`. This is Phase 1, not card completion or
-release acceptance. Ten repository paths; no dependency/lock/generated changes.
-
-Actual base seams: both phone paths converged in ActiveRun.handlePoint; it
-coerced coordinates, admitted absent accuracy, substituted receipt time, appended
-jump geometry even when distance rejected it, and connected gaps. Browser callbacks
-used Date.now; native distanceFilter was 5. Start waited for a separate permission
-watcher. There was no stationary auto-pause or foreground watcher reconciliation.
-
-`gpsTrace.js` is the shared deterministic policy (explicit now/fix milliseconds,
-meters). It requires finite in-range coordinates, finite accuracy 0–20m inclusive,
-a timestamp at most 5s old, strictly increasing fix time, and implied speed at most
-7m/s. Future/missing timestamps fail closed. A quality-accepted stationary fix
-updates liveness and stationary duration but adds no drawn vertex or distance:
-movement below max(3m, current accuracy) is ignored. Rejection/jitter diagnostics
-are fixed reason counters saturated at 65,535, never coordinate/error payloads.
-A >=15s accepted-fix gap or explicit background/foreground boundary emits a
-`gps-gap` event and starts a new segment; resumed auto/manual recording also
-cannot add a paused connector. Distance and live elevation sum within segments.
-
-Recorded tuples add optional slot 5 (`segmentId`); splitTraceSegments is the only
-live polyline input. Existing five-slot tuples retain their public shape. The
-small active-session seam preserves supplied IDs and auto-pause clock state over
-reload. It does not upgrade completed-run/backend/recap persistence. Never use
-flat recorded tuples as a polyline when continuing this work.
-
-Start runs while GPS is amber and acquires the watcher without waiting for a good
-fix; green can only follow an accepted fresh <=20m fix. Missing accepted fixes for
->=20s shows a separate nonmodal GPS-paused status. The default-ON auto-pause setting
-freezes clock/distance after >=10s of accepted stationary observations (<0.5m/s),
-resumes only on accepted movement beyond the jitter threshold, and retains explicit
-manual pause ownership. Turning the setting OFF disables automatic pause/resume.
-Live Activity uses the existing paused contract for the frozen clock. Native and
-web watcher adapters preserve source timestamps; native distanceFilter is 0.
-Serial registration/removal fences stale callbacks, pending registration, and
-foreground restarts. Failed removal retains the handle and prevents duplication.
-Native appStateChange / browser visibility transitions each use one event stream.
-
-Deterministic local commands below all exited 0 on the final code:
-
-```sh
-node frontend/test/gpsTrace.smoke.mjs
-node frontend/test/phoneGpsWatcher.smoke.mjs
-FORGE_TEST_MODULE_ROOT='/Volumes/Zordon Storage /openclaw-workspace/forge-app/frontend' node frontend/test/activeRunGps.smoke.mjs
-node frontend/test/activeRunControls.smoke.mjs
-node backend/scripts/active-run-gps-gap-smoke.js
-node frontend/test/runLocationAccess.smoke.mjs
-node frontend/test/liveActivity.smoke.mjs
-node frontend/test/activeRunPlannedRoute.smoke.mjs
-node frontend/test/runCompletionPhaseA.smoke.mjs
-node frontend/test/deviceSourceTruth.smoke.mjs
-node frontend/test/shareStats.smoke.mjs
-git diff --check
-```
-
-The component test compiles the real ActiveRun JSX with the already-installed
-Vite-local esbuild and executes hooks/handlers with a deterministic synthetic host.
-It is not a React browser renderer or physical-device test. No dependencies were
-installed. There is no worktree node_modules; full production build and exact-lock
-host QA were not run. Engine fixtures cover cold start, missing/20m/>20m accuracy,
-300m spike, +/-15m jitter, stale/future fixes, exact gap/pause/liveness boundaries,
-geometry exclusion, and measured distance within 2% of synthetic ground truth.
-Component tests cover both adapters, early Start/readiness, frozen clocks/distance,
-manual pause during auto-pause, OFF, foreground dedup, segmented polylines, route
-recording OFF and Live Activity payloads. Show route OFF sharing tests remain green.
-
-Reported hiccups: missing worktree dependencies; root esbuild resolution failed
-(exit 1), recovered through Vite's nested installed compiler; two unmatched audit
-shell globs; first planned-route regression failed (exit 1) because legacy tuples
-were extended, recovered by preserving legacy shape and verified by rerun. Final
-audit found a legacy segment-ID collision on restore; ID 0 is now reserved for
-legacy samples, with an actual-component recovery regression.
-Completion smoke emits its expected malformed-handoff diagnostic fixtures (exit 0).
-
-Phase 2 handoff: preserve segment identity and gap events through the finished-run
-payload, backend normalization/storage, recap/handoff/share geometry and elevation;
-the existing completed-run flat route contract is still a release blocker. Add the
-native background-refresh/Always/Precise bridge and once-only persisted explainer,
-source/status persistence, and watch-import precedence/dedup in serialized scope.
-Then coordinator-owned exact-lock build, full browser/SPA, native iOS/TestFlight
-and >=5-minute locked-screen physical-iPhone verification of native_bg are needed.
-Readiness acquisition starts on Start in this phase, not as a pre-start warm-up
-watcher. Existing pre-start permission wording in other screens is a follow-up.
-No ORS, tiles, production, Hermes/Kanban, messages, push/merge/deploy, EAS/TestFlight,
-services, provider settings, job5feaddc2bfaf or t_59894b65 were accessed or changed.
-Railway pause was preserved by no external action, not checked live. Flag this
-10-path change and GPS/elapsed timestamp handling for independent exact-SHA review.
+Historical task/build receipts (258 lines, preserved verbatim from rejected SHA
+fc6f991b4a6d4a61dab9083a4f78a0fbf995b92c) and their preservation proof are in:
+`/Users/zordon/.hermes/kanban/workspaces/t_765505f1/evidence/remediation-autopause/CLAUDE-task-receipts-fc6f991b.md`.
+Hermes owns exact-lock host QA, independent exact-SHA review and release gates.
 
 ## Private route editor — t_0f9a44da Phase 1B (patched; uncommitted)
 
