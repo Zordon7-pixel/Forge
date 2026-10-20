@@ -77,7 +77,8 @@ export function acceptGpsFix(state, input, nowMs) {
   const draw = newSegment || (!jitter && !autoPaused)
   const segmentId = newSegment ? state.segmentId + 1 : state.segmentId
   const distanceMeters = draw && !newSegment ? displacementMeters : 0
-  const point = draw ? [fix.lat, fix.lon, fix.altitudeMeters, fix.timestampMs, fix.accuracy, segmentId] : null
+  const point = draw ? [fix.lat, fix.lon, fix.altitudeMeters, fix.timestampMs, fix.accuracy, segmentId,
+    newSegment && state.segmentId >= 0 ? normalizeGapReason(state.boundary || (resumed ? 'auto-resume' : 'timeout')) : null] : null
   const gap = breakSegment ? { kind: 'gps-gap', reason: state.boundary || 'timeout',
     afterTimestampMs: previous?.timestampMs ?? null, beforeTimestampMs: fix.timestampMs, segmentId } : null
   return { accepted: true, point, gap, distanceMeters,
@@ -97,4 +98,48 @@ export function splitTraceSegments(points = []) {
     previousId = id
   }
   return segments
+}
+
+// Finished phone recordings use an explicit envelope; legacy flat routes stay legacy.
+export const GAP_REASONS = ['timeout', 'foreground', 'background', 'restore', 'manual-pause', 'auto-resume', 'auto-pause-disabled', 'unknown']
+export function normalizeGapReason(value) { return GAP_REASONS.includes(value) ? value : 'unknown' }
+export function normalizeGpsSource(value) { return ['native_bg', 'web_fallback'].includes(value) ? value : null }
+export function normalizeBackgroundRefreshStatus(value) {
+  return ['available', 'denied', 'restricted', 'unknown', 'error', 'unavailable'].includes(value) ? value : 'unknown'
+}
+export function phoneRunDiagnostics(value = {}) {
+  return { gps_source: normalizeGpsSource(value.gps_source), backgroundRefreshStatus: normalizeBackgroundRefreshStatus(value.backgroundRefreshStatus) }
+}
+export function phoneRunStatusLine(value = {}) {
+  const status = phoneRunDiagnostics(value)
+  const source = status.gps_source === 'native_bg' ? 'GPS: iPhone background' : status.gps_source === 'web_fallback'
+    ? 'GPS: web fallback · keep the app visible; running remains available' : 'GPS source: unknown'
+  const refresh = { denied: 'off', restricted: 'restricted', unknown: 'unknown', error: 'unavailable (check failed)', unavailable: 'unavailable' }
+  return source + (status.backgroundRefreshStatus === 'available' ? '' : ` · Background refresh: ${refresh[status.backgroundRefreshStatus]}`)
+}
+export function finishedPhoneRoute(points = []) {
+  return { version: 2, segments: splitTraceSegments(points).map((segment, index) => ({
+    gap: index ? { kind: 'gps-gap', reason: normalizeGapReason(segment[0][6]) } : null,
+    points: segment.map(([lat, lon, alt, time, accuracy]) => ({ lat, lon, alt, time, accuracy })),
+  })) }
+}
+// No sampling or flattening: every supplied boundary survives, or invalid input fails closed.
+export function normalizeSegmentedRoute(value) {
+  if (typeof value === 'string') { try { value = JSON.parse(value) } catch { return null } }
+  if (!value || value.version !== 2 || !Array.isArray(value.segments) || value.segments.length > 100000) return null
+  let count = 0
+  const segments = []
+  for (const [index, segment] of value.segments.entries()) {
+    if (!Array.isArray(segment?.points) || !segment.points.length) return null
+    const points = []
+    for (const point of segment.points) {
+      if (++count > 100000 || !Number.isFinite(point?.lat) || Math.abs(point.lat) > 90 || !Number.isFinite(point?.lon) || Math.abs(point.lon) > 180) return null
+      const optional = (v, min, max) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : null
+      const time = typeof point.time === 'number' ? point.time : typeof point.time === 'string' && point.time.length <= 40 ? Date.parse(point.time) : NaN
+      points.push({ lat: point.lat, lon: point.lon, alt: optional(point.alt, -2000, 100000),
+        time: Number.isFinite(time) && Math.abs(time) <= 8640000000000000 ? time : null, accuracy: optional(point.accuracy, 0, 10000) })
+    }
+    segments.push({ gap: index ? { kind: 'gps-gap', reason: normalizeGapReason(segment.gap?.reason) } : null, points })
+  }
+  return { version: 2, segments }
 }

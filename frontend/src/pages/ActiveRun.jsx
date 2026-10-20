@@ -27,7 +27,7 @@ import { createPrivatePlanPicker, plannedPresentation, privatePlanOverlay } from
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 import { buildLiveActivityStart, buildLiveActivityUpdate } from '../lib/liveActivityState'
 import LiveActivityService from '../services/LiveActivityService'
-import { acceptGpsFix, createGpsTrace, gpsPaused, METERS_PER_MILE, runElapsedSeconds, runPauseLabel, setTraceAutoPause, splitTraceSegments, traceBoundary } from '../lib/gpsTrace'
+import { finishedPhoneRoute, phoneRunDiagnostics, phoneRunStatusLine, acceptGpsFix, createGpsTrace, gpsPaused, METERS_PER_MILE, runElapsedSeconds, runPauseLabel, setTraceAutoPause, splitTraceSegments, traceBoundary } from '../lib/gpsTrace'
 import { createGpsForegroundHandler, createPhoneGpsWatcher } from '../lib/phoneGpsWatcher'
 
 /*
@@ -200,7 +200,7 @@ function MapViewController({
   return null
 }
 
-export default function ActiveRun() {
+export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   const location = useLocation()
   const navigate = useNavigate()
   const { fmt, units } = useUnits()
@@ -314,7 +314,9 @@ export default function ActiveRun() {
   const [autoPauseEnabled, setAutoPauseEnabled] = useState(restoredSession?.autoPauseEnabled ?? true)
   const [autoPaused, setAutoPaused] = useState(Boolean(restoredSession?.autoPaused))
   const [gpsIsPaused, setGpsIsPaused] = useState(false)
-  const [gpsSource, setGpsSource] = useState(null)
+  const [gpsSource, setGpsSource] = useState(restoredSession?.gps_source ?? null)
+  // Phase 3 supplies an observed value; absence remains unknown, never permission-derived.
+  const diagnostics = phoneRunDiagnostics({ gps_source: gpsSource, backgroundRefreshStatus: backgroundRefreshStatus === undefined ? restoredSession?.backgroundRefreshStatus : backgroundRefreshStatus })
   const traceRef = useRef(null)
   if (!traceRef.current) {
     traceRef.current = { ...createGpsTrace({ startedAtMs: restoredSession?.startedAt, autoPauseEnabled }),
@@ -412,6 +414,7 @@ export default function ActiveRun() {
     autoPauseEnabled,
     autoPaused,
     routeCoords,
+    ...diagnostics,
     manualDistance,
     mapMyRun,
     gpsStarted,
@@ -790,7 +793,7 @@ export default function ActiveRun() {
       native: BackgroundGeolocation,
       web: typeof navigator === 'undefined' ? null : navigator.geolocation,
       isNative: Capacitor.isNativePlatform(),
-      onFix: fix => handlePointRef.current(fix), onError: setLocationFailure, onSource: setGpsSource,
+      onFix: fix => handlePointRef.current(fix), onError: setLocationFailure, onSource: source => setGpsSource(source === 'browser' ? 'web_fallback' : source),
     })
     return watcherRef.current
   }, [setLocationFailure])
@@ -1068,13 +1071,9 @@ export default function ActiveRun() {
       avg_heart_rate: liveHr || null,
       elevation_gain: actualElevation.available ? actualElevation.gainFeet : null,
       elevation_loss: actualElevation.available ? actualElevation.lossFeet : null,
-      route_coords: routeCoords.map(([lat, lon, alt, time, accuracy]) => ({
-        lat,
-        lon,
-        alt: alt ?? null,
-        time: time ?? null,
-        accuracy: accuracy ?? null,
-      })),
+      route_coords: finishedPhoneRoute(routeCoords),
+      ...diagnostics,
+      workout_metrics_json: diagnostics,
       treadmill_brand: treadmillBrand || null
     }
   }
@@ -1395,6 +1394,7 @@ export default function ActiveRun() {
         ) : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect watch for live HR</p>}
       </div>
 
+      <p role="status" data-testid="run-settings-diagnostics" className="mb-3 text-xs" style={{ color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{phoneRunStatusLine(diagnostics)}</p>
       {(!gpsAvailable || gpsError) && <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>{gpsError || 'GPS unavailable — tracking time and effort only'}</div>}
       {restoredNotice && (
         <button type="button" onClick={() => setRestoredNotice(false)} className="w-full rounded-xl p-3 mb-3 text-left" role="status" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)' }}>

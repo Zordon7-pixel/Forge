@@ -1,14 +1,15 @@
+import { phoneRunStatusLine } from '../lib/gpsTrace'
 import ForgeMap from './maps/ForgeMap'
 import { useEffect, useState } from 'react'
 import { ArrowLeft, X, Brain, Gauge, MapPin, Share2, Trash2 } from 'lucide-react'
-import { CircleMarker, Polyline, useMap } from 'react-leaflet'
+import { CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
 import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { runProvenanceFromRecord, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
-import { buildRunComparison, elevationStreamFromRoute, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseWorkoutMetricStreams, parseZoneTimeline, resolveRunHeartRateZone, workoutMetricSourceLabel } from '../lib/runRecap'
+import { buildRunComparison, elevationStreamFromRoute, formatPlannedPaceTarget, normalizeRunSplits, parseRunRouteSegments, parseWorkoutMetricStreams, parseZoneTimeline, resolveRunHeartRateZone, workoutMetricSourceLabel } from '../lib/runRecap'
 import { providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import ActivityShareStudio from './ActivityShareStudio'
 import RunPlanImpact from './RunPlanImpact'
@@ -80,7 +81,15 @@ function traceTimeLabel(seconds) {
 }
 
 function MetricTraceCard({ label, points = [], average = null, minimum = null, maximum = null, formatValue, color = '#22D3EE', headline = null, sourceLabel = null }) {
-  const valid = points.filter((point) => Number.isFinite(Number(point?.t)) && Number.isFinite(Number(point?.v)))
+  const isValid = point => typeof point?.t === 'number' && Number.isFinite(point.t) && typeof point?.v === 'number' && Number.isFinite(point.v)
+  const valid = points.filter(isValid)
+  const sections = []
+  let section = []
+  for (const point of points) {
+    if (!isValid(point)) { if (section.length) sections.push(section); section = [] }
+    else section.push(point)
+  }
+  if (section.length) sections.push(section)
   if (valid.length < 2) return null
   const values = valid.map((point) => Number(point.v))
   const times = valid.map((point) => Number(point.t))
@@ -92,11 +101,11 @@ function MetricTraceCard({ label, points = [], average = null, minimum = null, m
   const maxTime = Math.max(...times)
   const timeSpan = Math.max(1, maxTime - minTime)
   const valueSpan = Math.max(0.0001, maxValue - minValue)
-  const polyline = valid.map((point) => {
+  const polylines = sections.map(section => section.map((point) => {
     const x = ((Number(point.t) - minTime) / timeSpan) * 320
     const y = 58 - ((Number(point.v) - minValue) / valueSpan) * 50
     return `${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
+  }).join(' '))
   const display = typeof formatValue === 'function' ? formatValue : (value) => String(Math.round(value))
   const averageValue = average === null || average === undefined || average === '' ? Number.NaN : Number(average)
 
@@ -110,7 +119,7 @@ function MetricTraceCard({ label, points = [], average = null, minimum = null, m
         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{display(minValue)}–{display(maxValue)}</p>
       </div>
       <svg className="mt-3 h-16 w-full" viewBox="0 0 320 64" preserveAspectRatio="none" role="img" aria-label={`${label} recorded timeline`}>
-        <polyline points={polyline} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <g>{polylines.map((polyline, index) => <polyline key={index} points={polyline} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />)}</g>
       </svg>
       <div className="mt-1 flex justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}><span>{traceTimeLabel(minTime)}</span><span>{traceTimeLabel(maxTime)}</span></div>
       {sourceLabel && <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>{sourceLabel}</p>}
@@ -250,7 +259,9 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const comparison = buildRunComparison(run)
   const inferredPlanMatch = comparison.planned?.matchSource === 'scheduled_date' || run.planned_match_source === 'scheduled_date'
   const splits = normalizeRunSplits(run.pace_splits)
-  const routePositions = parseRunRoute(run.route_coords)
+  const routeSegments = parseRunRouteSegments(run.route_coords)
+  const routePositions = routeSegments.flatMap(segment => segment.positions)
+  const routeGaps = routeSegments.filter(segment => segment.gap)
   const metricStreams = parseWorkoutMetricStreams(run.workout_metric_streams_json)
   const elevationTrace = elevationStreamFromRoute(run.route_coords, units)
   const paceTrace = (metricStreams.running_speed_mps || []).flatMap((point) => (
@@ -355,11 +366,17 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         </div>
         <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>{date}</p>
 
+        {isRun && (runProvenance !== RUN_PROVENANCE.IMPORTED || Object.hasOwn(workoutMetrics, 'gps_source')) && <p role="status" data-testid="recap-gps-diagnostics" className="mb-3 text-xs" style={{ color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{phoneRunStatusLine(workoutMetrics)}</p>}
+        {panelIs('route') && routeGaps.length > 0 && <p role="status" className="mb-3 text-sm">{routeGaps.length} GPS gap{routeGaps.length === 1 ? '' : 's'} · Missing distance and elevation are excluded.</p>}
+
         {panelIs('route') && isRun && !shareOpen && routePositions.length >= 2 && (
           <div className="mb-5 overflow-hidden rounded-xl" style={{ height: 220, border: '1px solid var(--border-subtle)' }}>
             <ForgeMap key={run.id} center={routePositions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
               <FitRouteBounds positions={routePositions} />
-              <Polyline positions={routePositions} pathOptions={{ color: '#EAB308', weight: 5 }} />
+              {routeSegments.map((segment, index) => segment.positions.length > 1 && <Polyline key={index} className="recap-recorded-segment" positions={segment.positions} pathOptions={{ color: '#EAB308', weight: 5 }} />)}
+              {routeGaps.map((segment, index) => <CircleMarker key={index} className="recap-gps-gap" center={segment.positions[0]} radius={10} pathOptions={{ color: '#F59E0B', fillColor: '#16130D', fillOpacity: 1, weight: 3 }}>
+                <Tooltip permanent direction="top"><span title={`GPS gap ${index + 1} · ${segment.gap.reason}`}>GPS gap {index + 1}</span></Tooltip>
+              </CircleMarker>)}
               <CircleMarker center={routePositions[0]} radius={7} pathOptions={{ color: '#FFFFFF', fillColor: '#22C55E', fillOpacity: 1, weight: 2 }} />
               <CircleMarker center={routePositions.at(-1)} radius={7} pathOptions={{ color: '#FFFFFF', fillColor: '#EF4444', fillOpacity: 1, weight: 2 }} />
             </ForgeMap>

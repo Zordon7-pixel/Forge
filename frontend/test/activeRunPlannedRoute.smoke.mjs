@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPrivatePlanPicker, normalizePrivatePlan, plannedPresentation, privatePlanOverlay } from '../src/lib/activeRunPlannedRoute.js'
 import { ACTIVE_RUN_SESSION_KEY, saveActiveRunSession, loadActiveRunSession, elapsedFromSession } from '../src/lib/activeRunSession.js'
+import { finishedPhoneRoute } from '../src/lib/gpsTrace.js'
+import { parseRunRouteSegments } from '../src/lib/runRecap.js'
 import { activeRunMapCommand } from '../src/lib/activeRunControls.js'
 const id='00000000-0000-4000-8000-000000000001'
 const geometry=Array.from({length:10000},(_,i)=>[-73+i/1000000,40+i/1000000])
@@ -58,7 +60,19 @@ picker.dispose()
 // Optional selection is never spread into the canonical payload or completion.
 const source=readFileSync(new URL('../src/pages/ActiveRun.jsx',import.meta.url),'utf8')
 const payload=source.slice(source.indexOf('  const buildRunPayload ='),source.indexOf('  const syncPlanProgressAfterSave ='))
-assert.doesNotMatch(payload,/privatePlan|plannedRoute/);assert.match(payload,/route_coords: routeCoords\.map/)
+assert.doesNotMatch(payload,/privatePlan|plannedRoute/)
+assert.match(payload,/route_coords: finishedPhoneRoute\(routeCoords\)/)
+// The new persistence contract contains only recorded points and keeps the gap.
+// A loaded 10,000-vertex plan must not supply even one missing recorded vertex.
+const segmented = [recorded[0].concat([0, null]), recorded[1].concat([1, 'foreground'])]
+const finished = finishedPhoneRoute(segmented)
+assert.equal(finished.segments.length, 2)
+assert.deepEqual(finished.segments.map(segment => segment.points.map(point => [point.lat, point.lon])), recorded.map(point => [point.slice(0, 2)]))
+assert.deepEqual(finished.segments[1].gap, { kind: 'gps-gap', reason: 'foreground' })
+assert.deepEqual(parseRunRouteSegments(JSON.stringify(finished)).map(segment => segment.positions.length), [1, 1])
+assert.deepEqual(finishedPhoneRoute([]), { version: 2, segments: [] })
+assert.deepEqual(recording.plannedRouteSelection, snapshot)
+assert.equal(JSON.stringify(recording), frozen)
 const lib=readFileSync(new URL('../src/lib/activeRunPlannedRoute.js',import.meta.url),'utf8')
 assert.doesNotMatch(lib,/shared_routes|\/runs|queueRequest|api\.post|watchPosition/)
 assert.match(source,/className="planned-route-overlay"/);assert.match(source,/className="recorded-route-overlay"/)

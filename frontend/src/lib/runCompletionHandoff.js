@@ -1,3 +1,4 @@
+import { normalizeSegmentedRoute, phoneRunDiagnostics } from './gpsTrace.js'
 export const RUN_COMPLETION_HANDOFF_KEY = 'forged_hybrid_run_completion_handoff_v1'
 export const RUN_COMPLETION_HANDOFF_EVENT = 'forge:run-completion-handoff'
 
@@ -102,6 +103,7 @@ function normalizeRoutePoint(value) {
 
 function boundedRoute(value) {
   const parsed = parseStructured(value)
+  if (parsed?.version === 2) return normalizeSegmentedRoute(parsed) || []
   if (!Array.isArray(parsed)) return []
   const normalized = parsed.map(normalizeRoutePoint).filter(Boolean)
   if (normalized.length <= MAX_ROUTE_POINTS) return normalized
@@ -140,7 +142,10 @@ export function buildRunCompletionSnapshot(...sources) {
     if (normalized) snapshot[field] = normalized
   }
   const route = boundedRoute(merged.route_coords)
-  if (route.length) snapshot.route_coords = route
+  if (route.length || route.version === 2) snapshot.route_coords = route
+  if (route.version === 2 || Object.hasOwn(merged, 'gps_source') || Object.hasOwn(merged, 'backgroundRefreshStatus')) {
+    snapshot.workout_metrics_json = { ...snapshot.workout_metrics_json, ...phoneRunDiagnostics(snapshot.workout_metrics_json || merged) }
+  }
   return snapshot
 }
 

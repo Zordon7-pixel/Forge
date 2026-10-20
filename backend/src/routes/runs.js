@@ -42,6 +42,7 @@ const {
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
+  phoneRunDiagnostics,
 } = require('../lib/runPostRun');
 const { planningInputUnchanged } = require('../lib/planningRevision');
 const { getGoalBackwardV24Mode } = require('../lib/betaPlanRollout');
@@ -89,6 +90,7 @@ function paceFromSeconds(distanceMiles, seconds) {
 }
 
 function firstRoutePoint(routeCoords) {
+  if (routeCoords?.version === 2) routeCoords = routeCoords.segments?.[0]?.points;
   if (!Array.isArray(routeCoords) || routeCoords.length === 0) return null;
   const point = routeCoords[0];
   if (Array.isArray(point)) {
@@ -800,6 +802,7 @@ router.post('/', auth, async (req, res) => {
       coverageIncomplete: gps_available === false,
     });
     const recordingMetrics = {
+      ...phoneRunDiagnostics(req.body),
       ...(distanceEvidence.source ? {
         distance_source: distanceEvidence.source,
         distance_unit: distanceEvidence.unit,

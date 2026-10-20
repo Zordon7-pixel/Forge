@@ -102,7 +102,42 @@ function downsampleRouteCoords(points) {
   });
 }
 
+// Keep this closed wire contract aligned with gpsTrace.js (cross-runtime tests compare both).
+const GAP_REASONS = ['timeout', 'foreground', 'background', 'restore', 'manual-pause', 'auto-resume', 'auto-pause-disabled', 'unknown']
+function normalizeGapReason(value) { return GAP_REASONS.includes(value) ? value : 'unknown' }
+function normalizeGpsSource(value) { return ['native_bg', 'web_fallback'].includes(value) ? value : null }
+function normalizeBackgroundRefreshStatus(value) {
+  return ['available', 'denied', 'restricted', 'unknown', 'error', 'unavailable'].includes(value) ? value : 'unknown'
+}
+function phoneRunDiagnostics(value = {}) {
+  return { gps_source: normalizeGpsSource(value.gps_source), backgroundRefreshStatus: normalizeBackgroundRefreshStatus(value.backgroundRefreshStatus) }
+}
+function normalizeSegmentedRoute(value) {
+  if (typeof value === 'string') { try { value = JSON.parse(value) } catch { return null } }
+  if (!value || value.version !== 2 || !Array.isArray(value.segments) || value.segments.length > 100000) return null
+  let count = 0
+  const segments = []
+  for (const [index, segment] of value.segments.entries()) {
+    if (!Array.isArray(segment?.points) || !segment.points.length) return null
+    const points = []
+    for (const point of segment.points) {
+      if (++count > 100000 || !Number.isFinite(point?.lat) || Math.abs(point.lat) > 90 || !Number.isFinite(point?.lon) || Math.abs(point.lon) > 180) return null
+      const optional = (v, min, max) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : null
+      const time = typeof point.time === 'number' ? point.time : typeof point.time === 'string' && point.time.length <= 40 ? Date.parse(point.time) : NaN
+      points.push({ lat: point.lat, lon: point.lon, alt: optional(point.alt, -2000, 100000),
+        time: Number.isFinite(time) && Math.abs(time) <= 8640000000000000 ? time : null, accuracy: optional(point.accuracy, 0, 10000) })
+    }
+    segments.push({ gap: index ? { kind: 'gps-gap', reason: normalizeGapReason(segment.gap?.reason) } : null, points })
+  }
+  return { version: 2, segments }
+}
+
 function normalizeRouteCoords(value) {
+  if (value && !Array.isArray(value) && typeof value === 'object') {
+    const route = normalizeSegmentedRoute(value);
+    if (!route) { const error = new Error('Invalid segmented phone route'); error.status = 400; throw error; }
+    return route;
+  }
   if (!Array.isArray(value)) return [];
   const points = value.map((raw) => {
     const lat = Number(Array.isArray(raw) ? raw[0] : raw?.lat);
@@ -160,7 +195,10 @@ function normalizeDistanceEvidence(candidates = []) {
 }
 
 function classifyRouteIntegrity({ routeCoords = [], materialGap = false, coverageIncomplete = false } = {}) {
-  const pointCount = normalizeRouteCoords(routeCoords).length;
+  const normalized = normalizeRouteCoords(routeCoords);
+  const segmented = !Array.isArray(normalized);
+  const pointCount = segmented ? normalized.segments.reduce((sum, segment) => sum + segment.points.length, 0) : normalized.length;
+  materialGap ||= segmented && normalized.segments.length > 1;
   if (pointCount === 0) {
     return { status: 'missing', pointCount, reason: 'no_valid_route_points' };
   }
@@ -198,6 +236,8 @@ function shouldInvalidateRunFeedback(value = {}) {
 
 module.exports = {
   MAX_ROUTE_POINTS,
+  phoneRunDiagnostics,
+  normalizeSegmentedRoute,
   classifyRouteIntegrity,
   normalizeDistanceEvidence,
   normalizePlanSessionId,
