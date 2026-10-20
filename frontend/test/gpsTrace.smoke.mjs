@@ -199,3 +199,69 @@ for (const speed of [7, 7.001]) {
 }
 console.log('WALKING/STOP/BOUNDARY PASS: 30 walking cases, invalid speed fallback, stationary jitter, retained tail, true resume, rejection fencing, <=20m and <=7m/s')
 console.log('GPS TRACE PASS: quality/readiness, 300m spike, ±15m jitter, 2% distance, exact gaps, clock/pause/resume, bounded counts, recovery')
+
+// BEGIN SHARED NOISE FIXTURES: kept identical in the tracked regression.
+function noiseMeasurements() {
+  const measurements = []
+  const epoch = 1800000000000, metersPerDegree = 111194.92664455874
+  for (const seed of [1, 42, 20261020]) for (const accuracy of [18, 20]) {
+    for (const amplitude of [1, 2, 3]) for (const speedMode of ['missing', 'invalid', 'valid']) {
+      // At +/-3m, 1Hz independent noise can exceed 7m/s. 2s bounds the
+      // worst 1.4m/s + noise step to hypot(8.8, 6)/2 < 7m/s.
+      const intervalSeconds = amplitude === 3 ? 2 : 1
+      const scenarios = [1, 1.2, 1.4].map(speed => ({ kind: 'walk', speed, fixes: 600 }))
+      for (const duration of [60, 90, 300]) scenarios.push({ kind: 'stationary', speed: 0, fixes: duration / intervalSeconds + 1 })
+      scenarios.push({ kind: 'stop', speed: 1.2, fixes: 570 / intervalSeconds + 1 })
+      for (const scenario of scenarios) {
+        let randomState = seed >>> 0
+        const noise = () => { randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0; return (randomState / 4294967296 * 2 - 1) * amplitude }
+        let state = createGpsTrace({ startedAtMs: epoch }), pausedFixes = 0, rejectedSpikes = 0, rejectedFixes = 0
+        let stationaryDistanceMeters = 0, settledStationaryDistanceMeters = 0
+        const points = [], pausesSeconds = [], resumesSeconds = []
+        for (let i = 0; i < scenario.fixes; i++) {
+          const seconds = i * intervalSeconds
+          const trueMeters = scenario.kind === 'stop'
+            ? scenario.speed * (Math.min(seconds, 240) + Math.max(0, seconds - 330)) : scenario.speed * seconds
+          const point = { lat: noise() / metersPerDegree, lon: (trueMeters + noise()) / metersPerDegree,
+            accuracy, timestampMs: epoch + seconds * 1000 }
+          if (speedMode === 'valid') point.speed = scenario.speed
+          if (speedMode === 'invalid') point.speed = [null, NaN, Infinity, -1, '1.2', {}, true][i % 7]
+          const wasPaused = state.autoPaused, result = acceptGpsFix(state, point, point.timestampMs)
+          state = result.state
+          if (result.point) points.push(result.point)
+          if (!result.accepted) rejectedFixes++
+          if (result.reason === 'speed') rejectedSpikes++
+          if (state.autoPaused) pausedFixes++
+          if (!wasPaused && state.autoPaused) pausesSeconds.push(seconds)
+          if (wasPaused && !state.autoPaused) resumesSeconds.push(seconds)
+          if (scenario.kind === 'stationary' || (scenario.kind === 'stop' && seconds > 240 && seconds <= 330)) stationaryDistanceMeters += result.distanceMeters
+          if (scenario.kind === 'stationary' || (scenario.kind === 'stop' && seconds >= 270 && seconds <= 330)) settledStationaryDistanceMeters += result.distanceMeters
+        }
+        const expectedDistanceMeters = scenario.kind === 'stop' ? 480 * scenario.speed : (scenario.fixes - 1) * intervalSeconds * scenario.speed
+        const relativeError = expectedDistanceMeters ? (state.distanceMeters - expectedDistanceMeters) / expectedDistanceMeters : state.distanceMeters === 0 ? 0 : null
+        const segmentCount = splitTraceSegments(points).length
+        const failures = []
+        if (rejectedFixes) failures.push('unexpected rejection')
+        if (scenario.kind === 'stationary') {
+          if (state.distanceMeters !== 0 || !state.autoPaused || pausesSeconds.length !== 1 || resumesSeconds.length) failures.push('stationary distance/pause')
+        } else {
+          if (Math.abs(relativeError) > .05) failures.push('distance error >5%')
+          if (scenario.kind === 'walk' && (segmentCount !== 1 || pausedFixes !== 0)) failures.push('continuous walk interrupted')
+          if (scenario.kind === 'stop' && (segmentCount !== 2 || pausesSeconds.length !== 1 || resumesSeconds.length !== 1
+            || pausesSeconds[0] < 240 || pausesSeconds[0] > 265 || resumesSeconds[0] <= 330 || resumesSeconds[0] > 350
+            || settledStationaryDistanceMeters !== 0 || state.autoPaused)) failures.push('stop/resume boundary')
+        }
+        measurements.push({ ...scenario, seed, accuracy, amplitude, speedMode, intervalSeconds,
+          actualDistanceMeters: state.distanceMeters, expectedDistanceMeters, relativeError, segmentCount, pausedFixes,
+          rejectedSpikes, rejectedFixes, pausesSeconds, resumesSeconds, stationaryDistanceMeters, settledStationaryDistanceMeters,
+          pass: failures.length === 0, failures })
+      }
+    }
+  }
+  return measurements
+}
+// END SHARED NOISE FIXTURES
+const noisyMeasurements = noiseMeasurements()
+for (const measurement of noisyMeasurements) console.log(JSON.stringify(measurement))
+assert.deepEqual(noisyMeasurements.filter(row => !row.pass), [], 'seeded noisy walk/stop/stationary contracts')
+console.log(`SEEDED NOISE PASS: ${noisyMeasurements.length} measured fixtures`)

@@ -47,24 +47,42 @@ export function runPauseLabel({ manualPaused, autoPaused, gpsIsPaused }) {
   return gpsIsPaused ? 'GPS paused' : null
 }
 // Independent of the drawn anchor/accuracy radius and of optional platform speed.
-// Net progress must dominate the travelled path: oscillating stationary fixes must
-// not accumulate into movement. Retain at most ten seconds / 64 accepted samples.
+// Fit position against source time, so per-fix zigzags do not inflate a path
+// denominator. Displacement must clear both the accuracy-scaled noise floor and
+// the observed scatter about that trend. Retain ten seconds / 64 accepted fixes.
 function movementObservation(state, fix, breakSegment) {
   const samples = breakSegment ? [] : (state.movementWindow || [])
     .filter(point => fix.timestampMs - point.timestampMs <= 10000).slice(-63)
   const window = [...samples, fix]
-  let pathMeters = 0, largestStepMeters = 0
-  for (let i = 1; i < window.length; i++) {
-    const stepMeters = metersBetween(window[i - 1], window[i])
-    pathMeters += stepMeters
-    largestStepMeters = Math.max(largestStepMeters, stepMeters)
-  }
-  const netMeters = metersBetween(window[0], fix)
   const seconds = (fix.timestampMs - window[0].timestampMs) / 1000
-  const moving = window.length >= 3 && seconds >= 2 && netMeters >= 3
-    && netMeters / seconds >= 0.5 && netMeters >= pathMeters * 0.8
-    // A single wobble after many identical stationary observations is not a walk.
-    && largestStepMeters <= pathMeters * 0.9
+  if (window.length < 3 || seconds < 2) return { window, moving: false }
+  const origin = window[0], metersPerDegree = 6371000 * Math.PI / 180
+  const samplesXY = window.map(point => ({
+    t: (point.timestampMs - origin.timestampMs) / 1000,
+    x: ((point.lon - origin.lon + 540) % 360 - 180) * metersPerDegree * Math.cos(origin.lat * Math.PI / 180),
+    y: (point.lat - origin.lat) * metersPerDegree,
+  }))
+  const mean = key => samplesXY.reduce((sum, point) => sum + point[key], 0) / window.length
+  const t = mean('t'), x = mean('x'), y = mean('y')
+  let tt = 0, tx = 0, ty = 0
+  for (const point of samplesXY) {
+    tt += (point.t - t) ** 2
+    tx += (point.t - t) * (point.x - x)
+    ty += (point.t - t) * (point.y - y)
+  }
+  const vx = tx / tt, vy = ty / tt
+  const residualMeters = Math.sqrt(samplesXY.reduce((sum, point) => sum
+    + (point.x - x - vx * (point.t - t)) ** 2
+    + (point.y - y - vy * (point.t - t)) ** 2, 0) / (window.length - 2))
+  const netMeters = Math.hypot(vx, vy) * seconds
+  // Twice the fitted displacement's standard error accounts for sample timing
+  // and scatter, without penalizing walking for its total zigzag path length.
+  const uncertaintyMeters = 2 * residualMeters * seconds / Math.sqrt(tt)
+  const noiseFloorMeters = Math.max(3, ...window.map(point => point.accuracy * 0.4), uncertaintyMeters)
+  // A single late jump away from an otherwise settled position is insufficient
+  // evidence, even if its leverage on the fitted slope is large.
+  const priorProgress = window.slice(1, -1).some(point => metersBetween(origin, point) >= 0.5)
+  const moving = priorProgress && netMeters >= noiseFloorMeters && netMeters / seconds >= 0.5
   return { window, moving }
 }
 export function acceptGpsFix(state, input, nowMs) {
@@ -86,11 +104,13 @@ export function acceptGpsFix(state, input, nowMs) {
   const movement = movementObservation(state, fix, breakSegment)
   let stationarySinceMs = state.stationarySinceMs
   let autoPaused = state.autoPaused
-  // Bootstrap a clear first step; once history exists, require coherent window
+  // Bootstrap a clear first step; once history exists, require window
   // progress. Neither decision consults the last DRAWN anchor or reported speed.
   const clearFirstStep = movement.window.length === 2 && previous
     && metersBetween(previous, fix) >= Math.max(3, previous.accuracy, fix.accuracy)
-  const genuineMovement = !breakSegment && Boolean(previous) && speedMps >= 0.5
+  // A noisy walking fix can nearly coincide with its predecessor. Only exact
+  // repeats suppress the window's decision; minimum speed belongs to the trend.
+  const genuineMovement = !breakSegment && Boolean(previous) && speedMps > 0
     && (clearFirstStep || movement.moving)
   const lastMovementFix = breakSegment ? null : genuineMovement && !state.autoPaused ? fix : state.lastMovementFix
   if (!state.autoPauseEnabled) { autoPaused = false; stationarySinceMs = null }
