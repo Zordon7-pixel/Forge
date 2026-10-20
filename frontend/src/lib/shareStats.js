@@ -241,6 +241,33 @@ export function fromHybrid(runShare, liftShare, options = { showRoute: true }) {
     runIds: Array.from(run.runIds, id).filter(Boolean), liftIds: Array.from(lift.liftIds, id).filter(Boolean) })
 }
 
+// personal_records: time_pr uses seconds; Fastest Pace uses minutes/mile.
+// This also normalizes supplied ShareModels at the renderer boundary.
+export function displayPr(record) {
+  const label = text(record?.label), unit = text(record?.unit)
+  if (!label || !unit) return null
+  const clock = /^(?:\d+:[0-5]\d|\d+):[0-5]\d$/
+  const clockUnit = ['mm:ss', 'h:mm:ss', '/mi', '/km'].includes(unit)
+  let value = positive(record.value), displayUnit = unit
+  if (clockUnit && typeof record.value === 'string' && clock.test(record.value) && /[1-9]/.test(record.value)) {
+    value = record.value
+  }
+  if (value === null) return null
+  let delta = number(record.delta) ?? text(record.delta)
+  const time = unit === 'seconds', pace = ['min/mi', 'min/km'].includes(unit)
+  if (time || pace) {
+    const seconds = value * (pace ? 60 : 1)
+    value = Math.round(seconds) > 0 ? duration(seconds) : null
+    if (!value) return null
+    displayUnit = pace ? unit.slice(3) : Math.round(seconds) >= 3600 ? 'h:mm:ss' : 'mm:ss'
+    if (typeof delta === 'number') {
+      const formatted = duration(Math.abs(delta) * (pace ? 60 : 1))
+      delta = formatted ? `${delta < 0 ? '-' : '+'}${formatted}` : null
+    } else if (delta && !/^[+-]?(?:\d+:)?\d+:[0-5]\d(?: vs prev best)?$/.test(delta)) delta = null
+  }
+  return { label, value, unit: displayUnit, delta }
+}
+
 export function fromPr(prRow, activity) {
   if (!activity) return null
   const source = activity[META]
@@ -248,7 +275,7 @@ export function fromPr(prRow, activity) {
     || (id(prRow?.lift_id) && source.liftIds.includes(id(prRow.lift_id))))
   const label = text(prRow?.label), value = positive(prRow?.value), unit = text(prRow?.unit)
   const delta = number(prRow?.delta) ?? text(prRow?.delta)
-  const pr = linked && label && value && unit ? { label, value, unit, delta } : null
+  const pr = linked && label && value && unit ? displayPr({ label, value, unit, delta }) : null
   // Spread intentionally omits metadata; explicitly restore its descriptors.
   return Object.defineProperties({ ...activity, pr }, Object.fromEntries(
     Reflect.ownKeys(activity).filter(key => !Object.getOwnPropertyDescriptor(activity, key).enumerable)

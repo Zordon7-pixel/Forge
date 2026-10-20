@@ -1,12 +1,14 @@
 // Real React controls + Canvas/PNG/JPEG in local Chromium. No account, backend,
 // provider, production URL or fixture route tiles are contacted.
 import assert from 'node:assert/strict'
-import { mkdirSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { chromium, expect } from '@playwright/test'
-import { fromRun, fromStrength, fromHybrid } from '../src/lib/shareStats.js'
+import { fromRun, fromStrength, fromHybrid, fromPr, fromStreak } from '../src/lib/shareStats.js'
 import { sharePreferences, rendererModel, studioModel } from '../src/lib/shareStudioModel.js'
 import { BRAND, SIZES } from '../src/lib/shareTheme.js'
 
@@ -17,6 +19,20 @@ const run = { id: 'share-test-run', name: 'Morning miles', date: '2026-10-19T03:
   duration_seconds: 3000, elevation_gain: 100, calories: 450, avg_heart_rate: 145, route_coords: route,
   email: 'private@example.test', real_name: 'Private identity', location: 'Private place', heart_rate_zones: [1, 2, 3, 4, 5] }
 const prefs = { friend_handle: 'abc', units: 'imperial', timezone: 'America/New_York' }
+const runModel = fromRun(run, prefs)
+const liftModel = fromStrength({ started_at: '2026-10-18', total_seconds: 1200, calories_burned: 200 },
+  [{ set_number: 1, exercise_name: 'Squat', reps: 5, weight_lbs: 100 }], prefs)
+const fixtures = {
+  'iron-chips': runModel,
+  'strike-pr': fromPr({ run_id: run.id, label: 'Fastest 5 mile', value: 2678, unit: 'seconds', delta: -31 }, runModel),
+  'hybrid-split': fromHybrid(runModel, liftModel), trace: runModel,
+  'forged-days': { ...runModel, streak: fromStreak({ days: 100,
+    week: Array.from({ length: 7 }, (_, i) => ({ hasRun: i % 2 === 0, hasLift: i % 3 === 0 })),
+    monthDays: Array.from({ length: 31 }, (_, i) => ({ date: `2026-10-${String(i + 1).padStart(2, '0')}`, hasRun: i < 18 && i % 2 === 0, hasLift: i < 18 && i % 3 === 0, isToday: i === 17, isFuture: i > 17 })),
+  }) }, 'full-bleed-story': runModel,
+}
+const legacyIds = ['route', 'log', 'ember', 'contour', 'overlay', 'photo']
+const newIds = ['iron-chips', 'strike-pr', 'hybrid-split', 'trace', 'forged-days', 'full-bleed-story']
 function ownTree(value) {
   if (!value || typeof value !== 'object') return value
   return Reflect.ownKeys(value).map(key => [String(key), ownTree(Object.getOwnPropertyDescriptor(value, key).value)])
@@ -61,14 +77,13 @@ await check('strict route state, adapter OFF/META, renderer allowlist, and resto
 })
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const artifactDir = fileURLToPath(new URL('../test-results/share-framework/', import.meta.url))
-mkdirSync(artifactDir, { recursive: true })
+const artifactDir = mkdtempSync(join(tmpdir(), 'forge-c2-framework-'))
 const entry = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router';
 import Studio, { canvasBlob, cardDataForPost, resizedCanvas, shareSummaryCard } from '/src/components/ActivityShareStudio.jsx';
-import { TEMPLATES, drawShareCard } from '/src/lib/shareTemplates.js';
+import { TEMPLATES, drawShareCard, resolveShareTemplate } from '/src/lib/shareTemplates.js';
 import { studioModel, rendererModel, sharePreferences } from '/src/lib/shareStudioModel.js';
 import { loadShareFonts } from '/src/lib/shareTheme.js';
 import PhotoLibraryService from '/src/services/PhotoLibraryService.js';
@@ -77,7 +92,7 @@ const root = createRoot(document.getElementById('root'));
 let key = 0;
 const run = ${JSON.stringify(run)};
 const prefs = ${JSON.stringify(prefs)};
-window.harness = { run, prefs, TEMPLATES, drawShareCard, canvasBlob, cardDataForPost, resizedCanvas, shareSummaryCard, studioModel, rendererModel, sharePreferences, loadShareFonts, PhotoLibraryService };
+window.harness = { fixtures: ${JSON.stringify(fixtures)}, lift: ${JSON.stringify(liftModel)}, run, prefs, resolveShareTemplate, TEMPLATES, drawShareCard, canvasBlob, cardDataForPost, resizedCanvas, shareSummaryCard, studioModel, rendererModel, sharePreferences, loadShareFonts, PhotoLibraryService };
 window.openStudio = (props = {}) => root.render(React.createElement(MemoryRouter, {key: ++key}, React.createElement(Studio, { run, prefs, ...props, onClose: () => root.render(null) })));
 window.openStudio();
 `
@@ -137,7 +152,7 @@ try {
           bounds = { top, bottom }
         }
         records.push({ method, text: method === 'fillText' ? String(args[0]) : null, bounds,
-          color: this.fillStyle, width: this.lineWidth, cap: this.lineCap })
+          radius: method === 'arc' ? args[2] : null, color: this.fillStyle, width: this.lineWidth, cap: this.lineCap })
         window.records.set(this.canvas, records)
         return original.apply(this, args)
       }
@@ -170,11 +185,11 @@ try {
     await expect(page.getByRole('checkbox', { name: 'Show route' })).toBeChecked()
     assert.deepEqual(await page.evaluate(() => [...document.fonts].map(face => [face.family.replaceAll('"', ''), face.status]).sort()),
       [['Anton', 'loaded'], ['Barlow Condensed', 'loaded'], ['Barlow Condensed', 'loaded'], ['JetBrains Mono', 'loaded']].sort())
-    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => Object.keys(item).sort())), Array(9).fill(['draw', 'id', 'label', 'sizes', 'supports', 'themes']))
-    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => item.id)), ['route', 'log', 'ember', 'contour', 'overlay', 'photo', 'iron-chips', 'strike-pr', 'hybrid-split'])
+    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => Object.keys(item).sort())), Array(6).fill(['draw', 'id', 'label', 'sizes', 'supports', 'themes']))
+    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => item.id)), newIds)
   })
   await check('reselecting the active template keeps exports ready', async () => {
-    await page.getByRole('button', { name: 'Route', exact: true }).click()
+    await page.getByRole('radio', { name: 'Iron Chips', exact: true }).click()
     await ready()
     await expect(page.getByRole('button', { name: 'Share', exact: true })).toBeEnabled()
   })
@@ -188,65 +203,135 @@ try {
     assert.deepEqual(dates, [['Asia/Tokyo', '2026-10-19'], ['America/New_York', '2026-10-18'],
       ...Array(3).fill(['America/Los_Angeles', '2026-10-18'])])
   })
-  const templates = [['route', 'Route'], ['log', 'Training Log'], ['ember', 'Ember'], ['contour', 'Contour'], ['overlay', 'Overlay'], ['photo', 'Photo']]
-  for (const [id, label] of templates) await check(`${label}: 3 themes × 2 sizes, UI exports, safe bounds, OFF pixels and draw calls`, async () => {
-    await page.getByRole('button', { name: label, exact: true }).click()
+  const templates = [['iron-chips', 'Iron Chips'], ['strike-pr', 'Strike PR'], ['hybrid-split', 'Hybrid Split'], ['trace', 'Trace'], ['forged-days', 'Forged Days'], ['full-bleed-story', 'Full-Bleed Story']]
+  for (const [id, label] of templates) await check(`${label}: 3 themes × 2 sizes, ON/OFF UI exports, exact reference pixels/bytes, safe bounds`, async () => {
+    await reopen({ model: fixtures[id], prefs: { ...prefs, template: id } })
     for (const theme of ['light', 'dark', 'color']) {
       await page.getByRole('radio', { name: theme, exact: true }).check()
       for (const size of ['Feed', 'Story']) {
         await page.getByRole('radio', { name: size, exact: true }).check()
+        await page.getByRole('checkbox', { name: 'Show route' }).check(); await ready()
+        await expect(page.getByRole('radio', { name: label, exact: true })).toHaveAttribute('aria-checked', 'true')
+        const onFile = await share()
+        assert.deepEqual([onFile.width, onFile.height], [1080, size === 'Feed' ? 1350 : 1920])
         await page.getByRole('checkbox', { name: 'Show route' }).uncheck()
         const file = await share()
         assert.deepEqual([file.width, file.height], [1080, size === 'Feed' ? 1350 : 1920])
-        assert.equal(file.type, id === 'overlay' ? 'image/png' : 'image/jpeg')
-        assert.equal(file.alpha, id === 'overlay')
-        assert.equal(file.name, `forged-hybrid-run-2026-10-18-${size.toLowerCase()}.${id === 'overlay' ? 'png' : 'jpg'}`)
+        assert.equal(file.type, id === 'forged-days' ? 'image/png' : 'image/jpeg')
+        assert.equal(file.alpha, id === 'forged-days')
+        assert.equal(file.name, `forged-hybrid-${fixtures[id].kind}-2026-10-18-${size.toLowerCase()}.${id === 'forged-days' ? 'png' : 'jpg'}`)
         assert.equal(file.leaked, false)
+        await expect(page.getByRole('radio', { name: 'Trace', exact: true })).toHaveCount(0)
         const evidence = await page.evaluate(async ({ id, theme, size }) => {
           const h = window.harness, logo = new Image(); logo.src = '/icon-192.png'; await logo.decode()
-          const disabled = h.studioModel({ run: h.run, prefs: h.prefs, showRoute: false })
-          const noRoute = h.studioModel({ run: { ...h.run, route_coords: null }, prefs: h.prefs, showRoute: true })
+          const source = h.fixtures[id], disabled = h.rendererModel(source, false)
+          const noRoute = h.rendererModel({ ...source, run: { ...source.run, route: null, elevationProfile: null } }, true)
+          const selected = h.resolveShareTemplate(disabled, { template: id, showRoute: false, size: size.toLowerCase() })
           const off = document.createElement('canvas'), reference = document.createElement('canvas')
-          const options = { template: id, theme, size: size.toLowerCase(), logo, showRoute: false }
+          const options = { template: selected, theme, size: size.toLowerCase(), logo, showRoute: false }
           await h.drawShareCard(off, disabled, options)
           await h.drawShareCard(reference, noRoute, { ...options, showRoute: true })
-          const records = window.records.get(off)
-          const actualFile = window.shared.at(-1).files[0]
-          const referenceFile = await h.canvasBlob(off, actualFile.type, id === 'overlay' ? undefined : 0.92)
-          const actualBytes = new Uint8Array(await actualFile.arrayBuffer())
-          const referenceBytes = new Uint8Array(await referenceFile.arrayBuffer())
+          const records = window.records.get(off), actualFile = window.shared.at(-1).files[0]
+          const referenceFile = await h.canvasBlob(off, actualFile.type, id === 'forged-days' ? undefined : 0.92)
+          const actualBytes = new Uint8Array(await actualFile.arrayBuffer()), referenceBytes = new Uint8Array(await referenceFile.arrayBuffer())
           const exportMatchesOff = actualBytes.length === referenceBytes.length && actualBytes.every((byte, i) => byte === referenceBytes[i])
-          const post = h.cardDataForPost(off, id === 'overlay')
+          const post = h.cardDataForPost(off, id === 'forged-days')
           const image = new Image(); image.src = post.data; await image.decode()
-          const scaled = [720, 600, 480].map(width => {
-            const c = h.resizedCanvas(off, width); return [c.width, c.height]
-          })
+          const scaled = [720, 600, 480].map(width => { const c = h.resizedCanvas(off, width); return [c.width, c.height] })
           const on = document.createElement('canvas')
-          await h.drawShareCard(on, h.studioModel({ run: h.run, prefs: h.prefs, showRoute: true }), { ...options, showRoute: true })
-          return { exportMatchesOff, identical: off.toDataURL() === reference.toDataURL(),
+          await h.drawShareCard(on, source, { ...options, template: id, showRoute: true })
+          const onRecords = window.records.get(on)
+          let rejectedTrace = false
+          if (id === 'trace') {
+            try { await h.drawShareCard(document.createElement('canvas'), source, { ...options, template: id }) }
+            catch (error) { rejectedTrace = /No available template/.test(error.message) }
+          }
+          return { selected, rejectedTrace, exportMatchesOff, identical: off.toDataURL() === reference.toDataURL(),
             routeStrokes: records.filter(r => r.method === 'stroke' && r.width >= 9 && r.cap === 'round').length,
-            markers: records.filter(r => r.method === 'arc' && ['#22c55e', '#ef4444'].includes(r.color)).length,
+            markers: records.filter(r => r.method === 'arc' && [13, 15].includes(r.radius)).length,
+            onMarkers: onRecords.filter(r => r.method === 'arc' && [13, 15].includes(r.radius)).length,
+            imageDraws: records.filter(r => r.method === 'drawImage').length,
             changedOn: on.toDataURL() !== off.toDataURL(),
             text: records.filter(r => r.text).map(r => r.text).join(''),
-            bounds: records.filter(r => r.bounds && (r.text || r.method === 'drawImage')).map(r => r.bounds),
+            bounds: [...records, ...onRecords].filter(r => r.bounds && (r.text || r.method === 'drawImage')).map(r => r.bounds),
+            serialized: JSON.stringify(disabled), route: disabled.run.route, elevation: disabled.run.elevationProfile,
             post: [image.width, image.height], scaled }
         }, { id, theme, size })
         assert.equal(evidence.exportMatchesOff, true, `${id}/${theme}/${size}: actual UI export matches OFF reference bytes`)
         assert.equal(evidence.identical, true, `${id}/${theme}/${size}: OFF equals no-route pixels`)
-        assert.equal(evidence.routeStrokes, 0)
-        assert.equal(evidence.markers, 0)
-        assert.equal(evidence.changedOn, ['route', 'contour', 'overlay'].includes(id))
+        assert.equal(evidence.routeStrokes, 0); assert.equal(evidence.markers, 0)
+        assert.equal(evidence.imageDraws, 1, 'only brand, no tiles')
+        assert.equal(evidence.onMarkers > 0, ['trace', 'full-bleed-story'].includes(id))
+        assert.equal(evidence.changedOn, ['trace', 'full-bleed-story'].includes(id))
+        assert.equal(evidence.rejectedTrace, id === 'trace')
+        assert.equal(evidence.route, null); assert.equal(evidence.elevation, null)
+        assert.doesNotMatch(evidence.serialized, /40\.7128123|74\.0060456|123\.456789|route_coords|"lat"|"lng"/)
         assert.match(evidence.text, /@abc \/ RUN \+ LIFT\. BUILT IN FORGED HYBRID\./)
         assert.doesNotMatch(evidence.text, /NOT SHARED|--|Private identity|Private place|Z[1-5]/)
-        if (size === 'Story') for (const bounds of evidence.bounds) {
-          assert.ok(bounds.top >= 250 && bounds.bottom <= 1580, `${id}: ${JSON.stringify(bounds)}`)
-        }
+        if (size === 'Story') for (const bounds of evidence.bounds) assert.ok(bounds.top >= 250 && bounds.bottom <= 1580, `${id}: ${JSON.stringify(bounds)}`)
         for (const [width, height] of [evidence.post, ...evidence.scaled]) assert.equal(width * file.height, height * file.width)
+        await page.getByRole('checkbox', { name: 'Show route' }).check(); await ready()
+        await expect(page.getByRole('radio', { name: label, exact: true })).toHaveAttribute('aria-checked', 'true')
+      }
+    }
+  })
+  await check('all legacy preferences + no preference: empty treadmill never loses picker/preview/export', async () => {
+    for (const template of [undefined, ...legacyIds]) for (const showRoute of [true, false]) {
+      await reopen({ run: { name: 'Treadmill' }, model: undefined, prefs: { ...prefs, template } })
+      if (!showRoute) await page.getByRole('checkbox', { name: 'Show route' }).uncheck()
+      assert.deepEqual(await page.getByRole('radiogroup', { name: 'Share design' }).getByRole('radio').allTextContents(), ['Full-Bleed Story'])
+      for (const size of ['Feed', 'Story']) {
+        await page.getByRole('radio', { name: size, exact: true }).check()
+        const file = await share()
+        assert.equal(file.leaked, false); assert.equal(file.alpha, false)
+        assert.deepEqual([file.width, file.height], [1080, size === 'Feed' ? 1350 : 1920])
+      }
+    }
+    for (const id of legacyIds) assert.equal(await page.evaluate(async id => {
+      const h = window.harness
+      if (h.TEMPLATES.some(entry => entry.id === id)) return false
+      for (const showRoute of [true, false]) {
+        try { await h.drawShareCard(document.createElement('canvas'), h.fixtures.trace, { template: id, size: 'feed', showRoute }); return false }
+        catch (error) { if (!/No available template/.test(error.message)) return false }
+      }
+      return true
+    }, id), true, id)
+  })
+  await check('streak layouts cycle independently of themes and each remains inside Story safe zones', async () => {
+    await reopen({ model: fixtures['forged-days'], prefs: { ...prefs, template: 'forged-days' } })
+    await page.getByRole('radio', { name: 'Story', exact: true }).check()
+    for (const theme of ['light', 'dark', 'color']) {
+      await page.getByRole('radio', { name: theme, exact: true }).check()
+      for (const layout of ['milestone', 'week', 'month']) {
+        await ready(); await expect(page.getByRole('button', { name: `Streak layout: ${layout} · Next` })).toBeVisible()
+        const file = await share(); assert.equal(file.alpha, true)
+        const evidence = await page.evaluate(async ({ theme, layout }) => {
+          const h = window.harness, canvas = document.createElement('canvas')
+          await h.drawShareCard(canvas, h.fixtures['forged-days'], { template: 'forged-days', theme, size: 'story', showRoute: true, layout })
+          const records = window.records.get(canvas)
+          return { bounds: records.filter(record => record.bounds).map(record => record.bounds),
+            text: records.filter(record => record.text).map(record => record.text).join('\n') }
+        }, { theme, layout })
+        for (const bounds of evidence.bounds) assert.ok(bounds.top >= 250 && bounds.bottom <= 1580, `${layout}: ${JSON.stringify(bounds)}`)
+        assert.match(evidence.text, layout === 'week' ? /5 OF 7 THIS WEEK/ : layout === 'month' ? /OCTOBER 2026/ : /MILESTONE/)
+        await page.getByRole('button', { name: `Streak layout: ${layout} · Next` }).click()
+      }
+    }
+  })
+  await check('Full-Bleed lift accepts missing hero, all themes/sizes, and never draws a run route', async () => {
+    for (const model of [liftModel, fromStrength({}, [], prefs)]) {
+      await reopen({ model, prefs: { ...prefs, template: 'full-bleed-story' } })
+      for (const theme of ['light', 'dark', 'color']) for (const size of ['Feed', 'Story']) {
+        await page.getByRole('radio', { name: theme, exact: true }).check()
+        await page.getByRole('radio', { name: size, exact: true }).check()
+        const file = await share(); assert.equal(file.leaked, false)
+        assert.deepEqual([file.width, file.height], [1080, size === 'Feed' ? 1350 : 1920])
       }
     }
   })
   await check('user OFF → ON restores route pixels; closing/reopening resets ON', async () => {
-    await page.getByRole('button', { name: 'Route', exact: true }).click(); await ready()
+    await reopen({ prefs: { ...prefs, template: 'full-bleed-story' } })
+    await page.getByRole('checkbox', { name: 'Show route' }).uncheck(); await ready()
     const off = await preview.evaluate(canvas => canvas.toDataURL())
     await page.getByRole('checkbox', { name: 'Show route' }).check(); await ready()
     assert.notEqual(await preview.evaluate(canvas => canvas.toDataURL()), off)
@@ -286,7 +371,7 @@ try {
   await check('null handle and missing stats omit labels, reflow and never manufacture values', async () => {
     const evidence = await page.evaluate(async () => {
       const h = window.harness, result = []
-      for (const entry of h.TEMPLATES.filter(entry => ['route', 'log', 'ember', 'contour', 'overlay', 'photo'].includes(entry.id))) {
+      for (const entry of h.TEMPLATES.filter(entry => ['iron-chips', 'full-bleed-story'].includes(entry.id))) {
         const canvas = document.createElement('canvas')
         const model = h.studioModel({ run: { name: 'Treadmill', date: '2026-10-18', duration_seconds: 900 }, prefs: {}, showRoute: false })
         await h.drawShareCard(canvas, model, { template: entry.id, theme: 'dark', size: 'feed', showRoute: false })
@@ -302,7 +387,7 @@ try {
     await reopen({ prefs: { ...prefs, friend_handle: null } })
     assert.equal((await share()).leaked, false)
   })
-  await check('each absent optional stat drops its label from every applicable legacy template', async () => {
+  await check('each absent optional stat drops its label from every applicable stat template', async () => {
     const evidence = await page.evaluate(async () => {
       const h = window.harness, result = []
       for (const key of ['distance', 'time', 'pace', 'avgHr', 'elevation', 'calories']) {
@@ -310,7 +395,7 @@ try {
         model.stats = model.stats.filter(item => item.key !== key)
         model.run.stats = model.stats
         if (model.hero?.key === key) model.hero = null
-        for (const entry of h.TEMPLATES.filter(entry => ['route', 'log', 'ember', 'contour', 'overlay', 'photo'].includes(entry.id))) {
+        for (const entry of h.TEMPLATES.filter(entry => ['iron-chips', 'full-bleed-story'].includes(entry.id))) {
           const canvas = document.createElement('canvas')
           await h.drawShareCard(canvas, model, { template: entry.id, theme: 'dark', size: 'feed', showRoute: false })
           result.push({ key, id: entry.id, text: window.records.get(canvas).filter(r => r.text).map(r => r.text).join('') })
@@ -341,7 +426,7 @@ try {
     await expect.poll(() => apiPosts.length).toBe(1)
     const post = apiPosts[0]
     assert.deepEqual(Object.keys(post).sort(), ['caption', 'card_data', 'mime_type', 'run_id', 'template'])
-    assert.equal(post.run_id, run.id); assert.equal(post.template, 'route'); assert.equal(post.mime_type, 'image/jpeg')
+    assert.equal(post.run_id, run.id); assert.equal(post.template, 'full-bleed-story'); assert.equal(post.mime_type, 'image/jpeg')
     await expect(page.getByText('Posted to your accepted friends in Forged Hybrid.', { exact: true })).toBeVisible()
     const dimensions = await page.evaluate(async data => { const img = new Image(); img.src = data; await img.decode(); return [img.width, img.height] }, post.card_data)
     assert.deepEqual(dimensions, [720, 1280])
@@ -393,5 +478,6 @@ try {
     assert.deepEqual(await page.evaluate(async () => { const bitmap = await createImageBitmap(window.files[0]); return [bitmap.width, bitmap.height] }), [1080, 1350])
     await context.close()
   })
-  console.log(`ACTIVITY SHARE STUDIO FRAMEWORK OK (${passed} groups, 36 UI matrix exports; 0 failed)`)
+  console.log(`Artifacts: ${artifactDir}`)
+  console.log(`ACTIVITY SHARE STUDIO FRAMEWORK OK (${passed} groups, 72 ON/OFF matrix exports + sparse/layout/lift exports; 0 failed)`)
 } finally { await browser?.close(); await server.close() }

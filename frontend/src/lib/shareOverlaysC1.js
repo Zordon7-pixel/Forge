@@ -273,3 +273,6 @@ export const C1_TEMPLATES = Object.freeze(definitions.map(([id, label, supports,
     } finally { ctx.restore() }
   },
 })))
+
+// Shared primitives preserve C1 geometry and font fitting for the C2 family.
+export const overlayDrawing = Object.freeze({ text, label, brand, footer, plate, gradient, display })

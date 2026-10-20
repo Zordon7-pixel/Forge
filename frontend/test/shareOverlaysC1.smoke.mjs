@@ -94,7 +94,7 @@ await check('offline draw capture: every optional chip, PR delta and hybrid stat
   assert.doesNotMatch(captured('iron-chips', noLifts).text, /TOP LIFTS/)
   const full = captured('strike-pr', pr)
   const reduced = captured('strike-pr', { ...pr, pr: { ...pr.pr, delta: null } })
-  assert.match(full.text, /-31 seconds vs prev best/)
+  assert.match(full.text, /-0:31 vs prev best/)
   assert.doesNotMatch(reduced.text, /vs prev best/)
   assert.ok(reduced.texts.find(item => item.value.includes('STRUCK WHILE HOT')).y < full.texts.find(item => item.value.includes('STRUCK WHILE HOT')).y)
   for (const [block, keys] of [['stats', ['totalTime', 'calories']], ['run', ['distance', 'pace', 'time']], ['lift', ['volume', 'sets', 'time', 'topLifts']]]) {
@@ -362,8 +362,8 @@ try {
   })
   await check('Strike PR: no absent delta/unit/label invention; date/kind micro line and numeric truth', async () => {
     const full = await render('strike-pr', pr), without = await render('strike-pr', { ...pr, pr: { ...pr.pr, delta: null } })
-    assert.ok(texts(full).includes('2678')); assert.ok(texts(full).includes('seconds'))
-    assert.ok(texts(full).includes('-31 seconds vs prev best'))
+    assert.ok(texts(full).includes('44:38')); assert.ok(texts(full).includes('mm:ss'))
+    assert.ok(texts(full).includes('-0:31 vs prev best'))
     assert.doesNotMatch(texts(without).join('\n'), /vs prev best/)
     assert.ok(without.calls.find(call => call.text?.includes('STRUCK WHILE HOT')).top < full.calls.find(call => call.text?.includes('STRUCK WHILE HOT')).top)
     assert.match(texts(full).join('\n'), /2026-10-18 · RUN · STRUCK WHILE HOT/)

@@ -5,8 +5,9 @@ import api from '../lib/api'
 import { createActionSingleFlight } from '../lib/actionSingleFlight'
 import { unreadableActivitySharePhotoMessage, validateActivitySharePhoto } from '../lib/activitySharePhoto'
 import { SIZES, loadShareFonts } from '../lib/shareTheme'
-import { TEMPLATES, drawShareCard, titleForModel, drawBrand, roundRect } from '../lib/shareTemplates'
+import { TEMPLATES, availableShareTemplates, resolveShareTemplate, transparentShareTemplate, drawShareCard, titleForModel, drawBrand, roundRect } from '../lib/shareTemplates'
 import { studioModel, sharePreferences } from '../lib/shareStudioModel'
+import { streakLayouts } from '../lib/shareOverlaysC2'
 import PhotoLibraryService from '../services/PhotoLibraryService'
 
 const CARD_WIDTH = SIZES.feed.w
@@ -204,7 +205,8 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   if (!actionLaneRef.current) actionLaneRef.current = createActionSingleFlight()
   const photoInputId = useId()
   const photoFeedbackId = `${photoInputId}-feedback`
-  const [template, setTemplate] = useState('route')
+  const [requestedTemplate, setTemplate] = useState(() => prefs?.template || null)
+  const [streakLayout, setStreakLayout] = useState(null)
   const [theme, setTheme] = useState('dark')
   const [size, setSize] = useState('feed')
   const [showRoute, setShowRoute] = useState(true)
@@ -221,8 +223,10 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   const [busy, setBusy] = useState(false)
   const [posted, setPosted] = useState(false)
   const cardModel = useMemo(() => studioModel({ run, model, prefs: preferences, showRoute, title: cardTitle }), [run, model, preferences, showRoute, cardTitle])
-  const availableTemplates = TEMPLATES.filter(item => item.supports(cardModel) && item.sizes.includes(size))
-  const transparent = template === 'overlay'
+  const availableTemplates = availableShareTemplates(cardModel, { showRoute, size })
+  const template = resolveShareTemplate(cardModel, { template: requestedTemplate, showRoute, size })
+  const layouts = streakLayouts(cardModel)
+  const transparent = transparentShareTemplate(template, photoUrl)
   const fileType = transparent ? 'image/png' : 'image/jpeg'
   const fileExtension = transparent ? 'png' : 'jpg'
   const filename = `forged-hybrid-${cardModel.kind}-${cardModel.dateLabel || 'activity'}-${size}.${fileExtension}`
@@ -357,7 +361,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
       if (cancelled) return null
       // Draw offscreen so a cancelled async render can never overwrite a newer preview.
       const rendered = document.createElement('canvas')
-      await drawShareCard(rendered, cardModel, { template, theme, size, photo, logo, showRoute })
+      await drawShareCard(rendered, cardModel, { template, theme, size, photo, logo, showRoute, layout: streakLayout })
       if (cancelled || version !== renderVersionRef.current) return null
       const canvas = canvasRef.current
       if (!canvas) return null
@@ -375,7 +379,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
       setStatus('Could not render this share card.')
     })
     return () => { cancelled = true }
-  }, [photoUrl, cardModel, template, theme, size, showRoute, preferencesReady])
+  }, [photoUrl, cardModel, template, theme, size, showRoute, streakLayout, preferencesReady])
 
   const exportCanvas = async () => {
     // Each action uses the exact canvas belonging to its current completed render.
@@ -532,7 +536,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
       invalidateRender()
       setPhotoUrl(nextPhotoUrl)
       setPhotoFeedback({ kind: 'selected', message: `Photo selected: ${displayName}.` })
-      setTemplate('photo')
+      setTemplate('full-bleed-story')
     } catch (error) {
       revokeOwnedPhotoUrl(nextPhotoUrl)
       if (selectionVersion !== photoSelectionVersionRef.current) return
@@ -579,9 +583,17 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
           style={{ WebkitOverflowScrolling: 'touch', paddingBottom: 'max(2rem, env(safe-area-inset-bottom, 0px))' }}
         >
 
-        <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
+        <div role="radiogroup" aria-label="Share design" className="mb-3 grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
           {availableTemplates.map((item) => (
-            <button key={item.id} type="button" aria-pressed={template === item.id} disabled={busy} onClick={() => { if (template === item.id) return; invalidateRender(); setTemplate(item.id); setTheme(item.id === 'contour' ? 'light' : 'dark'); setPosted(false); setStatus('') }} className="pressable min-h-10 rounded-md px-2 text-xs font-bold" style={{ background: template === item.id ? 'var(--accent)' : 'transparent', color: template === item.id ? 'var(--on-accent)' : 'var(--text-muted)' }}>
+            <button key={item.id} type="button" role="radio" aria-checked={template === item.id} tabIndex={template === item.id ? 0 : -1} onKeyDown={event => {
+              if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+              event.preventDefault()
+              const index = availableTemplates.findIndex(entry => entry.id === item.id)
+              const next = event.key === 'Home' ? 0 : event.key === 'End' ? availableTemplates.length - 1
+                : (index + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + availableTemplates.length) % availableTemplates.length
+              event.currentTarget.parentElement.querySelectorAll('[role="radio"]')[next].click()
+              event.currentTarget.parentElement.querySelectorAll('[role="radio"]')[next].focus()
+            }} disabled={busy} onClick={() => { if (template === item.id) return; invalidateRender(); setTemplate(item.id); setPosted(false); setStatus('') }} className="pressable min-h-10 rounded-md px-2 text-xs font-bold" style={{ background: template === item.id ? 'var(--accent)' : 'transparent', color: template === item.id ? 'var(--on-accent)' : 'var(--text-muted)' }}>
               {item.label}
             </button>
           ))}
@@ -609,10 +621,18 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
         </label>
         <p className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>When on, your route is shown as recorded, including its start and finish.</p>
 
+        {template === 'forged-days' && layouts.length > 1 && (
+          <button type="button" disabled={busy} onClick={() => {
+            invalidateRender()
+            const selected = layouts.includes(streakLayout) ? streakLayout : layouts[0]
+            setStreakLayout(layouts[(layouts.indexOf(selected) + 1) % layouts.length])
+            setPosted(false)
+          }}>Streak layout: {layouts.includes(streakLayout) ? streakLayout : layouts[0]} · Next</button>
+        )}
         {!availableTemplates.length && <p role="status" className="mb-3 text-sm">No share templates are available for this activity yet.</p>}
         <div className="relative">
-          <canvas ref={canvasRef} width={SIZES[size].w} height={SIZES[size].h} aria-label="Share card preview" aria-busy={!renderReady} className="block w-full rounded-lg object-contain" style={{ aspectRatio: `${SIZES[size].w} / ${SIZES[size].h}`, background: template === 'overlay' ? 'repeating-conic-gradient(#303033 0% 25%, #202023 0% 50%) 50% / 24px 24px' : '#080808', border: '1px solid var(--border-subtle)' }} />
-          {template === 'photo' && !photoUrl && (
+          <canvas ref={canvasRef} width={SIZES[size].w} height={SIZES[size].h} aria-label="Share card preview" aria-busy={!renderReady} className="block w-full rounded-lg object-contain" style={{ aspectRatio: `${SIZES[size].w} / ${SIZES[size].h}`, background: transparent ? 'repeating-conic-gradient(#303033 0% 25%, #202023 0% 50%) 50% / 24px 24px' : '#080808', border: '1px solid var(--border-subtle)' }} />
+          {template === 'full-bleed-story' && !photoUrl && (
             <button
               type="button"
               data-testid="photo-canvas-picker"
