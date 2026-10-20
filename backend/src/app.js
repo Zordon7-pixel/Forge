@@ -73,6 +73,8 @@ app.use(helmet({
 
 // Planning has its own authenticated 1 KiB parser before the general parser.
 app.use('/api/route-planning', require('./routes/routePlanning'));
+// Private saved plans also authenticate before their bounded parser.
+app.use('/api/user-routes', require('./routes/userRoutes'));
 app.use(express.json({ limit: '10mb' }));
 
 // Service-worker API caches must partition authenticated responses by bearer token.

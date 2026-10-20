@@ -5,6 +5,99 @@
 
 ---
 
+## Private saved route builder — t_0f9a44da Phase 1A (patched; uncommitted)
+
+Base `07c356d8a4b5bd43bf213089b54ff59e47642eaf`. Backend foundation only:
+`user_routes` is private planned-course storage, separate from `shared_routes`,
+sampled ActiveRun coordinates and canonical activity/training evidence. Identical
+SQLite/PostgreSQL DDL is additive/idempotent, included in the fresh schema and
+the existing locked always-migration transaction. The existing account-data
+registry exports/deletes owned routes; the FK also cascades account deletion.
+
+Bearer-authenticated endpoints (private/no-store, Vary Authorization):
+
+- `POST /api/user-routes` → 201 `{route}`, Location header.
+- `GET /api/user-routes?limit=20&offset=0` → `{routes,limit,offset}`; summaries
+  omit geometry, waypoints and legs. Limit 1–100, offset 0–1,000,000.
+- `GET /api/user-routes/:id` → `{route}`.
+- `PUT /api/user-routes/:id` → `{route}`; full replacement, not a partial patch.
+  Omitted optional metadata clears to unknown. Creation time is preserved.
+- `DELETE /api/user-routes/:id` → 204.
+- `GET /api/user-routes/:id/gpx` → GPX 1.1 `trk/trkseg/trkpt`, every saved point
+  in order, per-point `<ele>` only where finite valid altitude exists. No
+  interpolation, simplification, sampled timestamps or elevation synthesis.
+  XML escapes the name; download filenames use only the validated UUID. The
+  description labels the route planned and discloses straight segments.
+
+POST/PUT accept only this contract:
+
+```js
+{
+  name: 'My planned course',                      // 1–120 characters
+  waypoints: [[-73, 40], [-73.01, 40.01]],         // ordered [lon,lat]
+  geometry: { type: 'LineString',
+    coordinates: [[-73, 40], [-73.01, 40.01]] },   // [lon,lat,altitudeMeters?]
+  legs: [{ mode: 'straight', provenance: 'manual', profile: null,
+    startIndex: 0, endIndex: 1 }],
+  distanceMeters: 1400,                          // finite, 0–1,000,000
+  targetDistanceMeters: null,                    // optional, same range
+  elevation: { source: null, gainMeters: null, lossMeters: null },
+  display: { description: null, surface: null, elevationPreference: null }
+}
+```
+
+Bounds: uncompressed JSON at most 1 MiB, 2–100 waypoints, 2–10,000 geometry
+vertices; primitive finite numbers only, longitude ±180, latitude ±90, altitude
+−2000–100000 meters (existing coordinate-normalizer bounds). No point removal,
+rounding or reordering. Exactly one leg per adjacent waypoint pair; leg indexes
+are inclusive, contiguous and cover the whole geometry. A `straight/manual`
+leg has two points and null profile. A `routed/ors` leg carries `foot-walking`
+or `foot-hiking`. Waypoints are selected controls; routed geometry can be snapped
+by the existing provider. No waypoint-to-geometry snapping is performed here.
+
+Elevation source is nullable or `manual|imported|provider`; any supplied heights
+or gain/loss require a source. Gain/loss are independent nullable supplied values
+(0–1,000,000 meters), never computed or filled with zero. `coverage` is derived
+from point heights as `missing|partial|complete`; callers may echo it only if
+it matches. Coverage describes geometry heights, not aggregate availability.
+Display fields: nullable description ≤500 characters, `road|trail|mixed`
+surface, `flat|balanced|hilly` elevation preference. Unknown fields, control
+characters, malformed UUIDs/numbers and cross-user access fail closed.
+
+Responses add `id`, `schemaVersion:1`, `kind:'planned'`,
+`provenanceTrust:'client_declared'`, `createdAt`, `updatedAt`. These generated
+fields must not be echoed in POST/PUT. Labels never certify provider evidence.
+Missing and foreign IDs both return 404; invalid input 400, oversized bodies 413,
+storage failure 503, with no coordinates or raw SQL errors logged/returned.
+Writes use the existing account mutation guard; no training revision advances.
+
+The reviewed `POST /api/route-planning/leg` remains unchanged and is the only
+manual-builder ORS call path. No new provider logic, quota/cache, live calls,
+ActiveRun changes, native code, dependency manifests or release operations.
+
+Local gates: `node backend/test/userRoutes.smoke.js` and `--postgres` (each
+8 groups, real SQLite/disposable PostgreSQL); existing plannedLeg (12 groups),
+route-engine, account-data coverage (66 tables, atomicity/auth mutation guard),
+accountReceiptCoverage and the three planning mutation/plan/concurrency smokes.
+All pass with network guards/mocks. Syntax/diff checks are also required.
+
+Verification limitations: this worktree had no dependencies; offline npm ci
+failed because xtend was uncached. A separate ignored copy of existing packages
+resolves modules, but seven versions differ from the lock (axios, ip-address,
+nodemailer, proxy-addr, qs, side-channel, side-channel-list); exact-lock host QA
+remains necessary. PostgreSQL's sandbox shared-memory denial recovered under
+expanded local permissions. Initial test DDL regex incorrectly matched
+`updated_at` and was corrected; a zsh wrapper-variable error also recovered.
+No package/lock changes or downloads. This is not independent QA or release
+readiness; coordinator owns commit, review and lifecycle.
+
+Phase 1B must build the manual editor/library and map GeoJSON `[lon,lat]` to the
+existing `[lat,lon]` planned overlay, convert meters to display units, preserve
+straight/routed labels and partial/missing elevation, and keep account-scoped
+client state. ActiveRun currently truncates planned overlays to 800 points;
+address that seam explicitly without changing recorded samples or their truth.
+Do not treat saved routes as completed runs, navigation instructions, or load.
+
 ## Share alpha remediation — t_e510d614 (patched; uncommitted)
 
 Base `00e1864bd0fc2a7c8b4068279f92be8e2f359699`. The actual darwin-arm64

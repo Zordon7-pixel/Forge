@@ -50,6 +50,7 @@ async function runAlwaysMigrations() {
   await require('./index').withTransaction(async tx => {
     await tx.get('SELECT pg_advisory_xact_lock(73621002)');
     await require('./plannedLegStore').installPlanningStore(tx);
+    await require('./userRoutesStore').installUserRoutes(tx);
   }, { skipContextUserGuard: true });
   await ensureProviderImportReceipts(sql => pg.query(sql));
   await ensureActivityMeasuredReceipts(sql => pg.query(sql));

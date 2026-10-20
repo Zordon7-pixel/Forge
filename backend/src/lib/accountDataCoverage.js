@@ -1,4 +1,5 @@
 const ACCOUNT_EXPORT_TABLES = [
+  { key: 'user_routes', table: 'user_routes', orderBy: 'updated_at DESC, id ASC' },
   { key: 'ors_planning_cache', table: 'ors_planning_cache', orderBy: 'created_ms DESC, cache_key ASC' },
   { key: 'ors_planning_users', table: 'ors_planning_users', orderBy: 'user_id ASC' },
   { key: 'runs', table: 'runs', orderBy: 'COALESCE(date, created_at) DESC' },
@@ -89,6 +90,7 @@ const ACCOUNT_SOCIAL_DELETE_QUERIES = [
 ];
 
 const ACCOUNT_DELETE_QUERIES = [
+  ['DELETE FROM user_routes WHERE user_id = ?', [0]],
   ['DELETE FROM ors_planning_cache WHERE user_id = ?', [0]],
   ['DELETE FROM ors_planning_users WHERE user_id = ?', [0]],
   ['DELETE FROM password_reset_tokens WHERE user_id = ?', [0]],

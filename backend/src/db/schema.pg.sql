@@ -955,3 +955,20 @@ CREATE TABLE IF NOT EXISTS ors_planning_cache (
   PRIMARY KEY (user_id, cache_key)
 );
 CREATE INDEX IF NOT EXISTS idx_ors_planning_cache_age ON ors_planning_cache(created_ms, user_id, cache_key);
+
+-- Private saved planned routes; never recorded activity evidence.
+CREATE TABLE IF NOT EXISTS user_routes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+  waypoints_json TEXT NOT NULL CHECK (length(waypoints_json) <= 16384),
+  geometry_json TEXT NOT NULL CHECK (length(geometry_json) <= 1048576),
+  legs_json TEXT NOT NULL CHECK (length(legs_json) <= 32768),
+  distance_meters DOUBLE PRECISION NOT NULL CHECK (distance_meters BETWEEN 0 AND 1000000),
+  target_distance_meters DOUBLE PRECISION CHECK (target_distance_meters BETWEEN 0 AND 1000000),
+  elevation_json TEXT NOT NULL CHECK (length(elevation_json) <= 1024),
+  display_json TEXT NOT NULL CHECK (length(display_json) <= 4096),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_routes_owner_updated ON user_routes(user_id, updated_at DESC, id);
