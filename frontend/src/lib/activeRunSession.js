@@ -1,3 +1,5 @@
+import { normalizePrivatePlan } from './activeRunPlannedRoute.js'
+
 export const ACTIVE_RUN_SESSION_KEY = 'forged_hybrid_active_run_v1'
 
 const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000
@@ -113,6 +115,8 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
       gpsGapCount: Math.max(0, Math.round(finiteNumber(parsed.gpsGapCount, 0))),
       lastFixAt: Math.max(0, finiteNumber(parsed.lastFixAt, 0)),
       discardedSegment: Boolean(parsed.discardedSegment),
+      privatePlanChoice: parsed.privatePlanChoice === true,
+      plannedRouteSelection: normalizePrivatePlan(parsed.plannedRouteSelection, expectedOwnerUserId),
       navigationState: parsed.navigationState && typeof parsed.navigationState === 'object' && !Array.isArray(parsed.navigationState)
         ? parsed.navigationState
         : {},
@@ -155,6 +159,8 @@ export function saveActiveRunSession(session, ownerUserId, storage, now = Date.n
       ...session,
       ownerUserId: normalizedOwnerUserId,
       savedAt: now,
+      privatePlanChoice: session.privatePlanChoice === true,
+      plannedRouteSelection: normalizePrivatePlan(session.plannedRouteSelection, normalizedOwnerUserId),
       routeCoords: normalizeRouteCoords(session.routeCoords),
     }))
   } catch (error) {

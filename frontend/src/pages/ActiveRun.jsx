@@ -22,6 +22,8 @@ import {
   updateRunCompletionHandoff,
 } from '../lib/runCompletionHandoff'
 import { getAuthenticatedUserId } from '../lib/auth'
+import { getAuthSession, isAuthSessionCurrent, subscribeAuthSession } from '../lib/tokenStore'
+import { createPrivatePlanPicker, plannedPresentation, privatePlanOverlay } from '../lib/activeRunPlannedRoute'
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 import { buildLiveActivityStart, buildLiveActivityUpdate } from '../lib/liveActivityState'
 import LiveActivityService from '../services/LiveActivityService'
@@ -169,14 +171,14 @@ function normalizePlannedRoute(value) {
   }
   const coordinates = Array.isArray(value.coordinates)
     ? value.coordinates
-      .slice(0, 800)
+      .filter((point) => Array.isArray(point) && typeof point[0] === 'number' && typeof point[1] === 'number')
       .map((point) => {
         const position = normalizeMapPosition(point)
         return position ? [...position, optionalNumber(point[2])] : null
       })
       .filter(Boolean)
     : []
-  if (coordinates.length < 2) return null
+  if (coordinates.length < 2 || coordinates.length > 10000) return null
   return {
     coordinates,
     distanceMiles: optionalNumber(value.distanceMiles),
@@ -260,7 +262,26 @@ export default function ActiveRun() {
     return groupRunProvenance
   }, [authorizedGroupRunState, groupRunAuthorization, groupRunProvenance, incomingNavigationState, isGroupRunNavigation])
   const selectedCountdown = navigationState.countdown ?? 0
-  const plannedRoute = useMemo(() => normalizePlannedRoute(navigationState.plannedRoute), [navigationState.plannedRoute])
+  const [privatePlanChoice, setPrivatePlanChoice] = useState(restoredSession?.privatePlanChoice === true)
+  const [privatePlans, setPrivatePlans] = useState({ routes: [], offset: 0, selection: null, loading: Boolean(restoredSession?.plannedRouteSelection), error: '' })
+  const privatePlanPicker = useRef(null)
+  const plannedRoute = useMemo(() => privatePlanChoice
+    ? (getAuthenticatedUserId() === activeRunOwnerId ? privatePlanOverlay(privatePlans.selection) : null)
+    : normalizePlannedRoute(navigationState.plannedRoute), [activeRunOwnerId, privatePlanChoice, privatePlans.selection, navigationState.plannedRoute])
+  useEffect(() => {
+    if (completionRestorePending || !activeRunOwnerId) return undefined
+    const session = getAuthSession()
+    const current = () => isAuthSessionCurrent(session) && getAuthenticatedUserId() === activeRunOwnerId
+    const picker = createPrivatePlanPicker({ ownerUserId: activeRunOwnerId, current,
+      get: (url, options) => api.get(url, { ...options, forgeAuthSession: session, timeout: 8000 }), onChange: setPrivatePlans })
+    privatePlanPicker.current = picker
+    const unsubscribe = subscribeAuthSession(() => { if (!current()) { setPrivatePlanChoice(true); picker.revoke() } })
+    // A cached private route is never display authority: recheck owner/not-found
+    // through the same private endpoint, without touching recorder resume.
+    if (restoredSession?.plannedRouteSelection) void picker.select(restoredSession.plannedRouteSelection.route.id, { restore: true })
+    else if (!restoredSession) void picker.list()
+    return () => { unsubscribe(); picker.dispose(); privatePlanPicker.current = null }
+  }, [activeRunOwnerId, completionRestorePending, restoredSession])
   const workoutTarget = navigationState.workoutTarget || null
   const [countdownVal, setCountdownVal] = useState(selectedCountdown)
   const [countingDown, setCountingDown] = useState(false)
@@ -346,9 +367,9 @@ export default function ActiveRun() {
     routeRecordingLifecycleRef.current.stop()
   }, [])
   const actualElevation = useMemo(() => calculateElevationStats(routeCoords), [routeCoords])
-  const plannedRoutePositions = useMemo(() => (
-    validMapPositions(plannedRoute?.coordinates)
-  ), [plannedRoute])
+  const plannedDisplay = useMemo(() => plannedPresentation(plannedRoute?.coordinates), [plannedRoute])
+  // Fit every valid planned vertex; only the drawn polyline is sampled.
+  const plannedRoutePositions = useMemo(() => validMapPositions(plannedRoute?.coordinates), [plannedRoute])
   const recordedRoutePositions = useMemo(() => validMapPositions(routeCoords), [routeCoords])
   const allMapPositions = useMemo(() => (
     [...recordedRoutePositions, ...plannedRoutePositions]
@@ -417,6 +438,8 @@ export default function ActiveRun() {
     lastFixAt: lastFixAtRef.current,
     discardedSegment: discardedSegmentRef.current,
     navigationState,
+    privatePlanChoice,
+    plannedRouteSelection: privatePlans.selection || (privatePlans.loading ? restoredSession?.plannedRouteSelection : null),
   }
 
   useEffect(() => {
@@ -1371,13 +1394,36 @@ export default function ActiveRun() {
       )}
       <h2 className="t-micro mb-4">Active Run</h2>
 
+      {!running && !pausedRun && !countingDown && !awaitingManualDistance && elapsed === 0 && activeRunOwnerId && (
+        <section className="mb-4 rounded-xl p-3" aria-label="Private planned route" style={{ background: 'var(--bg-input)', minWidth: 0 }}>
+          <label htmlFor="active-planned-route" className="block text-sm font-bold">Planned route · Private (optional)</label>
+          <select id="active-planned-route" value={privatePlans.selection?.route.id || ''}
+            disabled={locationStatus === RUN_LOCATION_STATUS.CHECKING}
+            onChange={event => { setPrivatePlanChoice(true); void privatePlanPicker.current?.select(event.target.value) }}
+            style={{ width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 44, marginTop: 8, background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+            <option value="">{!privatePlanChoice && plannedRoute ? 'Existing planned course' : 'No planned route'}</option>
+            {privatePlans.selection && !privatePlans.routes.some(route => route.id === privatePlans.selection.route.id) && <option value={privatePlans.selection.route.id}>{privatePlans.selection.route.name}</option>}
+            {privatePlans.routes.map(route => <option key={route.id} value={route.id}>{route.name}</option>)}
+          </select>
+          <p className="mt-2 text-xs">Private reference only. Actual GPS is recorded separately after Start.</p>
+          <div className="flex flex-wrap gap-2 mt-2">
+            <button type="button" onClick={() => { setPrivatePlanChoice(true); void privatePlanPicker.current?.select('') }} style={{ minHeight: 44 }}>Use no planned route</button>
+            <button type="button" disabled={privatePlans.loading} onClick={() => void privatePlanPicker.current?.list(privatePlans.offset)} style={{ minHeight: 44 }}>Refresh routes</button>
+            <button type="button" disabled={privatePlans.loading || privatePlans.offset === 0} onClick={() => void privatePlanPicker.current?.list(privatePlans.offset - 20)} style={{ minHeight: 44 }}>Previous routes</button>
+            <button type="button" disabled={privatePlans.loading || privatePlans.routes.length < 20 || privatePlans.offset >= 1000000} onClick={() => void privatePlanPicker.current?.list(privatePlans.offset + 20)} style={{ minHeight: 44 }}>Next routes</button>
+          </div>
+          {privatePlans.loading && <p role="status">Loading private planned route…</p>}
+        </section>
+      )}
+      {privatePlans.error && <p className="mb-3 text-sm" role="alert">{privatePlans.error}</p>}
       {plannedRoute && (
         <div className="mb-4 p-3" style={{ borderRadius: 8, background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase" style={{ color: 'var(--accent)' }}>Planned course</p>
+            <div style={{ minWidth: 0 }}>
+              <p className="text-xs font-black uppercase" style={{ color: 'var(--accent)' }}>{plannedRoute.private ? 'Planned route · Private' : 'Planned course'}</p>
+              {plannedRoute.name && <p className="text-sm" style={{ overflowWrap: 'anywhere' }}>{plannedRoute.name}</p>}
               <p className="text-sm font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
-                {fmt.distance(plannedRoute.distanceMiles || plannedRoute.targetDistanceMiles, 1)} · {plannedRoute.elevationPreference === 'balanced' ? 'rolling' : plannedRoute.elevationPreference}
+                {fmt.distance(plannedRoute.distanceMiles ?? plannedRoute.targetDistanceMiles, 1)} · {plannedRoute.elevationPreference === 'balanced' ? 'rolling' : plannedRoute.elevationPreference || 'terrain unspecified'}
               </p>
             </div>
             <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{formatElevationForUnit(plannedRoute.elevationGainFeet, units)} gain</p>
@@ -1499,8 +1545,8 @@ export default function ActiveRun() {
               recenterToken={recenterToken}
               reduceMotion={reduceMotion}
             />
-            {plannedRoutePositions.length > 0 && <Polyline positions={plannedRoutePositions} pathOptions={{ color: '#D1D5DB', weight: 4, opacity: 0.9, dashArray: '7 9' }} />}
-            {recordedRoutePositions.length > 0 && <Polyline positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 6, opacity: 1 }} />}
+            {plannedRoutePositions.length > 1 && <Polyline className="planned-route-overlay" positions={plannedDisplay.positions} pathOptions={{ color: '#D1D5DB', weight: 4, opacity: 0.9, dashArray: '7 9' }} />}
+            {recordedRoutePositions.length > 1 && <Polyline className="recorded-route-overlay" positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 6, opacity: 1 }} />}
             {currentPosition && <CircleMarker center={currentPosition} radius={15} pathOptions={{ color: '#EAB308', fillColor: '#EAB308', fillOpacity: 0.2, weight: 2 }} />}
             {currentPosition && <CircleMarker center={currentPosition} radius={8} pathOptions={{ color: '#FFFFFF', fillColor: '#EAB308', fillOpacity: 1, weight: 3 }} />}
           </ForgeMap>
@@ -1537,7 +1583,7 @@ export default function ActiveRun() {
       )}
       {mapControlsMeaningful && mapLayout === 'stats' && (
         <div className="mb-3 rounded-xl p-3 text-sm font-semibold" data-testid="active-run-map-hidden" role="status" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
-          Map hidden for Stats view · GPS recording and run metrics continue.
+          {running ? 'Map hidden for Stats view · GPS recording and run metrics continue.' : pausedRun ? 'Map hidden for Stats view · Run remains paused.' : 'Map hidden for Stats view · Recording has not started.'}
         </div>
       )}
       {mapMyRun && !running && !pausedRun && !countingDown && !awaitingManualDistance && !plannedRoute && (
@@ -1551,11 +1597,15 @@ export default function ActiveRun() {
       )}
       {allMapPositions.length > 0 && mapLayout !== 'stats' && (
         <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] font-bold" aria-label="Map route legend" style={{ color: 'var(--text-muted)' }}>
-          {recordedRoutePositions.length > 0 && <span><span aria-hidden="true" style={{ display: 'inline-block', width: 18, borderTop: '4px solid #EAB308', marginRight: 6, verticalAlign: 'middle' }} />Recorded</span>}
-          {plannedRoutePositions.length > 0 && <span><span aria-hidden="true" style={{ display: 'inline-block', width: 18, borderTop: '3px dashed #D1D5DB', marginRight: 6, verticalAlign: 'middle' }} />Planned</span>}
+          {recordedRoutePositions.length > 0 && <span><span aria-hidden="true" style={{ display: 'inline-block', width: 18, borderTop: '4px solid #EAB308', marginRight: 6, verticalAlign: 'middle' }} />Recorded GPS</span>}
+          {plannedRoutePositions.length > 0 && <span><span aria-hidden="true" style={{ display: 'inline-block', width: 18, borderTop: '3px dashed #D1D5DB', marginRight: 6, verticalAlign: 'middle' }} />Planned{plannedRoute?.private ? ' · Private' : ''}</span>}
         </div>
       )}
 
+      {plannedRoute && <p className="mb-3 text-xs" role="status">
+        {recordedRoutePositions.length < 2 ? 'Planned reference only · No recorded GPS line yet.' : 'Dashed planned reference · Solid recorded GPS.'}
+        {plannedDisplay.sampled && ' Display sampled evenly to 800 points; full saved geometry is retained.'}
+      </p>}
       {!running && !pausedRun && !countingDown && !awaitingManualDistance && (
         <div>
           {plannedRoute && <div className="w-full py-2 text-center text-sm font-semibold mb-2" style={{ borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)' }}>Planned course loaded · GPS recording ready</div>}
@@ -1568,9 +1618,9 @@ export default function ActiveRun() {
               </button>
             )}
           </div>
-          <button type="button" disabled={groupRunAuthorization === 'pending' || locationStatus === RUN_LOCATION_STATUS.CHECKING} onClick={beginRun} className="pressable w-full rounded-xl py-3 font-black" style={{ minHeight: 52, background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' || locationStatus === RUN_LOCATION_STATUS.CHECKING ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : locationStatus === RUN_LOCATION_STATUS.CHECKING ? 'Checking Location...' : locationStatus === RUN_LOCATION_STATUS.DENIED ? 'Try Location Again' : 'Start Run'}</button>
+          <button type="button" disabled={privatePlans.loading || groupRunAuthorization === 'pending' || locationStatus === RUN_LOCATION_STATUS.CHECKING} onClick={beginRun} className="pressable w-full rounded-xl py-3 font-black" style={{ minHeight: 52, background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' || locationStatus === RUN_LOCATION_STATUS.CHECKING ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : locationStatus === RUN_LOCATION_STATUS.CHECKING ? 'Checking Location...' : locationStatus === RUN_LOCATION_STATUS.DENIED ? 'Try Location Again' : 'Start Run'}</button>
           {[RUN_LOCATION_STATUS.DENIED, RUN_LOCATION_STATUS.TIMEOUT, RUN_LOCATION_STATUS.UNAVAILABLE].includes(locationStatus) && (
-            <button type="button" onClick={continueWithoutRoute} className="pressable mt-2 w-full rounded-xl border px-3 py-3 text-sm font-black" style={{ minHeight: 48, borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
+            <button type="button" disabled={privatePlans.loading} onClick={continueWithoutRoute} className="pressable mt-2 w-full rounded-xl border px-3 py-3 text-sm font-black" style={{ minHeight: 48, borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
               Continue without route
             </button>
           )}

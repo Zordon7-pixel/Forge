@@ -95,12 +95,14 @@ await test('target halfway uses existing accumulated geometry; cannot extend or 
   assert.deepEqual(turnaroundPoint([A,B], 2 * segment), B)
   assert.ok(Math.abs(Math.abs(turnaroundPoint([[179,0],[-179,0]], geometricMeters([179,0],[-179,0]))[0]) - 180) < 1e-8)
 })
-await test('save/load round-trips actual backend validator and protected loaded totals; malformed data fail closed', async () => {
+await test('save/load round-trips actual backend validator and loaded leg totals and undo; malformed data fail closed', async () => {
   const f = fixture(); f.editor.setStart(A); f.editor.add(B); await f.tick(); f.editor.setMode('straight'); f.editor.add(C)
   const payload = routePayload(f.editor.snapshot(), '26.2 course', 26.2 * METERS_PER_MILE)
   const raw = receipt(validateRoute(payload)); assert.deepEqual(validateSavedRoute(raw), raw)
-  const loaded = fixture(); loaded.editor.load(raw); assert.equal(loaded.calls.length, 0); assert.equal(loaded.editor.snapshot().canUndo, false)
-  loaded.editor.undo(); assert.equal(loaded.editor.snapshot().distanceMeters, payload.distanceMeters)
+  const loaded = fixture(); loaded.editor.load(raw); assert.equal(loaded.calls.length, 0); assert.equal(loaded.editor.snapshot().canUndo, true)
+  loaded.editor.undo(); assert.equal(loaded.editor.snapshot().distanceMeters, 1000)
+  assert.deepEqual(loaded.editor.snapshot().coordinates, [A, B]); assert.deepEqual(loaded.editor.snapshot().waypoints, [A, B])
+  loaded.editor.load(raw)
   loaded.editor.add(D); await loaded.tick(); assert.equal(loaded.editor.snapshot().distanceMeters, payload.distanceMeters + 1000)
   loaded.editor.undo(); assert.equal(loaded.editor.snapshot().distanceMeters, payload.distanceMeters)
   loaded.editor.outAndBack(); assert.equal(loaded.editor.snapshot().distanceMeters, payload.distanceMeters * 2)
@@ -146,5 +148,31 @@ await test('invalid leg and route limits preserve accepted state', async () => {
   assert.equal(f.editor.snapshot().legs.length,0); assert.match(f.editor.snapshot().error.message,/invalid geometry/)
   const good=fixture(body=>response(body.points,600000)); good.editor.setStart(A); good.editor.add(B); await good.tick(); good.editor.outAndBack()
   assert.equal(good.editor.snapshot().distanceMeters,600000); assert.match(good.editor.snapshot().error.message,/limits/)
+})
+await test('legacy distances recover only authorized geometry or a single saved remainder; ambiguous totals stay unknown', async () => {
+  const f=fixture(); f.editor.setStart(A); f.editor.add(B); await f.tick(); f.editor.add(C); await f.tick()
+  const raw=receipt(validateRoute(routePayload(f.editor.snapshot(),'Legacy',null)))
+  for(const leg of raw.legs) {delete leg.distanceMeters; delete leg.distanceSource}
+  f.editor.load(raw); assert.equal(f.editor.snapshot().distanceMeters,2000)
+  f.editor.undo(); assert.equal(f.editor.snapshot().distanceMeters,null); assert.deepEqual(f.editor.snapshot().coordinates,[A,B])
+  assert.throws(()=>routePayload(f.editor.snapshot(),'Unknown',null))
+  f.editor.undo(); assert.equal(f.editor.snapshot().distanceMeters,0); f.editor.undo(); assert.equal(f.editor.snapshot().canUndo,false)
+  raw.legs[1].mode='straight'; raw.legs[1].profile=null; raw.legs[1].provenance='manual'
+  f.editor.load(raw); const legs=f.editor.snapshot().legs
+  assert.equal(legs[1].distanceMeters,geometricMeters(B,C)); assert.equal(legs[0].distanceSource,'saved_total_remainder')
+  f.editor.undo(); assert.equal(f.editor.snapshot().distanceMeters,2000-geometricMeters(B,C))
+  validateRoute(routePayload(f.editor.snapshot(),'Recovered',null))
+})
+await test('loaded undo invalidates pending routing and additive distance fields fail closed', async () => {
+  const f=fixture(); f.editor.setStart(A); f.editor.add(B); await f.tick(); f.editor.add(C); await f.tick()
+  const raw=receipt(validateRoute(routePayload(f.editor.snapshot(),'Known',null))), d=deferred(), loaded=fixture(()=>d.promise)
+  loaded.editor.load(raw); loaded.editor.add(D); await loaded.tick(); loaded.editor.undo(); loaded.editor.undo()
+  const before=structuredClone(loaded.editor.snapshot()); d.resolve(response([C,D],999)); await flush(); assert.deepEqual(loaded.editor.snapshot(),before)
+  assert.equal(before.distanceMeters,1000)
+  for(const patch of [{distanceMeters:-1},{distanceMeters:null},{distanceMeters:'1000'},{distanceSource:'geometry'},{distanceSource:'invented'},{distanceMeters:1001}]) {
+    const bad=structuredClone(raw); Object.assign(bad.legs[0],patch)
+    assert.throws(()=>validateSavedRoute(bad)); const {id,kind,schemaVersion,provenanceTrust,createdAt,updatedAt,...payload}=bad
+    assert.throws(()=>validateRoute(payload))
+  }
 })
 console.log(`PASS ${groups} deterministic manual-route groups; mocked providers only`)

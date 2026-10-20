@@ -143,6 +143,22 @@ async function suite(adapter, dialect) {
       assert.equal((await call({ ...options, token })).status, 401);
     }
   }
+  // The additive leg contract survives actual persistence, replacement and export.
+  const withDistances = example();
+  Object.assign(withDistances.legs[0], { distanceMeters: 400, distanceSource: 'ors' });
+  Object.assign(withDistances.legs[1], { distanceMeters: 143.21, distanceSource: 'geometry' });
+  const distanceReceipt = await call({ method: 'POST', body: withDistances });
+  assert.equal(distanceReceipt.status, 201);
+  const distanceUrl = `/api/user-routes/${distanceReceipt.body.route.id}`;
+  assert.deepEqual((await call({ url: distanceUrl })).body.route.legs, withDistances.legs);
+  assert.deepEqual((await call({ method: 'PUT', url: distanceUrl, body: withDistances })).body.route.legs, withDistances.legs);
+  assert.equal((await call({ token: bob, url: distanceUrl })).status, 404);
+  for (const patch of [{ distanceMeters: null }, { distanceMeters: -1 }, { distanceSource: 'geometry' }, { distanceSource: 'unknown' }, { distanceMeters: 401 }]) {
+    const bad = clone(withDistances); Object.assign(bad.legs[0], patch);
+    assert.equal((await call({ method: 'PUT', url: distanceUrl, body: bad })).status, 400);
+  }
+  assert.deepEqual((await adapter.dbAll(buildExportSql(ACCOUNT_EXPORT_TABLES.find(entry => entry.table === 'user_routes')), ['alice']))[0].legs_json, JSON.stringify(withDistances.legs));
+  assert.equal((await call({ method: 'DELETE', url: distanceUrl })).status, 204);
   const created = await call({ method: 'POST', body: example() });
   assert.equal(created.status, 201);
   const route = created.body.route, id = route.id, url = `/api/user-routes/${id}`;

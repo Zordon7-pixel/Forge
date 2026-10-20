@@ -138,23 +138,23 @@ export default function ManualRoutes() {
           <button type="button" onClick={() => setFitVersion(value => value + 1)} disabled={!state.legs.length}>View whole route</button>
         </div>
         <p className="manual-route-help">Out-and-back mirrors accepted legs; it does not check return-direction access. Mode and profile changes apply to new legs.</p>
-        {state.baseLegCount > 0 && <p className="manual-route-help">Loaded route is the saved base. Undo removes edits made since loading; Clear starts a new route. Saved data has no individual routed-leg distances.</p>}
+        {state.legacyDistances && <p className="manual-route-help">This older route lacks individual leg distances. Its saved total is retained until an unknown leg is removed; that can make the remaining total unavailable. Undo or Clear to remove unknown legs before saving.</p>}
         <div aria-live="polite" aria-atomic="true">
           {state.pending && !state.error && <p role="status">Routing the new leg… Accepted distance is unchanged.</p>}
           {state.error && <div role="alert"><p>{state.error.message}</p>{state.pending && <button type="button" disabled={retrySeconds > 0} onClick={() => editor.retry()}>{retrySeconds ? `Retry in ${retrySeconds}s` : 'Retry this leg'}</button>}</div>}
         </div>
         <div className="manual-route-metrics" aria-live="polite">
-          <div><span>PLANNED DISTANCE</span><strong>{(state.distanceMeters / METERS_PER_MILE).toFixed(2)} <small>mi</small></strong></div>
+          <div><span>PLANNED DISTANCE</span><strong>{state.distanceMeters === null ? 'Unavailable' : (state.distanceMeters / METERS_PER_MILE).toFixed(2)} <small>mi</small></strong></div>
           <div><span>ELEVATION</span><strong className="manual-route-elevation">{elevation.gainMeters === null ? 'Unavailable' : `+${Math.round(elevation.gainMeters * 3.28084)} / −${Math.round(elevation.lossMeters * 3.28084)} ft`}</strong><span>{elevation.coverage === 'partial' ? 'Partial heights · known adjacent points only' : elevation.coverage === 'complete' ? 'Calculated from supplied heights' : 'No usable adjacent heights'}</span></div>
         </div>
         <p>{state.legs.length} accepted legs{straightCount > 0 ? ` · ${straightCount} planned straight-line legs (dashed)` : ''}</p>
         <label htmlFor="route-target">Target distance (miles, optional)</label>
         <input id="route-target" type="number" inputMode="decimal" min="0.01" max="621.371" step="any" placeholder="26.2" value={target} aria-invalid={!targetValid} onChange={event => setTarget(event.target.value)} />
         {!targetValid && <p role="alert">Enter a positive target up to 621.371 miles.</p>}
-        {targetValid && targetMeters !== null && <p role="status">{(Math.abs(state.distanceMeters - targetMeters) / METERS_PER_MILE).toFixed(2)} mi {state.distanceMeters >= targetMeters ? 'over' : 'under'} target. {turnaround ? 'Purple marker: target halfway along planned geometry.' : 'The planned geometry has not reached target halfway.'}</p>}
+        {state.distanceMeters !== null && targetValid && targetMeters !== null && <p role="status">{(Math.abs(state.distanceMeters - targetMeters) / METERS_PER_MILE).toFixed(2)} mi {state.distanceMeters >= targetMeters ? 'over' : 'under'} target. {turnaround ? 'Purple marker: target halfway along planned geometry.' : 'The planned geometry has not reached target halfway.'}</p>}
         <div className="manual-route-actions">
-          <button className="manual-route-primary" type="button" disabled={!state.legs.length || !!state.pending || !name.trim() || !targetValid} onClick={() => save(!savedId)}><Route size={18} aria-hidden="true" />{savedId ? 'Update private route' : 'Save private route'}</button>
-          {savedId && <button type="button" disabled={!!state.pending || !state.legs.length || !name.trim() || !targetValid} onClick={() => save(true)}>Save as new</button>}
+          <button className="manual-route-primary" type="button" disabled={state.distanceMeters === null || !state.legs.length || !!state.pending || !name.trim() || !targetValid} onClick={() => save(!savedId)}><Route size={18} aria-hidden="true" />{savedId ? 'Update private route' : 'Save private route'}</button>
+          {savedId && <button type="button" disabled={state.distanceMeters === null || !!state.pending || !state.legs.length || !name.trim() || !targetValid} onClick={() => save(true)}>Save as new</button>}
         </div>
       </fieldset>
     </section>
@@ -170,7 +170,7 @@ export default function ManualRoutes() {
             const { data } = await api.get(`/user-routes/${route.id}`, config())
             if (!current()) return
             const loaded = editor.load(data?.route)
-            setSavedId(loaded.id); setName(loaded.name); setTarget(loaded.targetDistanceMeters === null ? '' : String(loaded.targetDistanceMeters / METERS_PER_MILE)); setLocationError(''); setFitVersion(value => value + 1); setNotice('Loaded saved base. Loading replaces the current draft.')
+            setSavedId(loaded.id); setName(loaded.name); setTarget(loaded.targetDistanceMeters === null ? '' : String(loaded.targetDistanceMeters / METERS_PER_MILE)); setLocationError(''); setFitVersion(value => value + 1); setNotice('Loaded private route. Undo removes the latest waypoint and leg, including saved legs.')
           })}>Load / edit</button>
           <button disabled={!!busy} onClick={() => perform('Download GPX', async () => {
             const { data } = await api.get(`/user-routes/${route.id}/gpx`, { ...config(), responseType: 'blob' })

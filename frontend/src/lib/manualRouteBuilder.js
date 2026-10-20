@@ -61,14 +61,22 @@ export function validateSavedRoute(raw) {
     || !(raw.targetDistanceMeters === null || bounded(raw.targetDistanceMeters, 0, 1000000))) invalid()
   let end = 0
   for (const leg of raw.legs) {
-    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex'])
+    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex', 'distanceMeters', 'distanceSource'])
       || leg.startIndex !== end || !Number.isInteger(leg.endIndex) || leg.endIndex <= end
       || leg.endIndex >= raw.geometry.coordinates.length
       || !(leg.mode === 'routed' && leg.provenance === 'ors' && PROFILES.includes(leg.profile)
         || leg.mode === 'straight' && leg.provenance === 'manual' && leg.profile === null && leg.endIndex === end + 1)) invalid()
+    const hasDistance = Object.hasOwn(leg, 'distanceMeters')
+    if (hasDistance !== Object.hasOwn(leg, 'distanceSource')
+      || (hasDistance && (!bounded(leg.distanceMeters, 0, 1000000)
+        || !(leg.distanceSource === 'saved_total_remainder'
+          || leg.mode === 'routed' && leg.distanceSource === 'ors'
+          || leg.mode === 'straight' && leg.distanceSource === 'geometry')))) invalid()
     end = leg.endIndex
   }
   if (end !== raw.geometry.coordinates.length - 1) invalid()
+  if (raw.legs.every(leg => Object.hasOwn(leg, 'distanceMeters'))
+    && Math.abs(raw.legs.reduce((sum, leg) => sum + leg.distanceMeters, 0) - raw.distanceMeters) > 0.000001) invalid()
   const e = raw.elevation, d = raw.display, computed = elevationStats(raw.geometry.coordinates)
   if (!keys(e, ['source', 'gainMeters', 'lossMeters', 'coverage'])
     || ![null, 'manual', 'imported', 'provider'].includes(e.source) || e.coverage !== computed.coverage
@@ -142,11 +150,11 @@ export function routeError(error) {
   return { message, retryAfter }
 }
 const empty = () => ({ waypoints: [], coordinates: [], legs: [], distanceMeters: 0,
-  elevationSource: null, display: { description: null, surface: null, elevationPreference: null }, baseLegCount: 0 })
+  elevationSource: null, display: { description: null, surface: null, elevationPreference: null }, legacyDistances: false })
 export function createRouteEditor({ client, onChange = () => {}, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now }) {
   let state = { ...empty(), mode: 'routed', profile: 'foot-walking', pending: null, error: null, revision: 0 }
   let history = [], timer, generation = 0, disposed = false
-  const emit = () => { if (!disposed) onChange({ ...state, canUndo: history.length > 0 || !!state.pending }) }
+  const emit = () => { if (!disposed) onChange({ ...state, canUndo: history.length > 0 || state.waypoints.length > 0 || !!state.pending }) }
   const invalidate = () => { generation++; clearTimer(timer); state = { ...state, pending: null, error: null, revision: state.revision + 1 } }
   const remember = () => { history.push(state); if (history.length > 100) history.shift() }
   const reject = message => { state = { ...state, pending: null, error: { message, retryAt: 0 } }; emit() }
@@ -157,17 +165,19 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
     }
     const startIndex = state.legs.length ? state.coordinates.length - 1 : 0
     const coordinates = state.legs.length ? [...state.coordinates, ...coords.slice(1)] : coords
-    if (coordinates.length > 10000 || state.waypoints.length >= 100 || state.distanceMeters + leg.distanceMeters > 1000000) {
+    if (coordinates.length > 10000 || state.waypoints.length >= 100 || (state.distanceMeters ?? 0) + leg.distanceMeters > 1000000) {
       throw new Error('Route limit reached: 100 waypoints, 10,000 points or 1,000 km.')
     }
     remember()
     state = { ...state, coordinates, waypoints: [...state.waypoints, point],
       legs: [...state.legs, { mode, provenance: mode === 'straight' ? 'manual' : 'ors', profile: mode === 'straight' ? null : profile,
-        startIndex, endIndex: coordinates.length - 1 }], distanceMeters: state.distanceMeters + leg.distanceMeters,
+        startIndex, endIndex: coordinates.length - 1, distanceMeters: leg.distanceMeters,
+        distanceSource: mode === 'straight' ? 'geometry' : 'ors' }],
+      distanceMeters: state.distanceMeters === null ? null : state.distanceMeters + leg.distanceMeters,
       elevationSource: state.elevationSource || (elevationStats(coords).coverage !== 'missing' ? 'provider' : null), pending: null, error: null }
   }
   const api = {
-    snapshot: () => ({ ...state, canUndo: history.length > 0 || !!state.pending }),
+    snapshot: () => ({ ...state, canUndo: history.length > 0 || state.waypoints.length > 0 || !!state.pending }),
     version: () => generation,
     setStart(point) {
       if (!validPoint(point, false) || state.waypoints.length) return
@@ -207,6 +217,15 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
       if (!pending && history.length) {
         const previous = history.pop()
         state = { ...previous, mode: state.mode, profile: state.profile, pending: null, error: null, revision: state.revision }
+      } else if (!pending && state.waypoints.length) {
+        const removed = state.legs.at(-1), legs = state.legs.slice(0, -1)
+        // Unknown legacy routed distances cannot be estimated from geometry.
+        const distanceMeters = legs.every(leg => Number.isFinite(leg.distanceMeters))
+          ? legs.reduce((sum, leg) => sum + leg.distanceMeters, 0)
+          : Number.isFinite(state.distanceMeters) && Number.isFinite(removed?.distanceMeters)
+            ? Math.max(0, state.distanceMeters - removed.distanceMeters) : null
+        state = { ...state, legs, waypoints: state.waypoints.slice(0, -1),
+          coordinates: removed ? state.coordinates.slice(0, removed.startIndex + 1) : [], distanceMeters }
       }
       emit()
     },
@@ -224,14 +243,30 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
         startIndex: 2 * (count - 1) - leg.endIndex, endIndex: 2 * (count - 1) - leg.startIndex }))
       state = { ...state, coordinates: [...state.coordinates, ...state.coordinates.slice(0, -1).reverse()],
         waypoints: [...state.waypoints, ...state.waypoints.slice(0, -1).reverse()],
-        legs: [...state.legs, ...reversed], distanceMeters: state.distanceMeters * 2 }
+        legs: [...state.legs, ...reversed], distanceMeters: state.distanceMeters === null ? null : state.distanceMeters * 2 }
       emit()
     },
     load(raw) {
       const route = validateSavedRoute(raw)
       invalidate(); history = []
-      state = { ...state, waypoints: route.waypoints, coordinates: route.geometry.coordinates, legs: route.legs,
-        distanceMeters: route.distanceMeters, elevationSource: route.elevation.source, display: route.display, baseLegCount: route.legs.length }
+      const legs = route.legs.map(leg => {
+        if (Number.isFinite(leg.distanceMeters) || leg.mode !== 'straight') return leg
+        return { ...leg, distanceMeters: geometricMeters(route.geometry.coordinates[leg.startIndex], route.geometry.coordinates[leg.endIndex]), distanceSource: 'geometry' }
+      })
+      const unknown = legs.filter(leg => !Number.isFinite(leg.distanceMeters))
+      const knownTotal = legs.reduce((sum, leg) => sum + (leg.distanceMeters ?? 0), 0)
+      // Exactly one missing leg is algebraically recoverable, never a reroute or ORS estimate.
+      if (unknown.length === 1 && route.distanceMeters >= knownTotal) {
+        unknown[0].distanceMeters = route.distanceMeters - knownTotal
+        unknown[0].distanceSource = 'saved_total_remainder'
+      }
+      // An inconsistent legacy aggregate cannot certify a breakdown. Keep its
+      // exact saved total, but make totals unknown after an unknowable removal.
+      if (knownTotal > route.distanceMeters + 0.000001 || !unknown.length && Math.abs(knownTotal - route.distanceMeters) > 0.000001) {
+        for (const leg of legs) { delete leg.distanceMeters; delete leg.distanceSource }
+      }
+      state = { ...state, waypoints: route.waypoints, coordinates: route.geometry.coordinates, legs,
+        distanceMeters: route.distanceMeters, elevationSource: route.elevation.source, display: route.display, legacyDistances: legs.some(leg => !Number.isFinite(leg.distanceMeters)) }
       emit(); return route
     },
     dispose() { invalidate(); disposed = true; client.dispose() },

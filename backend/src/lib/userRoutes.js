@@ -49,7 +49,7 @@ function validateRoute(value) {
   if (!Array.isArray(value.legs) || value.legs.length !== waypoints.length - 1) invalid();
   let previousEnd = 0;
   const legs = value.legs.map(leg => {
-    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex'])
+    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex', 'distanceMeters', 'distanceSource'])
       || !Number.isInteger(leg.startIndex) || !Number.isInteger(leg.endIndex)
       || leg.startIndex !== previousEnd || leg.endIndex <= leg.startIndex
       || leg.endIndex >= coordinates.length) invalid();
@@ -58,11 +58,21 @@ function validateRoute(value) {
     const straight = leg.mode === 'straight' && leg.provenance === 'manual'
       && leg.profile === null && leg.endIndex === leg.startIndex + 1;
     if (!routed && !straight) invalid();
+    const hasDistance = Object.hasOwn(leg, 'distanceMeters');
+    if (hasDistance !== Object.hasOwn(leg, 'distanceSource')
+      || (hasDistance && (!bounded(leg.distanceMeters, 0, 1000000)
+        || !(leg.distanceSource === 'saved_total_remainder'
+          || routed && leg.distanceSource === 'ors'
+          || straight && leg.distanceSource === 'geometry')))) invalid();
     previousEnd = leg.endIndex;
     return { mode: leg.mode, provenance: leg.provenance, profile: leg.profile,
-      startIndex: leg.startIndex, endIndex: leg.endIndex };
+      startIndex: leg.startIndex, endIndex: leg.endIndex,
+      ...(hasDistance ? { distanceMeters: leg.distanceMeters, distanceSource: leg.distanceSource } : {}) };
   });
   if (previousEnd !== coordinates.length - 1 || !bounded(value.distanceMeters, 0, 1000000)) invalid();
+  // Additive fields live in legs_json; legacy rows remain readable unchanged.
+  if (legs.every(leg => Object.hasOwn(leg, 'distanceMeters'))
+    && Math.abs(legs.reduce((sum, leg) => sum + leg.distanceMeters, 0) - value.distanceMeters) > 0.000001) invalid();
   const targetDistanceMeters = optionalNumber(value.targetDistanceMeters, 0, 1000000);
   const suppliedElevation = value.elevation ?? {};
   if (!keys(suppliedElevation, ['source', 'gainMeters', 'lossMeters', 'coverage'])) invalid();
