@@ -41,7 +41,7 @@
       "frontend/src/lib/shareTemplates.js": "40603f82d9b44a0ecedda97f769d2f574e052dcc47fda0645777f09cd00516c6",
       "frontend/src/lib/shareStats.js": "d0d19d7c7b86993f5f83a68a2d21e376edd6aae0d54630a59c02bd8dba740015",
       "frontend/src/lib/shareStudioModel.js": "a104ccb545da2932988bdb1dd2ff4a9d4cbcd93a9e0fa74a12ca07061a5382d0",
-      "frontend/src/components/ActivityShareStudio.jsx": "7ada0c8af4cbec716b95588a4c6fa1c3d6dc8d4ed57a3da5dcd0ffc8c9204c43",
+      "frontend/src/components/ActivityShareStudio.jsx": "f54ec9f4f1aa4e6056076369fa08dc1e6e382041ab1eebdc733ddf7c8363fbe7",
       "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
       "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
       ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347",

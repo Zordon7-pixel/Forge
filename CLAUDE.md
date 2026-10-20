@@ -5,6 +5,45 @@
 
 ---
 
+## Share Studio batch 4 — t_e510d614 (patched; host verification pending)
+
+Base: `1a89d2939bb34ea7489f2fd74799bc728a1525ea`. Host QA's first
+`iron-chips/light/Story` byte mismatch came from different selected designs.
+The picker returned early when clicking the active default Iron Chips, leaving
+`requestedTemplate=null` (or a removed saved ID). Feed resolved to Iron Chips;
+Story resolved to Full-Bleed. The UI's render effect and export used that new
+Full-Bleed canvas, while the independent oracle explicitly requested Iron Chips.
+An offline execution of the actual old click closure/resolver/draw dispatch
+reproduced both 1080×1920 outputs with different text/draw commands. This is a
+selection-contract defect, not evidence for changing the byte oracle or privacy.
+
+The click now records the explicit ID before the active-design early return.
+It preserves the ready canvas when the resolved design is unchanged and still
+invalidates synchronously for a different design. No renderer, privacy adapter,
+export encoding, default resolver, registry or photo behavior was changed.
+The deterministic regression failed against the old handler and passes against
+the patch for all four IDs, absent/six legacy preferences, sizes/themes and route
+states. Browser regressions retain exact bytes and assert selected controls;
+reopening waits for the prior mount to detach before checking new readiness.
+
+Six repository paths changed: this file, ActivityShareStudio.jsx, framework smoke,
+release-template smoke, and the two generated acceptance-v2 fingerprint files.
+`node frontend/test/shareGoldenProvenance.mjs --prepare` refreshed only the
+changed component digest and paired pin, with state **pending** and both platform
+receipts null. Zero images generated/approved; all 18 C1 + 24 Full-Bleed cases,
+strict comparison and provenance guards remain. Trace/Forged Days stay excluded.
+
+Advisory commands and raw logs: `/tmp/t_e510d614-batch4/commands.json`.
+Release templates, entry, stats, Phase C, single-flight, provenance (88 negatives),
+and C1 `--filter-only` exit 0. Framework syntax, env-isolated normal Vite build
+(`/tmp` output; existing large-chunk warning) and diff check exit 0. Framework
+browser command exits 1 before page load: sandbox loopback listen EPERM, both
+before and after the patch. Full golden gate exits 1 because acceptance remains
+pending. Real-host browser bytes, actual Linux captures, golden review and release
+gates still require Hermes; no commit, review request, handoff message or shipping
+action was performed. This diff exceeds two paths and touches privacy regression
+coverage; it changes no auth, evidence, timestamps or production data handling.
+
 ## Share overlay framework — t_38ab05ed (patched; not deployed)
 
 Card B moves only the six existing run layouts into `shareTemplates.js` with

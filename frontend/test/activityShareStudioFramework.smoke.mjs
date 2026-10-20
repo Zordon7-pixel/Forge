@@ -167,7 +167,17 @@ try {
       throw error
     }
   }
-  const reopen = async props => { await page.evaluate(props => window.openStudio(props), props); await ready() }
+  const reopen = async props => {
+    const previous = await page.$('canvas[aria-label="Share card preview"]')
+    await page.evaluate(props => window.openStudio(props), props)
+    // root.render is asynchronous. A ready canvas from the previous mount is
+    // not evidence that this mount has rendered the requested props.
+    if (previous) {
+      await expect.poll(() => previous.evaluate(canvas => canvas.isConnected)).toBe(false)
+      await previous.dispose()
+    }
+    await ready()
+  }
   const share = async () => {
     await ready()
     const count = await page.evaluate(() => window.shared.length)
@@ -201,6 +211,26 @@ try {
     await ready()
     await expect(page.getByRole('button', { name: 'Share', exact: true })).toBeEnabled()
   })
+  await check('explicitly selecting the active default or migrated fallback preserves design through Feed → Story → Feed', async () => {
+    for (const saved of [undefined, 'route', 'log', 'ember', 'contour', 'overlay', 'photo']) {
+      await reopen({ prefs: { ...prefs, template: saved } })
+      const selected = page.getByRole('radio', { name: 'Iron Chips', exact: true })
+      await expect(selected).toHaveAttribute('aria-checked', 'true')
+      const before = await preview.evaluate(canvas => canvas.toDataURL())
+      for (let repeat = 0; repeat < 2; repeat++) {
+        await selected.click()
+        await ready()
+        await expect(page.getByRole('button', { name: 'Share', exact: true })).toBeEnabled()
+        assert.equal(await preview.evaluate(canvas => canvas.toDataURL()), before, `${saved}: reselection preserves rendered pixels`)
+      }
+      for (const size of ['Story', 'Feed']) {
+        await page.getByRole('radio', { name: size, exact: true }).check()
+        await ready()
+        await expect(selected).toHaveAttribute('aria-checked', 'true')
+        await expect(preview).toHaveAttribute('height', size === 'Story' ? '1920' : '1350')
+      }
+    }
+  })
   await check('timezone boundary prefers valid preference, falls back to device for missing/invalid preferences', async () => {
     const dates = await page.evaluate(() => [
       { timezone: 'Asia/Tokyo' }, { timezone: 'America/New_York' }, { timezone: 'invalid/timezone' }, {}, { timezone: ' ' },
@@ -227,6 +257,13 @@ try {
       for (const size of ['Feed', 'Story']) {
         await page.getByRole('radio', { name: size, exact: true }).check()
         await page.getByRole('checkbox', { name: 'Show route' }).uncheck()
+        await ready()
+        // Prove the UI state that will be exported, not just its dimensions.
+        // An implicit Feed fallback used to change to Full-Bleed on Story.
+        await expect(page.getByRole('radio', { name: label, exact: true })).toHaveAttribute('aria-checked', 'true')
+        await expect(page.getByRole('radio', { name: theme, exact: true })).toBeChecked()
+        await expect(page.getByRole('radio', { name: size, exact: true })).toBeChecked()
+        await expect(page.getByRole('checkbox', { name: 'Show route' })).not.toBeChecked()
         const file = await share()
         assert.deepEqual([file.width, file.height], [1080, size === 'Feed' ? 1350 : 1920])
         assert.equal(file.type, 'image/jpeg')
@@ -254,7 +291,13 @@ try {
           })
           const on = document.createElement('canvas')
           await h.drawShareCard(on, h.rendererModel(model, true), { ...options, showRoute: true })
-          return { exportMatchesOff, identical: off.toDataURL() === reference.toDataURL(),
+          return { exportMatchesOff,
+            exportTrace: { selected: document.querySelector('[aria-label="Share design"] [aria-checked="true"]')?.textContent.trim(),
+              theme: document.querySelector('input[name$="-theme"]:checked')?.value,
+              size: document.querySelector('input[name$="-size"]:checked')?.value,
+              showRoute: document.querySelector('input[type="checkbox"]').checked,
+              actualBytes: actualBytes.length, referenceBytes: referenceBytes.length },
+            identical: off.toDataURL() === reference.toDataURL(),
             routeStrokes: records.filter(r => r.method === 'stroke' && r.width >= 9 && r.cap === 'round').length,
             markers: records.filter(r => r.method === 'arc' && [13, 15].includes(r.radius)).length,
             changedOn: on.toDataURL() !== off.toDataURL(),
@@ -262,7 +305,7 @@ try {
             bounds: records.filter(r => r.bounds && (r.text || r.method === 'drawImage')).map(r => r.bounds),
             post: [image.width, image.height], scaled }
         }, { id, theme, size, model })
-        assert.equal(evidence.exportMatchesOff, true, `${id}/${theme}/${size}: actual UI export matches OFF reference bytes`)
+        assert.equal(evidence.exportMatchesOff, true, `${id}/${theme}/${size}: actual UI export matches OFF reference bytes; ${JSON.stringify(evidence.exportTrace)}`)
         assert.equal(evidence.identical, true, `${id}/${theme}/${size}: OFF equals no-route pixels`)
         assert.equal(evidence.routeStrokes, 0)
         assert.equal(evidence.markers, 0)

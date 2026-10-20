@@ -73,6 +73,35 @@ await check('never-empty sparse treadmill/lift: absent and every legacy saved pr
   assert.equal(resolveShareTemplate(hybrid, { showRoute: true }), 'hybrid-split')
   assert.equal(resolveShareTemplate(run, { showRoute: true }), 'iron-chips')
 })
+await check('actual picker handler pins the active fallback without invalidating it; size/theme/privacy keep the chosen renderer', async () => {
+  // Execute the component's actual click closure, then its real resolver and draw
+  // dispatch. This is an offline state/draw trace, not a React/browser pixel gate.
+  const studio = readFileSync(new URL('../src/components/ActivityShareStudio.jsx', import.meta.url), 'utf8')
+  const handler = studio.match(/disabled=\{busy\} onClick=\{(\(\) => \{[^\n]*setTemplate\(item\.id\)[^\n]*\})\} className/)
+  assert.ok(handler, 'Locate the actual share-design click handler')
+  const bindClick = new Function('item', 'template', 'setTemplate', 'invalidateRender', 'setPosted', 'setStatus', `return (${handler[1]})`)
+  for (const [id, model] of Object.entries(fixtures)) for (const initial of [null, ...legacy, id]) {
+    let requested = initial, invalidations = 0
+    const resolved = () => resolveShareTemplate(model, { template: requested, showRoute: true, size: 'feed' })
+    const click = () => bindClick({ id }, resolved(), value => { requested = value },
+      () => { invalidations++ }, () => {}, () => {})()
+    const alreadyActive = resolved() === id
+    click()
+    assert.equal(requested, id, `${id}/${initial}: even an active fallback records the user's choice`)
+    assert.equal(invalidations, alreadyActive ? 0 : 1, 'Only a changed renderer invalidates the completed render')
+    click()
+    assert.equal(invalidations, alreadyActive ? 0 : 1, 'Reselection keeps the current render ready')
+    for (const size of ['feed', 'story', 'feed']) for (const theme of ['light', 'dark', 'color']) for (const showRoute of [false, true]) {
+      const safe = rendererModel(model, showRoute)
+      const options = { template: requested, size, theme, showRoute, logo: {} }
+      assert.equal(resolveShareTemplate(safe, options), id, `${id}/${initial}/${size}: selection survives controls`)
+      const { ctx, calls } = context(), canvas = { getContext: () => ctx }
+      await drawShareCard(canvas, safe, options)
+      assert.deepEqual(calls, capture(id, safe, options).calls, `${id}/${size}: actual dispatch matches the requested reference`)
+      assert.deepEqual([canvas.width, canvas.height], [1080, size === 'feed' ? 1350 : 1920])
+    }
+  }
+})
 await check('route 7a-d: all four designs × three themes × two sizes; zero OFF geometry calls, restoration', () => {
   for (const [id, model] of Object.entries(fixtures)) {
     for (const theme of ['light', 'dark', 'color']) for (const size of ['feed', 'story']) {

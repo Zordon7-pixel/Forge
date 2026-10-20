@@ -606,6 +606,8 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
         </button>}
 
         <div role="radiogroup" aria-label="Share design" className="mb-3 grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
+          {/* Pin an explicit choice even when it is the active fallback. Only a
+              different resolved design needs to invalidate the ready render. */}
           {availableTemplates.map((item) => (
             <button key={item.id} type="button" role="radio" aria-checked={template === item.id} tabIndex={template === item.id ? 0 : -1}
               onKeyDown={event => {
@@ -616,7 +618,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
                   : (index + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + availableTemplates.length) % availableTemplates.length
                 const control = event.currentTarget.parentElement.querySelectorAll('[role="radio"]')[next]
                 control.click(); control.focus()
-              }} disabled={busy} onClick={() => { if (template === item.id) return; invalidateRender(); setTemplate(item.id); setPosted(false); setStatus('') }} className="pressable min-h-10 rounded-md px-2 text-xs font-bold" style={{ background: template === item.id ? 'var(--accent)' : 'transparent', color: template === item.id ? 'var(--on-accent)' : 'var(--text-muted)' }}>
+              }} disabled={busy} onClick={() => { setTemplate(item.id); if (template === item.id) return; invalidateRender(); setPosted(false); setStatus('') }} className="pressable min-h-10 rounded-md px-2 text-xs font-bold" style={{ background: template === item.id ? 'var(--accent)' : 'transparent', color: template === item.id ? 'var(--on-accent)' : 'var(--text-muted)' }}>
               {item.label}
             </button>
           ))}
