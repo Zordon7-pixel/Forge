@@ -54,6 +54,9 @@ import {
   ACTIVE_RUN_MAP_LAYOUTS,
   activeRunBackDecision,
   activeRunMapCommand,
+  activeRunMapViewDecision,
+  activeRunNearViewEdge,
+  createActiveRunMapPolicy,
   loadActiveRunMapLayout,
   normalizeMapPosition,
   resolveActiveRunReturnTarget,
@@ -177,28 +180,36 @@ function normalizePlannedRoute(value) {
 }
 
 function MapViewController({
+  layout,
   command,
   followPaused,
   onFollowPaused,
   recenterToken,
   reduceMotion,
 }) {
+  const cameraPolicy = useRef(createActiveRunMapPolicy())
   const map = useMapEvents({
     dragstart: () => {
-      if (command.type === 'follow') onFollowPaused()
+      if (layout === 'follow') onFollowPaused()
     },
   })
 
   useEffect(() => {
     map.invalidateSize({ animate: false })
-    if (command.type === 'fit') {
-      if (command.positions.length === 1) map.setView(command.positions[0], 15, { animate: false })
-      else if (command.positions.length > 1) map.fitBounds(command.positions, { padding: [24, 24], animate: !reduceMotion })
+    const { state, action } = activeRunMapViewDecision(cameraPolicy.current, {
+      layout, command, followPaused, recenterToken, nowMs: performance.now(),
+      nearViewEdge: layout === 'follow' && !followPaused && command.type === 'follow'
+        ? activeRunNearViewEdge(map, command.position) : null,
+    })
+    cameraPolicy.current = state
+    if (action?.type === 'fit' && command.type === 'fit') {
+      if (action.positions.length === 1) map.setView(action.positions[0], 15, { animate: false })
+      else map.fitBounds(action.positions, { padding: [24, 24], animate: !reduceMotion })
     }
-    if (command.type === 'follow' && !followPaused) {
+    if (action?.type === 'pan' && command.type === 'follow') {
       map.panTo(command.position, { animate: !reduceMotion, duration: reduceMotion ? 0 : 0.35 })
     }
-  }, [command, followPaused, map, recenterToken, reduceMotion])
+  }, [layout, command, followPaused, map, recenterToken, reduceMotion])
   return null
 }
 
@@ -1488,6 +1499,7 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
         >
           <ForgeMap center={currentPosition || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
             <MapViewController
+              layout={mapLayout}
               command={mapCommand}
               followPaused={followPaused}
               onFollowPaused={() => setFollowPaused(true)}

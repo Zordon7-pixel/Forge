@@ -14,6 +14,9 @@ import {
   ACTIVE_RUN_MAP_LAYOUT_KEY,
   activeRunBackDecision,
   activeRunMapCommand,
+  activeRunMapViewDecision,
+  activeRunNearViewEdge,
+  createActiveRunMapPolicy,
   activeRunReturnTargetFromLocation,
   loadActiveRunMapLayout,
   normalizeMapPosition,
@@ -140,6 +143,167 @@ assert.match(activeRunSource, /activeRunMapCommand\(mapLayout/, 'the rendered ma
 assert.match(logRunSource, /authorizeWorkoutStart/, 'every LogRun live-start path rechecks the server-issued safety manifest')
 assert.match(logRunSource, /workoutStartAccess/, 'the run handoff carries the manifest revision and safety hash')
 assert.match(logRunSource, /WORKOUT_START_ACCESS_(?:STALE|MISSING|BLOCKED|UNAVAILABLE)/, 'stale or missing run safety state has a visible fail-closed path')
+
+
+console.log('== Deterministic Follow/Overview camera policy ==')
+const north = meters => [meters / 6371000 * 180 / Math.PI, 0]
+const followAt = meters => activeRunMapCommand('follow', { recordedPositions: [north(meters)] })
+assert.deepEqual(activeRunMapCommand(undefined, { recordedPositions: [north(0)] }), followAt(0))
+assert.equal(activeRunMapCommand('follow', { plannedPositions: planned }).type, 'empty', 'planned-only Follow cannot change zoom')
+let camera = createActiveRunMapPolicy()
+function decide(meters, nowMs, options = {}) {
+  const outcome = activeRunMapViewDecision(camera, { command: followAt(meters), nowMs, ...options })
+  camera = outcome.state
+  return outcome.action
+}
+assert.equal(decide(0, 0), null, 'initial center establishes the Follow anchor')
+assert.equal(decide(14.999, 10), null)
+assert.equal(decide(15, 20), null, 'exactly 15 metres is not more than 15 metres')
+assert.equal(decide(15.001, 30)?.type, 'pan')
+assert.equal(decide(32, 31), null)
+assert.equal(decide(48, 2029), null, '1999ms since pan remains throttled')
+assert.equal(decide(48, 2030)?.type, 'pan', 'exact 2000ms boundary allows a pan')
+assert.equal(decide(64, 4031)?.type, 'pan', 'after boundary also allows a pan')
+assert.equal(decide(65, 4032, { nearViewEdge: true }), null, 'edge never bypasses throttle')
+assert.equal(decide(65, 6031, { nearViewEdge: true })?.type, 'pan', 'edge can pan under 15m')
+assert.equal(decide(66, 8031, { nearViewEdge: null }), null, 'unknown edge is not fabricated')
+assert.equal(decide(66, 8032, { nearViewEdge: 'true' }), null)
+assert.equal(decide(100, 8033, { followPaused: true, nearViewEdge: true }), null)
+assert.equal(decide(65, 6032, { recenterToken: 1 })?.type, 'pan', 'Recenter overrides time and distance')
+assert.equal(decide(65, 6032, { recenterToken: 1 }), null, 'Recenter token is consumed once')
+assert.equal(decide(100, 8031, { recenterToken: 1 }), null, 'ordinary throttle starts at Recenter')
+assert.equal(decide(100, 8032, { recenterToken: 1 })?.type, 'pan')
+assert.equal(decide(200, NaN, { recenterToken: 1 }), null, 'invalid clock cannot request camera movement')
+assert.equal(decide(200, 100, { recenterToken: 1 }), null, 'clock regression fails safely')
+// Haversine longitude scaling at high latitude, not a degree-distance guess.
+camera = createActiveRunMapPolicy()
+const longitudeStep = meters => [80, meters / 6371000 * 180 / Math.PI]
+for (const [meters, expected] of [[0, undefined], [16, undefined], [100, 'pan']]) {
+  const outcome = activeRunMapViewDecision(camera, { command: { type: 'follow', position: longitudeStep(meters) }, nowMs: 1000 })
+  camera = outcome.state
+  assert.equal(outcome.action?.type, expected)
+}
+// Fixed-cost bounds adapter, including near, outside, malformed and throwing maps.
+function bounds(west = -1, east = 1, south = -1, north = 1) {
+  return {
+    isValid: () => true,
+    pad(ratio) { return bounds(west - (east - west) * ratio, east + (east - west) * ratio,
+      south - (north - south) * ratio, north + (north - south) * ratio) },
+    contains: ([lat, lon]) => lat >= south && lat <= north && lon >= west && lon <= east,
+  }
+}
+for (const [position, expected] of [[[0, 0], false], [[0, .7], false], [[0, .700001], true], [[0, 1.1], true]]) {
+  let reads = 0
+  assert.equal(activeRunNearViewEdge({ getBounds() { reads++; return bounds() } }, position), expected)
+  assert.equal(reads, 1)
+}
+for (const map of [{}, { getBounds() { throw Error('unavailable') } },
+  { getBounds: () => ({ isValid: () => false }) },
+  { getBounds: () => ({ isValid: () => true, pad: () => ({ isValid: () => false }) }) },
+  { getBounds: () => ({ isValid: () => true, pad: () => ({ isValid: () => true, contains: () => undefined }) }) }]) {
+  assert.equal(activeRunNearViewEdge(map, north(0)), null)
+}
+assert.equal(activeRunNearViewEdge({ getBounds() { throw Error('must not read') } }, [100, 0]), null)
+
+// Execute the actual controller body with dependency-aware hooks and a map spy.
+// Every camera method is observed; Follow/Recenter must never mutate zoom.
+const controllerSource = activeRunSource.slice(activeRunSource.indexOf('function MapViewController('), activeRunSource.indexOf('export default function ActiveRun('))
+assert.match(activeRunSource, /<MapViewController\s+layout=\{mapLayout\}/)
+assert.match(activeRunSource, /data-testid="map-recenter"[\s\S]*?setFollowPaused\(false\)[\s\S]*?setRecenterToken\(\(value\) => value \+ 1\)/)
+const calls = []
+let mapEvents, cameraTime = 0, controllerRef, effectDeps, pendingEffect
+let props = { layout: 'follow', command: followAt(0), followPaused: false, recenterToken: 0, reduceMotion: false,
+  onFollowPaused() { props.followPaused = true } }
+const mapSpy = {
+  getBounds: () => bounds(), invalidateSize() {},
+  ...Object.fromEntries(['panTo', 'setView', 'fitBounds', 'setZoom', 'zoomIn', 'zoomOut', 'flyTo', 'flyToBounds'].map(name => [name, (...args) => calls.push({ name, args })])),
+}
+const controllerContext = {
+  activeRunMapViewDecision, activeRunNearViewEdge, createActiveRunMapPolicy,
+  performance: { now: () => cameraTime },
+  useRef(initial) { return controllerRef ||= { current: initial } },
+  useMapEvents(events) { mapEvents = events; return mapSpy },
+  useEffect(fn, deps) {
+    if (!effectDeps || deps.some((value, index) => !Object.is(value, effectDeps[index]))) pendingEffect = fn
+    effectDeps = deps
+  },
+}
+vm.runInNewContext(controllerSource, controllerContext)
+function renderMap(next = {}, time = cameraTime) {
+  props = { ...props, ...next }; cameraTime = time; pendingEffect = null
+  controllerContext.MapViewController(props)
+  pendingEffect?.()
+}
+renderMap()
+renderMap({ command: followAt(15) }, 100)
+assert.equal(calls.length, 0)
+renderMap({ command: followAt(16) }, 101)
+renderMap({ command: followAt(32) }, 2100)
+assert.equal(calls.length, 1)
+renderMap({ command: followAt(32) }, 2101)
+assert.equal(calls.length, 2)
+mapEvents.dragstart(); renderMap({ command: followAt(100) }, 5000)
+assert.equal(props.followPaused, true)
+assert.equal(calls.length, 2)
+renderMap({ followPaused: false, recenterToken: 1 }, 5001)
+assert.equal(calls.length, 3)
+renderMap({ command: followAt(100) }, 5002)
+renderMap({ command: followAt(120) }, 7000)
+assert.equal(calls.length, 3)
+renderMap({ command: followAt(120) }, 7001)
+assert.equal(calls.length, 4)
+mapEvents.dragstart(); renderMap({ command: followAt(120) }, 7002)
+renderMap({ followPaused: false, recenterToken: 2, reduceMotion: true }, 7003)
+assert.equal(calls.length, 5, 'immediate Recenter even during throttle at zero displacement')
+renderMap({ command: followAt(120) }, 7004)
+assert.equal(calls.length, 5)
+assert.ok(calls.every(call => call.name === 'panTo'), 'zero Follow/Recenter setView/fitBounds/zoom calls')
+assert.deepEqual(calls.at(-1).args[0], north(120))
+assert.equal(calls.at(-1).args[1].animate, false)
+assert.equal(calls.at(-1).args[1].duration, 0)
+
+// A narrow synthetic view puts the same accepted fix near, then outside, its
+// edge. This exercises adapter -> policy -> real controller, under the throttle.
+const latitude = north(120)[0]
+mapSpy.getBounds = () => bounds(-.001, .001, latitude - .0018, latitude + .0002)
+renderMap({ command: followAt(120) }, 9002)
+assert.equal(calls.length, 5)
+renderMap({ command: followAt(120) }, 9003)
+assert.equal(calls.length, 6)
+mapSpy.getBounds = () => bounds(-.001, .001, latitude - .002, latitude - .0001)
+renderMap({ command: followAt(120) }, 9004)
+assert.equal(calls.length, 6)
+renderMap({ command: followAt(120) }, 11003)
+assert.equal(calls.length, 7)
+assert.ok(calls.every(call => call.name === 'panTo'))
+mapSpy.getBounds = () => bounds()
+
+calls.length = 0
+const overviewAt = positions => activeRunMapCommand('overview', { recordedPositions: positions })
+renderMap({ layout: 'overview', command: overviewAt([]) }, 8000)
+renderMap({ command: overviewAt([]) }, 8001)
+assert.equal(calls.length, 0, 'empty Overview keeps its one fit pending')
+renderMap({ command: overviewAt([north(0)]) }, 8002)
+assert.equal(calls.length, 1)
+assert.equal(calls[0].name, 'setView')
+renderMap({ command: overviewAt([north(0), north(20)]) }, 8003)
+renderMap({ command: overviewAt([]), reduceMotion: false }, 8004)
+renderMap({ command: overviewAt([north(30)]) }, 8005)
+assert.equal(calls.length, 1, 'new fixes/arrays/empty interval cannot refit during Overview')
+mapEvents.dragstart()
+assert.equal(props.followPaused, false, 'Overview drag is not a Follow pause')
+renderMap({ layout: 'follow', command: followAt(120) }, 8006)
+renderMap({ layout: 'overview', command: overviewAt([north(0), north(30)]) }, 8007)
+assert.equal(calls.length, 2)
+assert.equal(calls[1].name, 'fitBounds', 'returning to Overview permits one new fit')
+pendingEffect() // React effect replay must not duplicate the activation's fit.
+renderMap({ command: overviewAt([north(40), north(50)]) }, 8008)
+assert.equal(calls.length, 2)
+renderMap({ layout: 'stats', command: activeRunMapCommand('stats') }, 8009)
+renderMap({ layout: 'overview', command: overviewAt([north(20)]) }, 8010)
+assert.equal(calls.length, 3)
+assert.equal(calls[2].name, 'setView')
+console.log('PASS actual MapViewController: metre/time boundaries, bounded edge, drag/Recenter, no Follow zoom, one Overview fit per activation')
 
 console.log('ACTIVE RUN CONTROLS SMOKE OK')
 
