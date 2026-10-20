@@ -17,7 +17,9 @@ for (const marker of [
   assert(source.includes(marker), `Missing ActiveRun GPS gap marker: ${marker}`);
 }
 
-assert(source.includes('gapSeconds > 15'), 'GPS gaps must be tracked after a 15 second threshold');
-assert(source.includes('segment >= 0.25'), 'Large catch-up segments must be flagged when discarded');
+const trace = fs.readFileSync(path.resolve(__dirname, '../../frontend/src/lib/gpsTrace.js'), 'utf8');
+assert(trace.includes('gapMs >= 15000'), 'GPS gaps include the exact 15 second threshold');
+assert(source.includes('recordedSegments.map'), 'Each segment must draw independently');
+assert(trace.includes("return reject('speed')"), 'Speed spikes must not reach geometry or distance');
 
 console.log('active run gps gap smoke OK');

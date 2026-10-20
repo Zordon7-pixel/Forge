@@ -5,6 +5,103 @@
 
 ---
 
+## Manual phone GPS trace — t_765505f1 Phase 1 (patched; local only)
+
+Local commit is blocked by the sandbox: `git add` exited 128 because it cannot
+create `/Volumes/Zordon Storage /openclaw-workspace/forge-app/.git/worktrees/forge8/index.lock`.
+No staging or commit occurred. Hermes must commit this exact reviewed ten-path
+patch from a context permitted to write the canonical Git metadata; no permission
+bypass, push, review request or external mutation was attempted.
+
+Starting base `00cf8ccc0f9ab2683ab9636c371c5646a9c3cfbc`, isolated branch
+`codex/t_765505f1/iphone-gps-trace`. This is Phase 1, not card completion or
+release acceptance. Ten repository paths; no dependency/lock/generated changes.
+
+Actual base seams: both phone paths converged in ActiveRun.handlePoint; it
+coerced coordinates, admitted absent accuracy, substituted receipt time, appended
+jump geometry even when distance rejected it, and connected gaps. Browser callbacks
+used Date.now; native distanceFilter was 5. Start waited for a separate permission
+watcher. There was no stationary auto-pause or foreground watcher reconciliation.
+
+`gpsTrace.js` is the shared deterministic policy (explicit now/fix milliseconds,
+meters). It requires finite in-range coordinates, finite accuracy 0–20m inclusive,
+a timestamp at most 5s old, strictly increasing fix time, and implied speed at most
+7m/s. Future/missing timestamps fail closed. A quality-accepted stationary fix
+updates liveness and stationary duration but adds no drawn vertex or distance:
+movement below max(3m, current accuracy) is ignored. Rejection/jitter diagnostics
+are fixed reason counters saturated at 65,535, never coordinate/error payloads.
+A >=15s accepted-fix gap or explicit background/foreground boundary emits a
+`gps-gap` event and starts a new segment; resumed auto/manual recording also
+cannot add a paused connector. Distance and live elevation sum within segments.
+
+Recorded tuples add optional slot 5 (`segmentId`); splitTraceSegments is the only
+live polyline input. Existing five-slot tuples retain their public shape. The
+small active-session seam preserves supplied IDs and auto-pause clock state over
+reload. It does not upgrade completed-run/backend/recap persistence. Never use
+flat recorded tuples as a polyline when continuing this work.
+
+Start runs while GPS is amber and acquires the watcher without waiting for a good
+fix; green can only follow an accepted fresh <=20m fix. Missing accepted fixes for
+>=20s shows a separate nonmodal GPS-paused status. The default-ON auto-pause setting
+freezes clock/distance after >=10s of accepted stationary observations (<0.5m/s),
+resumes only on accepted movement beyond the jitter threshold, and retains explicit
+manual pause ownership. Turning the setting OFF disables automatic pause/resume.
+Live Activity uses the existing paused contract for the frozen clock. Native and
+web watcher adapters preserve source timestamps; native distanceFilter is 0.
+Serial registration/removal fences stale callbacks, pending registration, and
+foreground restarts. Failed removal retains the handle and prevents duplication.
+Native appStateChange / browser visibility transitions each use one event stream.
+
+Deterministic local commands below all exited 0 on the final code:
+
+```sh
+node frontend/test/gpsTrace.smoke.mjs
+node frontend/test/phoneGpsWatcher.smoke.mjs
+FORGE_TEST_MODULE_ROOT='/Volumes/Zordon Storage /openclaw-workspace/forge-app/frontend' node frontend/test/activeRunGps.smoke.mjs
+node frontend/test/activeRunControls.smoke.mjs
+node backend/scripts/active-run-gps-gap-smoke.js
+node frontend/test/runLocationAccess.smoke.mjs
+node frontend/test/liveActivity.smoke.mjs
+node frontend/test/activeRunPlannedRoute.smoke.mjs
+node frontend/test/runCompletionPhaseA.smoke.mjs
+node frontend/test/deviceSourceTruth.smoke.mjs
+node frontend/test/shareStats.smoke.mjs
+git diff --check
+```
+
+The component test compiles the real ActiveRun JSX with the already-installed
+Vite-local esbuild and executes hooks/handlers with a deterministic synthetic host.
+It is not a React browser renderer or physical-device test. No dependencies were
+installed. There is no worktree node_modules; full production build and exact-lock
+host QA were not run. Engine fixtures cover cold start, missing/20m/>20m accuracy,
+300m spike, +/-15m jitter, stale/future fixes, exact gap/pause/liveness boundaries,
+geometry exclusion, and measured distance within 2% of synthetic ground truth.
+Component tests cover both adapters, early Start/readiness, frozen clocks/distance,
+manual pause during auto-pause, OFF, foreground dedup, segmented polylines, route
+recording OFF and Live Activity payloads. Show route OFF sharing tests remain green.
+
+Reported hiccups: missing worktree dependencies; root esbuild resolution failed
+(exit 1), recovered through Vite's nested installed compiler; two unmatched audit
+shell globs; first planned-route regression failed (exit 1) because legacy tuples
+were extended, recovered by preserving legacy shape and verified by rerun. Final
+audit found a legacy segment-ID collision on restore; ID 0 is now reserved for
+legacy samples, with an actual-component recovery regression.
+Completion smoke emits its expected malformed-handoff diagnostic fixtures (exit 0).
+
+Phase 2 handoff: preserve segment identity and gap events through the finished-run
+payload, backend normalization/storage, recap/handoff/share geometry and elevation;
+the existing completed-run flat route contract is still a release blocker. Add the
+native background-refresh/Always/Precise bridge and once-only persisted explainer,
+source/status persistence, and watch-import precedence/dedup in serialized scope.
+Then coordinator-owned exact-lock build, full browser/SPA, native iOS/TestFlight
+and >=5-minute locked-screen physical-iPhone verification of native_bg are needed.
+Readiness acquisition starts on Start in this phase, not as a pre-start warm-up
+watcher. Existing pre-start permission wording in other screens is a follow-up.
+No ORS, tiles, production, Hermes/Kanban, messages, push/merge/deploy, EAS/TestFlight,
+services, provider settings, job5feaddc2bfaf or t_59894b65 were accessed or changed.
+Railway pause was preserved by no external action, not checked live. Flag this
+10-path change and GPS/elapsed timestamp handling for independent exact-SHA review.
+
 ## Private route editor — t_0f9a44da Phase 1B (patched; uncommitted)
 
 Session checkpoint `0c5b580ccf4f2c0c8be79edf52878e6e7dd7ddc2`, original

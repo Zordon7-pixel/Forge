@@ -49,6 +49,7 @@ function normalizeRouteCoords(value) {
     point[4] === null || point[4] === undefined || !Number.isFinite(Number(point[4])) || Number(point[4]) < 0 || Number(point[4]) > 10_000
       ? null
       : Number(point[4]),
+    ...(Number.isSafeInteger(point[5]) && point[5] >= 0 ? [point[5]] : []),
   ])
   return downsampleRouteCoords(points)
 }
@@ -99,7 +100,9 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
         ? finiteNumber(parsed.finishedAt, 0)
         : 0,
       pausedDurationMs: Math.min(MAX_SESSION_AGE_MS, Math.max(0, Math.round(finiteNumber(parsed.pausedDurationMs, 0)))),
-      pauseStartedAt: parsed.phase === 'paused' ? Math.max(0, finiteNumber(parsed.pauseStartedAt, savedAt)) : 0,
+      autoPauseEnabled: parsed.autoPauseEnabled !== false,
+      autoPaused: parsed.autoPaused === true,
+      pauseStartedAt: parsed.phase === 'paused' || parsed.autoPaused === true ? Math.max(0, finiteNumber(parsed.pauseStartedAt, savedAt)) : 0,
       distanceMiles: Math.min(500, Math.max(0, finiteNumber(parsed.distanceMiles, 0))),
       routeCoords: normalizeRouteCoords(parsed.routeCoords),
       manualDistance: String(parsed.manualDistance || ''),
@@ -130,7 +133,7 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
 
 export function elapsedFromSession(session, now = Date.now()) {
   if (!session?.startedAt) return 0
-  if (session.phase !== 'running') return Math.max(0, Number(session.elapsed || 0))
+  if (session.phase !== 'running' || session.autoPaused) return Math.max(0, Number(session.elapsed || 0))
   const activeMilliseconds = now - session.startedAt - Math.max(0, Number(session.pausedDurationMs || 0))
   return Math.max(Number(session.elapsed || 0), Math.round(activeMilliseconds / 1000))
 }
