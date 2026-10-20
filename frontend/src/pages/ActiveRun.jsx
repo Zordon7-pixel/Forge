@@ -1,6 +1,7 @@
+import ForgeMap from '../components/maps/ForgeMap'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from 'react-leaflet'
+import { CircleMarker, Polyline, useMapEvents } from 'react-leaflet'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { LocateFixed, MapPinned, Pause, Play } from 'lucide-react'
@@ -1490,8 +1491,7 @@ export default function ActiveRun() {
           data-testid="active-run-map"
           style={{ minHeight: 210, height: 'clamp(210px, 34vh, 280px)', borderRadius: 10, position: 'relative', border: '1px solid var(--border-subtle)' }}
         >
-          <MapContainer center={currentPosition || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
-            <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <ForgeMap center={currentPosition || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
             <MapViewController
               command={mapCommand}
               followPaused={followPaused}
@@ -1503,7 +1503,7 @@ export default function ActiveRun() {
             {recordedRoutePositions.length > 0 && <Polyline positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 6, opacity: 1 }} />}
             {currentPosition && <CircleMarker center={currentPosition} radius={15} pathOptions={{ color: '#EAB308', fillColor: '#EAB308', fillOpacity: 0.2, weight: 2 }} />}
             {currentPosition && <CircleMarker center={currentPosition} radius={8} pathOptions={{ color: '#FFFFFF', fillColor: '#EAB308', fillOpacity: 1, weight: 3 }} />}
-          </MapContainer>
+          </ForgeMap>
           {currentPosition && !followPaused && mapLayout === 'follow' && (
             <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 500, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '7px 10px', background: 'rgba(0,0,0,0.86)', color: '#FFFFFF', fontSize: 11, fontWeight: 800, pointerEvents: 'none' }}>
               <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#EAB308', border: '2px solid #FFFFFF' }} /> You are here

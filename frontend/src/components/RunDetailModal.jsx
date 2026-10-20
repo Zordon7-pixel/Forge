@@ -1,6 +1,7 @@
+import ForgeMap from './maps/ForgeMap'
 import { useEffect, useState } from 'react'
 import { ArrowLeft, X, Brain, Gauge, MapPin, Share2, Trash2 } from 'lucide-react'
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
+import { CircleMarker, Polyline, useMap } from 'react-leaflet'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
 import AiGuidanceNote from './AiGuidanceNote'
@@ -356,13 +357,12 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
 
         {panelIs('route') && isRun && !shareOpen && routePositions.length >= 2 && (
           <div className="mb-5 overflow-hidden rounded-xl" style={{ height: 220, border: '1px solid var(--border-subtle)' }}>
-            <MapContainer key={run.id} center={routePositions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
+            <ForgeMap key={run.id} center={routePositions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
               <FitRouteBounds positions={routePositions} />
-              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
               <Polyline positions={routePositions} pathOptions={{ color: '#EAB308', weight: 5 }} />
               <CircleMarker center={routePositions[0]} radius={7} pathOptions={{ color: '#FFFFFF', fillColor: '#22C55E', fillOpacity: 1, weight: 2 }} />
               <CircleMarker center={routePositions.at(-1)} radius={7} pathOptions={{ color: '#FFFFFF', fillColor: '#EF4444', fillOpacity: 1, weight: 2 }} />
-            </MapContainer>
+            </ForgeMap>
           </div>
         )}
 

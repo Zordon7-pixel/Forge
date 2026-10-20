@@ -1,5 +1,6 @@
+import ForgeMap from './ForgeMap'
 import { useEffect, useMemo } from 'react'
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
+import { CircleMarker, Polyline, useMap } from 'react-leaflet'
 
 function FitBounds({ positions }) {
   const map = useMap()
@@ -22,12 +23,11 @@ export default function RoutePreviewMap({ route, height = 220 }) {
 
   return (
     <div style={{ height, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-      <MapContainer center={positions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
-        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <ForgeMap center={positions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
         <FitBounds positions={positions} />
         <Polyline positions={positions} pathOptions={{ color: '#EAB308', weight: 5 }} />
         <CircleMarker center={positions[0]} radius={6} pathOptions={{ color: '#111111', fillColor: '#EAB308', fillOpacity: 1, weight: 2 }} />
-      </MapContainer>
+      </ForgeMap>
     </div>
   )
 }

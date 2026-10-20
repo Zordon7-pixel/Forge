@@ -236,6 +236,10 @@ async function matchStatic(request) {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
+  // Direct provider tiles use normal browser caching only. Never persist them
+  // in Forge's offline cache or log a failed request URL containing the key.
+  if (url.origin === 'https://api.thunderforest.com') return;
+
   if (isReplayUnsafeMutation(event.request, url)) {
     event.respondWith(fetch(event.request));
     return;
