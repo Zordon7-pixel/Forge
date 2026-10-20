@@ -1,6 +1,6 @@
 {
   "schema": "share-goldens-v2",
-  "state": "pending",
+  "state": "complete",
   "runtime": {
     "browser": "chromium",
     "version": "151.0.7922.34",
@@ -56,7 +56,661 @@
     "renderSourceSha256": "a7c0029a2cb052e7537dcb898e0e610357d0452d2d16fe00f19e7bdabbb7b96f"
   },
   "platforms": {
-    "darwin-arm64": null,
-    "linux-x64": null
+    "darwin-arm64": {
+      "schema": "share-generation-v2",
+      "platform": "darwin-arm64",
+      "directory": ".",
+      "runtime": {
+        "browser": "chromium",
+        "version": "151.0.7922.34",
+        "playwright": "1.62.1",
+        "playwrightCore": "1.62.1",
+        "browsers": [
+          {
+            "name": "chromium",
+            "revision": "1234",
+            "version": "151.0.7922.34"
+          },
+          {
+            "name": "chromium-headless-shell",
+            "revision": "1234",
+            "version": "151.0.7922.34"
+          }
+        ],
+        "args": [
+          "--font-render-hinting=none",
+          "--disable-lcd-text"
+        ],
+        "context": {
+          "viewport": {
+            "width": 1080,
+            "height": 1920
+          },
+          "deviceScaleFactor": 1,
+          "locale": "en-US",
+          "timezoneId": "UTC",
+          "serviceWorkers": "block"
+        }
+      },
+      "fingerprints": {
+        "sources": {
+          "frontend/src/lib/shareOverlaysC1.js": "4e7fe063cf003adef45160ea79443c42be9f52e1af14c88d1824d77d31031852",
+          "frontend/src/lib/shareFullBleed.js": "2db87a82ef05199c40cbc8ed1e0bc7a5cfc28d1e8e28dd7d90f07339e3637885",
+          "frontend/src/lib/shareTheme.js": "4a402f8feb990e86b656aebd66ac189ae5638ca1a2b87d969c0739d64afa88ca",
+          "frontend/src/lib/shareTemplates.js": "40603f82d9b44a0ecedda97f769d2f574e052dcc47fda0645777f09cd00516c6",
+          "frontend/src/lib/shareStats.js": "d0d19d7c7b86993f5f83a68a2d21e376edd6aae0d54630a59c02bd8dba740015",
+          "frontend/src/lib/shareStudioModel.js": "a104ccb545da2932988bdb1dd2ff4a9d4cbcd93a9e0fa74a12ca07061a5382d0",
+          "frontend/src/components/ActivityShareStudio.jsx": "96130c746dec0f81f61d1461f80aba5d443b5708c76348de7e3e8f7a11e9330f",
+          "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
+          "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
+          ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347",
+          "frontend/src/assets/share-fonts/Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+          "frontend/src/assets/share-fonts/BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+          "frontend/src/assets/share-fonts/BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+          "frontend/src/assets/share-fonts/JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+          "frontend/test/shareOverlaysC1.smoke.mjs": "ae22a659f63fcd758cef5f6646207843897045bd34487a6c46a8c55473cb8618",
+          "frontend/test/shareGoldenProvenance.mjs": "1205f4dea770257d1412a30c4009aac30c80cc1b2a5437a4a0a6e4e0ddc59503"
+        },
+        "fixtureSourceSha256": "39a6c54daa021b8fe2f9b6f1d70afbb4ccf83e56868df1351bec28883674fcf4",
+        "renderSourceSha256": "a7c0029a2cb052e7537dcb898e0e610357d0452d2d16fe00f19e7bdabbb7b96f"
+      },
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "node": "v26.7.0"
+      },
+      "batches": {
+        "1": [
+          {
+            "name": "iron-chips-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "15718822e83d34d13e97ff062e8ffa23f53a502877007412b8c9ac2cd899dfdd"
+          },
+          {
+            "name": "iron-chips-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "6963cf994753ea019852d819063b0439930444c95ff24f2b6f01ac2cf62fcfbd"
+          },
+          {
+            "name": "iron-chips-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "9eeeb7c5d8186dc20bdd6e65e0f10252440e2297157e733a26579bf562fc2fb1"
+          },
+          {
+            "name": "iron-chips-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "70459cb13c86fde7ded9b07be770801ac0c842d58b1958886c000ee5f6823806"
+          },
+          {
+            "name": "iron-chips-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "07cac5f2150e4f37696fb0082b3a5e5e3ed3f9a5f490992d3df30d7c2bff910e"
+          },
+          {
+            "name": "iron-chips-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "d39115767102f18930df10e2c5e4ae7e698c6aa04b85793d919ce3f1840d1ceb"
+          },
+          {
+            "name": "strike-pr-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "a2d0d5d9506638d166ebfde1cd21a51a78109e87dc3a577e935250e5e8bd53ff"
+          },
+          {
+            "name": "strike-pr-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "53eca46546e8068c6d652482b19d14a2365c198d6f398485c2a2f22e9922c878"
+          },
+          {
+            "name": "strike-pr-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "0422d1e88ba182c8e896499836271995ab3efb3577c352f0a95c2646248ce133"
+          }
+        ],
+        "2": [
+          {
+            "name": "strike-pr-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "3ed7a42e0b510e3b04e5ee3d96f32b9584066ba1fea7383a3b2cca601192d0ef"
+          },
+          {
+            "name": "strike-pr-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "059aa02788e0f8d5b0b1fd53b6458f77e75f8681435fe67dd2686968292e1777"
+          },
+          {
+            "name": "strike-pr-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "8199dbfce51770b48bbfb0a701090b60c43db58c834af753c61d3ce0dec57edf"
+          },
+          {
+            "name": "hybrid-split-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "69ce549f59c2f761af99dfbfab87d9cfef79e5cb7c146fd328740ca40249cfa9"
+          },
+          {
+            "name": "hybrid-split-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "e9ad4441baaf8eea03a83cb99653f04cd64a5b00e78edaa3af4c35595cea150c"
+          },
+          {
+            "name": "hybrid-split-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "797f7e3896adf761af30c540e589055a4515ac8c3f537f1ae0164c3bd4154d12"
+          },
+          {
+            "name": "hybrid-split-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "8e5e8d947cacc7a10c5ff630db9b735bef38246dc22b6d08c67c92c4cb33e832"
+          },
+          {
+            "name": "hybrid-split-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "2a82b59000582b420e0fd241230b468e4a16951a1b2ad97afa2b32b1eadc960d"
+          },
+          {
+            "name": "hybrid-split-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "db9146a95044328f13f42b05d7f3c686dbef8b0090b583c04c6c7b82a3f0473d"
+          }
+        ],
+        "3": [
+          {
+            "name": "full-bleed-story-run-on-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "61c3ac7962589705a9580a9024d3a2aab4ffd3a315966dc645e1c64e2594c784"
+          },
+          {
+            "name": "full-bleed-story-run-on-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "f91b5c59ab139ec91b653c7e44f5a5759e69d4f9a014d33e705d9d5aec4b550f"
+          },
+          {
+            "name": "full-bleed-story-run-on-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "da8509bea94f3c4c2a9eb2e6c6f9475b491cef5872c0d6052f0c94bbc14a9e8e"
+          },
+          {
+            "name": "full-bleed-story-run-on-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "bce6cc8f4d83678bad29992bd8ce4c884d5f49a0e29592e9772086aa0ec3c357"
+          },
+          {
+            "name": "full-bleed-story-run-on-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "9ba198954f81c1ed55d4d1331a43ecd2d7f7dcc1be2964d97d2663fd803bcaa8"
+          },
+          {
+            "name": "full-bleed-story-run-on-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "efde8aeba6ef13527d27dbe9ca00c96159b17a6afa8666cee7c21c852d46616d"
+          },
+          {
+            "name": "full-bleed-story-run-off-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "768bf39b0d0b7dc2bd001c08969e91046142a8fea7da961167005f3b745cea0a"
+          },
+          {
+            "name": "full-bleed-story-run-off-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "1c8749d64f3e8a6245b9c17337339df2bb63afa532fd1df2f087ed1d92be9f5f"
+          },
+          {
+            "name": "full-bleed-story-run-off-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "b0096ab3b702dac51764dfcc0d32a948ffa57571594499b4377dc270645da8e3"
+          }
+        ],
+        "4": [
+          {
+            "name": "full-bleed-story-run-off-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "29d7d6d771124dd437c70d55d4d51f98c7d2d2d438483c358868df27d2d9b94f"
+          },
+          {
+            "name": "full-bleed-story-run-off-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "7cb6ed135bfdc9f509ad29e4efb55ff3d069863e45efd6ba9e040924f69e131d"
+          },
+          {
+            "name": "full-bleed-story-run-off-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "d1ba99726481cbd4f5c937b10644c6ef9616ac82bea8ed2781dc72abb051474f"
+          },
+          {
+            "name": "full-bleed-story-lift-on-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "c30a941f7af1010e5e05d5127ca0c971baef1d94ad40ef7049ae1c158dfd57a1"
+          },
+          {
+            "name": "full-bleed-story-lift-on-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "2be9a7c25191b08462033713252ffb5562e29c05397f2d4b9b628f1d75be6da3"
+          },
+          {
+            "name": "full-bleed-story-lift-on-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "f415153534fbf6aabc3da434fb620024453f56248292bf815ba606a77fa6d819"
+          },
+          {
+            "name": "full-bleed-story-lift-on-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "05e4c50174d5815a3a8f73cd443fba8cd0789499d21c719e165d644000bdaf98"
+          },
+          {
+            "name": "full-bleed-story-lift-on-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "99a18c76ba65d8a895c4eab2821f72c51e28ab5ba9222712131300a3e9a1f61c"
+          },
+          {
+            "name": "full-bleed-story-lift-on-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "13502bb43c8dbad42724b73c0ac74a0473a42b9dc55c2e212b23e408ef1ba2f2"
+          }
+        ],
+        "5": [
+          {
+            "name": "full-bleed-story-lift-off-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "c30a941f7af1010e5e05d5127ca0c971baef1d94ad40ef7049ae1c158dfd57a1"
+          },
+          {
+            "name": "full-bleed-story-lift-off-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "2be9a7c25191b08462033713252ffb5562e29c05397f2d4b9b628f1d75be6da3"
+          },
+          {
+            "name": "full-bleed-story-lift-off-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "f415153534fbf6aabc3da434fb620024453f56248292bf815ba606a77fa6d819"
+          },
+          {
+            "name": "full-bleed-story-lift-off-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "05e4c50174d5815a3a8f73cd443fba8cd0789499d21c719e165d644000bdaf98"
+          },
+          {
+            "name": "full-bleed-story-lift-off-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "99a18c76ba65d8a895c4eab2821f72c51e28ab5ba9222712131300a3e9a1f61c"
+          },
+          {
+            "name": "full-bleed-story-lift-off-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "13502bb43c8dbad42724b73c0ac74a0473a42b9dc55c2e212b23e408ef1ba2f2"
+          }
+        ]
+      }
+    },
+    "linux-x64": {
+      "schema": "share-generation-v2",
+      "platform": "linux-x64",
+      "directory": "linux-x64-chromium-151-no-hint",
+      "runtime": {
+        "browser": "chromium",
+        "version": "151.0.7922.34",
+        "playwright": "1.62.1",
+        "playwrightCore": "1.62.1",
+        "browsers": [
+          {
+            "name": "chromium",
+            "revision": "1234",
+            "version": "151.0.7922.34"
+          },
+          {
+            "name": "chromium-headless-shell",
+            "revision": "1234",
+            "version": "151.0.7922.34"
+          }
+        ],
+        "args": [
+          "--font-render-hinting=none",
+          "--disable-lcd-text"
+        ],
+        "context": {
+          "viewport": {
+            "width": 1080,
+            "height": 1920
+          },
+          "deviceScaleFactor": 1,
+          "locale": "en-US",
+          "timezoneId": "UTC",
+          "serviceWorkers": "block"
+        }
+      },
+      "fingerprints": {
+        "sources": {
+          "frontend/src/lib/shareOverlaysC1.js": "4e7fe063cf003adef45160ea79443c42be9f52e1af14c88d1824d77d31031852",
+          "frontend/src/lib/shareFullBleed.js": "2db87a82ef05199c40cbc8ed1e0bc7a5cfc28d1e8e28dd7d90f07339e3637885",
+          "frontend/src/lib/shareTheme.js": "4a402f8feb990e86b656aebd66ac189ae5638ca1a2b87d969c0739d64afa88ca",
+          "frontend/src/lib/shareTemplates.js": "40603f82d9b44a0ecedda97f769d2f574e052dcc47fda0645777f09cd00516c6",
+          "frontend/src/lib/shareStats.js": "d0d19d7c7b86993f5f83a68a2d21e376edd6aae0d54630a59c02bd8dba740015",
+          "frontend/src/lib/shareStudioModel.js": "a104ccb545da2932988bdb1dd2ff4a9d4cbcd93a9e0fa74a12ca07061a5382d0",
+          "frontend/src/components/ActivityShareStudio.jsx": "96130c746dec0f81f61d1461f80aba5d443b5708c76348de7e3e8f7a11e9330f",
+          "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
+          "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
+          ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347",
+          "frontend/src/assets/share-fonts/Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+          "frontend/src/assets/share-fonts/BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+          "frontend/src/assets/share-fonts/BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+          "frontend/src/assets/share-fonts/JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+          "frontend/test/shareOverlaysC1.smoke.mjs": "ae22a659f63fcd758cef5f6646207843897045bd34487a6c46a8c55473cb8618",
+          "frontend/test/shareGoldenProvenance.mjs": "1205f4dea770257d1412a30c4009aac30c80cc1b2a5437a4a0a6e4e0ddc59503"
+        },
+        "fixtureSourceSha256": "39a6c54daa021b8fe2f9b6f1d70afbb4ccf83e56868df1351bec28883674fcf4",
+        "renderSourceSha256": "a7c0029a2cb052e7537dcb898e0e610357d0452d2d16fe00f19e7bdabbb7b96f"
+      },
+      "host": {
+        "platform": "linux",
+        "arch": "x64",
+        "node": "v22.23.3"
+      },
+      "batches": {
+        "1": [
+          {
+            "name": "iron-chips-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "316dfd413c105ec03e32af3be6fc7f2658791b4d46bd98f91e5567d75b693415"
+          },
+          {
+            "name": "iron-chips-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "c0b53a6292e155d63f6484106c0f403a317adb347129d8dae7cb9e9764b0f14e"
+          },
+          {
+            "name": "iron-chips-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "f6404c627bd0a8c48d283769fcf1b2fa54e6c9b309a2b682fc445c2f3be7ffaf"
+          },
+          {
+            "name": "iron-chips-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "03b7f9101bcc318ed982105783dad1fb9a0327dd529af8429bcceea97c0fb872"
+          },
+          {
+            "name": "iron-chips-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "13a294c85f6e5695457ca58791d4fecab71f21bcd57c3c24a2e97f5ee42fba96"
+          },
+          {
+            "name": "iron-chips-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "5d51c4817a2f887b77aa33d1ae98fee0c5cbcb66269ff52f22c45f8fe7141948"
+          },
+          {
+            "name": "strike-pr-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "0eee6be6380f93ba7d9c327405c0a156440abca96c1a887b8e688e72d25d1563"
+          },
+          {
+            "name": "strike-pr-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "f054b8e68e3f15e90c858b132ac2380fa4eeedb72e05ca4b8f2fb8c53deb57c9"
+          },
+          {
+            "name": "strike-pr-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "3a7cf9b82af33c8ef60f896af399e60802503db3798f0148dafdf16f36f14462"
+          }
+        ],
+        "2": [
+          {
+            "name": "strike-pr-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "dbf5786675633bd6438eac31e241bc519d641c9c8a84e8e3135de74d008a4963"
+          },
+          {
+            "name": "strike-pr-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "a8bd85f4b3c7ee9f5fc8d80796ccbbaa5b9a8a2a844c4763e150ca042ea7c742"
+          },
+          {
+            "name": "strike-pr-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "f83f2d0b37acb5766d7e56e72550a9731b8e0356a319eaf0228cac9883a924b1"
+          },
+          {
+            "name": "hybrid-split-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "d6c6abbf2425b8256224fdd1d97d9bc6fe8b387c21b210105a661fc78b56f828"
+          },
+          {
+            "name": "hybrid-split-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "71d73273098115b07f2c228bb99b702db40582b2672b7e2a863728f3edafd48b"
+          },
+          {
+            "name": "hybrid-split-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "4b6d45476b474e790d74189d5573a846cf29253b71435a58f4c203c84daaef47"
+          },
+          {
+            "name": "hybrid-split-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "9701a4d6704806108692b5a32823ad5d3d2bd6324506636249bcb08782a804f4"
+          },
+          {
+            "name": "hybrid-split-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "905bb763ac99db750f1e8854edef260375d436e97fd4ed7a4b0979bb368c92ae"
+          },
+          {
+            "name": "hybrid-split-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "aad98312bea84044269d103802d82858689cc2b3df155defb45f5388f53d6106"
+          }
+        ],
+        "3": [
+          {
+            "name": "full-bleed-story-run-on-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "9e54a301a3bcd28da467600265334b1c1762d5279fc5e3d08b54f002afbbfcec"
+          },
+          {
+            "name": "full-bleed-story-run-on-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "eba4481b89d0a4eaf7395076657883207b5220a555f343b0f44afdd739709b42"
+          },
+          {
+            "name": "full-bleed-story-run-on-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "6e97435eba41ff2e82eeef64629972f2a2019c28787cbdd5a5cc5f365fd6ac0b"
+          },
+          {
+            "name": "full-bleed-story-run-on-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "8ddd2bd84c1ce6594b765eb5168aaba17f5bdcb0706df7bcf172de7e3866b8f4"
+          },
+          {
+            "name": "full-bleed-story-run-on-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "27c1841251c5de26db83764517ecd301c0c9ef10c22fbb874b9aea474803532b"
+          },
+          {
+            "name": "full-bleed-story-run-on-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "71b01ddae02a1421c776e377970487d0db04539183dea2b92649a7d6c88cd759"
+          },
+          {
+            "name": "full-bleed-story-run-off-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "504f05e871189f2ca3734d852753f9c0f003fadbceccdfd50ca94c26162a2c61"
+          },
+          {
+            "name": "full-bleed-story-run-off-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "fcfd5b8f1143e026b9a06e5630348caf3e5c00bf61119c4e795c8893cb1b1569"
+          },
+          {
+            "name": "full-bleed-story-run-off-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "fe39f7b28f36b3e50f22c4cd416eca196bb753ab4836acb52e16e690efc86910"
+          }
+        ],
+        "4": [
+          {
+            "name": "full-bleed-story-run-off-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "140b95e2cf34ef169acb5ef53cedb4475738b25e35668cd81633bdd334f2a023"
+          },
+          {
+            "name": "full-bleed-story-run-off-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "8731c660f1526489b6d7f5a88c553039c459a86bdc8ca418780e424d92254e09"
+          },
+          {
+            "name": "full-bleed-story-run-off-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "70c7a555d6b7b87d1821f4acd2fce7c4e6432c053f41a2ad7610772c89f8fbf2"
+          },
+          {
+            "name": "full-bleed-story-lift-on-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "cd1ff59608237ef8f81d57f6a68ef265cdd3aa446c8469d01c17a5a69305e9b4"
+          },
+          {
+            "name": "full-bleed-story-lift-on-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "fdf39f2bf3796d5f4d7e65e5d4dd1481fe28250a891ad2260f5430ec2594230f"
+          },
+          {
+            "name": "full-bleed-story-lift-on-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "6144f47e0af2da0a4dd45792f00b2731267c2f9bffc3cf69cf9f9e43ab78f7c7"
+          },
+          {
+            "name": "full-bleed-story-lift-on-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "9cbf2003619e714f9c178ffb32d0341140c01f987e8aaa0b4db8bc05e6c27688"
+          },
+          {
+            "name": "full-bleed-story-lift-on-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "3c78e5bb34811584f3a34c7c00ec6c2e174893187228f2b13414677763435a9e"
+          },
+          {
+            "name": "full-bleed-story-lift-on-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "7e1db538da294df7bf1b7c4da98012e2e93af59d1807253efc3dc4fa27b90a55"
+          }
+        ],
+        "5": [
+          {
+            "name": "full-bleed-story-lift-off-light-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "cd1ff59608237ef8f81d57f6a68ef265cdd3aa446c8469d01c17a5a69305e9b4"
+          },
+          {
+            "name": "full-bleed-story-lift-off-light-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "fdf39f2bf3796d5f4d7e65e5d4dd1481fe28250a891ad2260f5430ec2594230f"
+          },
+          {
+            "name": "full-bleed-story-lift-off-dark-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "6144f47e0af2da0a4dd45792f00b2731267c2f9bffc3cf69cf9f9e43ab78f7c7"
+          },
+          {
+            "name": "full-bleed-story-lift-off-dark-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "9cbf2003619e714f9c178ffb32d0341140c01f987e8aaa0b4db8bc05e6c27688"
+          },
+          {
+            "name": "full-bleed-story-lift-off-color-feed.png",
+            "width": 1080,
+            "height": 1350,
+            "sha256": "3c78e5bb34811584f3a34c7c00ec6c2e174893187228f2b13414677763435a9e"
+          },
+          {
+            "name": "full-bleed-story-lift-off-color-story.png",
+            "width": 1080,
+            "height": 1920,
+            "sha256": "7e1db538da294df7bf1b7c4da98012e2e93af59d1807253efc3dc4fa27b90a55"
+          }
+        ]
+      }
+    }
   }
 }
