@@ -91,7 +91,8 @@ function createPlanningStore({ withUserMutation, dbGet, dialect = 'postgres' }) 
         || typeof row.payload !== 'string' || Buffer.byteLength(row.payload) > MAX_BYTES) unknown();
       return row.expires_ms > time ? row.payload : null;
     }),
-    reserve: owner => locked(owner, async (tx, global, time) => {
+    reserve: (owner, units = 1) => locked(owner, async (tx, global, time) => {
+      if (!Number.isSafeInteger(units) || units < 1 || units > 3) unknown();
       if (global.blocked_until > time) throw new PlanningError('PROVIDER_RATE_LIMITED', 429,
         Math.min(86400, Math.ceil((global.blocked_until - time) / 1000)));
       const day = Math.floor(time / TTL_MS), minute = Math.floor(time / 60000);
@@ -99,11 +100,15 @@ function createPlanningStore({ withUserMutation, dbGet, dialect = 'postgres' }) 
         VALUES (?,?,?,0,0) ON CONFLICT (user_id) DO NOTHING`, [owner, day, minute]);
       const user = checked(await tx.get('SELECT * FROM ors_planning_users WHERE user_id=?', [owner]), 100, 10);
       const [gd, gm] = counts(global, day, minute), [ud, um] = counts(user, day, minute);
-      if (gd >= 1900 || ud >= 100) throw new PlanningError('PLANNING_LIMIT', 429, Math.ceil(((day + 1) * TTL_MS - time) / 1000));
-      if (gm >= 35 || um >= 10) throw new PlanningError('PLANNING_LIMIT', 429, Math.ceil(((minute + 1) * 60000 - time) / 1000));
-      const globalWrite = await tx.run('UPDATE ors_planning_global SET day_bucket=?, minute_bucket=?, day_count=?, minute_count=? WHERE id=1', [day, minute, gd + 1, gm + 1]);
-      const userWrite = await tx.run('UPDATE ors_planning_users SET day_bucket=?, minute_bucket=?, day_count=?, minute_count=? WHERE user_id=?', [day, minute, ud + 1, um + 1, owner]);
+      if (gd + units > 1900 || ud + units > 100) throw new PlanningError('PLANNING_LIMIT', 429, Math.ceil(((day + 1) * TTL_MS - time) / 1000));
+      if (gm + units > 35 || um + units > 10) throw new PlanningError('PLANNING_LIMIT', 429, Math.ceil(((minute + 1) * 60000 - time) / 1000));
+      const globalWrite = await tx.run('UPDATE ors_planning_global SET day_bucket=?, minute_bucket=?, day_count=?, minute_count=? WHERE id=1', [day, minute, gd + units, gm + units]);
+      const userWrite = await tx.run('UPDATE ors_planning_users SET day_bucket=?, minute_bucket=?, day_count=?, minute_count=? WHERE user_id=?', [day, minute, ud + units, um + units, owner]);
       if (globalWrite?.changes !== 1 || userWrite?.changes !== 1) unknown();
+    }),
+    checkCooldown: owner => locked(owner, (_tx, global, time) => {
+      if (global.blocked_until > time) throw new PlanningError('PROVIDER_RATE_LIMITED', 429,
+        Math.min(86400, Math.ceil((global.blocked_until - time) / 1000)));
     }),
     cooldown: (owner, seconds) => locked(owner, async (tx, global, time) => {
       await tx.run('UPDATE ors_planning_global SET blocked_until=? WHERE id=1', [Math.max(global.blocked_until, time + seconds * 1000)]);

@@ -1,11 +1,12 @@
 // Offline Phase 1 gate: real map consumers + Leaflet in Chromium, synthetic API.
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync, mkdirSync } from 'node:fs'
+import { readFileSync, readdirSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import vm from 'node:vm'
 import path from 'node:path'
+import os from 'node:os'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { chromium, expect } from '@playwright/test'
@@ -19,17 +20,27 @@ const read = p => readFileSync(path.join(repo, p), 'utf8')
 const consumers = ['frontend/src/pages/ActiveRun.jsx', 'frontend/src/components/RoutePlanner.jsx',
   'frontend/src/components/RunDetailModal.jsx', 'frontend/src/components/maps/RoutePreviewMap.jsx']
 function walk(dir) { return readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]) }
-const build = spawnSync('npm', ['--prefix', 'frontend', 'run', 'build'], { cwd: repo, encoding: 'utf8',
+const isolated = mkdtempSync(path.join(os.tmpdir(), 'forge-map-build-'))
+const buildDir = path.join(isolated, 'dist'), envDir = path.join(isolated, 'empty-env')
+mkdirSync(envDir)
+const build = spawnSync(process.execPath, ['--input-type=module', '-e', `import { build } from 'vite'; import config from './vite.config.js'; await build({ ...config, configFile: false, envDir: ${JSON.stringify(envDir)}, build: { ...config.build, outDir: ${JSON.stringify(buildDir)}, emptyOutDir: true, sourcemap: true } });`], { cwd: root, encoding: 'utf8',
   env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR || '/tmp', ORS_API_KEY: sentinel, OPENROUTESERVICE_API_KEY: sentinel } })
-assert.equal(build.status, 0, 'No-tile-key build with synthetic server credentials must succeed')
-console.log('PASS npm --prefix frontend run build (exit 0, no tile key, synthetic ORS sentinels)')
+assert.equal(build.status, 0, `Isolated build failed: ${build.stderr}`)
+console.log('PASS isolated empty-env frontend build with source maps (exit 0, synthetic server credentials): ' + buildDir)
 console.log(build.stdout.trim().split('\n').at(-1))
 const oldHost = ['tile', 'openstreetmap', 'org'].join('.')
-for (const dir of ['frontend/src', 'backend/src', 'frontend/dist']) {
-  for (const file of walk(path.join(repo, dir))) {
+for (const dir of ['frontend/src', 'backend/src', buildDir]) {
+  for (const file of walk(path.isAbsolute(dir) ? dir : path.join(repo, dir))) {
     const content = readFileSync(file)
     if (dir === 'frontend/src') assert.equal(content.includes(['VITE', 'THUNDERFOREST_API_KEY'].join('_')), false, 'No build-time tile credential')
-    assert.equal(content.includes(oldHost), false, `Old tile source in ${file}`)
+    // Dependency source-map comments include Leaflet's documentation examples.
+    // Executable assets and our own mapped sources must contain no fallback.
+    if (file.endsWith('.map')) {
+      const map = JSON.parse(content)
+      map.sources.forEach((source, i) => {
+        if (!source.includes('node_modules/')) assert.equal(map.sourcesContent[i]?.includes(oldHost), false, `Old tile source in ${source}`)
+      })
+    } else assert.equal(content.includes(oldHost), false, `Old tile source in ${file}`)
     assert.equal(content.includes(sentinel), false, `Server sentinel in ${file}`)
     if (dir.endsWith('dist')) assert.equal(content.includes(key), false, `Baked tile key in ${file}`)
   }
@@ -184,7 +195,7 @@ try {
     await page.setViewportSize({ width, height: 874 })
     for (const kind of kinds) {
       config = { THUNDERFOREST_API_KEY: key }; tileFailure = false; tileRequests = []
-      await mount(kind)
+      await mount(kind, kind === 'ActiveRun')
       await expect(page.locator('.leaflet-tile-loaded').first()).toBeVisible()
       const rendered = await page.locator('.leaflet-tile').evaluateAll(images => images.map(image => image.src))
       assert.ok(rendered.length > 0, kind)
@@ -194,9 +205,36 @@ try {
       }
       await attribution()
       await page.getByTestId('forge-map').screenshot({ path: path.join(artifactDir, `${kind}-${width}.png`) })
+      // One actual tile image error must remove only tiles, preserving the exact
+      // MapContainer and SVG nodes/geometry (not remounting replacement lines).
+      await page.evaluate(() => {
+        window.beforeTileFailure = {
+          map: document.querySelector('.leaflet-container'),
+          paths: [...document.querySelectorAll('.leaflet-overlay-pane path')].map(node => ({ node, d: node.getAttribute('d') })),
+          recorded: localStorage.getItem('forged_hybrid_active_run_v1'),
+        }
+        document.querySelector('.leaflet-tile-loaded').dispatchEvent(new Event('error'))
+      })
+      await expect(page.getByTestId('forge-map')).toHaveAttribute('data-map-state', 'unavailable')
+      await expect(page.locator('.leaflet-tile-pane img')).toHaveCount(0)
+      await expect(page.locator('.leaflet-container')).toBeVisible()
+      await expect(page.getByTestId('forge-map').getByRole('status')).toHaveText('Map unavailable.')
+      assert.equal(await page.evaluate(() => {
+        const before = window.beforeTileFailure, map = document.querySelector('.leaflet-container')
+        return before.map === map && getComputedStyle(map).backgroundColor === 'rgb(22, 19, 13)'
+          && before.paths.length >= 2 && before.paths.some(p => p.node.getAttribute('fill') === 'none')
+          && before.paths.some(p => p.node.getAttribute('fill') !== 'none')
+          && before.paths.every(({ node, d }) => node.isConnected && node.getAttribute('d') === d && node.getBoundingClientRect().width > 0)
+          && before.recorded === localStorage.getItem('forged_hybrid_active_run_v1')
+      }), true, `${kind}: map, route geometry, markers and recorded truth survive one bad tile`)
+      for (const overlay of await page.locator('.leaflet-overlay-pane path').all()) await expect(overlay).toBeVisible()
+      const indicator = await page.getByTestId('forge-map').getByRole('status').boundingBox()
+      assert.ok(indicator.width <= width - 64 && indicator.height <= 48)
+      await attribution()
+      await page.getByTestId('forge-map').screenshot({ path: path.join(artifactDir, `${kind}-${width}-single-bad-tile.png`) })
     }
   }
-  console.log('PASS all four real consumers: fixed HTTPS outdoors tiles, exact attribution/hrefs, unobscured 320/393px screenshots')
+  console.log('PASS all four real consumers at 320/393px: success and single-bad-tile preserve exact map/route/marker nodes on plain background, exact visible attribution/hrefs, bounded indicator and screenshots')
   for (const kind of kinds) {
     for (const bad of [{}, { THUNDERFOREST_API_KEY: '' }, { THUNDERFOREST_API_KEY: ' ' }, { THUNDERFOREST_API_KEY: 'bad&host=evil' }, null]) {
       config = bad; tileRequests = []
@@ -213,7 +251,8 @@ try {
     configStatus = 200; config = { THUNDERFOREST_API_KEY: 'F' + key.slice(1) }; tileFailure = true
     await mount(kind)
     await expect(page.getByTestId('forge-map').getByRole('status')).toHaveText('Map unavailable.')
-    await expect(page.locator('.leaflet-container')).toHaveCount(0)
+    await expect(page.locator('.leaflet-container')).toBeVisible()
+    await expect(page.locator('.leaflet-tile-pane img')).toHaveCount(0)
     await attribution()
   }
   console.log('PASS each surface: absent/blank/malformed/config failure and provider tile failure close without fallback')

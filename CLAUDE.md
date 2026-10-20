@@ -220,12 +220,36 @@ values become 60 seconds. No automatic timer initiates another request. Other
 instances may finish attempts already reserved before a 429, within the same
 conservative budgets. Stable 429 responses expose no global or other-user totals.
 
-The legacy elevation-route service still uses `OPENROUTESERVICE_API_KEY` and is
-outside this new boundary. Quota protection here covers this endpoint only:
-release must ensure the new key/account's quota is not also consumed by legacy
-services or external callers. Railway credential presence is reported context,
-not independently verified here; never retrieve keys for QA. Deterministic gates
-use synthetic sentinels and mocked ORS only:
+### Remy P2/P3 remediation — t_fd6b89ea (local candidate)
+
+Starting SHA `0ba2329e185685057f2ad64f05b636c1a209c0e5`; base
+`1b80ccc41b97de8f45698eb1ee69fb6dbe2f2ec4`. Legacy `/api/routes/generate`
+and `/api/routes/search-start` now use the same `ors_planning_global` and
+owner-scoped user ledger as planned legs. Generate reserves exactly three units
+in one all-or-nothing transaction, including accepted legacy cache hits; geocoding
+reserves one. Planned-leg cache hits remain free. All four limits, UTC buckets,
+DB clock, backwards-clock checks, migration marker and account-deletion behavior
+are unchanged. No second ledger or schema change. The legacy in-process limiter
+remains an extra throttle, never quota authority. Legacy credentials remain
+`OPENROUTESERVICE_API_KEY`; safety no longer depends on separate provider accounts.
+
+Legacy calls require an authenticated owner and reserve before upstream work.
+Every candidate checks the persisted cooldown before its fixed-host request;
+redirects are disabled. A 429 persists bounded Retry-After before body parsing,
+and takes precedence over successful sibling candidates. Already-reserved work
+may finish; no retries or automatic fallback. Committed units survive every
+failure. Unknown ledger state fails closed, and provider/SQL error text is not
+logged or sent to clients. Legacy cache keys now include the authenticated owner.
+Unrelated external consumers of the provider account remain outside this ledger.
+
+Thunderforest failure removes only the TileLayer. The same MapContainer,
+recorded/planned polylines and markers remain mounted over a plain background,
+with a bounded non-blocking indicator. The exact attribution text and two links
+remain visible. Missing runtime configuration still shows the unavailable state
+without making tile requests. No public OSM fallback, proxy, service-worker tile
+cache, prefetch or referrer-policy change. Recorded activity truth is untouched.
+
+Local deterministic gates (all exit 0):
 
 ```sh
 node backend/test/plannedLeg.smoke.js
@@ -233,14 +257,47 @@ node backend/test/plannedLeg.smoke.js --postgres
 node backend/scripts/route-engine-smoke.js
 node backend/test/authMutationGuard.smoke.js
 node backend/scripts/check-account-data-coverage.js
+node backend/test/planningMutationRoutes.smoke.js
+node backend/test/planningPlanRoutes.smoke.js
+node backend/test/planningRevisionConcurrency.smoke.js
+node backend/test/accountDeletionAtomicity.smoke.js
+node backend/test/accountReceiptCoverage.smoke.js
+node frontend/test/routePlannerData.smoke.mjs
+PLAYWRIGHT_BROWSERS_PATH=/Users/zordon/Library/Caches/ms-playwright node frontend/test/mapTiles.smoke.mjs
 git diff --check
 ```
 
-The PostgreSQL mode creates/stops/deletes a disposable local Unix-socket cluster;
-it requires local initdb/pg_ctl and shared-memory permission. No production DB,
-provider request, frontend/native change, release or independent QA is claimed.
-This ten-path candidate includes auth-boundary and schema changes for independent
-review; Phase 1 Thunderforest attribution and tile failure behavior are unchanged.
+SQLite: 12 groups, including actual 380 planned legs + 1,140 legacy directions
++ 380 geocodes = 1,900 attempted units; the last geocode's malformed 429 counts.
+Per-user/global boundaries, three-unit rejection rollback, cache ownership/cost,
+timeouts/errors, actual legacy HTTP/auth/redaction, missing state/backwards clock
+and shared cooldown are covered. Real disposable PostgreSQL: three groups,
+including concurrent one/three-unit writers, full mixed 1,900 attempts and a
+stopped/restarted local server retaining counters/cache/cooldown. Synthetic
+credentials and intercepted providers only; zero live provider requests.
+
+Browser gate: actual four consumers at 320/393 px, one simulated image error
+preserving exact DOM map/SVG nodes and geometry, visible route/marker overlays,
+plain background, exact attribution/links, and missing/bad keys. Screenshots in
+`frontend/test-results/map-tiles/` (ignored). The gate builds fresh with the normal
+Vite config imported directly, an empty temporary envDir, isolated output and
+source maps. All assets/source maps/responses are sentinel-scanned. Leaflet's
+source-map documentation example is excluded only from the no-OSM-URL assertion;
+executable assets and application mapped sources remain checked, and no mapped
+content is exempt from credential scans.
+
+Verification hiccups: sandbox blocked PostgreSQL shared memory and browser
+loopback listening; authorized expanded local permissions recovered both gates.
+Vite's initial config bundling attempted a write into shared read-only dependency
+storage; direct config import avoids that write. The first expanded map scan
+flagged Leaflet's documentation example; inspection established its origin and
+the assertion was scoped as above. Existing Browserslist age warning remains.
+
+Eight changed paths, including this document and three test files. This exceeds
+two paths and touches authenticated quota enforcement; no schema, dependencies,
+lockfiles, native code, recorded evidence or production data changes. No auxiliary
+reviewer, Hermes/Kanban action, provider/production access, push, release or deploy.
+Independent exact-SHA QA/review and release remain Hermes-owned.
 
 ## What This App Is
 

@@ -35,11 +35,10 @@ export default function ForgeMap({ children, style, ...mapProps }) {
   return (
     <div data-testid="forge-map" data-map-state={url && !failed ? 'ready' : resolved || failed ? 'unavailable' : 'loading'} style={{ ...style, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <div style={{ flex: '1 1 0', minHeight: 0, position: 'relative' }}>
-        {url && !failed ? (
-          // Leaflet 1.9's zoom-transition timer survives remove(). A failed tile
-          // can unmount during fitBounds; avoid a callback into a removed pane.
-          <MapContainer {...mapProps} zoomAnimation={false} attributionControl={false} style={{ height: '100%', width: '100%' }}>
-            <TileLayer url={url} maxZoom={22} eventHandlers={{ tileerror: () => setFailed(true) }} />
+        {url ? (
+          // Keep the map and all recorded/planned overlays mounted on tile failure.
+          <MapContainer {...mapProps} zoomAnimation={false} attributionControl={false} style={{ height: '100%', width: '100%', background: '#16130D' }}>
+            {!failed && <TileLayer url={url} maxZoom={22} eventHandlers={{ tileerror: () => setFailed(true) }} />}
             {children}
           </MapContainer>
         ) : (
@@ -47,6 +46,7 @@ export default function ForgeMap({ children, style, ...mapProps }) {
             Map unavailable.
           </div>
         )}
+        {url && failed && <div role="status" style={{ position: 'absolute', top: 8, right: 8, maxWidth: 'calc(100% - 64px)', zIndex: 600, pointerEvents: 'none', background: '#16130D', color: '#FFF6DC', padding: '4px 8px', fontSize: 12, borderRadius: 4 }}>Map unavailable.</div>}
       </div>
       <div data-testid="map-attribution" style={{ flex: '0 0 auto', position: 'relative', zIndex: 600, padding: '4px 8px', background: '#FFFFFF', color: '#202020', fontSize: 12, lineHeight: '18px', textAlign: 'center', overflowWrap: 'anywhere' }}>
         Maps © <a href="https://www.thunderforest.com/" target="_blank" rel="noopener noreferrer" style={{ color: '#155078', textDecoration: 'underline' }}>Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" style={{ color: '#155078', textDecoration: 'underline' }}>OpenStreetMap contributors</a>
