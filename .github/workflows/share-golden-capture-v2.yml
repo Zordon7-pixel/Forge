@@ -1,6 +1,9 @@
 name: Share golden capture v2 (temporary)
 
 on:
+  push:
+    branches:
+      - codex/t_e510d614-pr-hybrid-wiring
   workflow_dispatch:
 
 permissions:
