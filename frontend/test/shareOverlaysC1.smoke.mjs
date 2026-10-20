@@ -94,7 +94,7 @@ await check('offline draw capture: every optional chip, PR delta and hybrid stat
   assert.doesNotMatch(captured('iron-chips', noLifts).text, /TOP LIFTS/)
   const full = captured('strike-pr', pr)
   const reduced = captured('strike-pr', { ...pr, pr: { ...pr.pr, delta: null } })
-  assert.match(full.text, /-31 seconds vs prev best/)
+  assert.match(full.text, /-0:31 vs prev best/)
   assert.doesNotMatch(reduced.text, /vs prev best/)
   assert.ok(reduced.texts.find(item => item.value.includes('STRUCK WHILE HOT')).y < full.texts.find(item => item.value.includes('STRUCK WHILE HOT')).y)
   for (const [block, keys] of [['stats', ['totalTime', 'calories']], ['run', ['distance', 'pace', 'time']], ['lift', ['volume', 'sets', 'time', 'topLifts']]]) {

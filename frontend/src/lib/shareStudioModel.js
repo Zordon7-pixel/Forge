@@ -1,4 +1,4 @@
-import { fromRun } from './shareStats.js'
+import { fromRun, fromStrength, fromHybrid, fromPr, prDisplay } from './shareStats.js'
 
 // Export boundary: retain display fields only, never copy symbols, descriptors,
 // raw activity records, HR zones, identity fields or source metadata.
@@ -20,7 +20,7 @@ export function rendererModel(model, showRoute) {
     handle: typeof handle === 'string' && /^@[a-z0-9_.-]+$/i.test(handle) && !/forgedhybrid/i.test(handle) ? handle : null,
     unit: model?.unit === 'km' ? 'km' : 'mi', stats,
     hero: stats.find(item => item.key === model?.hero?.key) || null,
-    pr: model?.pr ? { label: displayText(model.pr.label), value: typeof model.pr.value === 'number' && Number.isFinite(model.pr.value) ? model.pr.value : displayText(model.pr.value), unit: displayText(model.pr.unit), delta: typeof model.pr.delta === 'number' && Number.isFinite(model.pr.delta) ? model.pr.delta : displayText(model.pr.delta) } : null,
+    pr: prDisplay(model?.pr),
   }
   if (model?.run) {
     clean.run = { stats: statsFor(model.run.stats), route: null, elevationProfile: null }
@@ -56,11 +56,35 @@ export function sharePreferences(preferences = {}, alternateTimezone) {
   }
 }
 
-export function studioModel({ run, model, prefs, showRoute, title }) {
+// Context is served only after authenticating and resolving the exact owned run.
+// Recheck linkage/ownership here so stale or mixed responses cannot decorate it.
+export function activityShareModels(run, context, prefs, showRoute) {
+  if (typeof showRoute !== 'boolean') throw new TypeError('showRoute must be a boolean')
+  const preferences = sharePreferences(prefs)
+  let runShare = fromRun(run, preferences, { showRoute })
+  const valid = run?.id && context?.run_id === run.id && context.user_id
+    && (!run.user_id || run.user_id === context.user_id) && context.local_date === runShare.dateLabel
+  if (!valid) return { run: runShare, hybrid: null }
+  const owned = rows => (Array.isArray(rows) ? rows : []).filter(row => row?.user_id === context.user_id)
+  for (const row of owned(context.prs)) {
+    const candidate = fromPr(row, runShare)
+    if (candidate.pr) { runShare = candidate; break }
+  }
+  // Choose one actual completed session deterministically, never sum unrelated
+  // sessions or repeat whole-workout metrics from legacy exercise rows.
+  const candidates = owned(context.sessions).filter(session => session.ended_at)
+    .map(session => fromStrength(session, owned(context.sets).filter(set => set.session_id === session.id), preferences))
+  candidates.push(...owned(context.lifts).map(lift => fromStrength(lift, [lift], preferences)))
+  const hybrid = candidates.map(lift => fromHybrid(runShare, lift, { showRoute })).find(Boolean) || null
+  return { run: runShare, hybrid }
+}
+
+export function studioModel({ run, model, prefs, showRoute, title, context, hybrid = false }) {
   if (typeof showRoute !== 'boolean') throw new TypeError('showRoute must be a boolean')
   // Released A takes an options object; its showRoute FIELD is strictly boolean.
   // A bare false argument is not its contract and would keep geometry enabled.
-  const source = model || fromRun(run, sharePreferences(prefs), { showRoute })
+  const activities = model ? null : activityShareModels(run, context, prefs, showRoute)
+  const source = model || (hybrid && activities.hybrid) || activities.run
   const safe = rendererModel(source, showRoute)
   const customTitle = displayText(title)
   if (customTitle) safe.title = customTitle.slice(0, 48)

@@ -6,7 +6,7 @@ import { createActionSingleFlight } from '../lib/actionSingleFlight'
 import { unreadableActivitySharePhotoMessage, validateActivitySharePhoto } from '../lib/activitySharePhoto'
 import { SIZES, loadShareFonts } from '../lib/shareTheme'
 import { TEMPLATES, drawShareCard, titleForModel, drawBrand, roundRect } from '../lib/shareTemplates'
-import { studioModel, sharePreferences } from '../lib/shareStudioModel'
+import { studioModel, sharePreferences, activityShareModels } from '../lib/shareStudioModel'
 import PhotoLibraryService from '../services/PhotoLibraryService'
 
 const CARD_WIDTH = SIZES.feed.w
@@ -210,6 +210,8 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   const [showRoute, setShowRoute] = useState(true)
   const [preferences, setPreferences] = useState(() => sharePreferences(prefs))
   const [preferencesReady, setPreferencesReady] = useState(Boolean(model || prefs))
+  const [activityContext, setActivityContext] = useState(null)
+  const [hybridSelected, setHybridSelected] = useState(false)
   const [renderReady, setRenderReady] = useState(false)
   const renderPromiseRef = useRef(null)
   const renderVersionRef = useRef(0)
@@ -220,7 +222,8 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [posted, setPosted] = useState(false)
-  const cardModel = useMemo(() => studioModel({ run, model, prefs: preferences, showRoute, title: cardTitle }), [run, model, preferences, showRoute, cardTitle])
+  const activities = useMemo(() => model ? null : activityShareModels(run, activityContext, preferences, showRoute), [run, model, activityContext, preferences, showRoute])
+  const cardModel = useMemo(() => studioModel({ run, model, prefs: preferences, showRoute, title: cardTitle, context: activityContext, hybrid: hybridSelected }), [run, model, preferences, showRoute, cardTitle, activityContext, hybridSelected])
   const availableTemplates = TEMPLATES.filter(item => item.supports(cardModel) && item.sizes.includes(size))
   const transparent = template === 'overlay'
   const fileType = transparent ? 'image/png' : 'image/jpeg'
@@ -251,6 +254,22 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
     })
     return () => { cancelled = true }
   }, [model, prefs])
+
+  const activityDay = activities?.run.dateLabel
+  useEffect(() => {
+    let cancelled = false
+    setActivityContext(null)
+    setHybridSelected(false)
+    if (model || !run?.id || !activityDay || !preferencesReady) return
+    api.get(`/runs/${encodeURIComponent(run.id)}/share-context`, { params: { local_date: activityDay } })
+      .then(response => { if (!cancelled) setActivityContext(response.data) })
+      .catch(error => {
+        if (cancelled) return
+        console.warn('[ActivityShareStudio] linked activities unavailable:', error?.message || error)
+        setStatus('Linked PRs and same-day lifts could not be loaded. You can still share this run.')
+      })
+    return () => { cancelled = true }
+  }, [model, run?.id, activityDay, preferencesReady])
 
   const invalidateRender = () => {
     // Invalidate synchronously, including two input/action events in one tick.
@@ -578,6 +597,12 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
           data-testid="share-studio-scrollport"
           style={{ WebkitOverflowScrolling: 'touch', paddingBottom: 'max(2rem, env(safe-area-inset-bottom, 0px))' }}
         >
+
+        {activities?.hybrid && <button type="button" disabled={busy} aria-pressed={hybridSelected}
+          className="pressable mb-3 min-h-10 rounded-lg px-3 text-sm font-bold"
+          onClick={() => { invalidateRender(); setHybridSelected(!hybridSelected); setTemplate(hybridSelected ? 'route' : 'hybrid-split'); setCardTitle(''); setPosted(false); setStatus('') }}>
+          {hybridSelected ? 'Share run only' : 'Share run + lift'}
+        </button>}
 
         <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
           {availableTemplates.map((item) => (

@@ -241,14 +241,36 @@ export function fromHybrid(runShare, liftShare, options = { showRoute: true }) {
     runIds: Array.from(run.runIds, id).filter(Boolean), liftIds: Array.from(lift.liftIds, id).filter(Boolean) })
 }
 
+// personal_records uses seconds for time_pr; run pace records use min/mi
+// (decimal minutes), and distance/strength records retain their own units.
+export function prDisplay(prRow) {
+  const label = text(prRow?.label), unit = text(prRow?.unit)
+  let value = positive(prRow?.value)
+  let delta = number(prRow?.delta) ?? text(prRow?.delta)
+  if (!label || !unit) return null
+  // Already formatted adapter output may pass through the export boundary again.
+  if (['mm:ss', 'h:mm:ss'].includes(unit)) {
+    const pattern = unit === 'mm:ss' ? /^[0-5]\d:[0-5]\d$/ : /^[1-9]\d*:[0-5]\d:[0-5]\d$/
+    return typeof prRow.value === 'string' && pattern.test(prRow.value) && prRow.value !== '00:00'
+      ? { label, value: prRow.value, unit, delta } : null
+  }
+  if (value === null) return null
+  if (unit === 'seconds') {
+    const seconds = Math.round(value)
+    if (!Number.isSafeInteger(seconds) || seconds <= 0) return null
+    value = duration(seconds).padStart(5, '0')
+    if (typeof delta === 'number') delta = delta === 0 ? null : `${delta < 0 ? '-' : '+'}${duration(Math.abs(delta))}`
+    return { label, value, unit: seconds < 3600 ? 'mm:ss' : 'h:mm:ss', delta }
+  }
+  return { label, value, unit, delta }
+}
+
 export function fromPr(prRow, activity) {
   if (!activity) return null
   const source = activity[META]
   const linked = source && ((id(prRow?.run_id) && source.runIds.includes(id(prRow.run_id)))
     || (id(prRow?.lift_id) && source.liftIds.includes(id(prRow.lift_id))))
-  const label = text(prRow?.label), value = positive(prRow?.value), unit = text(prRow?.unit)
-  const delta = number(prRow?.delta) ?? text(prRow?.delta)
-  const pr = linked && label && value && unit ? { label, value, unit, delta } : null
+  const pr = linked ? prDisplay(prRow) : null
   // Spread intentionally omits metadata; explicitly restore its descriptors.
   return Object.defineProperties({ ...activity, pr }, Object.fromEntries(
     Reflect.ownKeys(activity).filter(key => !Object.getOwnPropertyDescriptor(activity, key).enumerable)

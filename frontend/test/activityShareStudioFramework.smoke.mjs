@@ -68,6 +68,8 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router';
 import Studio, { canvasBlob, cardDataForPost, resizedCanvas, shareSummaryCard } from '/src/components/ActivityShareStudio.jsx';
+import RunDetailModal from '/src/components/RunDetailModal.jsx';
+import { UnitsProvider } from '/src/context/UnitsContext.jsx';
 import { TEMPLATES, drawShareCard } from '/src/lib/shareTemplates.js';
 import { studioModel, rendererModel, sharePreferences } from '/src/lib/shareStudioModel.js';
 import { loadShareFonts } from '/src/lib/shareTheme.js';
@@ -79,6 +81,8 @@ const run = ${JSON.stringify(run)};
 const prefs = ${JSON.stringify(prefs)};
 window.harness = { run, prefs, TEMPLATES, drawShareCard, canvasBlob, cardDataForPost, resizedCanvas, shareSummaryCard, studioModel, rendererModel, sharePreferences, loadShareFonts, PhotoLibraryService };
 window.openStudio = (props = {}) => root.render(React.createElement(MemoryRouter, {key: ++key}, React.createElement(Studio, { run, prefs, ...props, onClose: () => root.render(null) })));
+window.openRunDetail = (activity = run) => root.render(React.createElement(MemoryRouter, {key: ++key}, React.createElement(UnitsProvider, null,
+  React.createElement(RunDetailModal, { run: activity, activePanel: 'media', onClose: () => root.render(null) }))));
 window.openStudio();
 `
 // Resolve Tailwind relative to the frontend even when the gate starts at repo root.
@@ -104,11 +108,18 @@ try {
   const errors = [], unexpected = []
   page.on('pageerror', error => errors.push(error.message))
   const apiPosts = []
+  let shareContext = { prs: [], sessions: [], sets: [], lifts: [] }
+  const contextReads = []
   await page.route('**/*', async route => {
     const url = new URL(route.request().url())
     if (url.hostname !== '127.0.0.1') { unexpected.push(url.origin); return route.abort() }
     if (url.pathname === '/api/auth/me') return route.fulfill({ json: { user: { friend_handle: 'self', units: 'metric' } } })
     if (url.pathname === '/api/users/settings') return route.fulfill({ json: { units: 'metric', timezone: 'invalid/timezone' } })
+    if (/^\/api\/runs\/[^/]+\/share-context$/.test(url.pathname)) {
+      const data = { run_id: decodeURIComponent(url.pathname.split('/')[3]), user_id: 'share-owner', local_date: url.searchParams.get('local_date'), ...shareContext }
+      contextReads.push(data)
+      return route.fulfill({ json: data })
+    }
     if (url.pathname === '/api/social/activity-posts') {
       apiPosts.push(route.request().postDataJSON()); return route.fulfill({ json: { ok: true } })
     }
@@ -374,6 +385,85 @@ try {
     })
     assert.deepEqual(result, { share: { method: 'share' }, dimensions: [1080, 1350], type: 'image/jpeg', download: { method: 'download' }, filename: 'forged-hybrid-score.jpg' })
   })
+  const linkedPr = { id: 'linked-pr', user_id: 'share-owner', run_id: run.id, category: 'time_pr', label: 'Time PR: 5K', value: 2678, unit: 'seconds' }
+  const sameDaySession = { id: 'same-day-session', user_id: 'share-owner', started_at: '2026-10-19T06:30:00Z', ended_at: '2026-10-19T06:50:00Z', total_seconds: 1200 }
+  const sameDaySets = [{ id: 'same-day-set', user_id: 'share-owner', session_id: sameDaySession.id, set_number: 1, exercise_name: 'Front Squat', reps: 5, weight_lbs: 100 }]
+  const enterFromRun = async data => {
+    shareContext = data
+    const previous = contextReads.length
+    await page.evaluate(activity => window.openRunDetail(activity), { ...run, user_id: 'share-owner', type: 'easy' })
+    await page.getByRole('button', { name: 'Share run recap', exact: true }).click()
+    await expect.poll(() => contextReads.length).toBeGreaterThan(previous)
+    await ready()
+    assert.equal(contextReads.at(-1).run_id, run.id)
+    assert.equal(contextReads.at(-1).local_date, '2026-10-18', 'invalid preference falls back to LA device day')
+    await expect(page.getByRole('checkbox', { name: 'Show route' })).toBeChecked()
+  }
+  for (const [id, label, hybrid] of [['strike-pr', 'Strike PR', false], ['hybrid-split', 'Hybrid Split', true]]) {
+    await check(`real RunDetail entry: ${label}, 3 themes × 2 sizes, preview/export equality and route OFF/ON`, async () => {
+      await enterFromRun({ prs: [linkedPr], sessions: [sameDaySession], sets: sameDaySets, lifts: [] })
+      if (hybrid) {
+        await page.getByRole('button', { name: 'Share run + lift', exact: true }).click()
+        await expect(page.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'true')
+        await expect(page.getByRole('button', { name: 'Post to Forged Hybrid', exact: true })).toBeDisabled()
+      }
+      await page.getByRole('button', { name: label, exact: true }).click()
+      for (const theme of ['light', 'dark', 'color']) for (const size of ['Feed', 'Story']) {
+        await page.getByRole('radio', { name: theme, exact: true }).check()
+        await page.getByRole('radio', { name: size, exact: true }).check()
+        for (const showRoute of [false, true]) {
+          await page.getByRole('checkbox', { name: 'Show route' }).setChecked(showRoute)
+          const file = await share()
+          assert.deepEqual([file.width, file.height, file.type], [1080, size === 'Feed' ? 1350 : 1920, 'image/jpeg'])
+          assert.equal(file.name, `forged-hybrid-${hybrid ? 'hybrid' : 'run'}-2026-10-18-${size.toLowerCase()}.jpg`)
+          assert.equal(file.leaked, false)
+          const evidence = await page.evaluate(async ({ id, theme, size, hybrid, showRoute, context }) => {
+            const h = window.harness, logo = new Image(); logo.src = '/icon-192.png'; await logo.decode()
+            const model = h.studioModel({ run: h.run, context, prefs: { units: 'metric', timezone: 'America/Los_Angeles', friend_handle: 'self' }, hybrid, showRoute })
+            const reference = document.createElement('canvas')
+            await h.drawShareCard(reference, model, { template: id, theme, size: size.toLowerCase(), logo, showRoute })
+            const expected = new Uint8Array(await (await h.canvasBlob(reference, 'image/jpeg', 0.92)).arrayBuffer())
+            const actual = new Uint8Array(await window.shared.at(-1).files[0].arrayBuffer())
+            return { previewMatches: document.querySelector('canvas[aria-label="Share card preview"]').toDataURL() === reference.toDataURL(),
+              exportMatches: actual.length === expected.length && actual.every((byte, i) => byte === expected[i]),
+              text: window.records.get(reference).filter(record => record.text).map(record => record.text).join('\n'),
+              privateModel: !showRoute && /route_coords|40\.7128123|74\.0060456|123\.456789/.test(JSON.stringify(model)) }
+          }, { id, theme, size, hybrid, showRoute, context: contextReads.at(-1) })
+          assert.equal(evidence.previewMatches, true)
+          assert.equal(evidence.exportMatches, true)
+          assert.equal(evidence.privateModel, false)
+          assert.match(evidence.text, hybrid ? /Front Squat/ : /44:38/)
+          assert.match(evidence.text, /@self/)
+          assert.doesNotMatch(evidence.text, /2678|NaN|NOT SHARED/)
+        }
+      }
+      if (hybrid) {
+        await page.getByRole('button', { name: 'Share run only', exact: true }).click()
+        await expect(page.getByRole('button', { name: 'Hybrid Split', exact: true })).toHaveCount(0)
+      }
+    })
+  }
+  await check('real entry negatives: plain/run-only, unrelated/foreign/invalid PR, nonmatching or empty lift; no fabricated hybrid', async () => {
+    for (const data of [
+      { prs: [], sessions: [], sets: [], lifts: [] },
+      { prs: [{ ...linkedPr, run_id: 'another-run' }], sessions: [], sets: [], lifts: [] },
+      { prs: [{ ...linkedPr, user_id: 'foreign' }], sessions: [], sets: [], lifts: [] },
+      { prs: [{ ...linkedPr, value: 0 }], sessions: [], sets: [], lifts: [] },
+      { prs: [], sessions: [{ ...sameDaySession, started_at: '2026-10-19T07:00:00Z' }], sets: sameDaySets, lifts: [] },
+      { prs: [], sessions: [{ ...sameDaySession, total_seconds: null }], sets: [], lifts: [] },
+    ]) {
+      await enterFromRun(data)
+      await expect(page.getByRole('button', { name: 'Iron Chips', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Strike PR', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Share run + lift', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Hybrid Split', exact: true })).toHaveCount(0)
+    }
+    // The real run-detail media entry is absent on a lift-only activity.
+    await page.evaluate(activity => window.openRunDetail(activity), { id: 'lift-only', type: 'strength', date: '2026-10-18' })
+    await expect(page.getByRole('button', { name: 'Share run recap', exact: true })).toHaveCount(0)
+    await expect(page.getByLabel('Share card preview')).toHaveCount(0)
+    await enterFromRun({ prs: [], sessions: [], sets: [], lifts: [] })
+  })
   await page.screenshot({ path: `${artifactDir}/studio-story.png`, fullPage: true })
   await check('no runtime errors or external map/tile requests', () => { assert.deepEqual(errors, []); assert.deepEqual(unexpected, []) })
   await context.close()
@@ -393,5 +483,5 @@ try {
     assert.deepEqual(await page.evaluate(async () => { const bitmap = await createImageBitmap(window.files[0]); return [bitmap.width, bitmap.height] }), [1080, 1350])
     await context.close()
   })
-  console.log(`ACTIVITY SHARE STUDIO FRAMEWORK OK (${passed} groups, 36 UI matrix exports; 0 failed)`)
+  console.log(`ACTIVITY SHARE STUDIO FRAMEWORK OK (${passed} groups, 36 legacy + 24 actual-entry UI matrix exports; 0 failed)`)
 } finally { await browser?.close(); await server.close() }

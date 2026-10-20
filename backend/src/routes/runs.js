@@ -696,6 +696,36 @@ router.get('/age-graded-performance', auth, async (req, res) => {
   }
 });
 
+// Display-only share inputs. The client applies the same adapter local-day rules
+// as the preview; the three-day window includes UTC instants across day boundaries.
+router.get('/:id/share-context', auth, async (req, res) => {
+  const day = req.query.local_date;
+  const instant = typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day)
+    ? new Date(`${day}T12:00:00Z`) : null;
+  if (!instant || !Number.isFinite(instant.getTime()) || instant.toISOString().slice(0, 10) !== day) {
+    return res.status(400).json({ error: 'A valid activity local_date is required' });
+  }
+  const start = new Date(instant.getTime() - 86400000).toISOString().slice(0, 10);
+  const end = new Date(instant.getTime() + 2 * 86400000).toISOString().slice(0, 10);
+  try {
+    const run = await dbGet('SELECT id, user_id, type, watch_activity_type, watch_normalized_type FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    if (!run || !isRunActivity(run)) return res.status(404).json({ error: 'Run not found' });
+    const [prs, sessions, sets, lifts] = await Promise.all([
+      dbAll('SELECT id, user_id, category, label, value, unit, run_id, lift_id FROM personal_records WHERE run_id=? AND user_id=? ORDER BY category, label, id', [run.id, req.user.id]),
+      dbAll('SELECT id, user_id, started_at, ended_at, total_seconds, calories_burned FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL AND started_at>=? AND started_at<? ORDER BY started_at, id', [req.user.id, start, end]),
+      dbAll(`SELECT s.id, s.user_id, s.session_id, s.set_number, s.exercise_name, s.reps, s.weight_lbs
+        FROM workout_sets s JOIN workout_sessions w ON w.id=s.session_id
+        WHERE s.user_id=? AND w.user_id=? AND w.ended_at IS NOT NULL AND w.started_at>=? AND w.started_at<?
+        ORDER BY s.session_id, s.set_number, s.id`, [req.user.id, req.user.id, start, end]),
+      dbAll('SELECT id, user_id, date, exercise_name, sets, reps, weight_lbs, workout_duration_seconds, calories, avg_heart_rate FROM lifts WHERE user_id=? AND date>=? AND date<? ORDER BY date, id', [req.user.id, start, end]),
+    ]);
+    res.json({ run_id: run.id, user_id: req.user.id, local_date: day, prs, sessions, sets, lifts });
+  } catch (err) {
+    console.error('[runs/share-context] fetch failed:', err.message);
+    res.status(500).json({ error: 'Could not load share activities' });
+  }
+});
+
 router.get('/:id', auth, async (req, res) => {
   try {
     const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
