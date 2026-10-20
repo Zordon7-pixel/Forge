@@ -5,6 +5,85 @@
 
 ---
 
+## Private route editor — t_0f9a44da Phase 1B (patched; uncommitted)
+
+Session checkpoint `0c5b580ccf4f2c0c8be79edf52878e6e7dd7ddc2`, original
+reviewed base `07c356d8a4b5bd43bf213089b54ff59e47642eaf`. Train/RunHub links to
+protected `/run/routes`; the existing five-tab shell is unchanged. New editor,
+private paginated library, authenticated CRUD/GPX, and focused tests only.
+`ForgeMap`, backend contracts/security/quota code and ActiveRun are unchanged.
+
+The isolated planned-course engine debounces the next unaccepted waypoint for
+300 ms, normalizes ordered cache endpoints to five decimal places, coalesces
+in-flight duplicates, and keeps at most 64 responses for ten minutes per editor
+session. Auth changes/unmount abort API work and dispose geometry/cache; generation
+tokens fence undo, clear, mode/profile changes, newer waypoints and late failures.
+There is no automatic retry or straight-line fallback. ORS distance is retained;
+only explicitly straight legs use geometry distance. Disconnected snapped leg
+geometry is rejected rather than joined with an invented connector. The user can
+undo or explicitly choose a different/manual segment. Mode/profile apply to new
+legs. Close loop requests only the final leg; out-and-back mirrors accepted
+geometry and provenance, with an explicit return-access caveat.
+
+Current location is an explicit one-shot request with a 12-second timeout;
+failure leaves long-press and keyboard map-center start available. The initial
+world view is labeled as not the user's location. Elevation uses only adjacent
+finite supplied heights; missing/partial coverage remains visible and persists.
+Target halfway is located only within accumulated actual planned geometry, with
+no extrapolation or navigation claim. All draft data is memory-only.
+
+**Known contract limitation, not full editor acceptance:** Phase 1A persists total
+distance, but not each leg's distance. A loaded route is therefore a protected
+base with its exact saved total. Appending, close-loop, out-and-back, rename,
+target changes, update and undo of edits since load work. Undo cannot remove
+individual legs of that saved base. Clear starts a new route. Full loaded-leg
+undo needs a separately authorized per-leg-distance contract; estimating routed
+leg distances or silently rerouting the base would break this session's rules.
+This limitation was disclosed during implementation; no approval was inferred.
+
+Local gates (synthetic data; no live ORS or tile traffic):
+- `node frontend/test/manualRouteBuilder.smoke.mjs`: 15 groups, exit 0, including
+  real backend payload-validator round trips, stale success/failure, cache bounds,
+  geometry joins, distance/elevation, target, and loaded-base behavior.
+- `node frontend/test/routePlannerData.smoke.mjs`: exit 0.
+- `PLAYWRIGHT_BROWSERS_PATH=/Users/zordon/Library/Caches/ms-playwright node frontend/test/manualRoutesBrowser.smoke.mjs`:
+  focused actual-component browser smoke, exit 0. Covers 320/393 px overflow,
+  44px buttons, location success/denial/long-press, mode labels, walking/hiking success and ORS failure, CRUD/GPX,
+  corrupt load, auth clearing, missing/bad tiles and exact attribution. This is
+  not full-SPA Playwright, native VoiceOver, or physical-iPhone acceptance.
+- Normal Vite production build via `build()` with the unchanged imported
+  `frontend/vite.config.js`, `configFile:false`, empty temporary `envDir`, and
+  temporary output: exit 0. No network/build-time credential reads.
+- `git diff --check`: exit 0. Nine intended changed paths relative to checkpoint.
+
+Logs: `/tmp/t_0f9a44da-phase1b-{state,existing,browser,build}.log`.
+Screenshots from the final focused layout check:
+`/var/folders/vs/k_12m6m53nvb9149x1zqrf0h0000gn/T/forge-manual-routes-cpKDUm/manual-{320,393}.png`.
+Verification hiccups were reported as they occurred: stalled rg searches (stopped,
+bounded reads used), batch-tool negotiation timeout, initial float endpoint test
+failure (exact vertex preserved), absent frontend dependencies, sandbox loopback
+EPERM (expanded local-only execution), intermittent map taps, and the map-control
+CSS collision found in screenshot review. A pointer trace proved Leaflet focus
+scrolled the map between pointerdown and pointerup; editor-local preventScroll
+focus fixes that tap loss. Long-press suppression, native map control click
+propagation and bottom placement are now covered. The first file audit also
+found the dependency symlink was not ignored; it was removed after verification. Existing stale
+Browserslist, large-chunk and test-cache Babel notices remain. An initial harness
+Tailwind cwd warning was resolved by running from the frontend root.
+
+A temporary `frontend/node_modules` symlink reused canonical installed packages
+and was removed after the final gates;
+no installs/downloads or manifest/lock changes. That installation has 16 package
+version differences from this lock, including Axios and Capacitor, so exact-lock
+host QA remains required. Full version comparison was performed read-only.
+
+Phase 1C must add the saved planned overlay handoff, preserve `[lon,lat]` to
+`[lat,lon]` conversion and all 10,000 planned vertices (ActiveRun currently slices
+planned input to 800), and prove separation from sampled coordinates/route truth,
+runs/history/evidence and training counts with full Playwright/host QA. Flag this
+nine-path scope for independent review. No commit, messages, Kanban, review request,
+push, merge, deploy, restart, native/provider/settings or production actions.
+
 ## Private saved route builder — t_0f9a44da Phase 1A (patched; uncommitted)
 
 Base `07c356d8a4b5bd43bf213089b54ff59e47642eaf`. Backend foundation only:
