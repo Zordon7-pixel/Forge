@@ -258,8 +258,10 @@ export const C1_TEMPLATES = Object.freeze(definitions.map(([id, label, supports,
     ctx.save()
     try {
       ctx.clearRect(0, 0, dimensions.w, dimensions.h)
-      ctx.fillStyle = tokens.background; ctx.fillRect(0, 0, dimensions.w, dimensions.h)
       if (photo) {
+        // Bare C1 designs are overlays. Only a selected photo gets an opaque
+        // backing, including photos whose own pixels contain transparency.
+        ctx.fillStyle = tokens.background; ctx.fillRect(0, 0, dimensions.w, dimensions.h)
         const scale = Math.max(dimensions.w / photo.width, dimensions.h / photo.height)
         ctx.drawImage(photo, (dimensions.w - photo.width * scale) / 2, (dimensions.h - photo.height * scale) / 2, photo.width * scale, photo.height * scale)
         ctx.fillStyle = alpha(tokens.background, theme === 'light' ? 0.28 : 0.4)

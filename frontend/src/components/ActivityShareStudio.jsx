@@ -226,7 +226,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   const cardModel = useMemo(() => studioModel({ run, model, prefs: preferences, showRoute, title: cardTitle, context: activityContext, hybrid: hybridSelected }), [run, model, preferences, showRoute, cardTitle, activityContext, hybridSelected])
   const availableTemplates = availableShareTemplates(cardModel, { showRoute, size })
   const template = resolveShareTemplate(cardModel, { template: requestedTemplate, showRoute, size })
-  const transparent = false
+  const transparent = template !== 'full-bleed-story' && !photoUrl
   const fileType = transparent ? 'image/png' : 'image/jpeg'
   const fileExtension = transparent ? 'png' : 'jpg'
   const filename = `forged-hybrid-${cardModel.kind}-${cardModel.dateLabel || 'activity'}-${size}.${fileExtension}`

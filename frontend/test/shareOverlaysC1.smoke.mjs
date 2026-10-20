@@ -232,10 +232,19 @@ try {
       const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data
       let transparent = 0
       for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 255) transparent++
+      const corners = [0, canvas.width - 1, canvas.width * (canvas.height - 1), canvas.width * canvas.height - 1]
+        .map(index => pixels[index * 4 + 3])
       const blob = await new Promise(resolve => canvas.toBlob(resolve, withPhoto ? 'image/jpeg' : 'image/png', 0.95))
       const decoded = await createImageBitmap(blob)
+      const exportedCanvas = document.createElement('canvas')
+      exportedCanvas.width = decoded.width; exportedCanvas.height = decoded.height
+      const exportedContext = exportedCanvas.getContext('2d')
+      exportedContext.drawImage(decoded, 0, 0)
+      const exportedPixels = exportedContext.getImageData(0, 0, decoded.width, decoded.height).data
+      let alphaMismatches = 0
+      for (let i = 3; i < pixels.length; i += 4) if (pixels[i] !== exportedPixels[i]) alphaMismatches++
       const exported = { type: blob.type, width: decoded.width, height: decoded.height }; decoded.close()
-      return { calls, plates, transparent, exported, width: canvas.width, height: canvas.height, png: canvas.toDataURL('image/png').split(',')[1] }
+      return { calls, plates, transparent, corners, alphaMismatches, exported, width: canvas.width, height: canvas.height, png: canvas.toDataURL('image/png').split(',')[1] }
     }
     window.compare = async (actual, expected, size) => {
       const decode = async data => {
@@ -366,6 +375,27 @@ try {
     for (const value of ['--', '0:00', 'NaN', 'undefined', 'null', 'NOT SHARED', '']) {
       const model = { ...run, stats: [{ key: 'time', label: 'Time', value }] }
       assert.equal(entryFor('iron-chips').supports(model), false)
+    }
+  })
+  await check('bare overlay canvas/PNG alpha and opaque photo composites across every design/theme/size', async () => {
+    const evidence = []
+    for (const id of [...ids, 'full-bleed-story']) for (const theme of themes) for (const size of sizes) {
+      const model = fixtures[id] || gpsRun
+      const bare = await render(id, model, theme, size, false, false)
+      const photo = await render(id, model, theme, size, true, false)
+      const row = { id, theme, size, transparent: bare.transparent, corners: bare.corners,
+        pngAlphaMismatches: bare.alphaMismatches, photoTransparent: photo.transparent,
+        jpegAlphaMismatches: photo.alphaMismatches, photoSha256: sha256(Buffer.from(photo.png, 'base64')) }
+      console.log(`ALPHA ${JSON.stringify(row)}`)
+      evidence.push(row)
+    }
+    for (const row of evidence) {
+      const label = `${row.id}/${row.theme}/${row.size}`
+      assert.deepEqual(row.corners, Array(4).fill(row.id === 'full-bleed-story' ? 255 : 0), `${label}: untouched background corners`)
+      assert.equal(row.transparent > 0, row.id !== 'full-bleed-story', `${label}: bare overlay retains alpha`)
+      assert.equal(row.pngAlphaMismatches, 0, `${label}: PNG preserves every canvas alpha byte`)
+      assert.equal(row.photoTransparent, 0, `${label}: photo composite is opaque`)
+      assert.equal(row.jpegAlphaMismatches, 0, `${label}: JPEG composite is opaque`)
     }
   })
   const pending = new Map()

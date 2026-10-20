@@ -265,10 +265,11 @@ try {
         await expect(page.getByRole('radio', { name: size, exact: true })).toBeChecked()
         await expect(page.getByRole('checkbox', { name: 'Show route' })).not.toBeChecked()
         const file = await share()
+        const transparent = id !== 'full-bleed-story'
         assert.deepEqual([file.width, file.height], [1080, size === 'Feed' ? 1350 : 1920])
-        assert.equal(file.type, 'image/jpeg')
-        assert.equal(file.alpha, false)
-        assert.equal(file.name, `forged-hybrid-${model.kind}-2026-10-18-${size.toLowerCase()}.jpg`)
+        assert.equal(file.type, transparent ? 'image/png' : 'image/jpeg')
+        assert.equal(file.alpha, transparent)
+        assert.equal(file.name, `forged-hybrid-${model.kind}-2026-10-18-${size.toLowerCase()}.${transparent ? 'png' : 'jpg'}`)
         assert.equal(file.leaked, false)
         const evidence = await page.evaluate(async ({ id, theme, size, model }) => {
           const h = window.harness, logo = new Image(); logo.src = '/icon-192.png'; await logo.decode()
@@ -441,6 +442,43 @@ try {
       }
     }
   })
+  await check('transparent File photo makes every design opaque; reopening restores bare overlay PNG alpha', async () => {
+    const photoData = await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 48
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = 'rgb(30,100,170)'; ctx.fillRect(0, 0, 16, 48)
+      return canvas.toDataURL().split(',')[1]
+    })
+    for (const [id, label, model] of templates) {
+      await reopen({ run: undefined, model })
+      await page.getByRole('radio', { name: label, exact: true }).click()
+      await ready()
+      const bare = await preview.evaluate(canvas => canvas.toDataURL())
+      const chooser = page.waitForEvent('filechooser')
+      await page.getByTestId('photo-control-picker').click()
+      await (await chooser).setFiles({ name: 'half-transparent.png', mimeType: 'image/png', buffer: Buffer.from(photoData, 'base64') })
+      await expect(page.getByText('Photo selected: half-transparent.png.', { exact: true })).toBeVisible()
+      // Choosing a photo requests Full-Bleed. Select the intended design again
+      // so this regression exercises each C1 composite as well as Full-Bleed.
+      await page.getByRole('radio', { name: label, exact: true }).click()
+      await expect(page.getByRole('radio', { name: label, exact: true })).toHaveAttribute('aria-checked', 'true')
+      const file = await share()
+      assert.equal(file.type, 'image/jpeg'); assert.equal(file.alpha, false)
+      const composite = await preview.evaluate(canvas => {
+        const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
+        let transparent = 0
+        for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 255) transparent++
+        return { transparent, png: canvas.toDataURL() }
+      })
+      assert.equal(composite.transparent, 0, `${id}: even transparent photos have opaque backing`)
+      assert.notEqual(composite.png, bare, `${id}: selected user photo affects preview`)
+      await reopen({ run: undefined, model })
+      await page.getByRole('radio', { name: label, exact: true }).click()
+      const restored = await share()
+      assert.equal(restored.type, id === 'full-bleed-story' ? 'image/jpeg' : 'image/png')
+      assert.equal(restored.alpha, id !== 'full-bleed-story')
+      assert.equal(await preview.evaluate(canvas => canvas.toDataURL()), bare)
+    }
+  })
   await check('local File picker → Full-Bleed preview/export: run/lift × 3 themes × 2 sizes × route ON/OFF', async () => {
     const photoData = await page.evaluate(() => {
       const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 48
@@ -544,15 +582,15 @@ try {
         for (const showRoute of [false, true]) {
           await page.getByRole('checkbox', { name: 'Show route' }).setChecked(showRoute)
           const file = await share()
-          assert.deepEqual([file.width, file.height, file.type], [1080, size === 'Feed' ? 1350 : 1920, 'image/jpeg'])
-          assert.equal(file.name, `forged-hybrid-${hybrid ? 'hybrid' : 'run'}-2026-10-18-${size.toLowerCase()}.jpg`)
+          assert.deepEqual([file.width, file.height, file.type, file.alpha], [1080, size === 'Feed' ? 1350 : 1920, 'image/png', true])
+          assert.equal(file.name, `forged-hybrid-${hybrid ? 'hybrid' : 'run'}-2026-10-18-${size.toLowerCase()}.png`)
           assert.equal(file.leaked, false)
           const evidence = await page.evaluate(async ({ id, theme, size, hybrid, showRoute, context }) => {
             const h = window.harness, logo = new Image(); logo.src = '/icon-192.png'; await logo.decode()
             const model = h.studioModel({ run: h.run, context, prefs: { units: 'metric', timezone: 'America/Los_Angeles', friend_handle: 'self' }, hybrid, showRoute })
             const reference = document.createElement('canvas')
             await h.drawShareCard(reference, model, { template: id, theme, size: size.toLowerCase(), logo, showRoute })
-            const expected = new Uint8Array(await (await h.canvasBlob(reference, 'image/jpeg', 0.92)).arrayBuffer())
+            const expected = new Uint8Array(await (await h.canvasBlob(reference, 'image/png')).arrayBuffer())
             const actual = new Uint8Array(await window.shared.at(-1).files[0].arrayBuffer())
             return { previewMatches: document.querySelector('canvas[aria-label="Share card preview"]').toDataURL() === reference.toDataURL(),
               exportMatches: actual.length === expected.length && actual.every((byte, i) => byte === expected[i]),

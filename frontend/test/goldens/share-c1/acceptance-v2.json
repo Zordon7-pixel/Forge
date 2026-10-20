@@ -35,13 +35,13 @@
   },
   "fingerprints": {
     "sources": {
-      "frontend/src/lib/shareOverlaysC1.js": "05acc0939afa78faa52678236c21d969fa20028fb070b999ea285abb0e946b1d",
+      "frontend/src/lib/shareOverlaysC1.js": "4e7fe063cf003adef45160ea79443c42be9f52e1af14c88d1824d77d31031852",
       "frontend/src/lib/shareFullBleed.js": "2db87a82ef05199c40cbc8ed1e0bc7a5cfc28d1e8e28dd7d90f07339e3637885",
       "frontend/src/lib/shareTheme.js": "4a402f8feb990e86b656aebd66ac189ae5638ca1a2b87d969c0739d64afa88ca",
       "frontend/src/lib/shareTemplates.js": "40603f82d9b44a0ecedda97f769d2f574e052dcc47fda0645777f09cd00516c6",
       "frontend/src/lib/shareStats.js": "d0d19d7c7b86993f5f83a68a2d21e376edd6aae0d54630a59c02bd8dba740015",
       "frontend/src/lib/shareStudioModel.js": "a104ccb545da2932988bdb1dd2ff4a9d4cbcd93a9e0fa74a12ca07061a5382d0",
-      "frontend/src/components/ActivityShareStudio.jsx": "f54ec9f4f1aa4e6056076369fa08dc1e6e382041ab1eebdc733ddf7c8363fbe7",
+      "frontend/src/components/ActivityShareStudio.jsx": "96130c746dec0f81f61d1461f80aba5d443b5708c76348de7e3e8f7a11e9330f",
       "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
       "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
       ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347",
@@ -49,11 +49,11 @@
       "frontend/src/assets/share-fonts/BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
       "frontend/src/assets/share-fonts/BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
       "frontend/src/assets/share-fonts/JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
-      "frontend/test/shareOverlaysC1.smoke.mjs": "4e1509249f4c6c69867465ba9afaf859aa9799b6126ba49dcaaa1024675a4310",
+      "frontend/test/shareOverlaysC1.smoke.mjs": "ae22a659f63fcd758cef5f6646207843897045bd34487a6c46a8c55473cb8618",
       "frontend/test/shareGoldenProvenance.mjs": "1205f4dea770257d1412a30c4009aac30c80cc1b2a5437a4a0a6e4e0ddc59503"
     },
     "fixtureSourceSha256": "39a6c54daa021b8fe2f9b6f1d70afbb4ccf83e56868df1351bec28883674fcf4",
-    "renderSourceSha256": "4e8218c3469330c573f91778fa8cc58660918f205c706ebee132027fe282a2a8"
+    "renderSourceSha256": "a7c0029a2cb052e7537dcb898e0e610357d0452d2d16fe00f19e7bdabbb7b96f"
   },
   "platforms": {
     "darwin-arm64": null,

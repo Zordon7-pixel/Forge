@@ -5,6 +5,57 @@
 
 ---
 
+## Share alpha remediation — t_e510d614 (patched; uncommitted)
+
+Base `00e1864bd0fc2a7c8b4068279f92be8e2f359699`. The actual darwin-arm64
+batch-1 generator reproduced the alpha assertion failure (exit 1, zero writes).
+C1's shared draw wrapper cleared then unconditionally filled the entire canvas
+with an opaque theme background. Real Chromium output confirmed all 18 bare C1
+variants had zero nonopaque pixels and alpha 255 at all four corners. A second
+defect was Studio's hardcoded `transparent=false`, which forced JPEG on Share,
+Save and social-post encoding even with a transparent renderer.
+
+C1 now applies its opaque backing only when a photo is selected. Studio selects
+PNG for bare C1 designs and JPEG for photo composites/Full-Bleed. Full-Bleed's
+renderer is unchanged. The new canvas/decoded-PNG alpha regression fails before
+the renderer patch; the actual UI PNG assertion independently fails before the
+Studio patch. After repair, all 18 bare C1 variants have transparent corners,
+725730–2006432 nonopaque pixels, and zero decoded-PNG alpha-byte mismatches.
+All 24 diagnostic photo PNG SHA256s are identical before/after. This is renderer
+evidence, not visual golden approval. Half-transparent real File inputs also
+exercise opaque backing for all four explicitly selected designs; reopening
+restores the bare output. The picker intentionally requests Full-Bleed after a
+photo selection, so the regression reselects each C1 design before checking it.
+
+Commands use `PLAYWRIGHT_BROWSERS_PATH=/Users/zordon/Library/Caches/ms-playwright`
+for Chromium. Raw logs are `/tmp/t_e510d614-alpha-*.log`:
+- `node frontend/test/shareOverlaysC1.smoke.mjs --smoke`: before exit 1;
+  after exit 0, 11 groups, all 18 C1 + 24 Full-Bleed cases.
+- `node frontend/test/activityShareStudioFramework.smoke.mjs`: before exit 1
+  (JPEG instead of PNG); final exit 0, 26 groups, exact export bytes/privacy,
+  PR/hybrid entry and photo controls. The first new photo test was strengthened
+  to explicitly reselect the intended design; the final rerun includes that fix.
+- `node frontend/test/{shareReleaseTemplates,activityShareEntry,shareStats,
+  activityShareStudioPhaseC,activityShareStudioSingleFlight,shareGoldenProvenance}.smoke.mjs`
+  (six separate commands): all exit 0; provenance retains 88 rejection cases.
+- `node frontend/test/shareGoldenProvenance.mjs --prepare`: exit 0; generated
+  pending lock/pin only, both platform receipts null. No digest was hand-edited.
+- Normal Vite API build from `frontend`, empty envDir
+  `/tmp/t_e510d614-alpha-no-env`, output `/tmp/t_e510d614-alpha-build`: exit 0.
+  Existing Browserslist age/large-chunk warnings remain; dependencies unchanged.
+- `git diff --check`: exit 0.
+
+Seven repository paths: two product files, two browser test files, generated
+acceptance-v2 JSON/SHA256, and this document. Zero golden PNGs or generation
+receipts written. Batch 1 alone writes ten paths and requires a clean checkpoint;
+rerunning it after this uncommitted repair would violate this session's path
+budget/clean-generation guard. No guard bypass, batch 2, Linux artifact, review,
+commit, push, merge, deployment or handoff message. Actual Mac/Linux captures,
+pixel approval and final exact-SHA QA remain pending. The original alpha assertion,
+42-case matrix, <=0.1% tolerance, exact four IDs and all privacy/wiring contracts
+remain. Trace/Forged Days excluded. This seven-path change must be flagged in the
+eventual review packet; no auth/evidence/production-data mutation is involved.
+
 ## Share Studio batch 4 — t_e510d614 (patched; host verification pending)
 
 Base: `1a89d2939bb34ea7489f2fd74799bc728a1525ea`. Host QA's first
