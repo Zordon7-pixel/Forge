@@ -53,7 +53,6 @@ app.use(cors({
 // Stripe webhooks require the raw request body for signature verification.
 app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
-app.use(express.json({ limit: '10mb' }));
 app.use(helmet({
   contentSecurityPolicy: {
     reportOnly: true,
@@ -70,6 +69,10 @@ app.use(helmet({
     },
   },
 }));
+
+// Planning has its own authenticated 1 KiB parser before the general parser.
+app.use('/api/route-planning', require('./routes/routePlanning'));
+app.use(express.json({ limit: '10mb' }));
 
 // Service-worker API caches must partition authenticated responses by bearer token.
 app.use('/api', (_req, res, next) => {

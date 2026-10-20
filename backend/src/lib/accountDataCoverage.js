@@ -1,4 +1,6 @@
 const ACCOUNT_EXPORT_TABLES = [
+  { key: 'ors_planning_cache', table: 'ors_planning_cache', orderBy: 'created_ms DESC, cache_key ASC' },
+  { key: 'ors_planning_users', table: 'ors_planning_users', orderBy: 'user_id ASC' },
   { key: 'runs', table: 'runs', orderBy: 'COALESCE(date, created_at) DESC' },
   { key: 'run_import_tombstones', table: 'run_import_tombstones', orderBy: 'created_at DESC' },
   { key: 'activity_import_claims', table: 'activity_import_claims', orderBy: 'created_at DESC' },
@@ -87,6 +89,8 @@ const ACCOUNT_SOCIAL_DELETE_QUERIES = [
 ];
 
 const ACCOUNT_DELETE_QUERIES = [
+  ['DELETE FROM ors_planning_cache WHERE user_id = ?', [0]],
+  ['DELETE FROM ors_planning_users WHERE user_id = ?', [0]],
   ['DELETE FROM password_reset_tokens WHERE user_id = ?', [0]],
   ['DELETE FROM push_subscriptions WHERE user_id = ?', [0]],
   ['DELETE FROM user_notifications WHERE user_id = ?', [0]],

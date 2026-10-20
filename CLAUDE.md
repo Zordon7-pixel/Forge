@@ -165,6 +165,83 @@ untouched. At this base LogLift uses `/workouts/start` then ActiveWorkout's
 `/:id/end`, not the completed-log POST. Gates: `strengthLogAcquisition.smoke.js`,
 `logLiftSaveFlow.smoke.mjs`, `activeWorkoutMobile.smoke.mjs`.
 
+## ORS one-leg planning — t_fd6b89ea Phase 2 (local candidate)
+
+`POST /api/route-planning/leg` uses existing bearer authentication and accepts only
+`{profile, points}`: profile `foot-walking` or `foot-hiking`, exactly two ordered
+`[longitude, latitude]` pairs of finite JSON numbers within geographic bounds.
+Unknown fields/options and query parameters are rejected. The authenticated JSON
+parser rejects compressed bodies and bodies over 1 KiB. Coordinates normalize via
+`Number(value.toFixed(5))` before hashing and routing; negative zero becomes zero.
+V1 has no client options; fixed `instructions=false`, `elevation=false` and the
+contract version participate in the owner/profile/ordered-points SHA-256 key.
+
+`ORS_API_KEY` is server-only and has no example value. Missing, blank or malformed
+keys disable this endpoint, including cached responses. Valid credentials travel
+only in the Authorization header to the fixed
+`https://api.heigit.org/openrouteservice/v2/directions/{profile}/geojson` endpoint.
+See the [official directions response contract](https://giscience.github.io/openrouteservice/api-reference/endpoints/directions/requests-and-return-types).
+Redirects, retries and automatic provider/straight-line fallbacks are disabled.
+The 8-second abort/deadline covers headers and body; streamed JSON is capped at
+512 KiB and geometry at 10,000 two-dimensional points. Responses contain only
+`leg: {profile, geometry, distanceMeters, durationSeconds}` and `status.cache`,
+or a stable error code plus a bounded integer Retry-After when applicable.
+Responses are private/no-store; request coordinates, keys and upstream/SQL errors
+are never logged by this boundary. Explicit straight-line mode remains a future
+client choice. Planned geometry never updates recorded runs, ActiveRun samples,
+route integrity, workout evidence or canonical route truth.
+
+Database `clock_timestamp()` supplies the clock in PostgreSQL; SQLite adapters
+use UTC epoch milliseconds. Buckets are `floor(epochMs/86400000)` (00:00 UTC daily)
+and `floor(epochMs/60000)` (UTC minute), independent of host/user timezone. Before
+each upstream attempt, one owner-guarded transaction locks the global singleton,
+checks all four limits, and commits both global and user counters atomically:
+1,900/day + 35/minute globally; 100/day + 10/minute per user. This leaves headroom
+of 100/day and 5/minute under the stated 2,000/day and 40/minute provider caps.
+Reservation failures/unknown state fail closed; every committed reservation
+counts even on timeout, 429, invalid credential, provider/body/cache-write failure
+or an interrupted process. Cache hits reserve nothing, including at exhausted
+limits. Rolling windows are not used. A backwards bucket clock fails closed.
+
+The same DB lock bounds the private persistent cache to 10,000 entries. Entries
+expire exactly 24 hours after insertion; expired entries are removed on writes,
+then oldest creation time/owner/hash wins deterministic eviction. Per-process
+in-flight duplicates coalesce; different processes may each make a budgeted miss.
+Cache and user counters survive process/database restart, are owner-scoped and
+participate in account export/deletion; the global counter is never reset by an
+account deletion. Fresh/upgrade DDL is additive, and a transactional migration
+marker seeds the global row only once. Missing/corrupt budget state after that
+requires operator repair; startup never silently replenishes it. Do not drop or
+reseed these tables during an active quota window.
+
+429 handling persists a service-wide cooldown across instances/restarts. Valid
+integer or IMF-fixdate Retry-After values become 60–86,400 seconds; absent/invalid
+values become 60 seconds. No automatic timer initiates another request. Other
+instances may finish attempts already reserved before a 429, within the same
+conservative budgets. Stable 429 responses expose no global or other-user totals.
+
+The legacy elevation-route service still uses `OPENROUTESERVICE_API_KEY` and is
+outside this new boundary. Quota protection here covers this endpoint only:
+release must ensure the new key/account's quota is not also consumed by legacy
+services or external callers. Railway credential presence is reported context,
+not independently verified here; never retrieve keys for QA. Deterministic gates
+use synthetic sentinels and mocked ORS only:
+
+```sh
+node backend/test/plannedLeg.smoke.js
+node backend/test/plannedLeg.smoke.js --postgres
+node backend/scripts/route-engine-smoke.js
+node backend/test/authMutationGuard.smoke.js
+node backend/scripts/check-account-data-coverage.js
+git diff --check
+```
+
+The PostgreSQL mode creates/stops/deletes a disposable local Unix-socket cluster;
+it requires local initdb/pg_ctl and shared-memory permission. No production DB,
+provider request, frontend/native change, release or independent QA is claimed.
+This ten-path candidate includes auth-boundary and schema changes for independent
+review; Phase 1 Thunderforest attribution and tile failure behavior are unchanged.
+
 ## What This App Is
 
 Forge is a coaching app for **hybrid runners/lifters** — people balancing running, strength work, readiness, and recovery. Do not position it as a generic athlete tracker.
