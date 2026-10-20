@@ -391,20 +391,29 @@ try {
     const evidence = await page.evaluate(async () => {
       const h = window.harness, result = []
       for (const key of ['distance', 'time', 'pace', 'avgHr', 'elevation', 'calories']) {
-        const model = h.studioModel({ run: h.run, prefs: h.prefs, showRoute: false })
+        // Avoid title/unit collisions while retaining the broad missing-label oracle.
+        const model = h.studioModel({ run: { ...h.run, name: 'Morning workout' }, prefs: h.prefs, showRoute: false })
+        const complete = structuredClone(model)
         model.stats = model.stats.filter(item => item.key !== key)
         model.run.stats = model.stats
         if (model.hero?.key === key) model.hero = null
         for (const entry of h.TEMPLATES.filter(entry => ['iron-chips', 'full-bleed-story'].includes(entry.id))) {
           const canvas = document.createElement('canvas')
           await h.drawShareCard(canvas, model, { template: entry.id, theme: 'dark', size: 'feed', showRoute: false })
-          result.push({ key, id: entry.id, text: window.records.get(canvas).filter(r => r.text).map(r => r.text).join('') })
+          const text = window.records.get(canvas).filter(r => r.text).map(r => r.text).join('\n')
+          const fullCanvas = document.createElement('canvas')
+          await h.drawShareCard(fullCanvas, complete, { template: entry.id, theme: 'dark', size: 'feed', showRoute: false })
+          const present = window.records.get(fullCanvas).filter(r => r.text).map(r => r.text).join('\n')
+          result.push({ key, id: entry.id, text, present })
         }
       }
       return result
     })
-    const labels = { distance: /DISTANCE|MILES|KILOMETERS/, time: /TIME/, pace: /PACE/, avgHr: /AVG HR/, elevation: /ELEVATION/, calories: /CALORIES/ }
-    for (const { key, id, text } of evidence) assert.doesNotMatch(text, labels[key], `${id}/${key}`)
+    const labels = { distance: /DISTANCE|MILES|KILOMETERS|^(?:MI|KM)$/m, time: /TIME/, pace: /PACE/, avgHr: /AVG HR/, elevation: /ELEVATION/, calories: /CALORIES/ }
+    for (const { key, id, text, present } of evidence) {
+      assert.match(present, labels[key], `${id}/${key}: positive control must expose the label/unit`)
+      assert.doesNotMatch(text, labels[key], `${id}/${key}`)
+    }
   })
   await check('model prop preserves display and sanitizes private/hidden route input', async () => {
     await page.evaluate(() => {

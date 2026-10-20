@@ -1,0 +1,62 @@
+{
+  "schema": "share-goldens-v2",
+  "state": "pending",
+  "runtime": {
+    "browser": "chromium",
+    "version": "151.0.7922.34",
+    "playwright": "1.62.1",
+    "playwrightCore": "1.62.1",
+    "browsers": [
+      {
+        "name": "chromium",
+        "revision": "1234",
+        "version": "151.0.7922.34"
+      },
+      {
+        "name": "chromium-headless-shell",
+        "revision": "1234",
+        "version": "151.0.7922.34"
+      }
+    ],
+    "args": [
+      "--font-render-hinting=none",
+      "--disable-lcd-text"
+    ],
+    "context": {
+      "viewport": {
+        "width": 1080,
+        "height": 1920
+      },
+      "deviceScaleFactor": 1,
+      "locale": "en-US",
+      "timezoneId": "UTC",
+      "serviceWorkers": "block"
+    }
+  },
+  "fingerprints": {
+    "sources": {
+      "frontend/src/lib/shareOverlaysC1.js": "fb59e8872f8fe2c0f837cfbed9354afaf2a0c0311837d32b8f986c192f7e16a4",
+      "frontend/src/lib/shareOverlaysC2.js": "b6fcb113326702f1909cb9a1c14369f7d495fe0806708267d5f20f14c6ebcc55",
+      "frontend/src/lib/shareTheme.js": "4a402f8feb990e86b656aebd66ac189ae5638ca1a2b87d969c0739d64afa88ca",
+      "frontend/src/lib/shareTemplates.js": "b72ff5de14147e457de9a78ce19f6ff85f8e944c7dde7b9f09de0423de78aac3",
+      "frontend/src/lib/shareStats.js": "a625b7dc65a1ed20d30d715717b1843a259bb566deedfb8d160854701ead3073",
+      "frontend/src/lib/shareStudioModel.js": "9067b4ed79230c0a78a84f7d2fe820341c8e94a605b17c8698a17bd623ec0d9d",
+      "frontend/src/components/ActivityShareStudio.jsx": "afff0fc0efb8dec93de6f801bb50b92aadcc06ad7eea7a50dd795d66e459b939",
+      "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
+      "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
+      ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347",
+      "frontend/src/assets/share-fonts/Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+      "frontend/src/assets/share-fonts/BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+      "frontend/src/assets/share-fonts/BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+      "frontend/src/assets/share-fonts/JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+      "frontend/test/shareOverlaysC1.smoke.mjs": "f13706d8826e882bb7725fef3c79b13bf95b604ebe4878c307527ad74f40fd50",
+      "frontend/test/shareGoldenProvenance.mjs": "2ae0532c96fa5bc2cf0cd35ee013ef599ee912f7fa1265ff67bb0e5dccb1bb67"
+    },
+    "fixtureSourceSha256": "7744333f3d7d27844d747d758ba93861a103cdca0724970fbb35b51f12176e1e",
+    "renderSourceSha256": "463bc100f4598fe838773c287072044d8b18b4d209dd27d3859a006df5033cac"
+  },
+  "platforms": {
+    "darwin-arm64": null,
+    "linux-x64": null
+  }
+}
