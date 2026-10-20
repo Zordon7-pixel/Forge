@@ -85,10 +85,12 @@ window.openRunDetail = (activity = run) => root.render(React.createElement(Memor
   React.createElement(RunDetailModal, { run: activity, activePanel: 'media', onClose: () => root.render(null) }))));
 window.openStudio();
 `
+// RunDetail statically imports react-leaflet. With noDiscovery, its Leaflet UMD
+// dependency must be prebundled or the entire entry fails linking before mount.
 // Resolve Tailwind relative to the frontend even when the gate starts at repo root.
 process.chdir(root)
 const server = await createServer({ root, configFile: false, envDir: `${artifactDir}/no-env`,
-  cacheDir: `${artifactDir}/vite-cache`, optimizeDeps: { noDiscovery: true, include: ['react', 'react-dom/client', 'react/jsx-runtime', 'react-router', 'lucide-react', 'axios', '@capacitor/core'] }, plugins: [react({ exclude: /node_modules|test-results/ }), {
+  cacheDir: `${artifactDir}/vite-cache`, optimizeDeps: { noDiscovery: true, include: ['react', 'react-dom/client', 'react/jsx-runtime', 'react-router', 'react-leaflet', 'leaflet', 'lucide-react', 'axios', '@capacitor/core'] }, plugins: [react({ exclude: /node_modules|test-results/ }), {
     name: 'share-framework-harness', configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         if (req.url === '/share-test') {
@@ -106,7 +108,8 @@ try {
   const context = await browser.newContext({ viewport: { width: 393, height: 874 }, timezoneId: 'America/Los_Angeles', serviceWorkers: 'block' })
   const page = await context.newPage()
   const errors = [], unexpected = []
-  page.on('pageerror', error => errors.push(error.message))
+  page.on('pageerror', error => { errors.push(error.message); console.error('BROWSER PAGE ERROR:', error.stack || error.message) })
+  page.on('console', message => { if (message.type() === 'error') { errors.push(message.text()); console.error('BROWSER CONSOLE ERROR:', message.text()) } })
   const apiPosts = []
   let shareContext = { prs: [], sessions: [], sets: [], lifts: [] }
   const contextReads = []
@@ -156,7 +159,14 @@ try {
   })
   await page.goto(`http://127.0.0.1:${address.port}/share-test`)
   const preview = page.getByLabel('Share card preview')
-  const ready = () => expect(preview).toHaveAttribute('aria-busy', 'false')
+  const ready = async () => {
+    try { await expect(preview).toHaveAttribute('aria-busy', 'false') }
+    catch (error) {
+      console.error('PREVIEW FAILURE:', JSON.stringify({ errors, unexpected, body: await page.locator('body').innerText() }))
+      await page.screenshot({ path: `${artifactDir}/preview-failure.png`, fullPage: true })
+      throw error
+    }
+  }
   const reopen = async props => { await page.evaluate(props => window.openStudio(props), props); await ready() }
   const share = async () => {
     await ready()

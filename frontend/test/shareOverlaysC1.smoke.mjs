@@ -1,32 +1,25 @@
-// C1 only. No Trace/Full-Bleed coverage is claimed here.
-// --smoke: filtering + 18 in-memory renders; NEVER reads/writes golden PNGs.
-// Default: same gates plus mandatory pixel comparisons (missing goldens FAIL).
-// Explicit local --update=<overlay> writes six PNGs in the selected platform only.
-// It never updates approved provenance/hashes: independent review is still required.
-// --compare=<overlay>: read-only comparison of that overlay's six goldens.
+// C1+Full-Bleed canonical acceptance (42 cases per actual platform). See SHARE-GOLDENS.md.
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync, existsSync, realpathSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
-import { createServer } from 'vite'
-import { chromium } from '@playwright/test'
+import { join, resolve, relative, isAbsolute } from 'node:path'
 import { fromRun, fromStrength, fromHybrid, fromPr } from '../src/lib/shareStats.js'
 import { rendererModel } from '../src/lib/shareStudioModel.js'
 import { C1_TEMPLATES } from '../src/lib/shareOverlaysC1.js'
 import { SIZES } from '../src/lib/shareTheme.js'
 
+import { matrix, parseOptions, readLock, validateProvenance, validateBaselines, goldenRoot, directories,
+  receiptPath, newReceipt, validateReceipt, pngRecord, assembleCandidate, sha256 } from './shareGoldenProvenance.mjs'
 const ids = ['iron-chips', 'strike-pr', 'hybrid-split']
-const args = process.argv.slice(2), smoke = args.includes('--smoke'), filterOnly = args.includes('--filter-only')
-const update = args.find(arg => arg.startsWith('--update='))?.split('=')[1]
-const compare = args.find(arg => arg.startsWith('--compare='))?.split('=')[1]
-assert.ok(args.length <= 1 && args.every(arg => arg === '--smoke' || arg === '--filter-only' || /^--(?:update|compare)=(iron-chips|strike-pr|hybrid-split)$/.test(arg)), 'Use --filter-only, --smoke, one --update=<overlay>, one --compare=<overlay>, or no args for golden comparison')
+const options = parseOptions(process.argv.slice(2))
+const { mode, key: platformKey, selected, batch } = options
+const smoke = mode === 'smoke', filterOnly = mode === 'filter-only', update = ['update', 'capture'].includes(mode)
 const themes = ['light', 'dark', 'color'], sizes = ['feed', 'story']
-const matrix = ids.flatMap(id => themes.flatMap(theme => sizes.map(size => ({ id, theme, size, name: `${id}-${theme}-${size}.png` }))))
-assert.equal(matrix.length, 18)
-assert.equal(new Set(matrix.map(item => item.name)).size, 18)
+assert.equal(matrix.length, 42)
+assert.equal(new Set(matrix.map(item => item.name)).size, 42)
 const prefs = { friend_handle: 'abc', distance_unit: 'mi', timezone: 'America/New_York' }
 // Independent, production-shaped test records, never copied preview statistics.
 // Adapters derive every display value (including pace, volume and top lifts).
@@ -39,7 +32,13 @@ const lift = fromStrength({ started_at: '2026-10-18', total_seconds: 2526, calor
 ], prefs)
 const hybrid = fromHybrid(run, lift, { showRoute: false })
 const pr = fromPr({ run_id: 'c1-run', label: 'Fastest 5 mile', value: 2678, unit: 'seconds', delta: -31 }, run)
-const fixtures = { 'iron-chips': lift, 'strike-pr': pr, 'hybrid-split': hybrid }
+// Keep all C1 fixture inputs intact, including the seconds PR now formatted by the adapter.
+const gpsRun = fromRun({ id: 'photo-run', name: 'Morning workout', date: '2026-10-18', distance_miles: 5.25,
+  duration_seconds: 2835, elevation_gain: 96, calories: 476, avg_heart_rate: 147,
+  route_coords: [[40.7128123, -74.0060456, 123.456789], [40.7138123, -74.0070456, 124.456789], [40.715, -74.006, 126]],
+}, prefs, { showRoute: true })
+const fixtures = { 'iron-chips': lift, 'strike-pr': pr, 'hybrid-split': hybrid, 'photo-run': gpsRun, 'photo-lift': lift }
+
 const entryFor = id => C1_TEMPLATES.find(entry => entry.id === id)
 let passed = 0
 async function check(name, work) { await work(); passed++; console.log(`PASS ${name}`) }
@@ -119,60 +118,41 @@ await check('offline draw capture: every optional chip, PR delta and hybrid stat
   for (const value of ['--', '0:00', 'NaN', 'undefined', 'null', 'NOT SHARED', '']) assert.equal(entryFor('iron-chips').supports({ ...run, stats: [{ key: 'time', label: 'Time', value }] }), false)
 })
 if (filterOnly) {
-  console.log(`C1 FILTERING OK (${passed} groups; 18-case manifest validated). Browser/pixels/goldens NOT RUN.`)
+  console.log(`C1 FILTERING OK (${passed} groups; 42-case manifest validated). Browser/pixels/goldens NOT RUN.`)
   process.exit(0)
 }
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const goldenRoot = fileURLToPath(new URL('./goldens/share-c1/', import.meta.url))
-const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
-const launchArgs = ['--font-render-hinting=none', '--disable-lcd-text']
-const contextOptions = { viewport: { width: 1080, height: 1920 }, deviceScaleFactor: 1, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block' }
-const approved = JSON.parse(readFileSync(join(goldenRoot, 'linux-diagnosis.json'), 'utf8')).acceptance
-// Pins the reviewed manifest, including both 18-file sets; changing metadata alone cannot bless pixels.
-const approvedDigest = '163576ddfcfb80ed114e3baa3d41c27541d0d8d63340236538e0f538cbee3216'
-function selectBaseline(platform, arch) {
-  const key = `${platform}-${arch}`
-  assert.ok(['darwin-arm64', 'linux-x64'].includes(key), `Unsupported C1 platform: ${key}`)
-  return key
+const approved = readLock()
+validateProvenance(approved, approved.runtime)
+if (mode === 'candidate') {
+  const path = resolve(options.candidate), rel = relative(join(root, '..'), path)
+  assert.ok(isAbsolute(options.candidate) && rel.startsWith('..' + '/') && !existsSync(path), 'Candidate output must be a new absolute path outside the repository')
+  const candidate = assembleCandidate(approved), bytes = JSON.stringify(candidate, null, 2) + '\n'
+  writeFileSync(path, bytes, { flag: 'wx' })
+  console.log(`CANDIDATE ONLY ${path} sha256=${sha256(bytes)}; compare/review both platforms before pinning acceptance`)
+  process.exit(0)
 }
-function validateProvenance(manifest, runtime, read = readFileSync) {
-  assert.equal(sha256(JSON.stringify(manifest)), approvedDigest, 'Unapproved C1 provenance')
-  assert.deepEqual(runtime, manifest.runtime, 'C1 browser/Playwright/launch provenance mismatch')
-  for (const [path, digest] of Object.entries(manifest.sources)) {
-    assert.equal(sha256(read(join(root, '..', path))), digest, `C1 source/font provenance: ${path}`)
-  }
-  const source = read(fileURLToPath(import.meta.url), 'utf8').toString()
-  const fixtureSource = source.slice(source.indexOf('const prefs ='), source.indexOf('const entryFor ='))
-  const renderSource = source.slice(source.indexOf('\n  await page.evaluate(async () => {'), source.indexOf('\n  const render ='))
-  assert.equal(sha256(fixtureSource), manifest.fixtureSourceSha256, 'C1 fixture provenance')
-  assert.equal(sha256(renderSource), manifest.renderSourceSha256, 'C1 render/photo/comparator provenance')
+const launchArgs = approved.runtime.args, contextOptions = approved.runtime.context
+const outputRoot = mode === 'capture' ? resolve(options.output) : goldenRoot
+if (mode === 'capture') {
+  mkdirSync(outputRoot, { recursive: true })
+  assert.ok(relative(join(root, '..'), realpathSync(outputRoot)).startsWith('../'), 'Capture symlink must not point inside checkout')
 }
-function validateBaselines(manifest, key, read = readFileSync, list = readdirSync) {
-  const selected = manifest.platforms[key], dir = join(goldenRoot, selected.directory)
-  const names = matrix.map(item => item.name).sort()
-  assert.deepEqual(selected.files.map(item => item.name).sort(), names, 'Incomplete C1 baseline manifest')
-  assert.deepEqual(list(dir).filter(name => name.endsWith('.png')).sort(), names, 'Incomplete C1 baseline directory')
-  const bytes = new Map()
-  for (const item of matrix) {
-    const record = selected.files.find(file => file.name === item.name), png = read(join(dir, item.name))
-    assert.deepEqual([record.width, record.height], [1080, item.size === 'story' ? 1920 : 1350], `C1 manifest dimensions: ${item.name}`)
-    assert.ok(png.length >= 24 && png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) && png.toString('ascii', 12, 16) === 'IHDR', `C1 invalid PNG: ${item.name}`)
-    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [record.width, record.height], `C1 PNG dimensions: ${item.name}`)
-    assert.equal(sha256(png), record.sha256, `C1 baseline hash: ${item.name}`)
-    bytes.set(item.name, png)
-  }
-  return bytes
-}
-function validateUpdateMode(updating, env) {
-  assert.ok(!updating || (!env.CI && !env.GITHUB_ACTIONS), 'C1 golden updates are forbidden in CI')
-}
-validateUpdateMode(update, process.env)
-const platformKey = selectBaseline(process.platform, process.arch)
-const goldenDir = join(goldenRoot, approved.platforms[platformKey].directory)
+const goldenDir = join(outputRoot, directories[platformKey])
+let receipt, baselineBytes
+if (update) {
+  assert.equal(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root, encoding: 'utf8' }).trim(), '',
+    'One batch per clean serialized session; commit/checkpoint existing work first')
+  receipt = existsSync(receiptPath(platformKey, outputRoot)) ? JSON.parse(readFileSync(receiptPath(platformKey, outputRoot), 'utf8')) : newReceipt(approved, platformKey, approved.runtime)
+  validateReceipt(receipt, approved, platformKey, false, readFileSync, undefined, outputRoot)
+  assert.deepEqual(receipt.host, { platform: process.platform, arch: process.arch, node: process.version }, 'Generation host changed between batches')
+  assert.ok(!Object.hasOwn(receipt.batches, String(batch)), 'Batch already generated; do not silently overwrite evidence')
+} else if (!smoke) baselineBytes = validateBaselines(approved)[platformKey]
+const { createServer } = await import('vite')
+const { chromium } = await import('@playwright/test')
 const require = createRequire(import.meta.url)
 const browserDescriptors = JSON.parse(readFileSync(join(root, 'node_modules/playwright-core/browsers.json'), 'utf8')).browsers
-let baselineBytes
 const scratch = mkdtempSync(join(tmpdir(), 'forge-c1-'))
 const entry = `
 import { drawShareCard, TEMPLATES } from '/src/lib/shareTemplates.js';
@@ -200,48 +180,9 @@ try {
       return { name, revision: descriptor?.revision, version: descriptor?.browserVersion }
     }), args: launchArgs, context: contextOptions }
   validateProvenance(approved, runtime)
-  if (!smoke && !update) {
-    baselineBytes = validateBaselines(approved, platformKey)
-    await check('fail-closed selector, provenance, complete sets, dimensions, hashes and CI update negatives', () => {
-      const rejects = (name, work, pattern) => { assert.throws(work, pattern); console.log(`REJECT ${name}`) }
-      for (const [os, arch] of [['win32', 'x64'], ['linux', 'arm64'], ['darwin', 'x64'], ['unknown', 'unknown']]) {
-        rejects(`${os}-${arch}`, () => selectBaseline(os, arch), /Unsupported C1 platform/)
-      }
-      for (const key of ['darwin-arm64', 'linux-x64']) {
-        assert.equal(selectBaseline(...key.split('-')), key)
-        validateBaselines(approved, key)
-        const changed = structuredClone(approved); changed.platforms[key].files.pop()
-        rejects(`${key} incomplete manifest`, () => validateBaselines(changed, key), /Incomplete C1 baseline manifest/)
-        rejects(`${key} missing PNG`, () => validateBaselines(approved, key, readFileSync, dir => readdirSync(dir).filter(name => name !== matrix[0].name)), /Incomplete C1 baseline directory/)
-        rejects(`${key} extra PNG`, () => validateBaselines(approved, key, readFileSync, dir => [...readdirSync(dir), 'unexpected.png']), /Incomplete C1 baseline directory/)
-        rejects(`${key} missing directory`, () => validateBaselines(approved, key, readFileSync, () => readdirSync(join(scratch, 'absent'))), /ENOENT/)
-        for (const mutation of ['hash', 'dimensions']) {
-          rejects(`${key} wrong ${mutation}`, () => validateBaselines(approved, key, path => {
-            const png = Buffer.from(readFileSync(path))
-            if (mutation === 'hash') png[png.length - 1] ^= 1
-            else png.writeUInt32BE(1, 16)
-            return png
-          }), mutation === 'hash' ? /C1 baseline hash/ : /C1 PNG dimensions/)
-        }
-      }
-      for (const key of ['browser', 'version', 'playwright', 'playwrightCore', 'browsers', 'args', 'context']) {
-        rejects(`wrong runtime ${key}`, () => validateProvenance(approved, { ...runtime, [key]: 'wrong' }), /provenance mismatch/)
-      }
-      rejects('unapproved manifest', () => validateProvenance({ ...approved, fixtureSourceSha256: 'wrong' }, runtime), /Unapproved C1 provenance/)
-      for (const path of Object.keys(approved.sources)) {
-        rejects(`wrong source/font ${path}`, () => validateProvenance(approved, runtime, (file, ...args) => file === join(root, '..', path) ? Buffer.from('wrong') : readFileSync(file, ...args)), /source\/font provenance/)
-      }
-      for (const [before, after, label] of [["friend_handle: 'abc'", "friend_handle: 'changed'", 'fixture'], ['rgb(60,70,90)', 'rgb(61,70,90)', 'render/photo/comparator']]) {
-        rejects(`wrong ${label}`, () => validateProvenance(approved, runtime, (path, ...args) => path === fileURLToPath(import.meta.url) ? readFileSync(path, 'utf8').replaceAll(before, after) : readFileSync(path, ...args)), /C1 (fixture|render\/photo\/comparator) provenance/)
-      }
-      rejects('CI update', () => validateUpdateMode('iron-chips', { CI: 'true' }), /forbidden in CI/)
-      rejects('Actions update', () => validateUpdateMode('iron-chips', { GITHUB_ACTIONS: 'true' }), /forbidden in CI/)
-    })
-    console.log(`BASELINES ${platformKey}: 18 approved PNGs; browser ${runtime.version}; Playwright ${runtime.playwright}; provenance verified`)
-  }
   const page = await browser.newPage(contextOptions)
   const errors = [], external = []
-  page.on('pageerror', error => errors.push(error.message))
+  page.on('pageerror', error => { errors.push(error.message); console.error('BROWSER PAGE ERROR:', error.stack || error.message) })
   await page.route('**/*', route => {
     if (new URL(route.request().url()).hostname !== '127.0.0.1') { external.push(route.request().url()); return route.abort() }
     return route.continue()
@@ -257,7 +198,8 @@ try {
     gradient.addColorStop(0, 'rgb(60,70,90)'); gradient.addColorStop(1, 'rgb(100,70,40)')
     p.fillStyle = gradient; p.fillRect(0, 0, 1080, 1920)
     p.fillStyle = 'rgb(40,40,40)'; p.fillRect(0, 1300, 1080, 620)
-    window.render = async (id, model, theme = 'dark', size = 'feed', withPhoto = false) => {
+    window.userPhoto = new Image(); window.userPhoto.src = window.photo.toDataURL('image/png'); await window.userPhoto.decode()
+    window.render = async (id, model, theme = 'dark', size = 'feed', withPhoto = false, showRoute = false) => {
       const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d'), calls = [], plates = []
       const fillText = ctx.fillText.bind(ctx), drawImage = ctx.drawImage.bind(ctx), closePath = ctx.closePath.bind(ctx)
       const moveTo = ctx.moveTo.bind(ctx), lineTo = ctx.lineTo.bind(ctx), beginPath = ctx.beginPath.bind(ctx)
@@ -286,8 +228,14 @@ try {
         }
         drawImage(image, x, y, w, h)
       }
-      await window.harness.drawShareCard(canvas, model, { template: id, theme, size, logo: window.logo, photo: withPhoto ? window.photo : null, showRoute: false })
-      return { calls, plates, width: canvas.width, height: canvas.height, png: canvas.toDataURL('image/png').split(',')[1] }
+      await window.harness.drawShareCard(canvas, model, { template: id, theme, size, logo: window.logo, photo: withPhoto ? (id === 'full-bleed-story' ? window.userPhoto : window.photo) : null, showRoute })
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+      let transparent = 0
+      for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 255) transparent++
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, withPhoto ? 'image/jpeg' : 'image/png', 0.95))
+      const decoded = await createImageBitmap(blob)
+      const exported = { type: blob.type, width: decoded.width, height: decoded.height }; decoded.close()
+      return { calls, plates, transparent, exported, width: canvas.width, height: canvas.height, png: canvas.toDataURL('image/png').split(',')[1] }
     }
     window.compare = async (actual, expected, size) => {
       const decode = async data => {
@@ -303,7 +251,7 @@ try {
       return different / (a.length / 4)
     }
   })
-  const render = (id, model, theme = 'dark', size = 'feed', photo = false) => page.evaluate(({ id, model, theme, size, photo }) => window.render(id, model, theme, size, photo), { id, model, theme, size, photo })
+  const render = (id, model, theme = 'dark', size = 'feed', photo = false, showRoute = false) => page.evaluate(({ id, model, theme, size, photo, showRoute }) => window.render(id, model, theme, size, photo, showRoute), { id, model, theme, size, photo, showRoute })
   const texts = result => result.calls.filter(call => call.text).map(call => call.text)
   const bounds = (result, size) => {
     for (const call of result.calls) {
@@ -362,8 +310,8 @@ try {
   })
   await check('Strike PR: no absent delta/unit/label invention; date/kind micro line and numeric truth', async () => {
     const full = await render('strike-pr', pr), without = await render('strike-pr', { ...pr, pr: { ...pr.pr, delta: null } })
-    assert.ok(texts(full).includes('2678')); assert.ok(texts(full).includes('seconds'))
-    assert.ok(texts(full).includes('-31 seconds vs prev best'))
+    assert.ok(texts(full).includes('44:38')); assert.ok(texts(full).includes('mm:ss'))
+    assert.ok(texts(full).includes('-0:31 vs prev best'))
     assert.doesNotMatch(texts(without).join('\n'), /vs prev best/)
     assert.ok(without.calls.find(call => call.text?.includes('STRUCK WHILE HOT')).top < full.calls.find(call => call.text?.includes('STRUCK WHILE HOT')).top)
     assert.match(texts(full).join('\n'), /2026-10-18 · RUN · STRUCK WHILE HOT/)
@@ -420,25 +368,38 @@ try {
       assert.equal(entryFor('iron-chips').supports(model), false)
     }
   })
-  await check('18-case matrix: exact PNG dimensions, deterministic pixels, all Story text/brand safe', async () => {
+  const pending = new Map()
+  await check('42-case matrix: exact PNG/JPEG dimensions, alpha, deterministic pixels, Story safe zones', async () => {
     let written = 0, compared = 0
-    for (const item of matrix) {
-      const result = await render(item.id, fixtures[item.id], item.theme, item.size, true)
+    for (const item of (update ? selected : matrix)) {
+      const result = await render(item.id, fixtures[item.fixture], item.theme, item.size, true, item.showRoute)
       bounds(result, item.size)
       assert.deepEqual([result.width, result.height], [SIZES[item.size].w, SIZES[item.size].h])
-      const repeat = await render(item.id, fixtures[item.id], item.theme, item.size, true)
+      assert.deepEqual(result.exported, { type: 'image/jpeg', width: item.width, height: item.height })
+      assert.equal(result.transparent, 0, 'Photo composite must be opaque')
+      const bare = await render(item.id, fixtures[item.fixture], item.theme, item.size, false, item.showRoute)
+      assert.deepEqual(bare.exported, { type: 'image/png', width: item.width, height: item.height })
+      assert.equal(bare.transparent > 0, item.id !== 'full-bleed-story', 'Transparent overlays retain alpha; Full-Bleed is opaque')
+      bounds(bare, item.size)
+      if (item.id === 'full-bleed-story') {
+        assert.notEqual(result.png, bare.png, 'Selected photo must affect actual pixels')
+        const stripped = await render(item.id, rendererModel(fixtures[item.fixture], false), item.theme, item.size, true, item.showRoute)
+        assert.equal(result.png !== stripped.png, item.fixture === 'photo-run' && item.showRoute, 'Only ON GPS run draws the thumbnail')
+        const restored = await render(item.id, fixtures[item.fixture], item.theme, item.size, true, true)
+        if (item.showRoute) assert.equal(restored.png, result.png, 'ON restoration is deterministic')
+      }
+      const repeat = await render(item.id, fixtures[item.fixture], item.theme, item.size, true, item.showRoute)
       assert.equal(result.png, repeat.png, item.name)
       assert.equal(await page.evaluate(({ a, size }) => window.compare(a, a, size), { a: result.png, size: item.size }), 0)
-      if (item.id === (update || compare)) {
+      if (update) {
         const tops = [...result.calls.map(call => call.top), ...result.plates.flatMap(plate => plate.map(([, y]) => y - 1))]
         const bottoms = [...result.calls.map(call => call.bottom), ...result.plates.flatMap(plate => plate.map(([, y]) => y + 1))]
         console.log(`PNG ${item.name}: ${result.width}x${result.height}; content y=${Math.min(...tops).toFixed(2)}..${Math.max(...bottoms).toFixed(2)}`)
       }
-      if (update === item.id) {
-        mkdirSync(goldenDir, { recursive: true })
-        writeFileSync(join(goldenDir, item.name), Buffer.from(result.png, 'base64'))
+      if (update) {
+        pending.set(item.name, Buffer.from(result.png, 'base64'))
         written++
-      } else if (!smoke && !update && (!compare || compare === item.id)) {
+      } else if (!smoke && selected.some(entry => entry.name === item.name)) {
         const expected = baselineBytes.get(item.name).toString('base64')
         const ratio = await page.evaluate(({ a, b, size }) => window.compare(a, b, size), { a: result.png, b: expected, size: item.size })
         assert.ok(ratio <= 0.001, `${item.name}: ${(ratio * 100).toFixed(4)}% pixels differ (maximum 0.1%)`)
@@ -446,8 +407,8 @@ try {
         compared++
       }
     }
-    assert.equal(written, update ? 6 : 0)
-    assert.equal(compared, smoke || update ? 0 : compare ? 6 : 18)
+    assert.equal(written, update ? selected.length : 0)
+    assert.equal(compared, smoke || update ? 0 : selected.length)
   })
   await check('pixel comparator detects a changed image and dimension mismatch', async () => {
     const result = await render('iron-chips', lift)
@@ -456,5 +417,18 @@ try {
     await assert.rejects(page.evaluate(a => window.compare(a, a, 'story'), result.png), /dimensions differ/)
   })
   await check('no browser errors or external requests', () => { assert.deepEqual(errors, []); assert.deepEqual(external, []) })
-  console.log(`C1 OK (${passed} groups; 18 cases). ${smoke ? 'SMOKE ONLY: no golden PNGs read or written; golden comparison NOT RUN.' : update ? `Updated exactly 6 ${update} goldens; review required.` : compare ? `All 6 ${compare} golden comparisons passed at <=0.1% tolerance.` : 'All 18 golden comparisons passed at <=0.1% tolerance.'}`)
+  if (update) {
+    // Write only after every render/contract passes. A partial write cannot create acceptance.
+    assert.equal(pending.size, selected.length)
+    validateProvenance(approved, runtime)
+    assert.equal(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root, encoding: 'utf8' }).trim(), '',
+      'Checkout changed during generation; no batch written')
+    receipt.batches[batch] = selected.map(item => pngRecord(item, pending.get(item.name)))
+    mkdirSync(goldenDir, { recursive: true })
+    for (const [name, bytes] of pending) writeFileSync(join(goldenDir, name), bytes)
+    writeFileSync(receiptPath(platformKey, outputRoot), JSON.stringify(receipt, null, 2) + '\n')
+    validateReceipt(receipt, approved, platformKey, false, readFileSync, undefined, outputRoot)
+  }
+  console.log(`C1+Full-Bleed OK (${passed} groups). ${smoke ? 'SMOKE ONLY: 42 cases; no golden acceptance.' : update ? `GENERATED ${mode} ${platformKey} batch ${batch}: ${selected.length} PNGs + 1 receipt; acceptance unchanged.` : `${selected.length} comparisons <=0.1%; both complete platform manifests verified.`}`)
+
 } finally { await browser?.close(); await server.close(); rmSync(scratch, { recursive: true, force: true }) }
