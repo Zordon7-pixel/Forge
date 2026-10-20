@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import assert from 'node:assert/strict'
 import {
   ACTIVE_RUN_SESSION_KEY,
   clearActiveRunSession,
@@ -14,6 +15,8 @@ import {
 } from '../src/lib/activeRunSession.js'
 import { getAuthenticatedUserId } from '../src/lib/auth.js'
 import { clearToken, setToken } from '../src/lib/tokenStore.js'
+import { createPhoneGpsWatcher } from '../src/lib/phoneGpsWatcher.js'
+import { acceptGpsFix, createGpsTrace } from '../src/lib/gpsTrace.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '../..')
@@ -177,10 +180,18 @@ check(/saveActiveRunSession/.test(activeRun) && /loadActiveRunSession/.test(acti
 check(!activeRun.includes('setQueuedOffline'), 'ActiveRun does not call the removed offline-queue state setter before GPS starts')
 check(activeRun.includes('Your iPhone records the route. Keep your watch running too — Forged Hybrid will combine the data after sync.'), 'the one Start Run action explains phone route recording and later watch enrichment')
 check(!activeRun.includes('Record route: On') && !activeRun.includes('Record route: Off'), 'ActiveRun no longer exposes a competing route-only mode')
-check(activeRun.includes('loc.accuracy') && activeRun.includes('pos.coords.accuracy'), 'native and web GPS forward horizontal accuracy into the route')
+check(/import\s*\{[^}]*createPhoneGpsWatcher[^}]*\}\s*from ['"]\.\.\/lib\/phoneGpsWatcher['"]/.test(activeRun)
+  && /watcherRef\.current = createPhoneGpsWatcher\(/.test(activeRun)
+  && /onFix:\s*fix => handlePointRef\.current\(fix\)/.test(activeRun)
+  && /handlePointRef\.current = handlePoint/.test(activeRun)
+  && /const result = acceptGpsFix\(previous, fix, now\)/.test(activeRun)
+  && /if \(result\.point\) setRouteCoords\(points => \[\.\.\.points, result\.point\]\)/.test(activeRun),
+  'ActiveRun routes the real phone watcher fixes through the shared GPS policy')
 check(activeRun.indexOf('const savePromise = saveRun()') < activeRun.indexOf('await clearActiveWatch()', activeRun.indexOf('const savePromise = saveRun()')), 'finish starts the durable save before watcher cleanup')
-check(/failed to remove native GPS watcher/.test(activeRun) && /failed to clear web GPS watcher/.test(activeRun), 'watcher cleanup errors are fail-soft and observable')
-check(/createRunLocationWatcherLifecycle/.test(activeRun) && /createRunLocationWatcherCallbacks/.test(activeRun), 'position and error callbacks share the current watcher lifecycle gate')
+check(/onError:\s*setLocationFailure/.test(activeRun)
+  && /setLocationStatus\(status\)/.test(activeRun)
+  && /setGpsError\(runLocationStatusMessage\(status\)\)/.test(activeRun),
+  'ActiveRun exposes watcher failures through location status and GPS error UI')
 check(/finishedAtRef\.current/.test(activeRun) && /resolveActivityEndTimestamp/.test(activeRun), 'run payload keeps wall-clock finish separate from active duration')
 check(/MapViewController/.test(activeRun) && /map\.panTo\(command\.position/.test(activeRun) && /You are here/.test(activeRun) && /radius=\{15\}/.test(activeRun), 'Follow view pans to a prominent yellow current-location marker')
 check(/activeRunMapCommand\(mapLayout/.test(activeRun) && /command\.type === 'fit'/.test(activeRun) && /command\.type === 'follow'/.test(activeRun), 'map fitting is isolated to Overview while Follow tracks the latest valid position')
@@ -191,6 +202,112 @@ check(/savedHrZones/.test(activeRun) && /profile\/hr-zones/.test(activeRun), 'li
 check(logRun.includes('disablePlanMatch: true') && /plan_session_id:\s*null/.test(treadmillRun)
   && !/disablePlanMatch\s*\?/.test(treadmillRun), 'the ad-hoc indoor timer always explicitly opts out of scheduled-plan matching')
 check(runsRoute.includes('planMatchExplicitlyDisabled') && runsRoute.includes('explicitNoPlanMatchSnapshot()') && runsRoute.includes('JSON.stringify(storedPlannedSession || {})'), 'the run API durably records an explicit null plan link instead of silently rematching it')
+
+console.log('\n== phone watcher behavior ==')
+// Only platform APIs are doubles; adapters, lifecycle and route policy are real.
+function phoneWatcherHarness(isNative) {
+  const fixes = [], errors = [], callbacks = [], removals = []
+  let failCleanup = false
+  const remove = id => {
+    removals.push(id)
+    if (failCleanup) throw new Error('synthetic cleanup failure')
+  }
+  const watcher = createPhoneGpsWatcher({
+    isNative,
+    native: {
+      async addWatcher(_options, callback) {
+        callbacks.push({ fix: value => callback(value), error: value => callback(null, value) })
+        return callbacks.length - 1
+      },
+      async removeWatcher({ id }) { remove(id) },
+    },
+    web: {
+      watchPosition(fix, error) { callbacks.push({ fix, error }); return callbacks.length - 1 },
+      clearWatch: remove,
+    },
+    onFix: fix => fixes.push(fix),
+    onError: error => errors.push(error),
+  })
+  const position = accuracy => isNative
+    ? { latitude: 38.9, longitude: -76.95, altitude: 14, accuracy, time: now }
+    : { coords: { latitude: 38.9, longitude: -76.95, altitude: 14, accuracy }, timestamp: now }
+  return { watcher, fixes, errors, callbacks, removals, position,
+    failCleanup: value => { failCleanup = value } }
+}
+async function checkBehavior(message, exercise) {
+  try { await exercise(); check(true, message) }
+  catch (error) { check(false, message); console.error(error) }
+}
+for (const isNative of [true, false]) {
+  const platform = isNative ? 'native' : 'web'
+  await checkBehavior(`${platform} GPS forwards horizontal accuracy into the route`, async () => {
+    const h = phoneWatcherHarness(isNative)
+    await h.watcher.start()
+    for (const accuracy of [4.5, 20, 20.01, undefined]) {
+      const before = h.fixes.length
+      h.callbacks[0].fix(h.position(accuracy))
+      assert.equal(h.fixes.length, before + 1)
+      assert.equal(h.fixes.at(-1).accuracy, accuracy)
+      const result = acceptGpsFix(createGpsTrace(), h.fixes.at(-1), now)
+      if (accuracy === 4.5 || accuracy === 20) {
+        assert.equal(result.accepted, true)
+        assert.deepEqual(result.point.slice(0, 5), [38.9, -76.95, 14, now, accuracy])
+      } else {
+        assert.equal(result.accepted, false)
+        assert.equal(result.reason, 'accuracy')
+        assert.equal(result.point, null)
+      }
+    }
+    await h.watcher.stop()
+  })
+  await checkBehavior(`${platform} watcher cleanup errors are fail-soft and observable`, async () => {
+    const h = phoneWatcherHarness(isNative)
+    await h.watcher.start()
+    h.failCleanup(true)
+    await assert.doesNotReject(() => h.watcher.restart())
+    assert.deepEqual(h.errors, ['unavailable'])
+    assert.equal(h.callbacks.length, 1, 'failed removal must not create a duplicate watcher')
+    h.callbacks[0].fix(h.position(4.5))
+    h.callbacks[0].error({ code: 1 })
+    assert.equal(h.fixes.length, 0)
+    assert.deepEqual(h.errors, ['unavailable'], 'failed cleanup must fence both callbacks')
+    await assert.doesNotReject(() => h.watcher.stop())
+    assert.deepEqual(h.errors, ['unavailable', 'unavailable'])
+    h.failCleanup(false)
+    await h.watcher.stop()
+    assert.deepEqual(h.removals, [0, 0, 0], 'retain the original handle until removal succeeds')
+    await h.watcher.start()
+    h.callbacks[1].fix(h.position(4.5))
+    assert.equal(h.fixes.length, 1, 'cleanup recovery permits a new working watcher')
+    await h.watcher.stop()
+  })
+  await checkBehavior(`${platform} position and error callbacks share the current watcher lifecycle gate`, async () => {
+    const h = phoneWatcherHarness(isNative)
+    const emit = callback => { callback.fix(h.position(4.5)); callback.error({ code: 1 }) }
+    await h.watcher.start()
+    emit(h.callbacks[0])
+    assert.equal(h.fixes.length, 1)
+    assert.deepEqual(h.errors, ['denied'])
+    const restarting = h.watcher.restart()
+    emit(h.callbacks[0]) // Invalidation must be synchronous, before queued cleanup.
+    assert.equal(h.fixes.length, 1)
+    assert.deepEqual(h.errors, ['denied'])
+    await restarting
+    emit(h.callbacks[0]) // An old epoch stays stale even while a new watcher is active.
+    assert.equal(h.fixes.length, 1)
+    assert.deepEqual(h.errors, ['denied'])
+    emit(h.callbacks[1])
+    assert.equal(h.fixes.length, 2)
+    assert.deepEqual(h.errors, ['denied', 'denied'])
+    const stopping = h.watcher.stop()
+    emit(h.callbacks[1])
+    await stopping
+    emit(h.callbacks[1])
+    assert.equal(h.fixes.length, 2)
+    assert.deepEqual(h.errors, ['denied', 'denied'])
+    assert.deepEqual(h.removals, [0, 1])
+  })
+}
 
 console.log('\n== HealthKit source truth ==')
 const swift = read('frontend/ios/App/App/ForgeHealthPlugin.swift')
