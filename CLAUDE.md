@@ -299,6 +299,73 @@ lockfiles, native code, recorded evidence or production data changes. No auxilia
 reviewer, Hermes/Kanban action, provider/production access, push, release or deploy.
 Independent exact-SHA QA/review and release remain Hermes-owned.
 
+### Served referrer / unavailable-config remediation — t_fd6b89ea (patched)
+
+Starting/failed SHA `d9df2d8b8d4319c525624497c0ef50b6bf84edad`, unchanged base
+`1b80ccc41b97de8f45698eb1ee69fb6dbe2f2ec4`. This supersedes the prior candidate's
+missing-config placeholder and unchanged-referrer statements above. Helmet now
+explicitly sends `Referrer-Policy: strict-origin-when-cross-origin`; every other
+Helmet/CSP option is unchanged. Once configuration resolves or fails, ForgeMap
+mounts Leaflet and its existing children even without a usable key. Only a valid
+key may mount TileLayer. Loading retains its prior placeholder; bad tiles still
+remove only TileLayer. The bounded, noninteractive unavailable indicator and
+exact linked attribution remain visible over the existing plain background.
+
+`mapReferrer.smoke.mjs` builds the normal SPA with an empty envDir into a temporary
+frontend/dist, then executes the actual Express app source, route registration,
+Helmet, static serving and SPA fallback. Only DB/bootstrap operations are stubbed;
+dotenv is disabled and the child environment is allowlisted. Runtime tile config
+uses the real endpoint and real JWT middleware with a signed synthetic user.
+Other app API data and external font CSS are mocked. Browser tile transport is
+intercepted, external DNS is disabled, and backend outbound HTTP/fetch is denied.
+No Referer or User-Agent is injected. Chromium loads `/run/active` with a private
+query, gets the exact built index and JS, then issues tiles with origin-only
+Referer and its own UA. A second execution removes only the new Helmet option:
+the actual prior `no-referrer` header produces blank tile Referer, rejecting the
+required origin contract. All other served security headers match across runs.
+
+`mapTiles.smoke.mjs` now checks all four actual consumers at both 320/393 px for
+absent/null/blank/invalid keys, failed config retrieval, delayed loading, and tile
+failure. It asserts visible route/marker SVGs, plain background, zero tiles when
+unconfigured, bounded indicator, exact attribution/links and no horizontal
+overflow. Existing exact DOM/geometry preservation on tile error and recorder
+truth checks remain. All build/cache/screenshots are temporary, outside the repo.
+The strengthened regression failed before the component fix (missing Leaflet
+container), then passed. Inspected 320 px recorder and 393 px planner failure
+screenshots retain the route/markers and readable attribution.
+
+Local commands (all final exits 0; browser commands use
+`PLAYWRIGHT_BROWSERS_PATH=/Users/zordon/Library/Caches/ms-playwright`):
+
+- `node frontend/test/mapReferrer.smoke.mjs`
+- `node frontend/test/mapTiles.smoke.mjs`
+- `node backend/test/plannedLeg.smoke.js` (12 groups, mixed 1,900 units and
+  SQLite restart-persistent cooldown; PostgreSQL rerun remains host QA scope)
+- `node backend/scripts/route-engine-smoke.js`
+- `node frontend/test/routePlannerData.smoke.mjs`
+- `node backend/test/authMutationGuard.smoke.js`
+- Fresh isolated normal frontend builds within both browser gates; map gate
+  retains source-map/key-sentinel/no-public-OSM-fallback scans.
+- `git diff --check`
+
+Raw final logs: `/tmp/t_fd6b89ea-referrer-final.log`,
+`/tmp/t_fd6b89ea-map-after.log`, and `/tmp/t_fd6b89ea-{plannedLeg,route-engine,
+routePlannerData,authMutationGuard}.log`. Verification hiccups: sandbox loopback
+EPERM recovered with expanded local permissions; the new Express fixture first
+lacked the Strava startup DDL stub, then rejected the SPA's blocked Google Fonts
+CSS request, both corrected without product changes. A batch-tool negotiation
+timeout returned no test receipts/logs; direct runs verified the focused gates.
+Read-only inspection also encountered truncated output, an incorrect db.js path,
+stalled search and denied process inspection; direct reads completed the review.
+Existing Browserslist age, large-chunk and test-cache Babel warnings remain.
+
+Five changed paths, including this document; flag the security-header change and
+scope over two files for independent exact-SHA review. No ORS, routing, auth,
+ownership, schema, native, dependency, recorded evidence or production data
+implementation changed. No live provider requests, Kanban/messages, push, merge,
+deploy or restart. This is local verification, not independent acceptance or
+live WebView verification; Hermes owns host QA, review and lifecycle.
+
 ## What This App Is
 
 Forge is a coaching app for **hybrid runners/lifters** — people balancing running, strength work, readiness, and recovery. Do not position it as a generic athlete tracker.

@@ -86,7 +86,7 @@ for (const suffix of ['?apikey=' + key, '?apikey=invalid']) {
 }
 console.log('PASS inventory, source/build leakage, allowlisted runtime endpoint, service worker bypass')
 
-const artifactDir = path.join(root, 'test-results/map-tiles')
+const artifactDir = path.join(isolated, 'screenshots')
 mkdirSync(artifactDir, { recursive: true })
 const coords = [[40, -73], [40.001, -73.001], [40.002, -73]]
 const planned = [[40, -73], [40.003, -73.002]]
@@ -137,7 +137,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined })
   const context = await browser.newContext({ viewport: { width: 320, height: 568 }, serviceWorkers: 'block' })
   const page = await context.newPage()
-  let config = { THUNDERFOREST_API_KEY: key }, configStatus = 200, tileFailure = false, tileRequests = [], configReads = 0, totalTiles = 0
+  let config = { THUNDERFOREST_API_KEY: key }, configStatus = 200, configHold, tileFailure = false, tileRequests = [], configReads = 0, totalTiles = 0
   const errors = [], external = [], consoleMessages = []
   page.on('pageerror', err => errors.push(err.stack || err.message))
   page.on('console', msg => consoleMessages.push(msg.text()))
@@ -156,7 +156,7 @@ try {
       return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jC1sAAAAASUVORK5CYII=', 'base64') })
     }
     if (url.hostname !== '127.0.0.1') { external.push(url.origin); return route.abort() }
-    if (url.pathname === '/api/meta/map-tiles') { configReads++; return route.fulfill({ status: configStatus, json: config }) }
+    if (url.pathname === '/api/meta/map-tiles') { configReads++; await configHold; return route.fulfill({ status: configStatus, json: config }) }
     if (url.pathname === '/api/routes/generate') return route.fulfill({ json: { route: { coordinates: planned, distanceMiles: 4, elevationPreference: 'flat' } } })
     if (url.pathname.startsWith('/api/')) return route.fulfill({ json: { user: { id: 'tile-test' }, zones: [], units: 'imperial' } })
     return route.continue()
@@ -165,13 +165,37 @@ try {
   await page.waitForFunction(() => typeof window.mount === 'function')
   for (const value of invalid) assert.equal(await page.evaluate(value => window.tileUrl({ THUNDERFOREST_API_KEY: value }), value ?? null), null)
   assert.equal(await page.evaluate(config => window.tileUrl(config), { THUNDERFOREST_API_KEY: key, host: 'https://invalid.test', style: 'other' }), `https://api.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=${key}`)
-  async function mount(kind, recording = false) {
+  async function mount(kind, recording = false, loading = false) {
     const before = configReads
     await page.evaluate(({ kind, recording }) => window.mount(kind, recording), { kind, recording })
     if (kind === 'RoutePlanner') await page.getByRole('button', { name: 'Generate route', exact: true }).click()
     await expect.poll(() => configReads).toBeGreaterThan(before)
     await expect(page.getByTestId('forge-map')).toBeVisible()
-    await expect(page.getByTestId('forge-map')).not.toHaveAttribute('data-map-state', 'loading')
+    if (!loading) await expect(page.getByTestId('forge-map')).not.toHaveAttribute('data-map-state', 'loading')
+  }
+  async function unavailableOverlays(kind) {
+    const map = page.getByTestId('forge-map')
+    await expect(map).toHaveAttribute('data-map-state', 'unavailable')
+    await expect(page.locator('.leaflet-container')).toBeVisible()
+    await expect(page.locator('.leaflet-tile-pane img')).toHaveCount(0)
+    await expect(map.getByRole('status')).toHaveText('Map unavailable.')
+    const overlays = await page.locator('.leaflet-overlay-pane path').all()
+    assert.ok(overlays.length >= 2, `${kind}: route and markers exist`)
+    for (const overlay of overlays) await expect(overlay).toBeVisible()
+    assert.equal(await map.evaluate(el => {
+      const paths = [...el.querySelectorAll('.leaflet-overlay-pane path')]
+      const indicator = el.querySelector('[role="status"]')
+      const box = indicator.getBoundingClientRect()
+      return paths.some(p => p.getAttribute('fill') === 'none')
+        && paths.some(p => p.getAttribute('fill') !== 'none')
+        && paths.every(p => p.getAttribute('d') && p.getBoundingClientRect().width > 0)
+        && getComputedStyle(el.querySelector('.leaflet-container')).backgroundColor === 'rgb(22, 19, 13)'
+        && getComputedStyle(indicator).pointerEvents === 'none'
+        && box.width <= innerWidth - 64 && box.height <= 48
+        && document.documentElement.scrollWidth <= innerWidth
+        && el.scrollWidth <= el.clientWidth
+    }), true, `${kind}: plain background, visible geometry, bounded noninteractive indicator, no horizontal overflow`)
+    await attribution()
   }
   async function attribution() {
     const footer = page.getByTestId('map-attribution')
@@ -235,27 +259,38 @@ try {
     }
   }
   console.log('PASS all four real consumers at 320/393px: success and single-bad-tile preserve exact map/route/marker nodes on plain background, exact visible attribution/hrefs, bounded indicator and screenshots')
-  for (const kind of kinds) {
-    for (const bad of [{}, { THUNDERFOREST_API_KEY: '' }, { THUNDERFOREST_API_KEY: ' ' }, { THUNDERFOREST_API_KEY: 'bad&host=evil' }, null]) {
-      config = bad; tileRequests = []
-      await mount(kind)
-      await expect(page.getByTestId('forge-map').getByRole('status')).toHaveText('Map unavailable.')
-      await expect(page.locator('.leaflet-container')).toHaveCount(0)
+  for (const width of [320, 393]) {
+    await page.setViewportSize({ width, height: 874 })
+    for (const kind of kinds) {
+      for (const bad of [{}, ...invalid.map(value => ({ THUNDERFOREST_API_KEY: value })), null]) {
+        config = bad; tileRequests = []
+        await mount(kind, kind === 'ActiveRun')
+        await unavailableOverlays(kind)
+        assert.equal(tileRequests.length, 0)
+      }
+      configStatus = 503; config = { error: sentinel }; tileRequests = []
+      await mount(kind, kind === 'ActiveRun')
+      await unavailableOverlays(kind)
       assert.equal(tileRequests.length, 0)
-      await attribution()
+      await page.getByTestId('forge-map').screenshot({ path: path.join(artifactDir, `${kind}-${width}-config-failed.png`) })
+      configStatus = 200; config = {}; tileRequests = []
+      let release
+      configHold = new Promise(resolve => { release = resolve })
+      await mount(kind, kind === 'ActiveRun', true)
+      await expect(page.getByTestId('forge-map')).toHaveAttribute('data-map-state', 'loading')
+      await expect(page.locator('.leaflet-container')).toHaveCount(0)
+      await expect(page.getByTestId('forge-map').getByRole('status')).toHaveText('Map unavailable.')
+      assert.equal(tileRequests.length, 0)
+      release(); configHold = undefined
+      await unavailableOverlays(kind)
+      assert.equal(tileRequests.length, 0)
+      config = { THUNDERFOREST_API_KEY: 'F' + key.slice(1) }; tileFailure = true
+      await mount(kind, kind === 'ActiveRun')
+      await unavailableOverlays(kind)
+      tileFailure = false
     }
-    configStatus = 503; config = { error: sentinel }; tileRequests = []
-    await mount(kind)
-    await expect(page.getByTestId('forge-map').getByRole('status')).toHaveText('Map unavailable.')
-    assert.equal(tileRequests.length, 0)
-    configStatus = 200; config = { THUNDERFOREST_API_KEY: 'F' + key.slice(1) }; tileFailure = true
-    await mount(kind)
-    await expect(page.getByTestId('forge-map').getByRole('status')).toHaveText('Map unavailable.')
-    await expect(page.locator('.leaflet-container')).toBeVisible()
-    await expect(page.locator('.leaflet-tile-pane img')).toHaveCount(0)
-    await attribution()
   }
-  console.log('PASS each surface: absent/blank/malformed/config failure and provider tile failure close without fallback')
+  console.log('PASS all four consumers at 320/393px: absent/blank/invalid/config failure preserve route and markers without tiles or overflow; loading unchanged; provider failure removes only tiles')
   config = { THUNDERFOREST_API_KEY: key }; tileFailure = false
   await mount('ActiveRun', true)
   await expect(page.locator('.leaflet-tile-loaded').first()).toBeVisible()
