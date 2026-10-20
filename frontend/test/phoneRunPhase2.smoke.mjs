@@ -225,6 +225,18 @@ assert.match(mapSource, /Maps ©.*Thunderforest.*Data ©.*OpenStreetMap contribu
 assert.doesNotMatch(readFileSync(path.join(root, 'frontend/src/components/RunDetailModal.jsx'), 'utf8'), /openrouteservice|route-planning|tile.openstreetmap/)
 console.log('PASS component: actual recap and chart JSX, separate polylines, one visible gap marker, nonmodal diagnostics, ForgeMap, no planned fill')
 
+// Phase 4: source labels remain separate from phone permission diagnostics.
+for (const watchRoute of [false, true]) {
+  const merged = componentNodes({ ...componentRun, health_source: 'apple_health',
+    route_coords: watchRoute ? legacy : route,
+    workout_metrics_json: { ...JSON.parse(savedRun.workout_metrics_json), forged_recording_id: 'synthetic',
+      summary_source: 'apple_health', route_source: watchRoute ? 'apple_health' : 'forged_phone' } })
+  const label = merged.find(node => node.props?.['data-testid'] === 'recap-merged-sources')
+  assert.equal(label.props.role, 'status')
+  assert.match(nodeText(label), watchRoute ? /Synced workout metrics.*Synced workout route/ : /Synced workout metrics.*iPhone route fallback/)
+  assert.equal(merged.filter(node => node.type === 'Polyline').length, watchRoute ? 1 : 2)
+}
+
 if (process.argv.includes('--browser') || process.argv.includes('--compile-browser')) {
   const { build } = createRequire(installed.resolve('vite'))('esbuild')
   const { chromium } = installed('@playwright/test')

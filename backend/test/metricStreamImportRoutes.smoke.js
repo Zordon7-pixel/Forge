@@ -37,8 +37,26 @@ const nativeFetch = global.fetch;
 global.fetch = (url, options) => { assert.match(String(url), /^http:\/\/127\.0\.0\.1:\d+\/(?:import|runs)\//, 'no external request'); return nativeFetch(url, options); };
 let server;
 async function main() {
-  server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const handlersOnly = process.argv.includes('--handlers');
+  if (!handlersOnly) {
+    server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  }
   async function request(method, route, body, user = owner) {
+    if (handlersOnly) {
+      // Same registered auth middleware and handlers, no listening socket. The
+      // default mode retains HTTP transport coverage for host QA.
+      const router = require(route.startsWith('/import/') ? '../src/routes/import' : '../src/routes/runs');
+      const routePath = route.startsWith('/import/') ? '/health' : '/:id';
+      const layer = router.stack.find(l => l.route?.path === routePath && l.route.methods[method.toLowerCase()]);
+      assert.ok(layer);
+      const req = { body, params: { id: route.split('/').at(-1) }, query: {},
+        headers: user ? { authorization: `Bearer ${jwt.sign({ id: user }, process.env.JWT_SECRET)}` } : {} };
+      const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(data) { this.data = data; return this; } };
+      let index = 0;
+      const next = () => layer.route.stack[index++]?.handle(req, res, next);
+      await next();
+      return { status: res.statusCode, data: res.data };
+    }
     const r = await fetch(`http://127.0.0.1:${server.address().port}${route}`, { method,
       headers: { 'Content-Type': 'application/json', ...(user ? { Authorization: `Bearer ${jwt.sign({ id: user }, process.env.JWT_SECRET)}` } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}) }); return { status: r.status, data: await r.json() };
@@ -63,7 +81,7 @@ async function main() {
   assert.equal(mixed.metric_sources.running_speed_mps.declared_source, 'manual');
   assert.equal(mixed.metric_sources.running_speed_mps.verification_status, 'UNVERIFIED');
   await send(mixedInput); assert.deepEqual(stream(), mixed, 'exact enrichment replay does not churn stream JSON');
-  assert.equal(revision(), 12, 'existing import revision semantics are unchanged');
+  assert.equal(revision(), 11, 'identical import does not advance planning revision');
   for (const invalid of [{ source: 'garmin' }, { source: 'garmin', heart_rate_bpm: [[null, null]], running_speed_mps: [[false, false]] }]) {
     await send(invalid); assert.deepEqual(stream(), mixed, 'empty/invalid enrichment never erases or relabels existing metrics');
   }
@@ -97,6 +115,6 @@ async function main() {
   assert.equal(db.prepare('SELECT COUNT(*) n FROM planning_pipeline_artifacts').get().n, 0);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM training_plans').get().n, 0);
   assert.equal(rows().length, 1);
-  console.log('PASS metric stream import routes: real auth/DDL/transactions, persistence/detail roundtrip, owner isolation, physical replay, unchanged revision semantics, legacy/unverified provenance');
+  console.log(`PASS metric stream import routes (${handlersOnly ? 'handlers' : 'HTTP'}): real auth/DDL/transactions, persistence/detail roundtrip, owner isolation, physical replay, unchanged retry revision, legacy/unverified provenance`);
 }
 main().catch(e => { console.error(e); process.exitCode = 1; }).finally(() => { server?.close(); db.close(); global.fetch = nativeFetch; });

@@ -361,7 +361,7 @@ async function runCanonicalRunMergeSmoke() {
   assert.equal(summaryUpdate.params[3], null, 'the user-rated Forged effort is never overwritten');
   assert.equal(summaryUpdate.params[4], PRODUCTION_PAIR.appleAvgHeartRate, 'Apple Health heart rate enriches the surviving row');
   assert.equal(summaryUpdate.params[6], 85, 'Apple Health minimum heart rate enriches the surviving row');
-  assert.equal(summaryUpdate.params[18], '[]', 'the Apple import cannot replace an existing Forged route');
+  assert.deepEqual(JSON.parse(summaryUpdate.params[18]), item.routeCoords, 'watch route replaces phone geometry as one complete source');
   assert.equal(summaryUpdate.params[25], 362, 'Apple Health calories become canonical');
   assert.equal(summaryUpdate.params[29], 362, 'the stale phone calorie estimate is replaced');
   assert.equal(summaryUpdate.params[31], 362, 'watch calories are stored explicitly');
@@ -371,7 +371,7 @@ async function runCanonicalRunMergeSmoke() {
   const metricStreams = JSON.parse(summaryUpdate.params[33]);
   assert.equal(metricStreams.heart_rate_bpm.length, 2, 'Apple Health heart-rate samples survive canonical merge');
   assert.equal(metricStreams.running_power_watts.length, 2, 'Apple Health running-power samples survive canonical merge');
-  assert.equal(metrics.route_source, 'forged_phone', 'the retained route records Forged provenance');
+  assert.equal(metrics.route_source, 'apple_health', 'the authoritative route records watch provenance');
   assert.equal(metrics.summary_source, 'apple_health', 'the watch summary records Apple Health provenance');
   assert.ok(
     statements.some((statement) => statement.sql === 'DELETE FROM runs WHERE id=? AND user_id=?'
@@ -394,6 +394,7 @@ async function runCanonicalRunMergeSmoke() {
   };
   const repeatedAppleCanonical = {
     ...canonicalRun,
+    route_coords: JSON.stringify(item.routeCoords),
     distance_miles: item.distanceMiles,
     duration_seconds: item.durationSeconds,
     avg_heart_rate: item.avgHeartRate,

@@ -125,6 +125,20 @@ Real TestFlight acceptance — ALL still required, do not mark from mocks:
       auto/manual pause ownership, Follow map, planned-vs-recorded truth and privacy.
 - [ ] Hermes exact-lock build, browser/SPA layout + map-referrer QA, native iOS build,
       advisory disposition and independent exact-SHA review remain outstanding.
+- [ ] Phase 4 real iPhone/watch sync: save the phone run first, then sync the
+      matching watch workout. History/recap show one canonical run with watch
+      distance, elapsed time, HR, elevation and supplied sensor metrics.
+- [ ] Repeat with watch sync first, then finish/save the matching phone run (hold
+      phone save until sync is visible where practical). The returned recap and
+      a phone-save retry resolve to the existing canonical run.
+- [ ] In both orderings, a watch route wins as one whole route. With no watch
+      route, the segmented iPhone trace and gap markers survive; a later watch
+      route replaces it without connectors or planned-route fill. Verify source
+      labels and phone diagnostics remain distinct.
+- [ ] In both orderings and repeated sync/save, dashboard totals, PRs and training
+      load count once. A provisional phone PR is corrected to the watch result;
+      identical retries do not advance planning input revisions. Check actual
+      device/host evidence; deterministic fixtures are not device acceptance.
 
 Phase 4 handoff: implement watch-import precedence/dedup in BOTH arrival orders
 (phone save then watch import; watch import then phone save), using the real manual

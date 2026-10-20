@@ -367,6 +367,9 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>{date}</p>
 
         {isRun && (runProvenance !== RUN_PROVENANCE.IMPORTED || Object.hasOwn(workoutMetrics, 'gps_source')) && <p role="status" data-testid="recap-gps-diagnostics" className="mb-3 text-xs" style={{ color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{phoneRunStatusLine(workoutMetrics)}</p>}
+        {isRun && workoutMetrics.forged_recording_id && workoutMetrics.summary_source && <p role="status" data-testid="recap-merged-sources" className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+          Synced workout metrics · {workoutMetrics.route_source === 'forged_phone' ? 'iPhone route fallback' : 'Synced workout route'}
+        </p>}
         {panelIs('route') && routeGaps.length > 0 && <p role="status" className="mb-3 text-sm">{routeGaps.length} GPS gap{routeGaps.length === 1 ? '' : 's'} · Missing distance and elevation are excluded.</p>}
 
         {panelIs('route') && isRun && !shareOpen && routePositions.length >= 2 && (

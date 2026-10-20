@@ -131,6 +131,7 @@ async function autoUpdatePRs(userId, run, options = {}) {
         });
       }
     } catch (err) {
+      if (options.strictErrors) throw err;
       console.error('PR auto-detect error for', candidate.label, err.message);
     }
   }
@@ -151,7 +152,7 @@ async function recomputeRunPrCategories(userId, categoryLabels = [], options = {
 
   for (const label of labels) {
     const autoPr = await db.get(
-      `SELECT * FROM personal_records WHERE user_id=? AND category='run' AND label=? AND source='auto'`,
+      `SELECT * FROM personal_records WHERE user_id=? AND category='run' AND label=? AND ${options.includeManualDiscrepancies ? "source IN ('auto','manual')" : "source='auto'"}`,
       [userId, label]
     );
     if (!autoPr) continue;
@@ -168,6 +169,18 @@ async function recomputeRunPrCategories(userId, categoryLabels = [], options = {
           achieved_at: formatDate(run.date),
         };
       }
+    }
+
+    if (autoPr.source === 'manual') {
+      // The user-entered record is immutable here; only its derived comparison
+      // with current canonical activities is refreshed.
+      const discrepancy = Boolean(best && isBetter(best.value, Number(autoPr.value), direction));
+      await db.run(
+        "UPDATE personal_records SET discrepancy=?, auto_value=? WHERE id=? AND user_id=? AND source='manual'",
+        [discrepancy ? 1 : 0, discrepancy ? best.value : null, autoPr.id, userId]
+      );
+      result.recomputed.push(label);
+      continue;
     }
 
     if (!best) {
