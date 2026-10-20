@@ -1,3 +1,13 @@
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { execFileSync } from 'node:child_process'
+import os from 'node:os'
+import path from 'node:path'
+import vm from 'node:vm'
+import * as policy from '../src/lib/runReadiness.js'
+import { createPhoneGpsWatcher } from '../src/lib/phoneGpsWatcher.js'
+import { saveActiveRunSession, loadActiveRunSession } from '../src/lib/activeRunSession.js'
+import { buildRunCompletionSnapshot, saveRunCompletionHandoff, loadRunCompletionHandoff } from '../src/lib/runCompletionHandoff.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
@@ -121,7 +131,7 @@ assert.match(activeRunSource, /minHeight: 44/)
 assert.match(activeRunSource, /data-testid="finish-run"/)
 assert.match(activeRunSource, /data-testid=\{pausedRun \? 'resume-run' : 'pause-run'\}/, 'the in-app recorder exposes explicit pause and resume controls')
 assert.match(activeRunSource, /data-testid="run-location-preflight"/, 'the Start Run flow displays a location preflight')
-assert.match(activeRunSource, /await getWatcher\(\)\.start\(\)/, 'the shared watcher acquires permission without blocking early Start')
+assert.match(activeRunSource, /await getWatcher\(\)\.start\(\{ requestPermissions:/, 'the shared watcher receives the once-only permission policy without waiting for a GPS fix')
 assert.match(activeRunSource, /Open iPhone Settings/, 'denied native location access has a direct recovery action')
 assert.match(activeRunSource, /Map hidden for Stats view · GPS recording and run metrics continue\./)
 assert.match(activeRunSource, /addListener\('backButton'/, 'native/system back uses the same Active Run guard')
@@ -132,3 +142,254 @@ assert.match(logRunSource, /workoutStartAccess/, 'the run handoff carries the ma
 assert.match(logRunSource, /WORKOUT_START_ACCESS_(?:STALE|MISSING|BLOCKED|UNAVAILABLE)/, 'stale or missing run safety state has a visible fail-closed path')
 
 console.log('ACTIVE RUN CONTROLS SMOKE OK')
+
+// Synthetic bridge/service/component evidence only; never physical iPhone acceptance.
+const tick = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
+const swift = readFileSync(new URL('../ios/App/App/AppViewController.swift', import.meta.url), 'utf8')
+assert.match(swift, /registerPluginInstance\(ForgeRunReadinessPlugin\(\)\)/)
+assert.match(swift, /UIApplication\.openSettingsURLString/)
+assert.doesNotMatch(swift, /requestAlwaysAuthorization|requestWhenInUseAuthorization|print\(|NSLog/)
+for (const method of ['getStatus', 'claimExplainer', 'claimFirstRun', 'openSettings']) assert.ok(swift.includes(`CAPPluginMethod(name: "${method}"`))
+// Execute the actual Swift plugin method bodies against tiny typed SDK doubles.
+// Only ObjC exposure/access modifiers and dispatch scheduling are adapted for macOS.
+const temporary = mkdtempSync(path.join(os.tmpdir(), 'forge-readiness-'))
+try {
+  const body = swift.slice(swift.indexOf('@objc(ForgeRunReadinessPlugin)'))
+    .replace(/@objc\(ForgeRunReadinessPlugin\)|@objc |public /g, '')
+    .replaceAll('DispatchQueue.main.async', 'TestQueue.async')
+  const stubs = `import Foundation
+class CAPPlugin {}
+protocol CAPBridgedPlugin {}
+struct CAPPluginMethod { init(name: String, returnType: String) {} }
+let CAPPluginReturnPromise = "promise"
+class CAPPluginCall { var result: [String: Any] = [:]; func resolve(_ value: [String: Any]) { result = value } }
+enum TestQueue { static func async(_ work: () -> Void) { work() } }
+class UserDefaults {
+ static let standard = UserDefaults(); var values: [String: Bool] = [:]
+ func bool(forKey key: String) -> Bool { values[key] ?? false }
+ func set(_ value: Bool, forKey key: String) { values[key] = value }
+}
+enum Refresh { case available, denied, restricted }
+enum Authorization { case authorizedAlways, authorizedWhenInUse, denied, restricted, notDetermined }
+enum Accuracy { case fullAccuracy, reducedAccuracy }
+class CLLocationManager {
+ static var location: Authorization = .notDetermined
+ static var accuracy: Accuracy = .reducedAccuracy
+ var authorizationStatus: Authorization { Self.location }
+ var accuracyAuthorization: Accuracy { Self.accuracy }
+}
+class UIApplication {
+ static let shared = UIApplication(); static let openSettingsURLString = "app-settings:"
+ var backgroundRefreshStatus: Refresh = .denied
+ var canOpen = true, opened = true; var destination: String?
+ func canOpenURL(_ url: URL) -> Bool { canOpen }
+ func open(_ url: URL, options: [String: Any], completion: (Bool) -> Void) { destination = url.absoluteString; completion(opened) }
+}
+`
+  const checks = `
+let plugin = ForgeRunReadinessPlugin()
+for (state, label) in [(Refresh.available,"available"),(.denied,"denied"),(.restricted,"restricted")] {
+ UIApplication.shared.backgroundRefreshStatus = state
+ let call = CAPPluginCall(); plugin.getStatus(call)
+ assert(call.result["backgroundRefreshStatus"] as? String == label)
+}
+for (state, label) in [(Authorization.authorizedAlways,"always"),(.authorizedWhenInUse,"while_using"),(.denied,"denied"),(.restricted,"restricted"),(.notDetermined,"not_determined")] {
+ CLLocationManager.location = state
+ let call = CAPPluginCall(); plugin.getStatus(call)
+ assert(call.result["locationAuthorization"] as? String == label)
+ assert(call.result["backgroundRefreshStatus"] as? String == "restricted")
+}
+for (state, label) in [(Accuracy.fullAccuracy,"precise"),(.reducedAccuracy,"reduced")] {
+ CLLocationManager.accuracy = state
+ let call = CAPPluginCall(); plugin.getStatus(call)
+ assert(call.result["accuracyAuthorization"] as? String == label)
+}
+let first = CAPPluginCall(); plugin.claimExplainer(first); assert(first.result["first"] as? Bool == true)
+let settings = CAPPluginCall(); UIApplication.shared.opened = false; plugin.openSettings(settings)
+assert(settings.result["opened"] as? Bool == false)
+assert(UIApplication.shared.destination == "app-settings:")
+let next = CAPPluginCall(); ForgeRunReadinessPlugin().claimExplainer(next); assert(next.result["first"] as? Bool == false)
+UIApplication.shared.opened = true; plugin.openSettings(settings); assert(settings.result["opened"] as? Bool == true)
+UIApplication.shared.canOpen = false; plugin.openSettings(settings); assert(settings.result["opened"] as? Bool == false)
+let start = CAPPluginCall(); plugin.claimFirstRun(start); assert(start.result["first"] as? Bool == true)
+ForgeRunReadinessPlugin().claimFirstRun(start); assert(start.result["first"] as? Bool == false)
+print("PASS actual Swift method bodies: refresh/location/accuracy mapping, durable claims, app-settings destination (SDK doubles)")
+`
+  writeFileSync(path.join(temporary, 'main.swift'), stubs + body + checks)
+  execFileSync('swiftc', ['-module-cache-path', path.join(temporary, 'cache'), path.join(temporary, 'main.swift'), '-o', path.join(temporary, 'bridge')], { stdio: 'pipe' })
+  process.stdout.write(execFileSync(path.join(temporary, 'bridge')))
+} finally { rmSync(temporary, { recursive: true, force: true }) }
+assert.equal((swift.match(/@unknown default: .* = "unknown"/g) || []).length, 3)
+
+function fixture({ nativeIOS = true, durable = new Set(), timeoutMs = 30 } = {}) {
+  let value = { backgroundRefreshStatus: 'denied', locationAuthorization: 'while_using', accuracyAuthorization: 'reduced' }
+  let reads = 0, adds = 0, removes = 0, settings = 0
+  const listeners = new Set()
+  const plugin = {
+    async getStatus() { reads++; return value },
+    async claimExplainer() { const first = !durable.has('explainer'); durable.add('explainer'); return { first } },
+    async claimFirstRun() { const first = !durable.has('run'); durable.add('run'); return { first } },
+    async openSettings() { settings++; throw Error('synthetic private native error') },
+  }
+  const app = { async addListener(name, fn) { assert.equal(name, 'appStateChange'); adds++; listeners.add(fn); return { async remove() { removes++; listeners.delete(fn) } } } }
+  const service = policy.createRunReadiness({ nativeIOS, plugin, app, timeoutMs })
+  return { service, plugin, app, durable, listeners, get reads() { return reads }, get adds() { return adds }, get removes() { return removes }, get settings() { return settings },
+    set(valueNext) { value = valueNext }, foreground(isActive) { for (const fn of listeners) fn({ isActive }) } }
+}
+const f = fixture()
+for (const refresh of ['available', 'denied', 'restricted', 'unknown', 'error', 'unavailable', 'arbitrary']) {
+  for (const location of ['always', 'while_using', 'denied', 'restricted', 'not_determined', 'arbitrary']) {
+    for (const accuracy of ['precise', 'reduced', 'arbitrary']) {
+      f.set({ backgroundRefreshStatus: refresh, locationAuthorization: location, accuracyAuthorization: accuracy, gps_source: 'native_bg' })
+      const actual = await f.service.refresh()
+      assert.deepEqual(actual, { backgroundRefreshStatus: refresh === 'arbitrary' ? 'unknown' : refresh,
+        locationAuthorization: location === 'arbitrary' ? 'unknown' : location, accuracyAuthorization: accuracy === 'arbitrary' ? 'unknown' : accuracy })
+      assert.equal(actual.gps_source, undefined)
+    }
+  }
+}
+f.plugin.getStatus = async () => { throw Error('private error') }
+assert.equal((await f.service.refresh()).backgroundRefreshStatus, 'error')
+f.plugin.getStatus = () => new Promise(() => {})
+assert.equal((await f.service.prepareStart()).status.backgroundRefreshStatus, 'error', 'hung bridge cannot prevent Start')
+const unsupported = fixture({ nativeIOS: false })
+assert.equal((await unsupported.service.refresh()).backgroundRefreshStatus, 'unavailable')
+assert.equal(unsupported.reads, 0)
+const stale = fixture(); let resolveOld
+stale.plugin.getStatus = () => new Promise(resolve => { resolveOld = resolve })
+const old = stale.service.refresh(); await tick()
+stale.plugin.getStatus = async () => ({ backgroundRefreshStatus: 'denied' })
+await stale.service.refresh(); resolveOld({ backgroundRefreshStatus: 'available' }); await old
+assert.equal(stale.service.snapshot().backgroundRefreshStatus, 'denied')
+
+const lifecycle = fixture()
+const stop1 = lifecycle.service.mount(), stop2 = lifecycle.service.mount(); await tick()
+assert.equal(lifecycle.adds, 1)
+for (const refresh of ['denied', 'available', 'restricted', 'denied']) {
+  lifecycle.set({ backgroundRefreshStatus: refresh })
+  const before = lifecycle.reads
+  lifecycle.foreground(false); lifecycle.foreground(true); lifecycle.foreground(true); await tick()
+  assert.equal(lifecycle.reads, before + 1)
+  assert.equal(lifecycle.service.snapshot().backgroundRefreshStatus, refresh)
+}
+stop1(); stop1(); await tick(); assert.equal(lifecycle.removes, 0)
+stop2(); await tick(); assert.equal(lifecycle.removes, 1); assert.equal(lifecycle.listeners.size, 0)
+let resolveListener, removeLate = 0
+const late = fixture()
+late.app.addListener = () => new Promise(resolve => { resolveListener = resolve })
+const lateStop = late.service.mount(); await tick(); lateStop()
+resolveListener({ remove: async () => { removeLate++ } }); await tick(); assert.equal(removeLate, 1)
+const failedRemoval = fixture(); let attempts = 0
+failedRemoval.app.addListener = async () => { attempts++; return { remove: async () => { throw Error('synthetic') } } }
+const cleanup = failedRemoval.service.mount(); await tick(); cleanup(); await tick(); failedRemoval.service.mount(); await tick()
+assert.equal(attempts, 1, 'failed removal never duplicates listener')
+console.log('PASS readiness: independent closed labels, unsupported/errors/timeouts, stale replies, one listener, foreground OFF/ON, late cleanup')
+
+// Actual JSX, with hook and native SDK doubles. Native storage survives module/relaunch recreation.
+const installed = createRequire(process.env.FORGE_TEST_MODULE_ROOT ? `${process.env.FORGE_TEST_MODULE_ROOT}/package.json` : import.meta.url)
+const { transformSync } = createRequire(installed.resolve('vite'))('esbuild')
+const componentSource = readFileSync(new URL('../src/components/RunReadiness.jsx', import.meta.url), 'utf8')
+const compiled = transformSync(componentSource, { loader: 'jsx', format: 'cjs', jsx: 'automatic' }).code
+function renderExplainer(f) {
+  let slots = [], cursor = 0, effects = [], dirty = true, tree, renders = 0
+  const hooks = {
+    useState(initial) { const id = cursor++; if (!(id in slots)) slots[id] = typeof initial === 'function' ? initial() : initial; return [slots[id], value => { slots[id] = value; dirty = true }] },
+    useEffect(fn) { const id = cursor++; if (!(id in slots)) { slots[id] = {}; effects.push(() => { slots[id].cleanup = fn() }) } },
+  }
+  const modules = { react: hooks, 'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) },
+    '@capacitor/core': { Capacitor: { isNativePlatform: () => true, getPlatform: () => 'ios' }, registerPlugin: () => f.plugin }, '@capacitor/app': { App: f.app },
+    '../lib/runReadiness': { createRunReadiness: () => f.service } }
+  const context = { module: { exports: {} }, require: name => ({ ...modules[name], __esModule: true }) }
+  vm.runInNewContext(compiled, context)
+  const nodes = () => { const result = []; const walk = n => { if (Array.isArray(n)) return n.forEach(walk); if (!n || typeof n !== 'object') return; result.push(n); walk(n.props?.children) }; walk(tree); return result }
+  const text = n => Array.isArray(n) ? n.map(text).join('') : typeof n === 'object' && n ? text(n.props?.children) : String(n ?? '')
+  const flush = async () => { for (let i = 0; i < 40; i++) { await Promise.resolve(); if (dirty) { dirty = false; cursor = 0; effects = []; tree = context.module.exports.RunReadinessExplainer(); renders++; for (const effect of effects) effect() } } }
+  return { flush, nodes, text: () => text(tree), get shown() { return !!tree }, get renders() { return renders },
+    async click(label) { const button = nodes().find(n => n.type === 'button' && text(n) === label); assert.ok(button); await button.props.onClick(); await flush() },
+    close() { for (const slot of slots) slot?.cleanup?.() },
+  }
+}
+const first = fixture(), onboarding = renderExplainer(first)
+await onboarding.flush(); assert.ok(onboarding.shown); assert.ok(first.durable.has('explainer'))
+assert.match(onboarding.text(), /Background App Refresh.*Location Always.*Precise Location/)
+assert.equal(onboarding.nodes().filter(n => ['dialog', 'alert'].includes(n.props.role)).length, 0)
+await onboarding.click('Open Settings'); assert.equal(first.settings, 1); assert.match(onboarding.text(), /could not open/)
+assert.equal(first.service.snapshot().backgroundRefreshStatus, 'denied')
+onboarding.close()
+const runEntry = renderExplainer(first); await runEntry.flush(); assert.equal(runEntry.shown, false)
+const relaunched = fixture({ durable: first.durable }), secondRun = renderExplainer(relaunched)
+await secondRun.flush(); assert.equal(secondRun.shown, false)
+const release = relaunched.service.mount(); await tick()
+for (const status of ['denied', 'available', 'denied']) {
+  relaunched.set({ backgroundRefreshStatus: status, locationAuthorization: 'denied', accuracyAuthorization: 'reduced' })
+  relaunched.foreground(false); relaunched.foreground(true); await secondRun.flush(); assert.equal(secondRun.shown, false)
+  await relaunched.service.prepareStart(); assert.equal(secondRun.shown, false)
+}
+release(); secondRun.close(); runEntry.close()
+const strict = fixture(); let shown = 0
+strict.service.presentExplainer(() => { throw Error('unmounted presenter') })()
+strict.service.presentExplainer(() => shown++)
+strict.service.presentExplainer(() => { throw Error('duplicate presenter') })
+await tick(); assert.equal(shown, 1)
+const permission = fixture()
+permission.set({ locationAuthorization: 'not_determined' })
+assert.equal((await permission.service.prepareStart()).requestPermissions, true)
+assert.equal((await fixture({ durable: permission.durable }).service.prepareStart()).requestPermissions, false)
+assert.equal((await permission.service.prepareStart({ resume: true })).requestPermissions, false)
+console.log('PASS actual explainer JSX: combined inline presentation, durable-before-Settings, failed Settings/relaunch/onboarding-to-run/second-run silence, StrictMode claim')
+
+// Actual ActiveRun hooks/save path uses the real service; Phase 2 owns backend POST/GET rounds.
+let host = readFileSync(new URL('./activeRunGps.smoke.mjs', import.meta.url), 'utf8')
+host = host.slice(0, host.indexOf('for(const native of [false,true])'))
+  .replaceAll('import.meta.url', JSON.stringify(new URL('./activeRunGps.smoke.mjs', import.meta.url).href))
+  .replace(/from '(\.\.[^']+)'/g, (_, relative) => `from '${new URL(relative, new URL('./activeRunGps.smoke.mjs', import.meta.url)).href}'`)
+const { mount } = await import('data:text/javascript;base64,' + Buffer.from(host + '\nexport { mount }').toString('base64'))
+const runFixture = fixture()
+const memory = { values: new Map(), getItem(k) { return this.values.get(k) }, setItem(k, v) { this.values.set(k, v) }, removeItem(k) { this.values.delete(k) } }
+for (const [index, refresh] of ['denied', 'available'].entries()) {
+  runFixture.set({ backgroundRefreshStatus: refresh, locationAuthorization: 'denied', accuracyAuthorization: 'reduced' })
+  const app = mount({ native: index === 0, readinessService: runFixture.service }); await app.flush()
+  const before = runFixture.reads
+  await app.clickText('Start Run'); assert.ok(runFixture.reads > before); assert.equal(app.watches, 1)
+  assert.match(app.text(), /Location: off.*Precise: off/)
+  await app.fix(0); await app.tick(2); await app.fix(6)
+  // Save must read again, not just retain the pre-start value or a rendered closure.
+  const atSave = index === 0 ? 'restricted' : 'denied'
+  runFixture.set({ backgroundRefreshStatus: atSave })
+  await app.find('finish-run').props.onClick(); await app.flush()
+  assert.equal(app.payload.backgroundRefreshStatus, atSave)
+  assert.equal(app.payload.gps_source, index === 0 ? 'native_bg' : 'web_fallback')
+  saveActiveRunSession({ phase: 'running', startedAt: 1800000000000, ...app.payload }, 'synthetic', memory, 1800000002000)
+  const restored = loadActiveRunSession('synthetic', memory, 1800000002000)
+  assert.equal(restored.backgroundRefreshStatus, atSave); assert.equal(restored.gps_source, app.payload.gps_source)
+  saveRunCompletionHandoff({ runId: `synthetic-${index}`, queued: true, snapshot: buildRunCompletionSnapshot(app.payload), provenance: 'live_tracked' }, 'synthetic', memory, 1800000002000)
+  const handoff = loadRunCompletionHandoff(`synthetic-${index}`, 'synthetic', memory, 1800000002000)
+  assert.equal(handoff.snapshot.workout_metrics_json.backgroundRefreshStatus, atSave)
+  assert.equal(handoff.snapshot.workout_metrics_json.gps_source, app.payload.gps_source)
+  await app.close()
+}
+// Delayed readiness cannot revive an unmounted recorder or duplicate a save.
+const detached = fixture({ timeoutMs: 1000 }); let finishRead
+const detachedApp = mount({ readinessService: detached.service }); await detachedApp.flush()
+detached.plugin.getStatus = () => new Promise(resolve => { finishRead = resolve })
+const starting = detachedApp.clickText('Start Run'); await tick(); await detachedApp.close()
+finishRead({ backgroundRefreshStatus: 'available' }); await starting
+assert.equal(detachedApp.watches, 0)
+const singleSave = fixture({ timeoutMs: 1000 }), savingApp = mount({ readinessService: singleSave.service })
+await savingApp.flush(); await savingApp.clickText('Start Run'); await savingApp.fix(0); await savingApp.tick(2); await savingApp.fix(6)
+let resolveSaveRead
+singleSave.plugin.getStatus = () => new Promise(resolve => { resolveSaveRead = resolve })
+const finish = savingApp.find('finish-run').props.onClick
+const saves = [finish(), finish()]; await tick(); assert.equal(savingApp.saves, 0)
+resolveSaveRead({ backgroundRefreshStatus: 'restricted' }); await Promise.all(saves); await savingApp.flush()
+assert.equal(savingApp.saves, 1); assert.equal(savingApp.payload.backgroundRefreshStatus, 'restricted')
+await savingApp.close()
+let options = [], webStarts = 0, granted = false
+const watcher = createPhoneGpsWatcher({ isNative: true, native: { async addWatcher(opts) { options.push(opts); throw Error('synthetic') } },
+  web: { watchPosition() { webStarts++; return 1 }, clearWatch() {} }, canFallbackSilently: async () => granted, onFix() {}, onError() {} })
+await watcher.start(); await watcher.restart(); assert.equal(webStarts, 0)
+granted = true; await watcher.restart(); assert.equal(webStarts, 1); await watcher.stop()
+assert.ok(options.every(option => option.requestPermissions === false))
+for (const file of ['../src/pages/Onboarding.jsx', '../src/pages/ActiveRun.jsx']) assert.match(readFileSync(new URL(file, import.meta.url), 'utf8'), /<RunReadinessExplainer/)
+assert.equal((readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8').match(/<RunReadinessLifecycle/g) || []).length, 1)
+console.log('PASS actual ActiveRun: fresh every start/save, two save/reload diagnostics, watcher-only source despite denied authorization, silent fallback, Start available')

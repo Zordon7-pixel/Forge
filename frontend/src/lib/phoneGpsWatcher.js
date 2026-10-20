@@ -2,7 +2,7 @@ import { createRunLocationWatcherLifecycle, runLocationErrorStatus } from './run
 import { fixTimestampMs } from './gpsTrace.js'
 
 // Serial ownership of exactly one watcher, including unresolved native registration.
-export function createPhoneGpsWatcher({ native, web, isNative, onFix, onError, onSource }) {
+export function createPhoneGpsWatcher({ native, web, isNative, onFix, onError, onSource, canFallbackSilently }) {
   const lifecycle = createRunLocationWatcherLifecycle()
   let revision = 0, active = false, handle = null, queue = Promise.resolve()
   const clear = async () => {
@@ -12,7 +12,7 @@ export function createPhoneGpsWatcher({ native, web, isNative, onFix, onError, o
     else web.clearWatch(handle.id)
     handle = null
   }
-  const reconcile = () => {
+  const reconcile = ({ requestPermissions = false } = {}) => {
     const requestedRevision = ++revision
     lifecycle.stop()
     queue = queue.then(async () => {
@@ -24,7 +24,7 @@ export function createPhoneGpsWatcher({ native, web, isNative, onFix, onError, o
       if (isNative) {
         try {
           const id = await native.addWatcher({ backgroundMessage: 'Forged Hybrid is recording your run',
-            backgroundTitle: 'Forged Hybrid', requestPermissions: true, stale: false, distanceFilter: 0 }, (fix, failure) => {
+            backgroundTitle: 'Forged Hybrid', requestPermissions, stale: false, distanceFilter: 0 }, (fix, failure) => {
             if (!current()) return
             if (failure) return error(failure)
             if (fix) onFix({ lat: fix.latitude, lon: fix.longitude, altitudeMeters: fix.altitude,
@@ -41,6 +41,8 @@ export function createPhoneGpsWatcher({ native, web, isNative, onFix, onError, o
           // Registration failure permits the existing browser fallback; no raw errors logged.
         }
       }
+      if (isNative && !requestPermissions && canFallbackSilently && !await canFallbackSilently()) { error({}); return }
+      if (!current()) return
       if (!web?.watchPosition) { error({}); return }
       const id = web.watchPosition(fix => {
         if (current()) onFix({ lat: fix.coords.latitude, lon: fix.coords.longitude,
@@ -52,7 +54,7 @@ export function createPhoneGpsWatcher({ native, web, isNative, onFix, onError, o
     return queue
   }
   return {
-    start() { active = true; return reconcile() },
+    start(options) { active = true; return reconcile(options) },
     restart() { return active ? reconcile() : queue },
     stop() { active = false; return reconcile() },
   }

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import api from '../lib/api'
+import { RunReadinessExplainer } from '../components/RunReadiness'
 import { previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import HealthService from '../services/HealthService'
@@ -82,6 +83,7 @@ export default function Onboarding() {
   return (
     <div className="min-h-screen px-4 py-6" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       <div className="mx-auto w-full max-w-[480px]">
+        <RunReadinessExplainer />
         <div className="mb-6 h-2 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-card)' }}>
           <div className="h-full transition-all" style={{ width: progress, background: 'var(--accent)' }} />
         </div>

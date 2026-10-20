@@ -1,4 +1,6 @@
 import ForgeMap from '../components/maps/ForgeMap'
+import { RunReadinessExplainer, runReadiness, useRunReadiness } from '../components/RunReadiness'
+import { runReadinessLine } from '../lib/runReadiness'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { CircleMarker, Polyline, useMapEvents } from 'react-leaflet'
@@ -315,8 +317,16 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   const [autoPaused, setAutoPaused] = useState(Boolean(restoredSession?.autoPaused))
   const [gpsIsPaused, setGpsIsPaused] = useState(false)
   const [gpsSource, setGpsSource] = useState(restoredSession?.gps_source ?? null)
-  // Phase 3 supplies an observed value; absence remains unknown, never permission-derived.
-  const diagnostics = phoneRunDiagnostics({ gps_source: gpsSource, backgroundRefreshStatus: backgroundRefreshStatus === undefined ? restoredSession?.backgroundRefreshStatus : backgroundRefreshStatus })
+  const readiness = useRunReadiness()
+  // Keep the Phase 2 injectable seam; production always reads the native observer.
+  const diagnostics = phoneRunDiagnostics({ gps_source: gpsSource, backgroundRefreshStatus: backgroundRefreshStatus === undefined ? readiness.backgroundRefreshStatus : backgroundRefreshStatus })
+  const startPendingRef = useRef(false)
+  const savePendingRef = useRef(false)
+  const runMountedRef = useRef(true)
+  useEffect(() => {
+    runMountedRef.current = true
+    return () => { runMountedRef.current = false }
+  }, [])
   const traceRef = useRef(null)
   if (!traceRef.current) {
     traceRef.current = { ...createGpsTrace({ startedAtMs: restoredSession?.startedAt, autoPauseEnabled }),
@@ -793,6 +803,10 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
       native: BackgroundGeolocation,
       web: typeof navigator === 'undefined' ? null : navigator.geolocation,
       isNative: Capacitor.isNativePlatform(),
+      canFallbackSilently: runReadiness.nativeIOS ? async () => {
+        try { return (await navigator.permissions?.query({ name: 'geolocation' }))?.state === 'granted' }
+        catch { return false }
+      } : undefined,
       onFix: fix => handlePointRef.current(fix), onError: setLocationFailure, onSource: source => setGpsSource(source === 'browser' ? 'web_fallback' : source),
     })
     return watcherRef.current
@@ -810,6 +824,11 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   }, [])
 
   const startGPS = useCallback(async ({ resume = false, recordRoute = mapMyRun } = {}) => {
+    if (startPendingRef.current) return
+    startPendingRef.current = true
+    const { requestPermissions } = await runReadiness.prepareStart({ resume })
+    startPendingRef.current = false
+    if (!runMountedRef.current) return
     setSaveError('')
     setGpsGapSummary(null)
     if (!resume) {
@@ -832,7 +851,8 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
     setGpsAvailable(true)
     setLocationStatus(RUN_LOCATION_STATUS.CHECKING)
     watcherWantedRef.current = true
-    await getWatcher().start()
+    await getWatcher().start({ requestPermissions: runReadiness.nativeIOS ? requestPermissions : !resume })
+    void runReadiness.refresh()
   }, [activateRunTimer, getWatcher, mapMyRun, stopRouteRecording])
 
   useEffect(() => {
@@ -900,12 +920,7 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   }, [launchRun])
 
   const openLocationSettings = useCallback(async () => {
-    if (!Capacitor.isNativePlatform()) return
-    try {
-      await BackgroundGeolocation.openSettings()
-    } catch (error) {
-      console.error('[ActiveRun] failed to open location settings:', error?.message || error)
-    }
+    if (!await runReadiness.openSettings()) setGpsError('Settings unavailable — you can continue running.')
   }, [])
 
   useEffect(() => {
@@ -1034,7 +1049,9 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
     return `[gps_gap_notice:${pieces.join('; ')}. Distance/route may be incomplete.]`
   }
 
-  const buildRunPayload = () => {
+  const buildRunPayload = (observedReadiness) => {
+    const savedDiagnostics = phoneRunDiagnostics({ gps_source: gpsSource,
+      backgroundRefreshStatus: backgroundRefreshStatus === undefined ? observedReadiness?.backgroundRefreshStatus : backgroundRefreshStatus })
     const runSurface = runEnvironment === 'indoor' && surface === 'treadmill' ? 'treadmill' : surface
     const shouldUseManualDistance = !gpsStarted || !gpsAvailable || distanceMiles <= 0
     let finalDistance = shouldUseManualDistance ? Number(manualDistance || 0) : distanceMiles
@@ -1072,8 +1089,8 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
       elevation_gain: actualElevation.available ? actualElevation.gainFeet : null,
       elevation_loss: actualElevation.available ? actualElevation.lossFeet : null,
       route_coords: finishedPhoneRoute(routeCoords),
-      ...diagnostics,
-      workout_metrics_json: diagnostics,
+      ...savedDiagnostics,
+      workout_metrics_json: savedDiagnostics,
       treadmill_brand: treadmillBrand || null
     }
   }
@@ -1135,14 +1152,20 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   }
   
   const saveRun = async () => {
+    if (savePendingRef.current) return
+    savePendingRef.current = true
+    setSaving(true)
     setSaveError('')
-    const payload = buildRunPayload()
+    const observedReadiness = await runReadiness.refresh()
+    if (!runMountedRef.current) { savePendingRef.current = false; return }
+    const payload = buildRunPayload(observedReadiness)
     if (!Number.isFinite(payload.distance_miles) || payload.distance_miles <= 0) {
       setSaveError(`Enter a distance greater than 0 ${fmt.distanceLabel} before saving.`)
+      savePendingRef.current = false
+      setSaving(false)
       return
     }
 
-    setSaving(true)
     try {
       const res = await api.post('/runs', payload)
       const runId = res.data?.id || res.data?.run?.id
@@ -1183,7 +1206,7 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
       } else {
         setSaveError(err?.response?.data?.error || 'Could not save this run. Check the details and try again.')
       }
-    } finally { setSaving(false) }
+    } finally { savePendingRef.current = false; setSaving(false) }
   }
 
   const finishRun = async () => {
@@ -1394,7 +1417,8 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
         ) : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect watch for live HR</p>}
       </div>
 
-      <p role="status" data-testid="run-settings-diagnostics" className="mb-3 text-xs" style={{ color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{phoneRunStatusLine(diagnostics)}</p>
+      <RunReadinessExplainer observe={false} eligible={!restoredSession && !completionRestorePending} />
+      <p role="status" data-testid="run-settings-diagnostics" className="mb-3 text-xs" style={{ color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{phoneRunStatusLine(diagnostics)}{runReadiness.nativeIOS ? ` · ${runReadinessLine(readiness)}` : ''}</p>
       {(!gpsAvailable || gpsError) && <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>{gpsError || 'GPS unavailable — tracking time and effort only'}</div>}
       {restoredNotice && (
         <button type="button" onClick={() => setRestoredNotice(false)} className="w-full rounded-xl p-3 mb-3 text-left" role="status" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)' }}>

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import vm from 'node:vm'
 import * as trace from '../src/lib/gpsTrace.js'
+import * as readinessPolicy from '../src/lib/runReadiness.js'
 import * as watcher from '../src/lib/phoneGpsWatcher.js'
 import * as controls from '../src/lib/activeRunControls.js'
 import * as session from '../src/lib/activeRunSession.js'
@@ -14,9 +15,9 @@ import * as elevation from '../src/utils/elevation.js'
 const requireInstalled = createRequire(process.env.FORGE_TEST_MODULE_ROOT ? `${process.env.FORGE_TEST_MODULE_ROOT}/package.json` : import.meta.url)
 const { transformSync } = createRequire(requireInstalled.resolve('vite'))('esbuild')
 const code = transformSync(readFileSync(new URL('../src/pages/ActiveRun.jsx', import.meta.url),'utf8'), { loader:'jsx', format:'cjs', jsx:'automatic' }).code
-function mount({ native = false, restored = null } = {}) {
+function mount({ native = false, restored = null, readinessService = null } = {}) {
   let now=1800000000000, cursor=0, dirty=true, tree, slots=[], effects=[], listeners=new Map(), intervals=new Map(), nextInterval=0
-  let callback, watchCount=0, watchStops=0, maxWatchCount=0, payload, lastLive, closed=false
+  let callback, watchCount=0, watchStops=0, maxWatchCount=0, payload, lastLive, saves=0, closed=false
   const storage=new Map()
   const localStorage={getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)}
   const subscribe=(name,fn)=>{ if(!listeners.has(name)) listeners.set(name,new Set()); listeners.get(name).add(fn) }
@@ -35,7 +36,7 @@ function mount({ native = false, restored = null } = {}) {
   const stopWatch=()=>{watchStops++;watchCount--}
   const background={addWatcher:async(_opts,cb)=>startWatch(cb),removeWatcher:async()=>stopWatch(),openSettings:async()=>{}}
   const app={addListener:async(name,fn)=>{subscribe(name,fn);return {remove:()=>unsubscribe(name,fn)}}}
-  const api={get:async()=>({data:{}}),post:async(_url,body)=>{payload=body;return {data:{id:'saved',run:body}}}}
+  const api={get:async()=>({data:{}}),post:async(_url,body)=>{saves++;payload=body;return {data:{id:'saved',run:body}}}}
   const navLocation={pathname:'/run/active',search:'',hash:'',state:{countdown:0}}
   const noop=()=>{}
   const modules={
@@ -45,6 +46,10 @@ function mount({ native = false, restored = null } = {}) {
     '@capacitor/app':{App:app},'@capacitor/core':{Capacitor:{isNativePlatform:()=>native},registerPlugin:()=>background},
     'lucide-react':{LocateFixed:'Icon',MapPinned:'Icon',Pause:'Icon',Play:'Icon'},
     '../components/maps/ForgeMap':{default:'ForgeMap'},
+    '../lib/runReadiness':readinessPolicy,
+    '../components/RunReadiness':{RunReadinessExplainer:'RunReadinessExplainer',
+      runReadiness:readinessService || {prepareStart:async()=>({requestPermissions:false}),refresh:async()=>{},snapshot:()=>({}),nativeIOS:false},
+      useRunReadiness:()=>{const service=readinessService;const [value,set]=hooks.useState(()=>service?.snapshot()||{});hooks.useEffect(()=>service?.subscribe(set),[]);return value}},
     '../context/UnitsContext':{useUnits:()=>({units:'imperial',fmt:{distance:(n)=>String(n),pace:n=>String(n),distanceLabel:'mi'}})},
     '../lib/api':{default:api},'../lib/offlineQueue':{queueRequest:async()=>{}},
     '../lib/dailyExecution':{planSessionIdFromState:()=>null,currentWeekFromState:()=>null},
@@ -74,7 +79,7 @@ function mount({ native = false, restored = null } = {}) {
   const find=id=>nodes().find(n=>n.props?.['data-testid']===id)
   const clickText=async(text)=>{const n=nodes().find(n=>n.type==='button'&&textOf(n)===text);assert.ok(n,`Missing ${text}`);assert.ok(!n.props.disabled);await n.props.onClick();await flush()}
   return { flush, find, nodes, text:()=>textOf(tree), clickText,
-    get live(){return lastLive},get watches(){return watchCount},get maxWatches(){return maxWatchCount},get stops(){return watchStops},get payload(){return payload},
+    get live(){return lastLive},get watches(){return watchCount},get maxWatches(){return maxWatchCount},get stops(){return watchStops},get payload(){return payload},get saves(){return saves},
     async tick(seconds){now=1800000000000+seconds*1000;for(const fn of [...intervals.values()])fn();await flush()},
     async fix(meters,{accuracy=3,age=0}={}){const value={latitude:0,longitude:meters/111194.92664455874,altitude:10,accuracy};if(native)callback({...value,time:now-age});else callback({coords:value,timestamp:now-age});await flush()},
     async toggle(){await nodes().find(n=>n.type==='input'&&n.props.type==='checkbox').props.onChange();await flush()},

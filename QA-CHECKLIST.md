@@ -6,6 +6,137 @@ Run through every item for every diff. CRITICAL items block ship. HIGH items mus
 
 ---
 
+
+## t_765505f1 — Phase 3 native run readiness (local patch; device acceptance pending)
+
+Required clean parent: `6ba694cf491a29d07d96d8f5eb7425a20a6a6cbc`, branch
+`codex/t_765505f1/iphone-gps-trace`. Phase 3 only; ten changed paths including this
+checklist. No watch merge/dedup, lockfile, dependency, generated bundle, or release
+changes. Flag native lifecycle/permission behavior and the >2-file scope for
+Hermes-owned independent exact-SHA review. This is not card completion.
+
+Actual seams and patch:
+- `AppViewController.swift` already belongs to the Xcode Sources phase and
+  registers custom CAPBridgedPlugin instances. The new plugin lives there and
+  reads UIApplication.backgroundRefreshStatus, CLLocationManager.authorizationStatus
+  and accuracyAuthorization independently on the main queue. Unknown enum cases
+  stay unknown. Bridge rejection/timeout becomes error; non-iOS becomes unavailable.
+- Onboarding previously had no run-readiness entry. Both Onboarding and ActiveRun
+  now host the same inline, dismissible combined explainer. Native UserDefaults
+  claims presentation atomically before rendering, independently of Settings
+  success and setting values. The flag is never cleared. One pending claim spans
+  StrictMode cleanup/remount; run start does not make a visible explanation flash
+  away. A restored in-progress run does not introduce an explainer.
+- App owns one readiness appStateChange listener. Hooks only subscribe; ActiveRun's
+  existing GPS foreground watcher restart remains separate and unchanged. Actual
+  false→true transitions re-read, duplicate active events do not. Late registration
+  is removed on cleanup; failed removal retains ownership to prevent duplication.
+- ActiveRun reads before every start/resume (including countdown/autostart/restore)
+  and again before save. Reads have a 1.2-second bound and never gate Start on any
+  status or GPS fix. Late reads cannot replace newer observations. Save uses its
+  own read result, not a captured render or persisted prior-run status.
+- Phase 2's backgroundRefreshStatus seam and persistence remain intact. Always and
+  Precise are bounded current labels in the small status line. gps_source is still
+  supplied solely by the successfully registered watcher, never by permissions.
+- The installed background-geolocation plugin requests/escalates authorization on
+  each registration when requestPermissions is true. A separate native first-run
+  claim now allows that only on the first start, for notDetermined/While Using;
+  later iOS starts and foreground restarts pass false. Native-to-web fallback on
+  later runs requires an already-granted browser permission; absent/unsupported
+  Permissions API conservatively keeps time/manual distance rather than risking
+  a new prompt. Ordinary web behavior remains nonblocking.
+- Open Settings uses UIApplication.openSettingsURLString to this app. Success is
+  navigation only. Failure is a bounded inline status; foreground return re-reads
+  actual settings. No new coordinate, raw native-error, token or user-data logging.
+
+Deterministic local evidence (synthetic data only): every command in the block
+below exited 0. The separate mapReferrer failure is recorded below, not waived.
+
+```sh
+export FORGE_TEST_MODULE_ROOT='/Volumes/Zordon Storage /openclaw-workspace/forge-app/frontend'
+export NODE_PATH='/Volumes/Zordon Storage /openclaw-workspace/forge-app/backend/node_modules'
+node frontend/test/activeRunControls.smoke.mjs
+node frontend/test/activeRunGps.smoke.mjs
+node frontend/test/phoneRunPhase2.smoke.mjs
+node frontend/test/phoneRunPhase2.smoke.mjs --compile-browser
+node frontend/test/gpsTrace.smoke.mjs
+node frontend/test/phoneGpsWatcher.smoke.mjs
+node backend/scripts/active-run-gps-gap-smoke.js
+node frontend/test/runLocationAccess.smoke.mjs
+node frontend/test/liveActivity.smoke.mjs
+node frontend/test/activeRunPlannedRoute.smoke.mjs
+node frontend/test/runCompletionPhaseA.smoke.mjs
+node frontend/test/deviceSourceTruth.smoke.mjs
+node frontend/test/shareStats.smoke.mjs
+swiftc -frontend -parse frontend/ios/App/App/AppViewController.swift
+git diff --check
+```
+
+The controls test includes actual Swift plugin method-body execution against typed
+SDK doubles (temporary files only), actual explainer JSX/hook tests and actual
+ActiveRun handler tests with the real readiness policy. It checks independent
+status mappings, unknown/error/timeout, persisted first-only presentation, Settings
+failure/relaunch, onboarding→run, silent second run/foreground/off-on transitions,
+listener ownership/cleanup, stale reply fencing, delayed-read unmount and duplicate-save
+protection, silent fallback and two save/reload
+cycles preserving watcher-derived source. Phase 2 additionally exercises six real
+SQLite POST/GET cycles, queued handoff, recap, segmented geometry and privacy.
+Swift syntax/SDK-double tests are not an iOS SDK build. Bundle/CSS compilation is
+not browser layout QA. No dependencies were installed; existing canonical packages
+are reused for test tooling, so coordinator-owned exact-lock host checks remain.
+
+Reported local hiccups: the dependency-directory probe exited 1 (no worktree
+node_modules). The original controls source assertion exited 1 because it required
+zero-argument watcher.start; updated to the explicit once-only permission argument,
+then its behavioral suite passed. The extra mapReferrer browser gate exited 1 at
+module resolution (ERR_MODULE_NOT_FOUND for its worktree tooling); it remains for
+Hermes host/browser QA. Thunderforest attribution/no ORS/route privacy are still
+covered by the passing Phase 2 and share regressions. No failed browser run is
+represented as a pass.
+
+Local commit could not be created: the initial explicit ten-path `git add` exited
+0, but the final checklist staging attempt exited 128 because the sandbox denied
+creating the canonical `.git/worktrees/forge8/index.lock`. No commit command was
+run after that denial. Hermes's permitted commit guard must stage the final
+checklist and commit the bounded candidate. HEAD remains the required Phase 2
+parent; the first checklist version and nine code/test paths are staged, with
+this final evidence update unstaged. No permission bypass or push was attempted.
+
+Real TestFlight acceptance — ALL still required, do not mark from mocks:
+- [ ] Record exact native build SHA, app version/build and installed TestFlight provenance.
+- [ ] Fresh install/onboarding presents one combined Background App Refresh + Always
+      + Precise explanation; Start remains usable. Onboarding then first run does
+      not repeat it. Repeat with first-run entry without onboarding.
+- [ ] Shown state survives reload/relaunch and failed/no-change Settings navigation.
+- [ ] Open Settings lands on Forged Hybrid's own iOS settings page.
+- [ ] Background App Refresh OFF/ON reads denied/available on return and before
+      each start; restricted is labeled non-user-changeable. Verify real Always,
+      While Using, denied/notDetermined and Precise/reduced readback where feasible.
+- [ ] Second/later run, repeated foreground and Settings return, and off/on changes
+      show NO new explainer, modal, alert, app-requested OS permission prompt or
+      forced Settings detour. Check iOS's own deferred authorization behavior.
+- [ ] Native failure has only the existing nonmodal warning/status; running remains
+      available. Confirm pre-granted web fallback and truthful web_fallback source.
+- [ ] At least two real saved/reloaded runs retain observed backgroundRefreshStatus
+      beside watcher-derived gps_source; status alone never proves native GPS.
+- [ ] >=5-minute locked-screen outdoor run proves continuing accepted GPS fixes and
+      native_bg from this installed build. Verify <=20m readiness, early Start,
+      filtering, >=15s segment gaps, >=20s GPS-paused status, foreground restart,
+      auto/manual pause ownership, Follow map, planned-vs-recorded truth and privacy.
+- [ ] Hermes exact-lock build, browser/SPA layout + map-referrer QA, native iOS build,
+      advisory disposition and independent exact-SHA review remain outstanding.
+
+Phase 4 handoff: implement watch-import precedence/dedup in BOTH arrival orders
+(phone save then watch import; watch import then phone save), using the real manual
+run persistence and watch/import matching seams. Preserve watch authority without
+silently overwriting phone evidence or making duplicate canonical runs, totals,
+training load or planning revisions. Cover replay/idempotency, partial/gapped phone
+trace vs watch distance/route/time, ambiguous matches, unrelated activities, owner
+boundaries, and visible source provenance in recap/history/share. Keep planned
+routes separate and Show route OFF private. No authority/dedup changes were made
+here. Hermes owns QA/review/release and Kanban; no messages, production access,
+push/merge/deploy, EAS/TestFlight, restarts or external mutations occurred.
+
 ## CRITICAL — Block ship if any are true
 
 - [ ] DELETE or UPDATE query missing `AND user_id=?` ownership check

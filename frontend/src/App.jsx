@@ -8,6 +8,7 @@ import { clearToken, rememberPostAuthRedirect } from './lib/tokenStore'
 import { clearPostRunCheckInDraft } from './lib/postRunCheckInDraft'
 import track from './lib/track'
 import Layout from './components/Layout'
+import { RunReadinessLifecycle } from './components/RunReadiness'
 import { ProProvider } from './context/ProContext'
 import HealthService from './services/HealthService'
 import NativeNotificationService from './services/NativeNotificationService'
@@ -469,6 +470,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <RunReadinessLifecycle />
       <ServiceWorkerUpdateNotice />
       <AppOpenTelemetry />
       <ProProvider>
