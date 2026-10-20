@@ -18,7 +18,9 @@ const healthService = fs.readFileSync(path.join(root, 'frontend/src/services/Hea
 const recap = fs.readFileSync(path.join(root, 'frontend/src/components/RunDetailModal.jsx'), 'utf8');
 const shareStudio = fs.readFileSync(path.join(root, 'frontend/src/components/ActivityShareStudio.jsx'), 'utf8');
 const shareTemplates = fs.readFileSync(path.join(root, 'frontend/src/lib/shareTemplates.js'), 'utf8');
-const { THEMES } = require('../../frontend/src/lib/shareTheme.js');
+const { THEMES, BRAND } = require('../../frontend/src/lib/shareTheme.js');
+const { TEMPLATES } = require('../../frontend/src/lib/shareTemplates.js');
+const { fromRun } = require('../../frontend/src/lib/shareStats.js');
 
 const decoded = decodeSummaryPolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
 assert.deepStrictEqual(decoded.slice(0, 3), [
@@ -113,13 +115,29 @@ for (const [name, theme] of Object.entries(THEMES)) {
 }
 assert(/import\s*\{[^}]*\bdrawShareCard\b[^}]*\}\s*from\s*'\.\.\/lib\/shareTemplates'/.test(shareStudio)
   && /await drawShareCard\(rendered, cardModel, \{ template, theme, size, photo, logo, showRoute \}\)/.test(shareStudio), 'share studio renders through the canonical template entry point');
-assert(/import\s*\{[^}]*\bTHEMES\b[^}]*\}\s*from\s*'\.\/shareTheme\.js'/.test(shareTemplates)
-  && /const tokens = THEMES\[theme\]/.test(shareTemplates)
-  && /legacyDraws\[id\]\(ctx, safeModel, \{ photo, logo, tokens, showRoute \}\)/.test(shareTemplates)
-  // C1 resolves a logo before dispatch; the spread must still forward the selected theme.
-  && /entry\.draw\(ctx, rendererModel\(model, options\.showRoute\), \{ \.\.\.options, logo \}\)/.test(shareTemplates), 'canonical renderer passes the selected production theme to its templates');
-assert(/route: \(ctx, model, \{ logo, tokens, showRoute \}\) => drawRouteTemplate\(ctx, model, showRoute \? model\.run\?\.route \|\| \[\] : \[\], logo, tokens\)/.test(shareTemplates)
-  && /function drawRouteTemplate\(ctx, model, route, logo, t\)[\s\S]*?drawRoute\(ctx, route, \{[^}]+\}, t\)/.test(shareTemplates), 'route template forwards theme tokens to the route renderer');
+assert(/const safe = rendererModel\(model, options\.showRoute\)/.test(shareTemplates)
+  && /entry\.draw\(ctx, safe, \{ \.\.\.options, logo \}\)/.test(shareTemplates), 'canonical renderer forwards selected theme after sanitizing the model');
+assert.deepStrictEqual(TEMPLATES.map(entry => entry.id), ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story'], "only this release's new designs are renderable");
+// The route painter is retained only for Full-Bleed. Exercise actual theme and
+// strict route dispatch instead of requiring removed legacy renderer source.
+const fullBleed = TEMPLATES.find(entry => entry.id === 'full-bleed-story');
+const shareModel = fromRun({ name: 'Synthetic run', distance_miles: 1, route_coords: [[40, -74], [40.01, -74.01]] }, { timezone: 'UTC' });
+for (const [theme, tokens] of Object.entries(THEMES)) {
+  for (const showRoute of [true, false]) {
+    const calls = [];
+    const ctx = new Proxy({ measureText: value => ({ width: String(value).length * 12 }), createLinearGradient: () => ({ addColorStop() {} }) }, {
+      get(target, method) { return method in target ? target[method] : (...args) => calls.push({ method, args, fill: target.fillStyle }); },
+    });
+    fullBleed.draw(ctx, shareModel, { theme, size: 'feed', showRoute, logo: {} });
+    assert(calls.some(call => call.method === 'fillText' && call.args[0] === 'FORGED' && call.fill === tokens.text), `${theme} brand uses selected theme`);
+    const markers = calls.filter(call => call.method === 'arc');
+    assert.strictEqual(markers.length, showRoute ? 3 : 0, `${theme} OFF omits every endpoint draw`);
+    if (showRoute) {
+      assert.strictEqual(markers[0].fill, BRAND.whiteHot, 'Full-Bleed uses its designed start token');
+      assert.strictEqual(markers[1].fill, BRAND.gold, 'Full-Bleed uses its designed end token');
+    }
+  }
+}
 assert(/const \[startX, startY\] = fitted\[0\][\s\S]*?ctx\.fillStyle = t\.start\s+ctx\.beginPath\(\)\s+ctx\.arc\(startX, startY, 13, 0, Math\.PI \* 2\)\s+ctx\.fill\(\)/.test(shareTemplates), 'route renderer fills the first coordinate with the canonical start color');
 assert(/const \[endX, endY\] = fitted\.at\(-1\)[\s\S]*?ctx\.fillStyle = t\.end\s+ctx\.beginPath\(\)\s+ctx\.arc\(endX, endY, 15, 0, Math\.PI \* 2\)\s+ctx\.fill\(\)/.test(shareTemplates), 'route renderer fills the last coordinate with the canonical end color');
 assert(/fetchRecentWorkoutHistory/.test(swift) && /mergeWorkoutHistory/.test(swift), 'native sync rechecks recent workouts for late HealthKit routes');

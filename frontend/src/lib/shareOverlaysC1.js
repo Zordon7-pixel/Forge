@@ -273,3 +273,6 @@ export const C1_TEMPLATES = Object.freeze(definitions.map(([id, label, supports,
     } finally { ctx.restore() }
   },
 })))
+
+// Shared drawing primitives keep Full-Bleed typography aligned with C1.
+export const overlayDrawing = Object.freeze({ text, brand, footer, plate, gradient, display })

@@ -5,7 +5,7 @@ import api from '../lib/api'
 import { createActionSingleFlight } from '../lib/actionSingleFlight'
 import { unreadableActivitySharePhotoMessage, validateActivitySharePhoto } from '../lib/activitySharePhoto'
 import { SIZES, loadShareFonts } from '../lib/shareTheme'
-import { TEMPLATES, drawShareCard, titleForModel, drawBrand, roundRect } from '../lib/shareTemplates'
+import { TEMPLATES, availableShareTemplates, resolveShareTemplate, drawShareCard, titleForModel, drawBrand, roundRect } from '../lib/shareTemplates'
 import { studioModel, sharePreferences, activityShareModels } from '../lib/shareStudioModel'
 import PhotoLibraryService from '../services/PhotoLibraryService'
 
@@ -204,7 +204,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   if (!actionLaneRef.current) actionLaneRef.current = createActionSingleFlight()
   const photoInputId = useId()
   const photoFeedbackId = `${photoInputId}-feedback`
-  const [template, setTemplate] = useState('route')
+  const [requestedTemplate, setTemplate] = useState(() => prefs?.template || null)
   const [theme, setTheme] = useState('dark')
   const [size, setSize] = useState('feed')
   const [showRoute, setShowRoute] = useState(true)
@@ -224,8 +224,9 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   const [posted, setPosted] = useState(false)
   const activities = useMemo(() => model ? null : activityShareModels(run, activityContext, preferences, showRoute), [run, model, activityContext, preferences, showRoute])
   const cardModel = useMemo(() => studioModel({ run, model, prefs: preferences, showRoute, title: cardTitle, context: activityContext, hybrid: hybridSelected }), [run, model, preferences, showRoute, cardTitle, activityContext, hybridSelected])
-  const availableTemplates = TEMPLATES.filter(item => item.supports(cardModel) && item.sizes.includes(size))
-  const transparent = template === 'overlay'
+  const availableTemplates = availableShareTemplates(cardModel, { showRoute, size })
+  const template = resolveShareTemplate(cardModel, { template: requestedTemplate, showRoute, size })
+  const transparent = false
   const fileType = transparent ? 'image/png' : 'image/jpeg'
   const fileExtension = transparent ? 'png' : 'jpg'
   const filename = `forged-hybrid-${cardModel.kind}-${cardModel.dateLabel || 'activity'}-${size}.${fileExtension}`
@@ -371,7 +372,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
       }
       if (photoUrl) {
         try { photo = await loadImage(photoUrl) }
-        catch (error) { console.error('[ActivityShareStudio] photo load failed:', error?.message || error) }
+        catch (error) { throw new Error('Selected photo could not be loaded', { cause: error }) }
       }
       if (cancelled) return null
       // Draw offscreen so a cancelled async render can never overwrite a newer preview.
@@ -551,7 +552,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
       invalidateRender()
       setPhotoUrl(nextPhotoUrl)
       setPhotoFeedback({ kind: 'selected', message: `Photo selected: ${displayName}.` })
-      setTemplate('photo')
+      setTemplate('full-bleed-story')
     } catch (error) {
       revokeOwnedPhotoUrl(nextPhotoUrl)
       if (selectionVersion !== photoSelectionVersionRef.current) return
@@ -600,13 +601,22 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
 
         {activities?.hybrid && <button type="button" disabled={busy} aria-pressed={hybridSelected}
           className="pressable mb-3 min-h-10 rounded-lg px-3 text-sm font-bold"
-          onClick={() => { invalidateRender(); setHybridSelected(!hybridSelected); setTemplate(hybridSelected ? 'route' : 'hybrid-split'); setCardTitle(''); setPosted(false); setStatus('') }}>
+          onClick={() => { invalidateRender(); setHybridSelected(!hybridSelected); setTemplate(hybridSelected ? null : 'hybrid-split'); setCardTitle(''); setPosted(false); setStatus('') }}>
           {hybridSelected ? 'Share run only' : 'Share run + lift'}
         </button>}
 
-        <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
+        <div role="radiogroup" aria-label="Share design" className="mb-3 grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
           {availableTemplates.map((item) => (
-            <button key={item.id} type="button" aria-pressed={template === item.id} disabled={busy} onClick={() => { if (template === item.id) return; invalidateRender(); setTemplate(item.id); setTheme(item.id === 'contour' ? 'light' : 'dark'); setPosted(false); setStatus('') }} className="pressable min-h-10 rounded-md px-2 text-xs font-bold" style={{ background: template === item.id ? 'var(--accent)' : 'transparent', color: template === item.id ? 'var(--on-accent)' : 'var(--text-muted)' }}>
+            <button key={item.id} type="button" role="radio" aria-checked={template === item.id} tabIndex={template === item.id ? 0 : -1}
+              onKeyDown={event => {
+                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+                event.preventDefault()
+                const index = availableTemplates.findIndex(entry => entry.id === item.id)
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? availableTemplates.length - 1
+                  : (index + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + availableTemplates.length) % availableTemplates.length
+                const control = event.currentTarget.parentElement.querySelectorAll('[role="radio"]')[next]
+                control.click(); control.focus()
+              }} disabled={busy} onClick={() => { if (template === item.id) return; invalidateRender(); setTemplate(item.id); setPosted(false); setStatus('') }} className="pressable min-h-10 rounded-md px-2 text-xs font-bold" style={{ background: template === item.id ? 'var(--accent)' : 'transparent', color: template === item.id ? 'var(--on-accent)' : 'var(--text-muted)' }}>
               {item.label}
             </button>
           ))}
@@ -636,8 +646,8 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
 
         {!availableTemplates.length && <p role="status" className="mb-3 text-sm">No share templates are available for this activity yet.</p>}
         <div className="relative">
-          <canvas ref={canvasRef} width={SIZES[size].w} height={SIZES[size].h} aria-label="Share card preview" aria-busy={!renderReady} className="block w-full rounded-lg object-contain" style={{ aspectRatio: `${SIZES[size].w} / ${SIZES[size].h}`, background: template === 'overlay' ? 'repeating-conic-gradient(#303033 0% 25%, #202023 0% 50%) 50% / 24px 24px' : '#080808', border: '1px solid var(--border-subtle)' }} />
-          {template === 'photo' && !photoUrl && (
+          <canvas ref={canvasRef} width={SIZES[size].w} height={SIZES[size].h} aria-label="Share card preview" aria-busy={!renderReady} className="block w-full rounded-lg object-contain" style={{ aspectRatio: `${SIZES[size].w} / ${SIZES[size].h}`, background: transparent ? 'repeating-conic-gradient(#303033 0% 25%, #202023 0% 50%) 50% / 24px 24px' : '#080808', border: '1px solid var(--border-subtle)' }} />
+          {template === 'full-bleed-story' && !photoUrl && (
             <button
               type="button"
               data-testid="photo-canvas-picker"
