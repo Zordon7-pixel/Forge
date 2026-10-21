@@ -1,11 +1,11 @@
 // Phone-only trace policy. All time inputs are explicit milliseconds; distances are meters.
-// A quality-accepted stationary observation updates liveness/auto-pause, never geometry.
+// Quality-accepted observations update liveness; confirmed motion emits a smoothed track.
 export const METERS_PER_MILE = 1609.344
 const COUNT_LIMIT = 65535
 const REASONS = ['coordinates', 'accuracy', 'timestamp', 'stale', 'order', 'speed', 'jitter']
 export function createGpsTrace({ startedAtMs, autoPauseEnabled = true } = {}) {
   return { startedAtMs, autoPauseEnabled, autoPaused: false, stationarySinceMs: null,
-    movementWindow: [], lastMovementFix: null,
+    movementWindow: [], movingSinceMs: null, motionConfirmed: false, smoothedSpeedMps: null, filterPosition: null, trackingSpeed: 0,
     lastFix: null, anchor: null, segmentId: -1, boundary: null, ready: false,
     distanceMeters: 0, counts: Object.fromEntries(REASONS.map(reason => [reason, 0])) }
 }
@@ -28,7 +28,8 @@ export function metersBetween(a, b) {
   return 6371000 * 2 * Math.asin(Math.sqrt(Math.min(1, h)))
 }
 export function traceBoundary(state, reason = 'foreground') {
-  return { ...state, boundary: reason, stationarySinceMs: null, movementWindow: [], lastMovementFix: null }
+  if (reason === 'auto-pause-disabled' || reason === 'auto-resume') return state
+  return { ...state, boundary: reason, stationarySinceMs: null, movingSinceMs: null, movementWindow: [], motionConfirmed: false }
 }
 export function setTraceAutoPause(state, enabled) {
   return { ...state, autoPauseEnabled: enabled, autoPaused: enabled && state.autoPaused, stationarySinceMs: null }
@@ -46,44 +47,116 @@ export function runPauseLabel({ manualPaused, autoPaused, gpsIsPaused }) {
   if (autoPaused) return 'Auto-paused'
   return gpsIsPaused ? 'GPS paused' : null
 }
-// Independent of the drawn anchor/accuracy radius and of optional platform speed.
-// Fit position against source time, so per-fix zigzags do not inflate a path
-// denominator. Displacement must clear both the accuracy-scaled noise floor and
-// the observed scatter about that trend. Retain ten seconds / 64 accepted fixes.
+// Accuracy-weighted local motion fit on source time. Sustained transverse
+// acceleration corrects the line fit on bends; distance uses emitted positions.
+// Bounded history also supplies velocity uncertainty, so stationary scatter is
+// not mistaken for movement. Optional platform speed is deliberately irrelevant.
 function movementObservation(state, fix, breakSegment) {
-  const samples = breakSegment ? [] : (state.movementWindow || [])
-    .filter(point => fix.timestampMs - point.timestampMs <= 10000).slice(-63)
-  const window = [...samples, fix]
-  const seconds = (fix.timestampMs - window[0].timestampMs) / 1000
-  if (window.length < 3 || seconds < 2) return { window, moving: false }
-  const origin = window[0], metersPerDegree = 6371000 * Math.PI / 180
-  const samplesXY = window.map(point => ({
-    t: (point.timestampMs - origin.timestampMs) / 1000,
-    x: ((point.lon - origin.lon + 540) % 360 - 180) * metersPerDegree * Math.cos(origin.lat * Math.PI / 180),
-    y: (point.lat - origin.lat) * metersPerDegree,
+  let history = breakSegment ? [] : (state.movementWindow || [])
+    .filter(point => fix.timestampMs - point.timestampMs <= 32000)
+  // Compact dense callbacks across time rather than truncating to the newest
+  // 64: otherwise high-rate sources could never reach the six-second warm-up.
+  if (history.length >= 64) history = history.filter((_, index) => index % 2 === 0)
+  const window = [...history, fix]
+  const origin = window[0], scale = 6371000 * Math.PI / 180
+  const cosLat = Math.max(1e-9, Math.cos(origin.lat * Math.PI / 180))
+  const samples = window.map(point => ({
+    t: (point.timestampMs - fix.timestampMs) / 1000,
+    t2: ((point.timestampMs - fix.timestampMs) / 1000) ** 2,
+    x: ((point.lon - origin.lon + 540) % 360 - 180) * scale * cosLat,
+    y: (point.lat - origin.lat) * scale,
+    // Reported accuracy is a radius, not observed per-axis Gaussian variance.
+    // Inverse-radius weights retain responsiveness when reported accuracy changes.
+    w: 1 / Math.max(1, point.accuracy),
   }))
-  const mean = key => samplesXY.reduce((sum, point) => sum + point[key], 0) / window.length
-  const t = mean('t'), x = mean('x'), y = mean('y')
-  let tt = 0, tx = 0, ty = 0
-  for (const point of samplesXY) {
-    tt += (point.t - t) ** 2
-    tx += (point.t - t) * (point.x - x)
-    ty += (point.t - t) * (point.y - y)
+  const fit = samples => {
+    const weight = samples.reduce((sum, p) => sum + p.w, 0)
+    const mean = key => samples.reduce((sum, p) => sum + p.w * p[key], 0) / weight
+    const t = mean('t'), x = mean('x'), y = mean('y')
+    let tt = 0, tx = 0, ty = 0
+    for (const p of samples) {
+      tt += p.w * (p.t - t) ** 2
+      tx += p.w * (p.t - t) * (p.x - x)
+      ty += p.w * (p.t - t) * (p.y - y)
+    }
+    const vx = tt ? tx / tt : 0, vy = tt ? ty / tt : 0
+    const residual = samples.reduce((sum, p) => sum + p.w *
+      ((p.x - x - vx * (p.t - t)) ** 2 + (p.y - y - vy * (p.t - t)) ** 2), 0)
+    const uncertainty = samples.length > 2 && tt ? Math.sqrt(residual / (samples.length - 2) / tt) : 0
+    // Orthogonalize the quadratic term against the line to estimate curvature
+    // without changing the position/velocity trend used by pause hysteresis.
+    const t2 = mean('t2')
+    const tq = tt ? samples.reduce((sum, p) => sum + p.w * (p.t - t) * p.t ** 2, 0) / tt : 0
+    let qq = 0, qx = 0, qy = 0
+    for (const p of samples) {
+      const q = p.t ** 2 - t2 - tq * (p.t - t)
+      qq += p.w * q * q
+      qx += p.w * q * p.x
+      qy += p.w * q * p.y
+    }
+    return { x: x - vx * t, y: y - vy * t, vx, vy, uncertainty,
+      q0: -t2 + tq * t, qSlope: -tq, qx: qq > 1e-9 ? qx / qq : 0, qy: qq > 1e-9 ? qy / qq : 0,
+      qUncertainty: samples.length > 3 && qq > 1e-9 ? Math.sqrt(Math.max(0, residual - (qx * qx + qy * qy) / qq) / (samples.length - 3) / qq) : Infinity }
   }
-  const vx = tx / tt, vy = ty / tt
-  const residualMeters = Math.sqrt(samplesXY.reduce((sum, point) => sum
-    + (point.x - x - vx * (point.t - t)) ** 2
-    + (point.y - y - vy * (point.t - t)) ** 2, 0) / (window.length - 2))
-  const netMeters = Math.hypot(vx, vy) * seconds
-  // Twice the fitted displacement's standard error accounts for sample timing
-  // and scatter, without penalizing walking for its total zigzag path length.
-  const uncertaintyMeters = 2 * residualMeters * seconds / Math.sqrt(tt)
-  const noiseFloorMeters = Math.max(3, ...window.map(point => point.accuracy * 0.4), uncertaintyMeters)
-  // A single late jump away from an otherwise settled position is insufficient
-  // evidence, even if its leverage on the fitted slope is large.
-  const priorProgress = window.slice(1, -1).some(point => metersBetween(origin, point) >= 0.5)
-  const moving = priorProgress && netMeters >= noiseFloorMeters && netMeters / seconds >= 0.5
-  return { window, moving }
+  // A six-second warm-up prevents two noisy fixes from authorizing movement.
+  // The 16-second trend and three-second speed filter suppress scatter; the
+  // hysteresis below measures additional sustained source time, not fix counts.
+  const trend = fit(samples.filter(p => p.t >= -16))
+  const seconds = (fix.timestampMs - origin.timestampMs) / 1000
+  const dt = state.lastFix ? (fix.timestampMs - state.lastFix.timestampMs) / 1000 : 0
+  const observedSpeed = Math.max(0, Math.hypot(trend.vx, trend.vy) - 2 * trend.uncertainty)
+  const priorSpeed = breakSegment ? null : state.smoothedSpeedMps
+  const speed = seconds >= 6 ? priorSpeed == null ? observedSpeed
+    : priorSpeed + (1 - Math.exp(-dt / 3)) * (observedSpeed - priorSpeed) : null
+  const trackingSpeed = Math.max(Math.hypot(trend.vx, trend.vy), breakSegment ? 0 : (state.trackingSpeed || 0) * Math.exp(-dt / 30))
+  // Shorten position history at running speeds (24m travel, bounded 8–16s),
+  // while keeping the pause estimator's full history through turns.
+  const horizon = Math.max(8, Math.min(16, 24 / Math.max(1, trackingSpeed)))
+  const local = fit(samples.filter(p => p.t >= -horizon))
+  // A line extrapolated to the newest time lies outside a curved track, and
+  // its slope points toward the middle of the window instead of the endpoint.
+  // Estimate transverse quadratic motion over 32s, requiring 24s of history
+  // and shrinking coefficients within two residual standard errors to zero.
+  // This longer baseline separates sustained turning from per-fix scatter.
+  // Projecting across velocity leaves longitudinal stop/reversal response to
+  // the short fit. Correct both endpoint and heading using the same polynomial;
+  // correcting only position leaves the directional filter's outward bias.
+  let { vx, vy } = local
+  const magnitude = Math.hypot(vx, vy)
+  const nx = magnitude ? -vy / magnitude : 0, ny = magnitude ? vx / magnitude : 0
+  const curve = fit(samples)
+  const curvature = curve.qx * nx + curve.qy * ny
+  const confidence = seconds >= 24 && curvature ? Math.max(0, 1 - (2 * curve.qUncertainty / curvature) ** 2) : 0
+  const correction = local.q0 * curvature * confidence
+  local.x += correction * nx
+  local.y += correction * ny
+  const velocityCorrection = local.qSlope * curvature * confidence
+  vx += velocityCorrection * nx
+  vy += velocityCorrection * ny
+  const position = { ...fix, lat: origin.lat + local.y / scale,
+    lon: ((origin.lon + local.x / (scale * cosLat) + 540) % 360) - 180 }
+  const prior = breakSegment ? null : state.filterPosition
+  const response = Math.max(1, trackingSpeed / 1.4)
+  const alpha = 1 - Math.exp(-dt * response / 3)
+  // Correct along the local velocity more quickly than across it. Lateral
+  // scatter should not turn a straight walk into a longer zigzag track.
+  let smoothed = position
+  if (prior && window.length > 2) {
+    const dx = ((position.lon - prior.lon + 540) % 360 - 180) * scale * cosLat
+    const dy = (position.lat - prior.lat) * scale
+    const magnitude = Math.hypot(vx, vy)
+    const ux = magnitude ? vx / magnitude : 0, uy = magnitude ? vy / magnitude : 0
+    const along = dx * ux + dy * uy
+    const lateralGain = 1 - Math.exp(-dt * response / 7)
+    // Partial velocity prediction reduces causal-filter lag, bounded to half
+    // a step so a noisy instantaneous heading cannot fully steer the position.
+    const prediction = Math.min(0.5, 0.25 * response - 0.1)
+    const mx = prediction * (1 - alpha) * vx * dt + alpha * along * ux + lateralGain * (dx - along * ux)
+    const my = prediction * (1 - alpha) * vy * dt + alpha * along * uy + lateralGain * (dy - along * uy)
+    smoothed = { ...position, lat: prior.lat + my / scale,
+      lon: ((prior.lon + mx / (scale * cosLat) + 540) % 360) - 180 }
+  }
+  return { window, speed, trackingSpeed, position: { ...smoothed, lat: Math.max(-90, Math.min(90, smoothed.lat)) } }
 }
 export function acceptGpsFix(state, input, nowMs) {
   const reject = reason => ({ state: { ...state, counts: { ...state.counts,
@@ -98,50 +171,42 @@ export function acceptGpsFix(state, input, nowMs) {
   const gapMs = previous ? fix.timestampMs - previous.timestampMs : 0
   const breakSegment = Boolean(state.boundary) || (previous && gapMs >= 15000)
   if (previous && !breakSegment && metersBetween(previous, fix) / (gapMs / 1000) > 7) return reject('speed')
-  const displacementMeters = state.anchor ? metersBetween(state.anchor, fix) : 0
-  const jitter = Boolean(state.anchor) && !breakSegment && displacementMeters < Math.max(3, fix.accuracy)
-  const speedMps = previous && !breakSegment ? metersBetween(previous, fix) / (gapMs / 1000) : 0
   const movement = movementObservation(state, fix, breakSegment)
   let stationarySinceMs = state.stationarySinceMs
+  let movingSinceMs = state.movingSinceMs
   let autoPaused = state.autoPaused
-  // Bootstrap a clear first step; once history exists, require window
-  // progress. Neither decision consults the last DRAWN anchor or reported speed.
-  const clearFirstStep = movement.window.length === 2 && previous
-    && metersBetween(previous, fix) >= Math.max(3, previous.accuracy, fix.accuracy)
-  // A noisy walking fix can nearly coincide with its predecessor. Only exact
-  // repeats suppress the window's decision; minimum speed belongs to the trend.
-  const genuineMovement = !breakSegment && Boolean(previous) && speedMps > 0
-    && (clearFirstStep || movement.moving)
-  const lastMovementFix = breakSegment ? null : genuineMovement && !state.autoPaused ? fix : state.lastMovementFix
-  if (!state.autoPauseEnabled) { autoPaused = false; stationarySinceMs = null }
-  else if (!previous || breakSegment) stationarySinceMs = null
-  else if (genuineMovement) { autoPaused = false; stationarySinceMs = null }
+  let motionConfirmed = breakSegment ? false : state.motionConfirmed
+  if (!previous || breakSegment) { stationarySinceMs = null; movingSinceMs = null }
   else {
-    stationarySinceMs ??= previous.timestampMs
-    if (fix.timestampMs - stationarySinceMs >= 10000) autoPaused = true
+    stationarySinceMs = movement.speed !== null && movement.speed < 0.3 ? (stationarySinceMs ?? fix.timestampMs) : null
+    movingSinceMs = movement.speed > 0.6 ? (movingSinceMs ?? fix.timestampMs) : null
   }
-  // Resume uses a new anchor, so none of the distance traversed while paused is counted.
-  const resumed = state.autoPaused && !autoPaused
-  const newSegment = !state.anchor || breakSegment || resumed
-  // Flush only previously confirmed, pre-pause movement still below the drawing
-  // radius. Use that observation's original timestamp/height, not stationary GPS
-  // or the resume location. This preserves the tail without a paused connector.
-  const pendingMovement = !state.autoPaused && autoPaused && lastMovementFix
-    && lastMovementFix.timestampMs > state.anchor?.timestampMs ? lastMovementFix : null
-  const drawnFix = pendingMovement || fix
-  const draw = newSegment || Boolean(pendingMovement) || (!jitter && !autoPaused)
+  // With auto-pause OFF, two precise observations can establish a short leg
+  // before warm-up. Default-ON always requires sustained movement evidence.
+  if (!state.autoPauseEnabled && movement.window.length === 2
+    && metersBetween(movement.window[0], fix) >= 2 * Math.max(1, movement.window[0].accuracy, fix.accuracy) - 1e-6) motionConfirmed = true
+  if (movingSinceMs !== null && fix.timestampMs - movingSinceMs >= 3000) motionConfirmed = true
+  if (stationarySinceMs !== null && fix.timestampMs - stationarySinceMs >= 10000) motionConfirmed = false
+  if (!state.autoPauseEnabled) autoPaused = false
+  else if (stationarySinceMs !== null && fix.timestampMs - stationarySinceMs >= 10000) autoPaused = true
+  else if (movingSinceMs !== null && fix.timestampMs - movingSinceMs >= 3000) autoPaused = false
+  const newSegment = !state.anchor || breakSegment
+  const drawnFix = movement.position
+  // Every confirmed smoothed fix is emitted and integrated. No accuracy-radius
+  // chords, distance-only compensation, or automatic-pause segment boundary.
+  const draw = newSegment || motionConfirmed
   const segmentId = newSegment ? state.segmentId + 1 : state.segmentId
   const distanceMeters = draw && !newSegment ? metersBetween(state.anchor, drawnFix) : 0
   const point = draw ? [drawnFix.lat, drawnFix.lon, drawnFix.altitudeMeters, drawnFix.timestampMs, drawnFix.accuracy, segmentId,
-    newSegment && state.segmentId >= 0 ? normalizeGapReason(state.boundary || (resumed ? 'auto-resume' : 'timeout')) : null] : null
+    newSegment && state.segmentId >= 0 ? normalizeGapReason(state.boundary || 'timeout') : null] : null
   const gap = breakSegment ? { kind: 'gps-gap', reason: state.boundary || 'timeout',
     afterTimestampMs: previous?.timestampMs ?? null, beforeTimestampMs: fix.timestampMs, segmentId } : null
   return { accepted: true, point, gap, distanceMeters,
     state: { ...state, ready: true, lastFix: fix, anchor: draw ? drawnFix : state.anchor,
-      movementWindow: movement.window, lastMovementFix: resumed ? null : lastMovementFix,
+      movementWindow: movement.window, movingSinceMs, motionConfirmed, smoothedSpeedMps: movement.speed, filterPosition: movement.position, trackingSpeed: movement.trackingSpeed,
       boundary: null, segmentId, stationarySinceMs, autoPaused,
       distanceMeters: state.distanceMeters + distanceMeters,
-      counts: jitter ? { ...state.counts, jitter: Math.min(COUNT_LIMIT, state.counts.jitter + 1) } : state.counts } }
+      counts: !draw ? { ...state.counts, jitter: Math.min(COUNT_LIMIT, state.counts.jitter + 1) } : state.counts } }
 }
 // Tuple slot 5 is additive segment identity. Never use the flat list as a polyline.
 export function splitTraceSegments(points = []) {

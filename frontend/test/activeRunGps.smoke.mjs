@@ -94,39 +94,53 @@ for(const native of [false,true]) {
   await app.clickText('Start Run');assert.equal(app.watches,1);assert.match(app.text(),/Connecting to GPS/)
   await app.fix(300,{accuracy:300});await app.fix(600,{age:6000});assert.equal(app.live.distance,0);assert.doesNotMatch(app.text(),/Route connected/);assert.equal(app.nodes().filter(n=>n.type==='CircleMarker'||n.type==='Polyline').length,0)
   await app.fix(0);assert.match(app.text(),/Route connected/)
-  await app.tick(9.999);await app.fix(0);assert.ok(!app.find('auto-paused'))
-  await app.tick(10);await app.fix(0);assert.ok(app.find('auto-paused'));assert.equal(app.live.elapsedSeconds,10);assert.equal(app.live.isPaused,true)
-  await app.tick(12);await app.fix(300);await app.fix(1);assert.ok(app.find('auto-paused'));assert.equal(app.live.distance,0)
-  await app.tick(14);await app.fix(7);assert.ok(!app.find('auto-paused'));assert.equal(app.live.elapsedSeconds,10)
-  await app.tick(16);await app.fix(13);assert.ok(app.live.distance>0)
-  const distance=app.live.distance
+  // The speed filter warms up, then requires ten sustained low-speed seconds.
+  // Continuous GPS through automatic pause/resume is one route, not a gap.
+  for (let second=1;second<=30;second++) { await app.tick(second);await app.fix(0) }
+  assert.ok(app.find('auto-paused'));assert.equal(app.live.elapsedSeconds,16);assert.equal(app.live.isPaused,true)
+  await app.tick(31);await app.fix(300);assert.ok(app.find('auto-paused'));assert.equal(app.live.distance,0)
+  let resumeAt=null
+  for(let second=32;second<=60;second++) {
+    await app.tick(second);await app.fix((second-31)*1.4)
+    if(!app.find('auto-paused')&&resumeAt===null)resumeAt=second
+  }
+  assert.ok(resumeAt>=35&&resumeAt<=55);assert.ok(app.live.distance>0)
+  assert.equal(app.nodes().filter(n=>n.type==='Polyline').length,1,'continuous auto-pause/resume route')
+  assert.ok(!app.find('gps-gap'),'automatic pause is not missing GPS')
+  const distance=app.live.distance, activeSeconds=16+60-resumeAt
+  assert.equal(app.live.elapsedSeconds,activeSeconds)
   await app.clickText('Pause');assert.equal(app.watches,0);assert.match(app.text(),/Run paused ·/)
-  await app.tick(30);assert.equal(app.live.elapsedSeconds,12)
+  await app.tick(75);assert.equal(app.live.elapsedSeconds,activeSeconds)
   await app.clickText('Resume');assert.equal(app.watches,1);await app.fix(100);assert.equal(app.live.distance,distance)
   await app.foreground(false);await app.foreground(true);await app.foreground(true)
   assert.equal(app.watches,1);assert.equal(app.maxWatches,1);assert.equal(app.listenerCount(native?'appStateChange':'visibilitychange'),1)
-  await app.tick(32);await app.fix(200);assert.equal(app.live.distance,distance);assert.ok(app.find('gps-gap'))
-  await app.tick(34);await app.fix(206)
-  assert.equal(app.nodes().filter(n=>n.type==='Polyline').length,2, 'two independently drawn moving segments, no pause/return connector')
-  await app.tick(53.999);assert.ok(!app.find('gps-paused'))
-  await app.tick(54);assert.ok(app.find('gps-paused'));assert.equal(app.live.isPaused,false)
+  await app.tick(77);await app.fix(200);assert.equal(app.live.distance,distance);assert.ok(app.find('gps-gap'))
+  for(let second=78;second<=95;second++){await app.tick(second);await app.fix(200+(second-77)*3)}
+  assert.equal(app.nodes().filter(n=>n.type==='Polyline').length,2,'manual/foreground gaps still have no connector')
+  await app.tick(114.999);assert.ok(!app.find('gps-paused'))
+  await app.tick(115);assert.ok(app.find('gps-paused'));assert.equal(app.live.isPaused,false)
   await app.fix(300,{age:6000});assert.ok(app.find('gps-paused'))
   await app.fix(300);assert.ok(!app.find('gps-paused'))
-  await app.toggle();await app.tick(64);await app.fix(300);assert.ok(!app.find('auto-paused'))
+  await app.toggle();await app.tick(125);await app.fix(300);assert.ok(!app.find('auto-paused'))
   await app.close();assert.equal(app.watches,0)
 }
 
 const automatic=mount();await automatic.flush();await automatic.clickText('Start Run');await automatic.fix(0)
-await automatic.tick(10);await automatic.fix(0);assert.ok(automatic.find('auto-paused'))
-await automatic.tick(18);await automatic.toggle();assert.ok(!automatic.find('auto-paused'))
-await automatic.tick(23);assert.equal(automatic.live.elapsedSeconds,15);await automatic.fix(10);assert.equal(automatic.live.distance,0)
-await automatic.toggle();await automatic.tick(33);await automatic.fix(10);assert.ok(automatic.find('auto-paused'))
-await automatic.clickText('Pause');await automatic.toggle();await automatic.tick(40);assert.equal(automatic.live.elapsedSeconds,25)
-await automatic.clickText('Resume');await automatic.tick(45);assert.equal(automatic.live.elapsedSeconds,30);await automatic.close()
+for(let second=1;second<=30;second++){await automatic.tick(second);await automatic.fix(0)}
+assert.ok(automatic.find('auto-paused'))
+await automatic.tick(38);await automatic.toggle();assert.ok(!automatic.find('auto-paused'))
+await automatic.tick(43);assert.equal(automatic.live.elapsedSeconds,21);await automatic.fix(10)
+assert.ok(!automatic.find('gps-gap'),'disabling auto-pause does not create a gap')
+await automatic.toggle()
+for(let second=44;second<=70;second++){await automatic.tick(second);await automatic.fix(10)}
+assert.ok(automatic.find('auto-paused'))
+const frozen=automatic.live.elapsedSeconds
+await automatic.clickText('Pause');await automatic.toggle();await automatic.tick(80);assert.equal(automatic.live.elapsedSeconds,frozen)
+await automatic.clickText('Resume');await automatic.tick(85);assert.equal(automatic.live.elapsedSeconds,frozen+5);await automatic.close()
 const recovered=mount({restored:{phase:'paused',startedAt:1800000000000,elapsed:5,pauseStartedAt:1800000005000,mapMyRun:true,
   routeCoords:[[0,0,10,1800000000000,3],[0,0.00005,10,1800000002000,3]],distanceMiles:0.003}})
 await recovered.flush();await recovered.tick(10);await recovered.clickText('Resume');await recovered.fix(100)
-await recovered.tick(12);await recovered.fix(106)
+for(let second=11;second<=25;second++){await recovered.tick(second);await recovered.fix(100+(second-10)*3)}
 assert.equal(recovered.nodes().filter(n=>n.type==='Polyline').length,2,'legacy five-slot route and resumed segment never join')
 await recovered.close()
 const off=mount({restored:{phase:'paused',startedAt:1800000000000,elapsed:5,pauseStartedAt:1800000005000,mapMyRun:false}})

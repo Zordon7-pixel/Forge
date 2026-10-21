@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { acceptGpsFix, createGpsTrace, gpsPaused, traceBoundary, setTraceAutoPause, splitTraceSegments, runElapsedSeconds, runPauseLabel } from '../src/lib/gpsTrace.js'
+import { acceptGpsFix, createGpsTrace, gpsPaused, traceBoundary, setTraceAutoPause, splitTraceSegments, runElapsedSeconds, runPauseLabel, metersBetween } from '../src/lib/gpsTrace.js'
 import { saveActiveRunSession, loadActiveRunSession, elapsedFromSession } from '../src/lib/activeRunSession.js'
 const start = 1800000000000
 const fix = (meters, seconds, accuracy = 3) => ({ lat: 0, lon: meters / 111194.92664455874, accuracy, altitudeMeters: 10, timestampMs: start + seconds * 1000 })
@@ -8,7 +8,17 @@ function recorder(options = {}) {
   return { get state() { return state }, points, gaps,
     boundary(reason) { state = traceBoundary(state, reason) }, toggle(value) { state = setTraceAutoPause(state, value) },
     push(point, now = point.timestampMs) { const result = acceptGpsFix(state, point, now); state = result.state;
-      if (result.point) points.push(result.point); if (result.gap) gaps.push(result.gap); return result } }
+      if (result.point) {
+        assert.equal(result.point[3], point.timestampMs, 'smoothed position retains accepted source time')
+        assert.ok(Number.isFinite(result.point[0]) && Math.abs(result.point[0]) <= 90)
+        assert.ok(Number.isFinite(result.point[1]) && Math.abs(result.point[1]) <= 180)
+        const last = points.at(-1)
+        const geometryDelta = last && last[5] === result.point[5] ? metersBetween(
+          { lat: last[0], lon: last[1] }, { lat: result.point[0], lon: result.point[1] }) : 0
+        assert.ok(Math.abs(result.distanceMeters - geometryDelta) < 1e-8, 'distance follows emitted geometry')
+        points.push(result.point)
+      }
+      if (result.gap) gaps.push(result.gap); return result } }
 }
 const cold = recorder()
 for (const point of [fix(0, 0, undefined), { ...fix(0, 1), accuracy: null }, fix(0, 2, 20.01), fix(0, 3, -1), { ...fix(0, 4), lat: NaN }, { ...fix(0, 5), timestampMs: undefined }]) {
@@ -49,15 +59,38 @@ tunnel.push(fix(710, 21), start + 40000)
 assert.equal(gpsPaused(tunnel.state, start + 40000), true, 'stale samples cannot refresh liveness')
 const pause = recorder()
 assert.equal(pause.state.autoPauseEnabled, true)
-pause.push(fix(0, 0)); pause.push(fix(0, 9.999)); assert.equal(pause.state.autoPaused, false)
-pause.push(fix(0, 10)); assert.equal(pause.state.autoPaused, true)
-assert.equal(pause.push(fix(300, 11)).accepted, false); assert.equal(pause.state.autoPaused, true)
-pause.push(fix(1, 12)); assert.equal(pause.state.autoPaused, true)
+// The product now requires a mature smoothed speed below .3 for ten full
+// source-time seconds, and above .6 for three; raw first/second fixes cannot
+// force a pause/resume. Auto-pause explicitly no longer breaks map segments.
+for (let second = 0; second <= 30; second++) {
+  const before = pause.state
+  pause.push(fix(0, second))
+  if (!before.autoPaused && pause.state.autoPaused) {
+    assert.ok(pause.state.smoothedSpeedMps < .3)
+    assert.equal(pause.state.lastFix.timestampMs - pause.state.stationarySinceMs, 10000)
+  }
+}
+assert.equal(pause.state.autoPaused, true)
+assert.equal(pause.push(fix(300, 31)).reason, 'speed')
+assert.equal(pause.state.autoPaused, true)
+pause.push(fix(1, 32)); assert.equal(pause.state.autoPaused, true)
 assert.equal(pause.state.distanceMeters, 0); assert.equal(pause.points.length, 1)
-pause.push(fix(7, 14)); assert.equal(pause.state.autoPaused, false); assert.equal(pause.state.distanceMeters, 0)
-pause.push(fix(13, 16)); assert.ok(Math.abs(pause.state.distanceMeters - 6) < .01)
-assert.equal(splitTraceSegments(pause.points).length, 2)
-pause.toggle(false); pause.push(fix(13, 26)); pause.push(fix(13, 36)); assert.equal(pause.state.autoPaused, false)
+let resumedAt = null
+for (let second = 33; second <= 65; second++) {
+  const before = pause.state
+  pause.push(fix((second - 32) * 1.4, second))
+  if (before.autoPaused && !pause.state.autoPaused) {
+    resumedAt = second
+    assert.ok(pause.state.smoothedSpeedMps > .6)
+    assert.equal(pause.state.lastFix.timestampMs - pause.state.movingSinceMs, 3000)
+  }
+}
+assert.ok(resumedAt > 35 && resumedAt < 55)
+assert.equal(splitTraceSegments(pause.points).length, 1)
+assert.equal(pause.gaps.length, 0)
+pause.toggle(false)
+for (let second = 66; second <= 100; second++) pause.push(fix(46.2, second))
+assert.equal(pause.state.autoPaused, false)
 assert.equal(runPauseLabel({ autoPaused: true }), 'Auto-paused')
 assert.equal(runPauseLabel({ manualPaused: true, autoPaused: true }), 'Run paused')
 assert.equal(runPauseLabel({ gpsIsPaused: true }), 'GPS paused')
@@ -129,18 +162,19 @@ for (const accuracy of [20, 20.000001, 20.01, 25]) {
   if (!accepted) assert.equal(result.reason, 'accuracy')
 }
 
-// Preserve the legitimate tail below the accuracy drawing radius BEFORE a true
-// stop. Resume must create a separate polyline and count no stationary connector.
+// Supersedes the rejected test's auto-resume segment break and raw-anchor tail
+// flush. Smoothed geometry retains the pre-stop leg and one continuous segment;
+// bounded filter settling is measured instead of demanding a raw t=19 endpoint.
 const stop = recorder()
 for (let second = 0; second <= 19; second++) stop.push(fix(second * 1.4, second, 18))
 const stopMeters = 19 * 1.4
 assert.ok(stop.state.distanceMeters < stopMeters - 1, 'fixture has an undrawn moving tail')
-for (let second = 20; second <= 29; second++) stop.push(fix(stopMeters, second, 18))
+for (let second = 20; second <= 45; second++) stop.push(fix(stopMeters, second, 18))
 assert.equal(stop.state.autoPaused, true)
-assert.ok(Math.abs(stop.state.distanceMeters - stopMeters) < .001, 'pre-pause distance is retained')
-assert.equal(stop.points.at(-1)[3], start + 19000, 'tail keeps the original moving timestamp')
+assert.ok(stop.state.distanceMeters >= stopMeters, 'pre-pause leg is retained through filter settling')
+assert.ok(stop.points.every(point => point[3] >= start && point[3] <= start + 45000), 'only actual accepted source times')
 const stoppedDistance = stop.state.distanceMeters
-for (let second = 30; second <= 60; second++) stop.push(fix(stopMeters + (second % 2 ? 1 : -1), second, 18))
+for (let second = 46; second <= 60; second++) stop.push(fix(stopMeters + (second % 2 ? 1 : -1), second, 18))
 assert.equal(stop.state.autoPaused, true)
 assert.equal(stop.state.distanceMeters, stoppedDistance)
 const stoppedState = stop.state
@@ -164,12 +198,13 @@ for (let second = 61; second <= 90; second++) {
   if (wasPaused && !stop.state.autoPaused) resumeResult = result
 }
 assert.ok(resumeResult, 'accepted sustained walking resumes automatically')
-assert.equal(resumeResult.distanceMeters, 0)
-assert.equal(resumeResult.point[6], 'auto-resume')
-assert.equal(splitTraceSegments(stop.points).length, 2)
+assert.ok(resumeResult.distanceMeters > 0, 'coordinate-confirmed resumed movement is retained')
+assert.equal(resumeResult.point[6], null)
+assert.equal(splitTraceSegments(stop.points).length, 1)
+assert.equal(stop.gaps.length, 0)
 const geometryMeters = splitTraceSegments(stop.points).reduce((sum, segment) => sum + segment.slice(1)
   .reduce((subtotal, point, i) => subtotal + Math.abs(point[1] - segment[i][1]) * 111194.92664455874, 0), 0)
-assert.ok(Math.abs(geometryMeters - stop.state.distanceMeters) < .001, 'no distance-only chord across pause')
+assert.ok(Math.abs(geometryMeters - stop.state.distanceMeters) < .001, 'distance is exactly the continuous emitted smoothed geometry')
 
 // Manual/background/gap boundaries discard movement history and never count a
 // connector, even with a large displacement or an enticing reported speed.
@@ -199,6 +234,44 @@ for (const speed of [7, 7.001]) {
 }
 console.log('WALKING/STOP/BOUNDARY PASS: 30 walking cases, invalid speed fallback, stationary jitter, retained tail, true resume, rejection fencing, <=20m and <=7m/s')
 console.log('GPS TRACE PASS: quality/readiness, 300m spike, ±15m jitter, 2% distance, exact gaps, clock/pause/resume, bounded counts, recovery')
+
+
+// Auto-pause OFF during a stop cannot manufacture a GPS gap or erase a pending
+// manual boundary. OFF controls the clock; the position filter stays active.
+const disabled = recorder()
+for (let second = 0; second <= 30; second++) disabled.push(fix(0, second, 18))
+assert.equal(disabled.state.autoPaused, true)
+disabled.toggle(false); disabled.boundary('auto-pause-disabled')
+for (let second = 31; second <= 70; second++) disabled.push(fix((second - 30) * 1.4, second, 18))
+assert.equal(disabled.state.autoPaused, false)
+assert.equal(disabled.gaps.length, 0)
+assert.equal(splitTraceSegments(disabled.points).length, 1)
+assert.equal(traceBoundary(traceBoundary(disabled.state, 'manual-pause'), 'auto-resume').boundary, 'manual-pause')
+// Accuracy actually weights position; it is not merely a quality gate.
+const weightedPosition = outlierAccuracy => {
+  let trace = createGpsTrace({ startedAtMs: start })
+  for (let t = 0; t <= 20; t++) trace = acceptGpsFix(trace,
+    { ...fix(t * 1.4 + (t === 20 ? 4 : 0), t, t === 20 ? outlierAccuracy : 8) }, start + t * 1000).state
+  return trace.filterPosition.lon
+}
+assert.ok(weightedPosition(1) > weightedPosition(20), 'more accurate observation receives more position weight')
+// Source time and bounded memory, including high-frequency and irregular fixes.
+const rapid = recorder()
+for (let i = 0; i < 3000; i++) {
+  rapid.push(fix(i * .03, i * .01, 8))
+  assert.ok(rapid.state.movementWindow.length <= 64)
+}
+assert.equal(rapid.state.autoPaused, false)
+assert.ok(Math.abs(rapid.state.distanceMeters / 89.97 - 1) < .05)
+const irregular = recorder()
+let elapsed = 0
+for (let i = 0; i < 600; i++) {
+  elapsed += [.5, 1.5, 2, 1][i % 4]
+  irregular.push(fix(elapsed * 1.4, elapsed, 12))
+}
+assert.equal(irregular.state.autoPaused, false)
+assert.equal(splitTraceSegments(irregular.points).length, 1)
+assert.ok(Math.abs(irregular.state.distanceMeters / ((elapsed - .5) * 1.4) - 1) < .05)
 
 // BEGIN SHARED NOISE FIXTURES: kept identical in the tracked regression.
 function noiseMeasurements() {
@@ -247,8 +320,8 @@ function noiseMeasurements() {
         } else {
           if (Math.abs(relativeError) > .05) failures.push('distance error >5%')
           if (scenario.kind === 'walk' && (segmentCount !== 1 || pausedFixes !== 0)) failures.push('continuous walk interrupted')
-          if (scenario.kind === 'stop' && (segmentCount !== 2 || pausesSeconds.length !== 1 || resumesSeconds.length !== 1
-            || pausesSeconds[0] < 240 || pausesSeconds[0] > 265 || resumesSeconds[0] <= 330 || resumesSeconds[0] > 350
+          if (scenario.kind === 'stop' && (segmentCount !== 1 || pausesSeconds.length !== 1 || resumesSeconds.length !== 1
+            || pausesSeconds[0] < 240 || pausesSeconds[0] > 275 || resumesSeconds[0] <= 330 || resumesSeconds[0] > 355
             || settledStationaryDistanceMeters !== 0 || state.autoPaused)) failures.push('stop/resume boundary')
         }
         measurements.push({ ...scenario, seed, accuracy, amplitude, speedMode, intervalSeconds,
@@ -265,3 +338,116 @@ const noisyMeasurements = noiseMeasurements()
 for (const measurement of noisyMeasurements) console.log(JSON.stringify(measurement))
 assert.deepEqual(noisyMeasurements.filter(row => !row.pass), [], 'seeded noisy walk/stop/stationary contracts')
 console.log(`SEEDED NOISE PASS: ${noisyMeasurements.length} measured fixtures`)
+
+// BEGIN GAUSSIAN FIXTURES
+// Predeclared: standstill/drift <=2m in 300s, zero false resumes; Gaussian is
+// unbounded, independent per axis, 1Hz INCLUDING sigma3. Raw >7m/s is rejected.
+function gaussianMeasurements() {
+ const rows=[], epoch=1800000000000, scale=111194.92664455874
+ // Includes the three formerly independent host seeds: these are regressions now.
+ const seeds=process.env.GPS_EXTRA_SEEDS ? process.env.GPS_EXTRA_SEEDS.split(',').map(Number) : [1,42,20261020,7,123,8675309,314159,271828,20261021]
+ for(const seed of seeds) for(const sigma of [1,2,3]) for(const accuracy of [8,14,20,'ramp']) {
+  const scenarios=[... [1,1.2,1.4,3].map(speed=>({kind:'straight',speed,duration:600})),
+   {kind:'stationary',speed:0,duration:300},{kind:'drift',speed:.1,duration:300},
+   ...[1.4,3].flatMap(speed=>[{kind:'stop',speed,duration:540+(speed===3?60:90)},
+    {kind:'outback',speed,duration:100/speed},{kind:'switchbacks',speed,duration:600/speed},
+    {kind:'oval',speed,duration:600}])]
+  for(const scenario of scenarios) {
+   let rng=seed>>>0
+   const uniform=()=>{rng=(Math.imul(rng,1664525)+1013904223)>>>0;return (rng+.5)/4294967296}
+   const noise=()=>Math.sqrt(-2*Math.log(uniform()))*Math.cos(2*Math.PI*uniform())*sigma
+   let state=createGpsTrace({startedAtMs:epoch}),pausedFixes=0,discardedFixes=0,settledDistanceMeters=0
+   const points=[],pauses=[],resumes=[]; const {kind,speed,duration}=scenario
+   let maxWindow=0, acceptedFixes=0
+   const stopEnd=240+(speed===3?60:90)
+   const coord=t=>{
+    let d=speed*t
+    if(kind==='stop') d=speed*(Math.min(t,240)+Math.max(0,t-stopEnd))
+    if(kind==='outback'||kind==='switchbacks') d=50-Math.abs(d%100-50)
+    if(kind==='oval') {const radius=400/(2*Math.PI),a=speed*t/radius; return [radius*Math.sin(a),radius*(1-Math.cos(a))]}
+    return [d,0]
+   }
+   const times=Array.from({length:Math.floor(duration)+1},(_,i)=>i)
+   if(duration%1) times.push(duration)
+   for(const t of times){
+    const [x,y]=coord(t);const a=accuracy==='ramp'?5+15*t/duration:accuracy
+    const f={lat:(y+noise())/scale,lon:(x+noise())/scale,accuracy:a,timestampMs:epoch+t*1000}
+    // Missing and invalid speed share every matrix; a platform claim never drives it.
+    if(seed===42) f.speed=[null,NaN,Infinity,-1,'1.4',{},true][Math.floor(t)%7]
+    if(seed===20261020) f.speed=kind==='stationary'?3:speed
+    const was=state.autoPaused,r=acceptGpsFix(state,f,f.timestampMs); state=r.state
+    if(r.point)points.push(r.point)
+    if(r.accepted)acceptedFixes++;else discardedFixes++
+    if(state.autoPaused)pausedFixes++
+    if(!was&&state.autoPaused)pauses.push(t)
+    if(was&&!state.autoPaused)resumes.push(t)
+    if(kind==='stop'&&t>=270&&t<=stopEnd)settledDistanceMeters+=r.distanceMeters
+    maxWindow=Math.max(maxWindow,state.movementWindow?.length||0)
+   }
+   const expectedMeters=kind==='stationary'||kind==='drift'?0:kind==='stop'?540*speed:speed*duration
+   const errorPercent=expectedMeters?100*(state.distanceMeters-expectedMeters)/expectedMeters:null
+   const segments=splitTraceSegments(points).length,failures=[]
+   if(segments!==1)failures.push('segments')
+   if(kind==='stationary'||kind==='drift'){
+    if(state.distanceMeters>2||!state.autoPaused||pauses.length!==1||resumes.length)failures.push('stationary/drift')
+   }else{
+    if(Math.abs(errorPercent)>(kind==='outback'||kind==='switchbacks'?10:5)) failures.push('distance')
+    if(kind==='stop'){
+     if(pauses.length!==1||resumes.length!==1||pauses[0]<250||pauses[0]>275||resumes[0]<stopEnd+3||resumes[0]>stopEnd+25||state.autoPaused||settledDistanceMeters>2)failures.push('stop/resume')
+    }else if(pausedFixes)failures.push('false pause')
+   }
+   if(maxWindow>64)failures.push('unbounded')
+   rows.push({...scenario,seed,sigma,accuracy,expectedMeters,actualMeters:state.distanceMeters,errorPercent,segments,pausedFixes,pauses,resumes,discardedFixes,acceptedFixes,counts:state.counts,settledDistanceMeters,maxWindow,pass:!failures.length,failures})
+  }
+ }
+ return rows
+}
+// END GAUSSIAN FIXTURES
+const gaussianRows = gaussianMeasurements()
+for (const row of gaussianRows) console.log(JSON.stringify(row))
+assert.deepEqual(gaussianRows.filter(row => !row.pass), [], 'unbounded 1Hz Gaussian sigma1–3 contracts')
+console.log(`GAUSSIAN PASS: ${gaussianRows.length} measured scenarios`)
+
+// BEGIN CURVATURE REGRESSIONS
+// Geometry witnesses distinguish an actual trajectory correction from a distance
+// multiplier. Clean curves isolate extrapolation bias from Gaussian scatter.
+function curvatureMeasurements() {
+ const rows=[],scale=6371000*Math.PI/180,epoch=1800000000000
+ for(const shape of ['circle','ellipse']) for(const speed of [1.4,3]) for(const direction of [1,-1]) {
+  const rx=shape==='circle'?400/(2*Math.PI):90,ry=shape==='circle'?rx:60
+  let state=createGpsTrace({startedAtMs:epoch}),previousTruth,previousDraw,expectedMeters=0,geometryMeters=0
+  const points=[],radial=[]
+  for(let t=0;t<=600;t++){
+   const a=direction*speed*t/rx,x=rx*Math.sin(a),y=ry*(1-Math.cos(a))
+   const f={lat:y/scale,lon:x/scale,accuracy:20,timestampMs:epoch+t*1000}
+   if(previousTruth)expectedMeters+=metersBetween(previousTruth,f)
+   previousTruth=f
+   const result=acceptGpsFix(state,f,f.timestampMs);state=result.state
+   assert.equal(result.accepted,true,'clean curve passes the unchanged quality boundary')
+   assert.equal(state.autoPaused,false,'continuous curved movement must not pause')
+   if(result.point){
+    assert.equal(result.point[3],f.timestampMs)
+    points.push(result.point)
+    const p={lat:result.point[0],lon:result.point[1]}
+    if(previousDraw)geometryMeters+=metersBetween(previousDraw,p)
+    previousDraw=p
+    if(shape==='circle'&&t>=60)radial.push(Math.hypot(p.lon*scale,p.lat*scale-ry)-rx)
+   }
+  }
+  const errorPercent=100*(state.distanceMeters/expectedMeters-1)
+  const radialBiasMeters=radial.length?radial.reduce((s,v)=>s+v,0)/radial.length:null
+  rows.push({shape,speed,direction,expectedMeters,actualMeters:state.distanceMeters,errorPercent,
+   radialBiasMeters,geometryDeltaMeters:geometryMeters-state.distanceMeters,segments:splitTraceSegments(points).length})
+ }
+ return rows
+}
+// END CURVATURE REGRESSIONS
+const curvatureRows=curvatureMeasurements()
+for(const row of curvatureRows)console.log(JSON.stringify(row))
+for(const row of curvatureRows){
+ assert.equal(row.segments,1)
+ assert.ok(Math.abs(row.geometryDeltaMeters)<1e-8,'distance exactly follows the drawn curve')
+ assert.ok(Math.abs(row.errorPercent)<1.5,'clean curved position model has <1.5% bias')
+ if(row.radialBiasMeters!==null)assert.ok(Math.abs(row.radialBiasMeters)<.75,'clean circle radial bias <0.75m')
+}
+console.log(`CURVATURE PASS: ${curvatureRows.length} geometry witnesses`)

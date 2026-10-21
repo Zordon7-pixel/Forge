@@ -516,18 +516,20 @@ for (const [index, refresh] of ['denied', 'available'].entries()) {
   const before = runFixture.reads
   await app.clickText('Start Run'); assert.ok(runFixture.reads > before); assert.equal(app.watches, 1)
   assert.match(app.text(), /Location: off.*Precise: off/)
-  await app.fix(0); await app.tick(2); await app.fix(6)
+  // Default-ON now requires a mature movement trend before counting distance.
+  await app.fix(0)
+  for (let second = 1; second <= 20; second++) { await app.tick(second); await app.fix(second * 3) }
   // Save must read again, not just retain the pre-start value or a rendered closure.
   const atSave = index === 0 ? 'restricted' : 'denied'
   runFixture.set({ backgroundRefreshStatus: atSave })
   await app.find('finish-run').props.onClick(); await app.flush()
   assert.equal(app.payload.backgroundRefreshStatus, atSave)
   assert.equal(app.payload.gps_source, index === 0 ? 'native_bg' : 'web_fallback')
-  saveActiveRunSession({ phase: 'running', startedAt: 1800000000000, ...app.payload }, 'synthetic', memory, 1800000002000)
-  const restored = loadActiveRunSession('synthetic', memory, 1800000002000)
+  saveActiveRunSession({ phase: 'running', startedAt: 1800000000000, ...app.payload }, 'synthetic', memory, 1800000020000)
+  const restored = loadActiveRunSession('synthetic', memory, 1800000020000)
   assert.equal(restored.backgroundRefreshStatus, atSave); assert.equal(restored.gps_source, app.payload.gps_source)
-  saveRunCompletionHandoff({ runId: `synthetic-${index}`, queued: true, snapshot: buildRunCompletionSnapshot(app.payload), provenance: 'live_tracked' }, 'synthetic', memory, 1800000002000)
-  const handoff = loadRunCompletionHandoff(`synthetic-${index}`, 'synthetic', memory, 1800000002000)
+  saveRunCompletionHandoff({ runId: `synthetic-${index}`, queued: true, snapshot: buildRunCompletionSnapshot(app.payload), provenance: 'live_tracked' }, 'synthetic', memory, 1800000020000)
+  const handoff = loadRunCompletionHandoff(`synthetic-${index}`, 'synthetic', memory, 1800000020000)
   assert.equal(handoff.snapshot.workout_metrics_json.backgroundRefreshStatus, atSave)
   assert.equal(handoff.snapshot.workout_metrics_json.gps_source, app.payload.gps_source)
   await app.close()
@@ -540,7 +542,8 @@ const starting = detachedApp.clickText('Start Run'); await tick(); await detache
 finishRead({ backgroundRefreshStatus: 'available' }); await starting
 assert.equal(detachedApp.watches, 0)
 const singleSave = fixture({ timeoutMs: 1000 }), savingApp = mount({ readinessService: singleSave.service })
-await savingApp.flush(); await savingApp.clickText('Start Run'); await savingApp.fix(0); await savingApp.tick(2); await savingApp.fix(6)
+await savingApp.flush(); await savingApp.clickText('Start Run'); await savingApp.fix(0)
+for (let second = 1; second <= 20; second++) { await savingApp.tick(second); await savingApp.fix(second * 3) }
 let resolveSaveRead
 singleSave.plugin.getStatus = () => new Promise(resolve => { resolveSaveRead = resolve })
 const finish = savingApp.find('finish-run').props.onClick

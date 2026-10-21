@@ -28,7 +28,14 @@ const route = trace.finishedPhoneRoute(points)
 assert.ok(Math.abs(state.distanceMeters - 12) < .01, 'cross-gap chord excluded by accepted phone policy')
 assert.equal(route.segments.length, 2)
 assert.equal(route.segments[1].gap.reason, 'timeout')
-for (const reason of trace.GAP_REASONS) {
+// Legacy automatic gap labels still deserialize, but automatic pause controls
+// must no longer create a recording boundary (October 20 product contract).
+for (const reason of ['auto-resume', 'auto-pause-disabled']) {
+  assert.equal(trace.traceBoundary(state, reason), state)
+  const legacy = trace.finishedPhoneRoute([[0, 0, null, start, 3, 0, null], [0, .01, null, start + 21000, 3, 1, reason]])
+  assert.equal(trace.normalizeSegmentedRoute(legacy).segments[1].gap.reason, reason)
+}
+for (const reason of trace.GAP_REASONS.filter(reason => !['auto-resume', 'auto-pause-disabled'].includes(reason))) {
   const result = trace.acceptGpsFix(trace.traceBoundary(state, reason), { lat: 0, lon: .01, accuracy: 3, timestampMs: start + 21000 }, start + 21000)
   assert.equal(trace.finishedPhoneRoute([...points, result.point]).segments.at(-1).gap.reason, reason)
 }
@@ -79,6 +86,9 @@ const { mount } = await import('data:text/javascript;base64,' + Buffer.from(acti
 for (const native of [false, true]) {
   const app = mount({ native, refresh: 'denied' }); await app.flush()
   assert.match(app.text(), /GPS source: unknown.*Background refresh: off/)
+  // Match the policy fixture above: OFF isolates two-fix legs around a gap.
+  // Default-ON warm-up/hysteresis is covered by the actual ActiveRun GPS suite.
+  await app.toggle()
   await app.clickText('Start Run'); await app.fix(0)
   await app.tick(2); await app.fix(6)
   await app.tick(17); await app.fix(500)
