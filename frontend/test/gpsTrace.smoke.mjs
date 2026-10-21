@@ -451,3 +451,35 @@ for(const row of curvatureRows){
  if(row.radialBiasMeters!==null)assert.ok(Math.abs(row.radialBiasMeters)<.75,'clean circle radial bias <0.75m')
 }
 console.log(`CURVATURE PASS: ${curvatureRows.length} geometry witnesses`)
+
+// BEGIN EXACT FIRST FIX REGRESSIONS
+function exactFirstFixMeasurements() {
+ const rows=[],epoch=1800000000000
+ for(const [lat,lon] of [[38.9,-76.95],[-33.865,151.209],[0,180],[0,-180],[-0,-0]]) {
+  for(const boundary of ['initial','manual-pause','background','foreground','restore','timeout']) {
+   let state=createGpsTrace({startedAtMs:epoch})
+   if(boundary!=='initial') {
+    state=acceptGpsFix(state,{lat:0,lon:0,accuracy:5,timestampMs:epoch},epoch).state
+    state=acceptGpsFix(state,{lat:0,lon:.00001,accuracy:5,timestampMs:epoch+1000},epoch+1000).state
+    if(boundary!=='timeout')state=traceBoundary(state,boundary)
+   }
+   const timestampMs=epoch+(boundary==='timeout'?16000:2000)
+   const input={lat,lon,accuracy:4.5,altitudeMeters:14,timestampMs}
+   const rejected=acceptGpsFix(state,{...input,accuracy:20.01},timestampMs)
+   assert.equal(rejected.accepted,false)
+   const result=acceptGpsFix(rejected.state,input,timestampMs)
+   assert.equal(result.accepted,true)
+   assert.deepEqual(result.point.slice(0,5),[lat,lon,14,timestampMs,4.5],'first/reset point preserves source numbers exactly')
+   assert.ok(Object.is(result.state.filterPosition.lat,lat))
+   assert.ok(Object.is(result.state.filterPosition.lon,lon))
+   assert.equal(result.distanceMeters,0,'first/reset point never connects across a real boundary')
+   assert.equal(result.point[5],boundary==='initial'?0:1)
+   assert.equal(result.point[6],boundary==='initial'?null:boundary)
+   rows.push({lat,lon,boundary,exact:true,connectorMeters:result.distanceMeters})
+  }
+ }
+ return rows
+}
+const exactFirstFixRows=exactFirstFixMeasurements()
+console.log(`EXACT FIRST FIX PASS: ${exactFirstFixRows.length} initial/manual/lifecycle/timeout cases`)
+// END EXACT FIRST FIX REGRESSIONS

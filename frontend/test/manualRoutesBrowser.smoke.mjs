@@ -9,6 +9,16 @@ import path from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { chromium, expect } from '@playwright/test'
+// BEGIN SUSTAINED ROUTE FIXTURE
+function sustainedRouteFixes(startMs) {
+  // 30 seconds at 1.4m/s, 1Hz. Each callback is delivered at its source time;
+  // default-ON warm-up and sustained movement confirmation remain in force.
+  return Array.from({length:31},(_,second)=>({
+    coords:{latitude:40+second*1.4/111194.92664455874,longitude:-73,altitude:10+second/15,accuracy:5},
+    timestamp:startMs+second*1000,
+  }))
+}
+// END SUSTAINED ROUTE FIXTURE
 const require = createRequire(import.meta.url)
 const { validateRoute, toGpx } = require('../../backend/src/lib/userRoutes.js')
 const root = fileURLToPath(new URL('..', import.meta.url)), artifacts = mkdtempSync(path.join(os.tmpdir(), 'forge-manual-routes-'))
@@ -192,23 +202,29 @@ try {
     await select.selectOption(privateRoute.id);await expect(page.locator('.planned-route-overlay')).toHaveCount(1)
     await page.evaluate(()=>{navigator.geolocation.getCurrentPosition=success=>success({coords:{latitude:40,longitude:-73,accuracy:5},timestamp:Date.now()})})
     await page.getByRole('button',{name:'Start Run',exact:true}).click();await expect(page.getByTestId('pause-run')).toBeVisible()
-    const suppliedFixes=await page.evaluate(()=>{
-      const now=Date.now()
-      // Both fixes are fresh and in the past: ~11.12 m / 2 s = ~5.56 m/s,
-      // above the 5 m accuracy/jitter floor and below the 7 m/s speed ceiling.
-      const fixes=[
-        {coords:{latitude:40,longitude:-73,altitude:10,accuracy:5},timestamp:now-3000},
-        {coords:{latitude:40.0001,longitude:-73,altitude:12,accuracy:5},timestamp:now-1000},
-      ]
-      for(const fix of fixes) window.emitPoint(fix)
-      return fixes
-    })
+    await expect.poll(()=>page.evaluate(()=>window.watchStarts)).toBe(1)
+    const suppliedFixes=sustainedRouteFixes(await page.evaluate(()=>Date.now()))
+    for(const fix of suppliedFixes) {
+      // Keep Date.now and source time together; timers/React/Leaflet keep running.
+      await page.clock.setFixedTime(fix.timestamp)
+      await page.evaluate(fix=>window.emitPoint(fix),fix)
+    }
     await expect(page.locator('.recorded-route-overlay')).toHaveCount(1)
+    await expect.poll(async()=>(await persist())?.routeCoords.length).toBe(23)
     const recorded=await persist()
-    assert.equal(recorded.routeCoords.length,2);assert.equal(recorded.plannedRouteSelection.route.geometry.coordinates.length,10000)
-    assert.deepEqual(recorded.routeCoords,suppliedFixes.map(({coords,timestamp})=>[
-      coords.latitude,coords.longitude,coords.altitude,timestamp,coords.accuracy,0,null,
-    ]),'persisted vertices retain supplied fix timestamps/accuracy and one uninterrupted segment')
+    assert.equal(recorded.autoPauseEnabled,true,'fixture must exercise the default-ON recorder')
+    assert.equal(recorded.autoPaused,false)
+    // The first point plus seconds9..30: six-second warm-up, three-second hold.
+    assert.equal(recorded.routeCoords.length,23)
+    assert.equal(recorded.plannedRouteSelection.route.geometry.coordinates.length,10000)
+    const drawnFixes=[suppliedFixes[0],...suppliedFixes.slice(9)]
+    assert.deepEqual(recorded.routeCoords.map(point=>point.slice(2)),drawnFixes.map(({coords,timestamp})=>[
+      coords.altitude,timestamp,coords.accuracy,0,null,
+    ]),'every emitted vertex retains its source metadata and one uninterrupted segment')
+    assert.deepEqual(recorded.routeCoords[0].slice(0,2),[40,-73],'first fix is exact')
+    assert.ok(recorded.routeCoords.slice(1).every(([lat,lon])=>Number.isFinite(lat)&&lat>=40&&lat<=suppliedFixes.at(-1).coords.latitude&&Math.abs(lon+73)<1e-10))
+    assert.notEqual(recorded.routeCoords.at(-1)[0],suppliedFixes.at(-1).coords.latitude,'subsequent positions are smoothed')
+    assert.ok(recorded.distanceMiles*1609.344>35&&recorded.distanceMiles*1609.344<45,'distance reflects the 42m walk, not the planned marathon')
     assert.equal(recorded.gpsGapCount,0);assert.equal(recorded.gpsGapSeconds,0);assert.equal(recorded.discardedSegment,false)
     assert.equal(recorded.gps_source,'web_fallback')
     assert.notEqual(recorded.distanceMiles,42195/1609.344)
@@ -237,7 +253,7 @@ try {
     await expect(page.locator('.planned-route-overlay')).toHaveCount(0);await expect(page.locator('.recorded-route-overlay')).toHaveCount(1)
     assert.deepEqual((await persist()).routeCoords,recorded.routeCoords);missing=false
     await page.getByTestId('finish-run').click()
-    await expect.poll(()=>savedRunPayload?.route_coords?.segments?.[0]?.points.length).toBe(2)
+    await expect.poll(()=>savedRunPayload?.route_coords?.segments?.[0]?.points.length).toBe(23)
     await expect(page.getByText('Synthetic recap handoff',{exact:true})).toBeVisible()
     assert.deepEqual(savedRunPayload.route_coords,{version:2,segments:[{gap:null,
       points:recorded.routeCoords.map(([lat,lon,alt,time,accuracy])=>({lat,lon,alt,time,accuracy})),

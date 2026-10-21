@@ -133,7 +133,9 @@ function movementObservation(state, fix, breakSegment) {
   const velocityCorrection = local.qSlope * curvature * confidence
   vx += velocityCorrection * nx
   vy += velocityCorrection * ny
-  const position = { ...fix, lat: origin.lat + local.y / scale,
+  // A new/reset filter has no motion to smooth. Preserve the admitted source
+  // coordinate exactly, including longitude endpoints and signed zero.
+  const position = window.length === 1 ? fix : { ...fix, lat: origin.lat + local.y / scale,
     lon: ((origin.lon + local.x / (scale * cosLat) + 540) % 360) - 180 }
   const prior = breakSegment ? null : state.filterPosition
   const response = Math.max(1, trackingSpeed / 1.4)
