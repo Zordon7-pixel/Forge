@@ -1,12 +1,12 @@
 // Batch-2 contract/draw evidence. Golden approval is a separate fail-closed gate.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fromRun, fromStrength, fromHybrid, fromPr } from '../src/lib/shareStats.js'
+import { fromRun, fromStrength, fromHybrid, fromPr, fromStreak } from '../src/lib/shareStats.js'
 import { rendererModel } from '../src/lib/shareStudioModel.js'
 import { TEMPLATES, availableShareTemplates, resolveShareTemplate, drawShareCard } from '../src/lib/shareTemplates.js'
 
 const legacy = ['route', 'log', 'ember', 'contour', 'overlay', 'photo']
-const ids = ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story']
+const ids = ['iron-chips', 'strike-pr', 'hybrid-split', 'trace', 'forged-days', 'full-bleed-story']
 const prefs = { friend_handle: 'abc', timezone: 'UTC' }
 const raw = { id: 'release-run', name: 'Morning workout', date: '2026-10-18', distance_miles: 5.25, duration_seconds: 2835,
   elevation_gain: 96, calories: 476, avg_heart_rate: 147,
@@ -16,7 +16,7 @@ const lift = fromStrength({ started_at: '2026-10-18', total_seconds: 2526, calor
   [{ set_number: 1, exercise_name: 'Front Squat', reps: 6, weight_lbs: 155 }], prefs)
 const hybrid = fromHybrid(run, lift)
 const pr = fromPr({ run_id: raw.id, label: 'Fastest 5 mile', value: 2678, unit: 'seconds', delta: -31 }, run)
-const fixtures = { 'iron-chips': run, 'strike-pr': pr, 'hybrid-split': hybrid, 'full-bleed-story': run }
+const fixtures = { 'iron-chips': run, 'strike-pr': pr, 'hybrid-split': hybrid, trace: run, 'forged-days': { ...run, streak: fromStreak({ days: 7 }) }, 'full-bleed-story': run }
 let groups = 0
 async function check(name, work) { await work(); groups++; console.log(`PASS ${name}`) }
 function context() {
@@ -41,7 +41,7 @@ function privateAbsent(model) {
   assert.equal(model.run.route, null); assert.equal(model.run.elevationProfile, null)
   for (const value of [model, ownTree(model)]) assert.doesNotMatch(JSON.stringify(value), /40\.7128123|74\.0060456|123\.456789|124\.456789|route_coords|"lat"|"lng"|markers|tiles|rawPoints|geometry/)
 }
-await check('exact four new registry IDs; all six legacy IDs absent from lookup/library/picker/export dispatch', async () => {
+await check('exact six new registry IDs; all six legacy IDs absent from lookup/library/picker/export dispatch', async () => {
   assert.deepEqual(TEMPLATES.map(entry => entry.id), ids)
   const source = readFileSync(new URL('../src/lib/shareTemplates.js', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /legacyDraws|LEGACY_TEMPLATES|draw(?:Route|Log|Ember|Contour|Overlay|Photo)Template/)
@@ -94,29 +94,31 @@ await check('actual picker handler pins the active fallback without invalidating
     for (const size of ['feed', 'story', 'feed']) for (const theme of ['light', 'dark', 'color']) for (const showRoute of [false, true]) {
       const safe = rendererModel(model, showRoute)
       const options = { template: requested, size, theme, showRoute, logo: {} }
-      assert.equal(resolveShareTemplate(safe, options), id, `${id}/${initial}/${size}: selection survives controls`)
+      const selected = id === 'trace' && !showRoute ? (size === 'story' ? 'full-bleed-story' : 'iron-chips') : id
+      assert.equal(resolveShareTemplate(safe, options), selected, `${id}/${initial}/${size}: selection survives controls`)
       const { ctx, calls } = context(), canvas = { getContext: () => ctx }
       await drawShareCard(canvas, safe, options)
-      assert.deepEqual(calls, capture(id, safe, options).calls, `${id}/${size}: actual dispatch matches the requested reference`)
+      assert.deepEqual(calls, capture(selected, safe, options).calls, `${id}/${size}: actual dispatch matches the requested reference`)
       assert.deepEqual([canvas.width, canvas.height], [1080, size === 'feed' ? 1350 : 1920])
     }
   }
 })
-await check('route 7a-d: all four designs × three themes × two sizes; zero OFF geometry calls, restoration', () => {
+await check('route 7a-d: all six designs × three themes × two sizes; zero OFF geometry calls, restoration', () => {
   for (const [id, model] of Object.entries(fixtures)) {
     for (const theme of ['light', 'dark', 'color']) for (const size of ['feed', 'story']) {
       const before = JSON.stringify(model), on = capture(id, model, { theme, size })
-      assert.equal(on.markers > 0, id === 'full-bleed-story', id)
+      assert.equal(on.markers > 0, ['trace', 'full-bleed-story'].includes(id), id)
       const off = rendererModel(model, false)
       privateAbsent(off)
       const reference = rendererModel({ ...model, run: { ...model.run, route: null, elevationProfile: null } }, true)
-      const disabled = capture(id, off, { theme, size, showRoute: false })
+      const selected = resolveShareTemplate(off, { template: id, size, showRoute: false })
+      const disabled = capture(selected, off, { theme, size, showRoute: false })
       assert.equal(disabled.markers, 0)
-      assert.deepEqual(disabled.calls, capture(id, reference, { theme, size }).calls)
+      assert.deepEqual(disabled.calls, capture(selected, reference, { theme, size }).calls)
       assert.deepEqual(capture(id, model, { theme, size }).calls, on.calls)
       assert.equal(JSON.stringify(model), before)
       assert.doesNotMatch(on.text + disabled.text, /^(--|0:00|NaN|undefined|null|NOT SHARED)$/mi)
-      assert.equal(resolveShareTemplate(off, { template: id, size, showRoute: false }), id)
+      assert.equal(selected, id === 'trace' ? (size === 'story' ? 'full-bleed-story' : 'iron-chips') : id)
     }
     for (const showRoute of [undefined, null, 'false', 0, {}, new Boolean(false)]) {
       assert.throws(() => capture(id, model, { showRoute }), /boolean/)

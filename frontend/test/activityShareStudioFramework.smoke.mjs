@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { chromium, expect } from '@playwright/test'
-import { fromRun, fromStrength, fromHybrid, fromPr } from '../src/lib/shareStats.js'
+import { fromRun, fromStrength, fromHybrid, fromPr, fromStreak } from '../src/lib/shareStats.js'
 import { sharePreferences, rendererModel, studioModel } from '../src/lib/shareStudioModel.js'
 import { BRAND, SIZES } from '../src/lib/shareTheme.js'
 
@@ -70,7 +70,7 @@ import { MemoryRouter } from 'react-router';
 import Studio, { canvasBlob, cardDataForPost, resizedCanvas, shareSummaryCard } from '/src/components/ActivityShareStudio.jsx';
 import RunDetailModal from '/src/components/RunDetailModal.jsx';
 import { UnitsProvider } from '/src/context/UnitsContext.jsx';
-import { TEMPLATES, drawShareCard } from '/src/lib/shareTemplates.js';
+import { TEMPLATES, drawShareCard, resolveShareTemplate } from '/src/lib/shareTemplates.js';
 import { studioModel, rendererModel, sharePreferences } from '/src/lib/shareStudioModel.js';
 import { loadShareFonts } from '/src/lib/shareTheme.js';
 import PhotoLibraryService from '/src/services/PhotoLibraryService.js';
@@ -79,7 +79,7 @@ const root = createRoot(document.getElementById('root'));
 let key = 0;
 const run = ${JSON.stringify(run)};
 const prefs = ${JSON.stringify(prefs)};
-window.harness = { run, prefs, TEMPLATES, drawShareCard, canvasBlob, cardDataForPost, resizedCanvas, shareSummaryCard, studioModel, rendererModel, sharePreferences, loadShareFonts, PhotoLibraryService };
+window.harness = { run, prefs, TEMPLATES, drawShareCard, resolveShareTemplate, canvasBlob, cardDataForPost, resizedCanvas, shareSummaryCard, studioModel, rendererModel, sharePreferences, loadShareFonts, PhotoLibraryService };
 window.openStudio = (props = {}) => root.render(React.createElement(MemoryRouter, {key: ++key}, React.createElement(Studio, { run, prefs, ...props, onClose: () => root.render(null) })));
 window.openRunDetail = (activity = run) => root.render(React.createElement(MemoryRouter, {key: ++key}, React.createElement(UnitsProvider, null,
   React.createElement(RunDetailModal, { run: activity, activePanel: 'media', onClose: () => root.render(null) }))));
@@ -201,8 +201,8 @@ try {
     await expect(page.getByRole('checkbox', { name: 'Show route' })).toBeChecked()
     assert.deepEqual(await page.evaluate(() => [...document.fonts].map(face => [face.family.replaceAll('"', ''), face.status]).sort()),
       [['Anton', 'loaded'], ['Barlow Condensed', 'loaded'], ['Barlow Condensed', 'loaded'], ['JetBrains Mono', 'loaded']].sort())
-    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => Object.keys(item).sort())), Array(4).fill(['draw', 'id', 'label', 'sizes', 'supports', 'themes']))
-    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => item.id)), ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story'])
+    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => Object.keys(item).sort())), Array(6).fill(['draw', 'id', 'label', 'sizes', 'supports', 'themes']))
+    assert.deepEqual(await page.evaluate(() => window.harness.TEMPLATES.map(item => item.id)), ['iron-chips', 'strike-pr', 'hybrid-split', 'trace', 'forged-days', 'full-bleed-story'])
   })
   await check('reselecting the active template keeps exports ready', async () => {
     await page.getByRole('radio', { name: 'Full-Bleed Story', exact: true }).click()
@@ -247,6 +247,11 @@ try {
     ['iron-chips', 'Iron Chips', runModel],
     ['strike-pr', 'Strike PR', fromPr({ run_id: run.id, label: 'Time PR: 5K', value: 2678, unit: 'seconds' }, runModel)],
     ['hybrid-split', 'Hybrid Split', fromHybrid(runModel, liftModel)],
+    ['trace', 'Trace', runModel],
+    ['forged-days', 'Forged Days', { ...runModel, streak: fromStreak({ days: 100,
+      week: Array.from({ length: 7 }, (_, i) => ({ hasRun: i % 2 === 0, hasLift: i % 3 === 0 })),
+      monthDays: [{ date: '2026-10-18', hasRun: true, hasLift: true, isToday: true }],
+    }) }],
     ['full-bleed-story', 'Full-Bleed Story', runModel],
   ]
   for (const [id, label, model] of templates) await check(`${label}: 3 themes × 2 sizes, UI exports, safe bounds, OFF pixels and draw calls`, async () => {
@@ -256,16 +261,23 @@ try {
       await page.getByRole('radio', { name: theme, exact: true }).check()
       for (const size of ['Feed', 'Story']) {
         await page.getByRole('radio', { name: size, exact: true }).check()
+        await page.getByRole('checkbox', { name: 'Show route' }).check(); await ready()
+        await expect(page.getByRole('radio', { name: label, exact: true })).toHaveAttribute('aria-checked', 'true')
+        const onFile = await share()
+        assert.deepEqual([onFile.width, onFile.height], [1080, size === 'Feed' ? 1350 : 1920])
+        assert.equal(onFile.leaked, false)
         await page.getByRole('checkbox', { name: 'Show route' }).uncheck()
         await ready()
+        const selectedLabel = id === 'trace' ? (size === 'Story' ? 'Full-Bleed Story' : 'Iron Chips') : label
+        await expect(page.getByRole('radio', { name: 'Trace', exact: true })).toHaveCount(0)
         // Prove the UI state that will be exported, not just its dimensions.
         // An implicit Feed fallback used to change to Full-Bleed on Story.
-        await expect(page.getByRole('radio', { name: label, exact: true })).toHaveAttribute('aria-checked', 'true')
+        await expect(page.getByRole('radio', { name: selectedLabel, exact: true })).toHaveAttribute('aria-checked', 'true')
         await expect(page.getByRole('radio', { name: theme, exact: true })).toBeChecked()
         await expect(page.getByRole('radio', { name: size, exact: true })).toBeChecked()
         await expect(page.getByRole('checkbox', { name: 'Show route' })).not.toBeChecked()
         const file = await share()
-        const transparent = id !== 'full-bleed-story'
+        const transparent = selectedLabel !== 'Full-Bleed Story'
         assert.deepEqual([file.width, file.height], [1080, size === 'Feed' ? 1350 : 1920])
         assert.equal(file.type, transparent ? 'image/png' : 'image/jpeg')
         assert.equal(file.alpha, transparent)
@@ -276,7 +288,8 @@ try {
           const disabled = h.rendererModel(model, false)
           const noRoute = h.rendererModel({ ...model, run: { ...model.run, route: null, elevationProfile: null } }, true)
           const off = document.createElement('canvas'), reference = document.createElement('canvas')
-          const options = { template: id, theme, size: size.toLowerCase(), logo, showRoute: false }
+          const selected = h.resolveShareTemplate(disabled, { template: id, size: size.toLowerCase(), showRoute: false })
+          const options = { template: selected, theme, size: size.toLowerCase(), logo, showRoute: false }
           await h.drawShareCard(off, disabled, options)
           await h.drawShareCard(reference, noRoute, { ...options, showRoute: true })
           const records = window.records.get(off)
@@ -291,7 +304,7 @@ try {
             const c = h.resizedCanvas(off, width); return [c.width, c.height]
           })
           const on = document.createElement('canvas')
-          await h.drawShareCard(on, h.rendererModel(model, true), { ...options, showRoute: true })
+          await h.drawShareCard(on, h.rendererModel(model, true), { ...options, template: id, showRoute: true })
           return { exportMatchesOff,
             exportTrace: { selected: document.querySelector('[aria-label="Share design"] [aria-checked="true"]')?.textContent.trim(),
               theme: document.querySelector('input[name$="-theme"]:checked')?.value,
@@ -303,14 +316,14 @@ try {
             markers: records.filter(r => r.method === 'arc' && [13, 15].includes(r.radius)).length,
             changedOn: on.toDataURL() !== off.toDataURL(),
             text: records.filter(r => r.text).map(r => r.text).join(''),
-            bounds: records.filter(r => r.bounds && (r.text || r.method === 'drawImage')).map(r => r.bounds),
+            bounds: [...records, ...(window.records.get(on) || [])].filter(r => r.bounds && (r.text || r.method === 'drawImage')).map(r => r.bounds),
             post: [image.width, image.height], scaled }
         }, { id, theme, size, model })
         assert.equal(evidence.exportMatchesOff, true, `${id}/${theme}/${size}: actual UI export matches OFF reference bytes; ${JSON.stringify(evidence.exportTrace)}`)
         assert.equal(evidence.identical, true, `${id}/${theme}/${size}: OFF equals no-route pixels`)
         assert.equal(evidence.routeStrokes, 0)
         assert.equal(evidence.markers, 0)
-        assert.equal(evidence.changedOn, id === 'full-bleed-story')
+        assert.equal(evidence.changedOn, ['trace', 'full-bleed-story'].includes(id))
         assert.match(evidence.text, /@abc \/ RUN \+ LIFT\. BUILT IN FORGED HYBRID\./)
         assert.doesNotMatch(evidence.text, /NOT SHARED|--|Private identity|Private place|Z[1-5]/)
         if (size === 'Story') for (const bounds of evidence.bounds) {
@@ -319,6 +332,35 @@ try {
         for (const [width, height] of [evidence.post, ...evidence.scaled]) assert.equal(width * file.height, height * file.width)
       }
     }
+  })
+  await check('Forged Days cycles real layouts and exports the current layout inside Story safe zones', async () => {
+    const model = templates.find(([id]) => id === 'forged-days')[2]
+    await reopen({ run: undefined, model, prefs: { ...prefs, template: 'forged-days' } })
+    await page.getByRole('radio', { name: 'Story', exact: true }).check()
+    for (const theme of ['light', 'dark', 'color']) {
+      await page.getByRole('radio', { name: theme, exact: true }).check()
+      for (const layout of ['milestone', 'week', 'month']) {
+        const next = page.getByRole('button', { name: `Streak layout: ${layout} · Next`, exact: true })
+        await expect(next).toBeVisible()
+        const file = await share()
+        assert.equal(file.type, 'image/png'); assert.equal(file.alpha, true)
+        const evidence = await page.evaluate(async ({ model, theme, layout }) => {
+          const h = window.harness, reference = document.createElement('canvas')
+          await h.drawShareCard(reference, model, { template: 'forged-days', theme, size: 'story', showRoute: true, layout })
+          const expected = new Uint8Array(await (await h.canvasBlob(reference)).arrayBuffer())
+          const actual = new Uint8Array(await window.shared.at(-1).files[0].arrayBuffer())
+          const records = window.records.get(reference)
+          return { matches: actual.length === expected.length && actual.every((byte, i) => byte === expected[i]),
+            text: records.filter(r => r.text).map(r => r.text).join('\n'), bounds: records.filter(r => r.bounds).map(r => r.bounds) }
+        }, { model, theme, layout })
+        assert.equal(evidence.matches, true)
+        assert.match(evidence.text, layout === 'week' ? /5 OF 7 THIS WEEK/ : layout === 'month' ? /OCTOBER 2026/ : /MILESTONE/)
+        for (const bounds of evidence.bounds) assert.ok(bounds.top >= 250 && bounds.bottom <= 1580, `${layout}: ${JSON.stringify(bounds)}`)
+        await next.click()
+      }
+    }
+    await reopen({ prefs: { ...prefs, template: 'full-bleed-story' } })
+    await page.getByRole('checkbox', { name: 'Show route' }).uncheck(); await ready()
   })
   await check('user OFF → ON restores route pixels; closing/reopening resets ON', async () => {
     await page.getByRole('radio', { name: 'Full-Bleed Story', exact: true }).click(); await ready()
@@ -651,5 +693,5 @@ try {
     assert.deepEqual(await page.evaluate(async () => { const bitmap = await createImageBitmap(window.files[0]); return [bitmap.width, bitmap.height] }), [1080, 1350])
     await context.close()
   })
-  console.log(`ACTIVITY SHARE STUDIO FRAMEWORK OK (${passed} groups, 24 registry + 24 actual-entry + 24 photo UI matrix exports; 0 failed)`)
+  console.log(`ACTIVITY SHARE STUDIO FRAMEWORK OK (${passed} groups, 72 registry ON/OFF + 24 actual-entry + 24 photo UI matrix exports; 0 failed)`)
 } finally { await browser?.close(); await server.close() }

@@ -7,6 +7,7 @@ import { unreadableActivitySharePhotoMessage, validateActivitySharePhoto } from 
 import { SIZES, loadShareFonts } from '../lib/shareTheme'
 import { TEMPLATES, availableShareTemplates, resolveShareTemplate, drawShareCard, titleForModel, drawBrand, roundRect } from '../lib/shareTemplates'
 import { studioModel, sharePreferences, activityShareModels } from '../lib/shareStudioModel'
+import { streakLayouts } from '../lib/shareOverlaysC2'
 import PhotoLibraryService from '../services/PhotoLibraryService'
 
 const CARD_WIDTH = SIZES.feed.w
@@ -205,6 +206,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   const photoInputId = useId()
   const photoFeedbackId = `${photoInputId}-feedback`
   const [requestedTemplate, setTemplate] = useState(() => prefs?.template || null)
+  const [streakLayout, setStreakLayout] = useState(null)
   const [theme, setTheme] = useState('dark')
   const [size, setSize] = useState('feed')
   const [showRoute, setShowRoute] = useState(true)
@@ -226,6 +228,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
   const cardModel = useMemo(() => studioModel({ run, model, prefs: preferences, showRoute, title: cardTitle, context: activityContext, hybrid: hybridSelected }), [run, model, preferences, showRoute, cardTitle, activityContext, hybridSelected])
   const availableTemplates = availableShareTemplates(cardModel, { showRoute, size })
   const template = resolveShareTemplate(cardModel, { template: requestedTemplate, showRoute, size })
+  const layouts = streakLayouts(cardModel)
   const transparent = template !== 'full-bleed-story' && !photoUrl
   const fileType = transparent ? 'image/png' : 'image/jpeg'
   const fileExtension = transparent ? 'png' : 'jpg'
@@ -377,7 +380,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
       if (cancelled) return null
       // Draw offscreen so a cancelled async render can never overwrite a newer preview.
       const rendered = document.createElement('canvas')
-      await drawShareCard(rendered, cardModel, { template, theme, size, photo, logo, showRoute })
+      await drawShareCard(rendered, cardModel, { template, theme, size, photo, logo, showRoute, layout: streakLayout })
       if (cancelled || version !== renderVersionRef.current) return null
       const canvas = canvasRef.current
       if (!canvas) return null
@@ -395,7 +398,7 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
       setStatus('Could not render this share card.')
     })
     return () => { cancelled = true }
-  }, [photoUrl, cardModel, template, theme, size, showRoute, preferencesReady])
+  }, [photoUrl, cardModel, template, theme, size, showRoute, streakLayout, preferencesReady])
 
   const exportCanvas = async () => {
     // Each action uses the exact canvas belonging to its current completed render.
@@ -646,6 +649,17 @@ export default function ActivityShareStudio({ run, model, prefs, onClose }) {
         </label>
         <p className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>When on, your route is shown as recorded, including its start and finish.</p>
 
+        {template === 'forged-days' && layouts.length > 1 && (
+          <button type="button" disabled={busy}
+            className="pressable mb-3 min-h-10 rounded-lg px-3 text-sm font-bold"
+            onClick={() => {
+              invalidateRender()
+              const selected = layouts.includes(streakLayout) ? streakLayout : layouts[0]
+              setStreakLayout(layouts[(layouts.indexOf(selected) + 1) % layouts.length])
+              setPosted(false)
+              setStatus('')
+            }}>Streak layout: {layouts.includes(streakLayout) ? streakLayout : layouts[0]} · Next</button>
+        )}
         {!availableTemplates.length && <p role="status" className="mb-3 text-sm">No share templates are available for this activity yet.</p>}
         <div className="relative">
           <canvas ref={canvasRef} width={SIZES[size].w} height={SIZES[size].h} aria-label="Share card preview" aria-busy={!renderReady} className="block w-full rounded-lg object-contain" style={{ aspectRatio: `${SIZES[size].w} / ${SIZES[size].h}`, background: transparent ? 'repeating-conic-gradient(#303033 0% 25%, #202023 0% 50%) 50% / 24px 24px' : '#080808', border: '1px solid var(--border-subtle)' }} />
