@@ -70,15 +70,16 @@ export function sharePreferences(preferences = {}, alternateTimezone) {
 }
 
 // Context is served only after authenticating and resolving the exact owned run.
-// Recheck linkage/ownership here so stale or mixed responses cannot decorate it.
+// Recheck run/day linkage so stale responses cannot decorate another activity.
+// Owner scoping is server-side; tolerate legacy owner fields only when consistent.
 export function activityShareModels(run, context, prefs, showRoute) {
   if (typeof showRoute !== 'boolean') throw new TypeError('showRoute must be a boolean')
   const preferences = sharePreferences(prefs)
   let runShare = fromRun(run, preferences, { showRoute })
-  const valid = run?.id && context?.run_id === run.id && context.user_id
-    && (!run.user_id || run.user_id === context.user_id) && context.local_date === runShare.dateLabel
+  const valid = run?.id && context?.run_id === run.id
+    && (!context.user_id || context.user_id === run.user_id) && context.local_date === runShare.dateLabel
   if (!valid) return { run: runShare, hybrid: null }
-  const owned = rows => (Array.isArray(rows) ? rows : []).filter(row => row?.user_id === context.user_id)
+  const owned = rows => (Array.isArray(rows) ? rows : []).filter(row => row && (!row.user_id || row.user_id === run.user_id))
   for (const row of owned(context.prs)) {
     const candidate = fromPr(row, runShare)
     if (candidate.pr) { runShare = candidate; break }

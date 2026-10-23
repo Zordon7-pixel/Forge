@@ -114,10 +114,10 @@ for (const [name, theme] of Object.entries(THEMES)) {
   assert.strictEqual(theme.end, '#EF4444', `${name} share routes mark the last coordinate in red`);
 }
 assert(/import\s*\{[^}]*\bdrawShareCard\b[^}]*\}\s*from\s*'\.\.\/lib\/shareTemplates'/.test(shareStudio)
-  && /await drawShareCard\(rendered, cardModel, \{ template, theme, size, photo, logo, showRoute \}\)/.test(shareStudio), 'share studio renders through the canonical template entry point');
+  && /await drawShareCard\(rendered, cardModel, \{ template, theme, size, photo, logo, showRoute, layout: streakLayout \}\)/.test(shareStudio), 'share studio renders through the canonical template entry point');
 assert(/const safe = rendererModel\(model, options\.showRoute\)/.test(shareTemplates)
   && /entry\.draw\(ctx, safe, \{ \.\.\.options, logo \}\)/.test(shareTemplates), 'canonical renderer forwards selected theme after sanitizing the model');
-assert.deepStrictEqual(TEMPLATES.map(entry => entry.id), ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story'], "only this release's new designs are renderable");
+assert.deepStrictEqual(TEMPLATES.map(entry => entry.id), ['iron-chips', 'strike-pr', 'hybrid-split', 'trace', 'forged-days', 'full-bleed-story'], "only this release's new designs are renderable");
 // The route painter is retained only for Full-Bleed. Exercise actual theme and
 // strict route dispatch instead of requiring removed legacy renderer source.
 const fullBleed = TEMPLATES.find(entry => entry.id === 'full-bleed-story');

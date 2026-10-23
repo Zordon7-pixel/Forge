@@ -273,8 +273,8 @@ async function main() {
   const share = async (account, id) => request(runs, 'GET', '/:id/share-context', account, { id, query: { local_date: '2026-01-02' } });
   const linked = await share(owner, faster.id);
   assert.equal(linked.status, 200);
-  assert.deepEqual(linked.data.prs.filter(pr => pr.category === 'time_pr').map(pr => pr.id), [original.id]);
-  assert.equal((await share(owner, first.id)).data.prs.filter(pr => pr.category === 'time_pr').length, 0);
+  assert.deepEqual(linked.data.prs.filter(pr => pr.unit === 'seconds').map(pr => ({ ...pr })), [{ label: 'Time PR: 1 Mile', value: 350, unit: 'seconds', run_id: faster.id }]);
+  assert.equal((await share(owner, first.id)).data.prs.filter(pr => pr.unit === 'seconds').length, 0);
   assert.equal((await share(foreign, faster.id)).status, 404);
   assert.equal((await share(null, faster.id)).status, 401);
   pass('real authenticated share-context selects only the exact linked owned run, excludes manual time');

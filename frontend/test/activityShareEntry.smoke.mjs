@@ -6,10 +6,10 @@ import { C1_TEMPLATES } from '../src/lib/shareOverlaysC1.js'
 const prefs = { timezone: 'America/New_York', friend_handle: 'self', distance_unit: 'mi' }
 const run = { id: 'run-a', user_id: 'owner', date: '2026-10-19T03:30:00Z', distance_miles: 5, duration_seconds: 3000,
   route_coords: [[40, -74, 12], [40.01, -74.01, 14]] }
-const pr = { id: 'pr-a', user_id: 'owner', run_id: run.id, category: 'time_pr', label: 'Time PR: 5K', value: 2678, unit: 'seconds' }
-const session = { id: 'session-a', user_id: 'owner', started_at: '2026-10-18T23:45:00-04:00', ended_at: '2026-10-19T00:05:00-04:00', total_seconds: 1200 }
-const set = { id: 'set-a', user_id: 'owner', session_id: session.id, set_number: 1, exercise_name: 'Squat', reps: 5, weight_lbs: 100 }
-const context = { run_id: run.id, user_id: 'owner', local_date: '2026-10-18', prs: [pr], sessions: [session], sets: [set], lifts: [] }
+const pr = { run_id: run.id, label: 'Time PR: 5K', value: 2678, unit: 'seconds' }
+const session = { id: 'session-a', started_at: '2026-10-18T23:45:00-04:00', ended_at: '2026-10-19T00:05:00-04:00', total_seconds: 1200 }
+const set = { session_id: session.id, set_number: 1, exercise_name: 'Squat', reps: 5, weight_lbs: 100 }
+const context = { run_id: run.id, local_date: '2026-10-18', prs: [pr], sessions: [session], sets: [set], lifts: [] }
 const models = (changes = {}, activity = run, preferences = prefs) => activityShareModels(activity, { ...context, ...changes }, preferences, true)
 const supports = (id, model) => C1_TEMPLATES.find(item => item.id === id).supports(model)
 

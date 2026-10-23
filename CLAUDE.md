@@ -5,6 +5,135 @@
 
 ---
 
+## P3 share hardening — t_b10c101d (source candidate; host QA pending)
+
+Assigned base `eef0707d9beaa6e32c970ba1bdb5639e7a5d9871`, branch
+`codex/t_b10c101d/p3-share-hardening`. Nine paths including this report.
+COMMIT BLOCKED: initial explicit eight-path git add succeeded (exit 0), but
+staging this report and `git commit -m 'Harden share context and add synthetic
+export metadata coverage'` both exited 128: sandbox denied creating canonical
+`.git/worktrees/forge12/index.lock`. HEAD is still the assigned base; no candidate
+commit or parent SHA exists yet. Eight code/test files are staged; this report
+is unstaged. Hermes must stage the report and commit on the permitted host.
+Complete binary diff is preserved at `/tmp/t_b10c101d-candidate.patch`; no
+permission bypass, alternate repository, or approval request was attempted.
+No renderer, theme/size, dependency, golden PNG, acceptance lock, native, or
+production changes. Flag owner-boundary/timezone-sensitive work and >2 files
+for Hermes-owned advisory QA and independent exact-SHA review; no review or
+release was requested by this worker.
+
+Consumer trace: only ActivityShareStudio fetches `/runs/:id/share-context`.
+`activityShareModels` feeds `fromPr`, `fromStrength`, and `fromHybrid`, then the
+renderer allowlist. Response now contains exactly `run_id`, `local_date`, `prs`,
+`sessions`, `sets`, `lifts`. PRs retain only label/value/unit/run_id; sessions
+retain id/start/end/duration/calories; sets retain session_id/set_number/name/
+reps/weight; legacy lifts retain date/name/sets/reps/weight/duration/calories/HR.
+Session IDs join sets; run IDs reject stale context and unrelated PRs. No user
+IDs, PR/set/lift IDs, PR category/lift link, notes, timestamps unrelated to card
+inputs, or whole database rows are exposed. Auth and all parameterized owner
+predicates are retained, including BOTH set and session ownership. Error logs
+no longer echo database error messages. Existing client owner fields, if supplied
+by an old response, must match the run; new responses need no owner identifiers.
+
+PR association remains exact run linkage, never achieved_at/date matching.
+The existing explicit “Share run + lift” action intentionally combines an actual
+completed strength session/legacy lift with the run on the same local day; the
+schema has no run-to-workout-session link. It never represents that combination
+as a linked PR or aggregates unrelated sessions. The three-day SQL candidate
+window and adapter timezone semantics remain: UTC instants use user timezone,
+offset/date-only records retain recorded day. Real authenticated synthetic SQLite
+responses are exercised through the real frontend adapter, including cross-owner
+run/PR/session/set/lift negatives, same-day unlinked PR rejection, exact response,
+midnight boundaries, stale context, invalid dates, leap day, and unfinished lifts.
+
+Photo trace: file input -> validateActivitySharePhoto -> owned object URL ->
+loadImage -> drawShareCard(offscreen canvas) -> canvasBlob -> exported File.
+Share/Save use PNG (`image/png`) for bare overlays and JPEG (`image/jpeg`) for
+photos or Full-Bleed; social posting uses the same two formats through
+cardDataForPost. No WebP output is selected. The existing browser framework now
+generates a 32x48 JPEG and injects a bounded, valid EXIF APP1 little-endian TIFF
+with GPS latitude/longitude IFDs and rational values. Positive fixture parsing
+proves actual GPS metadata. Actual UI-selected File exports are inspected as
+bytes, with JPEG segment and PNG chunk checks, no EXIF/APP1/GPS payload, image
+decode/dimensions, ON/OFF/ON exact restoration, route strokes/markers captured
+from the ACTUAL canvas passed to toBlob, and retained photo/stat/footer pixels.
+Both canvasBlob and resized social encoders are covered. Photo UI exports JPEG;
+PNG of that same photo-fed canvas is an encoder-boundary case, not an invented
+photo-UI option. Bare Trace also checks actual UI PNG. No customer media is used.
+These new browser assertions have NOT executed here: loopback listen is denied.
+
+C2 coverage is reused unchanged: default ON, Trace absent OFF, zero OFF geometry,
+Full-Bleed thumbnail, every theme/size, and restoration. The same UI framework
+adds explicit Trace selection -> OFF fallback -> ON restored selection/pixels.
+Forged Days actual-entry route applicability is CONDITIONAL / NOT APPLICABLE
+until P2 `t_8beef1d1` supplies owner-scoped streak history. Existing synthetic
+renderer tests remain; they do not prove production reachability. It is not
+revived here. Only the two reviewed runRecapData assertions from
+`a225f3967605546253fd1a00188fc4ae39c424c4` relative to
+`54feff80dd42c4436c13c12167cfe4158e524d2a` were ported, after reproducing the
+base failure on the pre-C2 draw signature. No release lineage was integrated.
+
+Verification environment: Node v22.22.3; supplied frontend/node_modules symlink
+unchanged/untracked. Backend commands use read-only existing dependencies:
+`NODE_PATH='/Volumes/Zordon Storage /openclaw-workspace/forge-app/backend/node_modules'`.
+No installs; exact-lock host verification is still required. Browser commands
+use `PLAYWRIGHT_BROWSERS_PATH=/Users/zordon/Library/Caches/ms-playwright`.
+
+Focused commands/results (each command separate; exits are real):
+- `node backend/test/activityShareContext.smoke.js`: 0, authenticated SQL + adapter
+  contract. Also 0 with `TZ=Pacific/Honolulu` and `TZ=Asia/Tokyo`.
+- `node backend/test/runLinkedTimePr.smoke.js`: 0, 12 groups. Initial revised
+  assertion mistakenly used the original 500s value instead of the later 350s
+  winner; corrected expected full display object, then passed. Injected rollback
+  error messages in this suite are deliberate passing negative controls.
+- `node backend/test/runRecapData.smoke.js`: base 1, authorized assertion port 0.
+- `node frontend/test/activityShareEntry.smoke.mjs`: 0.
+- `node frontend/test/shareStats.smoke.mjs`: 0, 21 groups / 197 outputs.
+- `node frontend/test/activityShareStudioPhaseC.smoke.mjs`: 0, 29 checks.
+- `node frontend/test/activityShareStudioSingleFlight.smoke.mjs`: 0.
+- `node frontend/test/shareReleaseTemplates.smoke.mjs`: 0, 5 groups.
+- `node frontend/test/shareOverlaysC2.smoke.mjs`: 0, 8 groups / 36 route cases.
+- `node frontend/test/shareOverlaysC1.smoke.mjs --filter-only`: 0, 2 groups.
+- `node frontend/test/shareFrameworkModules.smoke.mjs`: 0, actual Vite/Leaflet
+  prebundle linking; expected old-module failing control is retained.
+- `node frontend/test/activityShareStudioFramework.smoke.mjs`: 1, two offline
+  groups pass, then listen EPERM 127.0.0.1:5173 before browser launch.
+- `node frontend/test/shareGoldenProvenance.smoke.mjs`: 1, changed
+  shareStudioModel source fingerprint; no acceptance record was rewritten.
+- `node frontend/test/shareOverlaysC1.smoke.mjs --smoke`: 1, same fingerprint
+  gate before renders. Strict 0.001 (0.1%) pixel tolerance is untouched.
+- Standalone helper positive/negative control: 0, constructs GPS APP1 on a
+  synthetic JPEG marker envelope, parses both rationals, accepts a clean envelope,
+  rejects the source bytes. Structural proof only, not decoded-image export proof.
+- `node --check frontend/test/activityShareStudioFramework.smoke.mjs`,
+  `node --check backend/src/routes/runs.js`, `git diff --check`: all 0.
+- `npm run qa:smoke`: 1 at framework loopback EPERM; later tests not reached.
+- `npm --prefix backend run test:smoke`: 1 at authSelfProfile listen EPERM
+  127.0.0.1; subsequent suite tests not reached.
+- `npm run qa:native`: 0, 40 contract checks; not an iOS device/build claim.
+- Production Vite build: 0, output `/tmp/t_b10c101d-build`; ordinary large-chunk
+  warning. Unchanged config imported directly to avoid shared dependency writes
+  and environment/credential reads. Exact invocation from repository root:
+  `node --input-type=module` with the following stdin:
+
+```js
+import { build } from './frontend/node_modules/vite/dist/node/index.js'
+import config from './frontend/vite.config.js'
+process.chdir('frontend')
+await build({ ...config, configFile: false, envDir: '/tmp/t_b10c101d-no-env',
+  cacheDir: '/tmp/t_b10c101d-build-cache',
+  build: { ...config.build, outDir: '/tmp/t_b10c101d-build', emptyOutDir: true } })
+```
+
+Raw logs: `/tmp/t_b10c101d-{framework,linked-pr,full-smoke,backend-smoke,export-smoke,build}.log`
+and `/tmp/t_b10c101d-gates.json` with individual gate logs. Host frontend/backend
+full smoke, browser/export matrix, aggregate/subset golden comparison on actual
+Mac and immutable Linux, provenance reconciliation, and exact-SHA independent
+QA remain required. Do not treat expected provenance rejection as acceptance;
+no baselines/fingerprints were updated to make tests pass. Frontend/backend
+contract changes must be released together. No Kanban, messaging, secrets,
+provider/model settings, production access, push, merge or deployment actions.
+
 ## Release acceptance restart inspection — t_cdcce340 (local candidate)
 
 Base `18323e553ff21d00732d2673a58e7b06bd559547`. A synthetic executable

@@ -8,6 +8,7 @@ import react from '@vitejs/plugin-react'
 import { chromium, expect } from '@playwright/test'
 import { fromRun, fromStrength, fromHybrid, fromPr, fromStreak } from '../src/lib/shareStats.js'
 import { sharePreferences, rendererModel, studioModel } from '../src/lib/shareStudioModel.js'
+import { gpsPhoto, assertMetadataAbsent } from './shareExportMetadata.mjs'
 import { BRAND, SIZES } from '../src/lib/shareTheme.js'
 
 let passed = 0
@@ -119,7 +120,7 @@ try {
     if (url.pathname === '/api/auth/me') return route.fulfill({ json: { user: { friend_handle: 'self', units: 'metric' } } })
     if (url.pathname === '/api/users/settings') return route.fulfill({ json: { units: 'metric', timezone: 'invalid/timezone' } })
     if (/^\/api\/runs\/[^/]+\/share-context$/.test(url.pathname)) {
-      const data = { run_id: decodeURIComponent(url.pathname.split('/')[3]), user_id: 'share-owner', local_date: url.searchParams.get('local_date'), ...shareContext }
+      const data = { run_id: decodeURIComponent(url.pathname.split('/')[3]), local_date: url.searchParams.get('local_date'), ...shareContext }
       contextReads.push(data)
       return route.fulfill({ json: data })
     }
@@ -130,6 +131,11 @@ try {
   })
   await page.addInitScript(() => {
     window.shared = []; window.records = new WeakMap()
+    const toBlob = HTMLCanvasElement.prototype.toBlob
+    HTMLCanvasElement.prototype.toBlob = function (...args) {
+      window.lastExportCanvas = this
+      return toBlob.apply(this, args)
+    }
     Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true })
     Object.defineProperty(navigator, 'share', { configurable: true, value: async data => { window.shared.push(data) } })
     const proto = CanvasRenderingContext2D.prototype
@@ -484,6 +490,87 @@ try {
       }
     }
   })
+  await check('synthetic EXIF GPS File → actual canvas → PNG/JPEG bytes, route ON/OFF/ON', async () => {
+    const jpeg = await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 48
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#1964aa'; ctx.fillRect(0, 0, 32, 48)
+      ctx.fillStyle = '#f0a020'; ctx.fillRect(16, 0, 16, 24)
+      return canvas.toDataURL('image/jpeg').split(',')[1]
+    })
+    const fixture = gpsPhoto(Buffer.from(jpeg, 'base64'))
+    await reopen({ prefs: { ...prefs, template: 'full-bleed-story' } })
+    const chooser = page.waitForEvent('filechooser')
+    await page.getByTestId('photo-control-picker').click()
+    await (await chooser).setFiles({ name: 'synthetic-gps.jpg', mimeType: 'image/jpeg', buffer: fixture.photo })
+    await expect(page.getByText('Photo selected: synthetic-gps.jpg.', { exact: true })).toBeVisible()
+    const snapshots = []
+    for (const showRoute of [true, false, true]) {
+      await page.getByRole('checkbox', { name: 'Show route' }).setChecked(showRoute)
+      assert.equal((await share()).type, 'image/jpeg', 'photo UI exports JPEG')
+      const result = await page.evaluate(async ({ showRoute, photoBytes }) => {
+        const h = window.harness, preview = document.querySelector('canvas[aria-label="Share card preview"]'), exported = window.lastExportCanvas
+        const photo = new Image(), logo = new Image()
+        photo.src = 'data:image/jpeg;base64,' + photoBytes; logo.src = '/icon-192.png'
+        await Promise.all([photo.decode(), logo.decode()])
+        const options = { template: 'full-bleed-story', theme: 'dark', size: 'feed', photo, logo, showRoute }
+        const model = h.studioModel({ run: h.run, prefs: h.prefs, showRoute })
+        const reference = document.createElement('canvas'), stripped = document.createElement('canvas'), bare = document.createElement('canvas')
+        await h.drawShareCard(reference, model, options)
+        await h.drawShareCard(stripped, h.rendererModel(model, false), { ...options, showRoute: false })
+        await h.drawShareCard(bare, model, { ...options, photo: null })
+        const records = window.records.get(exported)
+        const file = window.shared.at(-1).files[0]
+        const bytes = async blob => Array.from(new Uint8Array(await blob.arrayBuffer()))
+        // PNG with a selected photo is an encoder-boundary case: the UI correctly
+        // chooses JPEG. Both encoders are exercised on the actual File-fed canvas.
+        const outputs = [{ mime: file.type, bytes: await bytes(file) }]
+        for (const mime of ['image/png', 'image/jpeg']) {
+          const blob = await h.canvasBlob(exported, mime, mime === 'image/jpeg' ? 0.92 : undefined)
+          const bitmap = await createImageBitmap(blob)
+          outputs.push({ mime: blob.type, bytes: await bytes(blob), dimensions: [bitmap.width, bitmap.height] })
+          bitmap.close()
+          const post = h.cardDataForPost(exported, mime === 'image/png')
+          outputs.push({ mime: post.mimeType, bytes: Array.from(Uint8Array.from(atob(post.data.split(',')[1]), c => c.charCodeAt(0))) })
+        }
+        return { outputs, preview: preview.toDataURL(), matches: preview.toDataURL() === reference.toDataURL() && exported.toDataURL() === reference.toDataURL(),
+          routeVisible: reference.toDataURL() !== stripped.toDataURL(), photoVisible: reference.toDataURL() !== bare.toDataURL(),
+          markers: records.filter(r => r.method === 'arc' && [13, 15].includes(r.radius)).length,
+          routeStrokes: records.filter(r => r.method === 'stroke' && r.cap === 'round' && r.width >= 7).length,
+          text: records.filter(r => r.text).map(r => r.text).join('\n') }
+      }, { showRoute, photoBytes: fixture.photo.toString('base64') })
+      assert.equal(result.matches, true, 'actual selected File reached renderer')
+      assert.equal(result.routeVisible, showRoute)
+      assert.equal(result.photoVisible, true, 'OFF retains the photo')
+      assert.equal(result.markers > 0, showRoute)
+      assert.equal(result.routeStrokes > 0, showRoute)
+      assert.match(result.text, /PACE/); assert.match(result.text, /@abc/, 'OFF retains card graphics')
+      for (const output of result.outputs) {
+        if (output.dimensions) assert.deepEqual(output.dimensions, [1080, 1350])
+        assertMetadataAbsent(Buffer.from(output.bytes), output.mime, fixture)
+      }
+      assert.deepEqual(result.outputs[0].bytes, result.outputs[3].bytes, 'UI JPEG equals actual preview encoding')
+      snapshots.push(result.preview)
+    }
+    assert.notEqual(snapshots[0], snapshots[1]); assert.equal(snapshots[0], snapshots[2])
+    await reopen({ prefs: { ...prefs, template: 'trace' } })
+    assert.equal((await share()).type, 'image/png', 'bare Trace UI exports PNG')
+    assertMetadataAbsent(Buffer.from(await page.evaluate(async () => Array.from(new Uint8Array(await window.shared.at(-1).files[0].arrayBuffer())))), 'image/png', fixture)
+  })
+  await check('C2 Trace picker OFF → ON restores valid selection and exact pixels', async () => {
+    await reopen({ prefs: { ...prefs, template: 'trace' } })
+    await expect(page.getByRole('checkbox', { name: 'Show route' })).toBeChecked()
+    await expect(page.getByRole('radio', { name: 'Trace', exact: true })).toHaveAttribute('aria-checked', 'true')
+    // Forged Days has renderer-only synthetic coverage above. Actual run entry
+    // remains inapplicable until P2 t_8beef1d1 supplies owner-scoped history.
+    await expect(page.getByRole('radio', { name: 'Forged Days', exact: true })).toHaveCount(0)
+    const on = await preview.evaluate(canvas => canvas.toDataURL())
+    await page.getByRole('checkbox', { name: 'Show route' }).uncheck(); await ready()
+    await expect(page.getByRole('radio', { name: 'Trace', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('radio', { name: 'Iron Chips', exact: true })).toHaveAttribute('aria-checked', 'true')
+    await page.getByRole('checkbox', { name: 'Show route' }).check(); await ready()
+    await expect(page.getByRole('radio', { name: 'Trace', exact: true })).toHaveAttribute('aria-checked', 'true')
+    assert.equal(await preview.evaluate(canvas => canvas.toDataURL()), on)
+  })
   await check('transparent File photo makes every design opaque; reopening restores bare overlay PNG alpha', async () => {
     const photoData = await page.evaluate(() => {
       const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 48
@@ -594,9 +681,9 @@ try {
     })
     assert.deepEqual(result, { share: { method: 'share' }, dimensions: [1080, 1350], type: 'image/jpeg', download: { method: 'download' }, filename: 'forged-hybrid-score.jpg' })
   })
-  const linkedPr = { id: 'linked-pr', user_id: 'share-owner', run_id: run.id, category: 'time_pr', label: 'Time PR: 5K', value: 2678, unit: 'seconds' }
-  const sameDaySession = { id: 'same-day-session', user_id: 'share-owner', started_at: '2026-10-19T06:30:00Z', ended_at: '2026-10-19T06:50:00Z', total_seconds: 1200 }
-  const sameDaySets = [{ id: 'same-day-set', user_id: 'share-owner', session_id: sameDaySession.id, set_number: 1, exercise_name: 'Front Squat', reps: 5, weight_lbs: 100 }]
+  const linkedPr = { run_id: run.id, label: 'Time PR: 5K', value: 2678, unit: 'seconds' }
+  const sameDaySession = { id: 'same-day-session', started_at: '2026-10-19T06:30:00Z', ended_at: '2026-10-19T06:50:00Z', total_seconds: 1200 }
+  const sameDaySets = [{ session_id: sameDaySession.id, set_number: 1, exercise_name: 'Front Squat', reps: 5, weight_lbs: 100 }]
   const enterFromRun = async data => {
     shareContext = data
     const previous = contextReads.length
