@@ -325,6 +325,44 @@
         "height": 1920,
         "sha256": "13502bb43c8dbad42724b73c0ac74a0473a42b9dc55c2e212b23e408ef1ba2f2"
       }
+    ],
+    "trace": [
+      {
+        "name": "trace-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "98228708d30fb12f0d79ee2287c06fd3b447f511a0939888c1306280d7dc4de9"
+      },
+      {
+        "name": "trace-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "b49312775732c03cd8e77d9b82e02a14cf2fd782ccad28d01c6b0eb70e852d83"
+      },
+      {
+        "name": "trace-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "0d00eb09506cd3c93367201b81402e0ba65fe89e7c172f4db42c0b9795b829ab"
+      },
+      {
+        "name": "trace-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "59d1692ff35c2bb7b78941c4d9bd16897cfd583ae52873362355780d7b74b98c"
+      },
+      {
+        "name": "trace-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "45f065d51f007a05feb6c0194f1f24b68e049c04ce3de01ea3e22be57198a734"
+      },
+      {
+        "name": "trace-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "3dbe6c4747213bb9e828efbd66e31499b8043604c85f6ea50072bad1871a114e"
+      }
     ]
   }
 }
