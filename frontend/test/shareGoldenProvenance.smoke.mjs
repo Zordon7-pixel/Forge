@@ -2,18 +2,49 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { matrix, ids, directories, repo, goldenRoot, sourcePaths, runnerPath, lockPath, pinPath,
+import { matrix, batches, c2Layouts, selectBatch, ids, directories, repo, goldenRoot, sourcePaths, runnerPath, lockPath, pinPath,
   parseOptions, selectBaseline, fingerprints, readLock, validateProvenance, pngRecord,
   newReceipt, receiptPath, validateReceipt, validateBaselines, assembleCandidate, sha256 } from './shareGoldenProvenance.mjs'
 let rejected = 0
 const rejects = (label, work, pattern) => { assert.throws(work, pattern, label); rejected++; console.log(`REJECT ${label}`) }
-assert.deepEqual(ids, ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story'])
-assert.equal(matrix.length, 42)
+assert.deepEqual(ids, ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story', 'trace', 'forged-days'])
+assert.equal(matrix.length, 72)
 assert.deepEqual(matrix.slice(0, 18).map(item => item.name), ids.slice(0, 3).flatMap(id => ['light', 'dark', 'color'].flatMap(theme => ['feed', 'story'].map(size => `${id}-${theme}-${size}.png`))))
 for (const fixture of ['photo-run', 'photo-lift']) for (const showRoute of [true, false]) {
   assert.equal(matrix.filter(item => item.fixture === fixture && item.showRoute === showRoute).length, 6)
 }
-assert.equal(new Set(matrix.map(item => item.name)).size, 42)
+assert.equal(new Set(matrix.map(item => item.name)).size, 72)
+assert.deepEqual(Object.keys(batches), ['1', '2', '3', '4', '5', 'trace', ...c2Layouts.map(layout => `forged-days-${layout}`)])
+assert.deepEqual(c2Layouts, ['week', 'month', 'milestone', 'count'])
+// Bind legacy case order/names/dimensions to both preserved historical receipts.
+for (const key of Object.keys(directories)) {
+  const old = JSON.parse(readFileSync(join(goldenRoot, directories[key], 'generation-v2.json'), 'utf8'))
+  for (const batch of ['1', '2', '3', '4', '5']) assert.deepEqual(
+    batches[batch].map(({ name, width, height }) => ({ name, width, height })),
+    old.batches[batch].map(({ name, width, height }) => ({ name, width, height })))
+}
+for (const batch of ['trace', ...c2Layouts.map(layout => `forged-days-${layout}`)]) {
+  const selected = selectBatch(batch)
+  assert.equal(selected.length, 6)
+  assert.deepEqual(selected.map(item => [item.theme, item.size]), ['light', 'dark', 'color'].flatMap(theme => ['feed', 'story'].map(size => [theme, size])))
+  for (const item of selected) {
+    assert.deepEqual([item.width, item.height], [1080, item.size === 'story' ? 1920 : 1350])
+    assert.equal(item.showRoute, batch === 'trace')
+    assert.equal(item.id, batch === 'trace' ? 'trace' : 'forged-days')
+    if (item.id === 'forged-days') assert.equal(item.layout, batch.slice('forged-days-'.length))
+  }
+  for (const [os, arch] of [['darwin', 'arm64'], ['linux', 'x64']]) {
+    const key = `${os}-${arch}`
+    assert.deepEqual(parseOptions([`--update-batch=${batch}`, `--platform=${key}`], {}, os, arch).selected, selected)
+    assert.deepEqual(parseOptions([`--capture-batch=${batch}`, `--platform=${key}`, '--output=/tmp/capture'], { CI: 'true' }, os, arch).selected, selected)
+    rejects('C2 repository mutation in CI', () => parseOptions([`--update-batch=${batch}`, `--platform=${key}`], { CI: 'true' }, os, arch), /forbidden in CI/)
+  }
+}
+for (const batch of ['', '6', 'trace,forged-days', 'forged-days', 'TRACE', '../trace', 'trace=', 'constructor']) {
+  rejects(`invalid bounded selector ${batch}`, () => selectBatch(batch), /Invalid filter/)
+}
+assert.deepEqual(parseOptions([], {}, 'darwin', 'arm64').selected, matrix, 'Default aggregate never loses C2 or old coverage')
+assert.deepEqual(parseOptions(['--compare=c2'], {}, 'darwin', 'arm64').selected, matrix.slice(42))
 const lock = readLock()
 validateProvenance(lock, lock.runtime)
 const files = new Map(), receipts = {}
@@ -23,9 +54,9 @@ for (const key of Object.keys(directories)) {
   const receipt = newReceipt(lock, key, lock.runtime), all = []
   // Synthetic host stand-in used ONLY for offline validator tests.
   receipt.host = { platform: os, arch, node: process.version }
-  for (let batch = 1; batch <= 5; batch++) {
+  for (const batch of Object.keys(batches)) {
     const parsed = parseOptions([`--update-batch=${batch}`, `--platform=${key}`], {}, os, arch)
-    assert.equal(parsed.selected.length, batch === 5 ? 6 : 9)
+    assert.equal(parsed.selected.length, ['1', '2', '3', '4'].includes(batch) ? 9 : 6)
     all.push(...parsed.selected.map(item => item.name))
     receipt.batches[batch] = parsed.selected.map(item => {
       // Only a header stand-in for validator unit tests; never a golden or render claim.
@@ -36,7 +67,7 @@ for (const key of Object.keys(directories)) {
       return pngRecord(item, png)
     })
   }
-  assert.deepEqual(all, matrix.map(item => item.name), 'Batches preserve exactly all 18 C1 + 24 Full-Bleed photo cases')
+  assert.deepEqual(all, matrix.map(item => item.name), 'Batches preserve exactly all 18 C1 + 24 Full-Bleed photo + 30 C2 cases')
   receipts[key] = receipt
   files.set(receiptPath(key), Buffer.from(JSON.stringify(receipt)))
 }
@@ -47,7 +78,7 @@ for (const key of Object.keys(directories)) {
   assert.equal(validateReceipt(receipts[key], lock, key, true, path => {
     assert.ok(path.startsWith(externalRoot + '/'), 'External import must read captured bytes, not repository baselines')
     return read(path.replace(externalRoot, goldenRoot))
-  }, list, externalRoot).size, 42)
+  }, list, externalRoot).size, 72)
 }
 const candidate = assembleCandidate(lock, read, list)
 assert.equal(Object.keys(validateBaselines(candidate, read, list)).length, 2)
@@ -65,7 +96,7 @@ for (const args of [['--update=trace'], ['--compare=trace'], ['--compare='], ['-
   rejects(`invalid selection ${args.join(' ')}`, () => parseOptions(args, {}, 'darwin', 'arm64'), /Invalid filter/)
 }
 assert.deepEqual(parseOptions(['--compare=c1'], {}, 'linux', 'x64').selected, matrix.slice(0, 18))
-assert.deepEqual(parseOptions(['--compare=photo'], {}, 'linux', 'x64').selected, matrix.slice(18))
+assert.deepEqual(parseOptions(['--compare=photo'], {}, 'linux', 'x64').selected, matrix.slice(18, 42))
 for (const env of [{ CI: 'true' }, { GITHUB_ACTIONS: 'true' }]) for (const args of [
   ['--update-batch=1', '--platform=linux-x64'], ['--candidate=/tmp/candidate.json']]) {
   rejects('CI mutation', () => parseOptions(args, env, 'linux', 'x64'), /forbidden in CI/)
@@ -97,8 +128,13 @@ for (const key of Object.keys(directories)) {
   rejects(`${key} wrong directory`, () => validateReceipt(mutate(r => { r.directory = directories[other] }), lock, key, true, read, list), /Wrong platform directory/)
   rejects(`${key} wrong runtime`, () => validateReceipt(mutate(r => { r.runtime.version = 'wrong' }), lock, key, true, read, list), /runtime mismatch/)
   rejects(`${key} wrong fingerprint`, () => validateReceipt(mutate(r => { r.fingerprints.fixtureSourceSha256 = 'wrong' }), lock, key, true, read, list), /mismatch/)
+  rejects(`${key} historical receipt is not current acceptance`, () => validateReceipt({ ...current, schema: 'share-generation-v2' }, lock, key, true, read, list), /share-generation-v3/)
+  for (const batch of ['trace', ...c2Layouts.map(layout => `forged-days-${layout}`)]) {
+    rejects(`${key} missing ${batch}`, () => validateReceipt(mutate(r => { delete r.batches[batch] }), lock, key, true, read, list), /Incomplete generation/)
+    rejects(`${key} mixed ${batch}`, () => validateReceipt(mutate(r => { r.batches[batch] = r.batches[1] }), lock, key, true, read, list), /batch files/)
+  }
   const partial = mutate(r => { delete r.batches[5] })
-  assert.equal(validateReceipt(partial, lock, key, false, read, list).size, 36, 'Partial receipts are generation evidence only')
+  assert.equal(validateReceipt(partial, lock, key, false, read, list).size, 66, 'Partial receipts are generation evidence only')
   rejects(`${key} incomplete receipt`, () => validateReceipt(partial, lock, key, true, read, list), /Incomplete generation/)
   rejects(`${key} partial final manifest`, () => validateBaselines({ ...candidate, platforms: { ...receipts, [key]: partial } }, read, list), /Incomplete generation/)
   rejects(`${key} unknown batch`, () => validateReceipt(mutate(r => { r.batches[6] = [] }), lock, key, true, read, list), /Invalid receipt batch/)
@@ -121,4 +157,4 @@ for (const key of Object.keys(directories)) {
   rejects(`${key} Mac/Linux byte substitution`, () => validateReceipt(current, lock, key, true,
     path => read(path.replace(join(goldenRoot, directories[key]), join(goldenRoot, directories[other]))), list), /Baseline hash/)
 }
-console.log(`PASS share provenance: 42 cases, five bounded batches/platform, ${rejected} fail-closed negatives; no browser/golden claim`)
+console.log(`PASS share provenance: 72 cases, ten bounded batches/platform, ${rejected} fail-closed negatives; no browser/golden claim`)

@@ -1,4 +1,4 @@
-// C1+Full-Bleed canonical acceptance (42 cases per actual platform). See SHARE-GOLDENS.md.
+// C1+Full-Bleed+C2 canonical acceptance (72 cases per actual platform). See SHARE-GOLDENS.md.
 import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync, existsSync, realpathSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -6,9 +6,11 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join, resolve, relative, isAbsolute } from 'node:path'
-import { fromRun, fromStrength, fromHybrid, fromPr } from '../src/lib/shareStats.js'
+import { fromRun, fromStrength, fromHybrid, fromPr, fromStreak } from '../src/lib/shareStats.js'
 import { rendererModel } from '../src/lib/shareStudioModel.js'
 import { C1_TEMPLATES } from '../src/lib/shareOverlaysC1.js'
+import { streakLayouts } from '../src/lib/shareOverlaysC2.js'
+import { TEMPLATES, availableShareTemplates, resolveShareTemplate } from '../src/lib/shareTemplates.js'
 import { SIZES } from '../src/lib/shareTheme.js'
 
 import { matrix, parseOptions, readLock, validateProvenance, validateBaselines, goldenRoot, directories,
@@ -18,8 +20,8 @@ const options = parseOptions(process.argv.slice(2))
 const { mode, key: platformKey, selected, batch } = options
 const smoke = mode === 'smoke', filterOnly = mode === 'filter-only', update = ['update', 'capture'].includes(mode)
 const themes = ['light', 'dark', 'color'], sizes = ['feed', 'story']
-assert.equal(matrix.length, 42)
-assert.equal(new Set(matrix.map(item => item.name)).size, 42)
+assert.equal(matrix.length, 72)
+assert.equal(new Set(matrix.map(item => item.name)).size, 72)
 const prefs = { friend_handle: 'abc', distance_unit: 'mi', timezone: 'America/New_York' }
 // Independent, production-shaped test records, never copied preview statistics.
 // Adapters derive every display value (including pace, volume and top lifts).
@@ -37,7 +39,20 @@ const gpsRun = fromRun({ id: 'photo-run', name: 'Morning workout', date: '2026-1
   duration_seconds: 2835, elevation_gain: 96, calories: 476, avg_heart_rate: 147,
   route_coords: [[40.7128123, -74.0060456, 123.456789], [40.7138123, -74.0070456, 124.456789], [40.715, -74.006, 126]],
 }, prefs, { showRoute: true })
-const fixtures = { 'iron-chips': lift, 'strike-pr': pr, 'hybrid-split': hybrid, 'photo-run': gpsRun, 'photo-lift': lift }
+const streak = fromStreak({ current_streak: 100,
+  week: Array.from({ length: 7 }, (_, i) => ({ date: `2026-10-${12 + i}`, hasRun: i % 2 === 0, hasLift: i % 3 === 0 })),
+  monthDays: Array.from({ length: 31 }, (_, i) => ({ date: `2026-10-${String(i + 1).padStart(2, '0')}`,
+    hasRun: i < 18 && i % 2 === 0, hasLift: i < 18 && i % 3 === 0, isToday: i === 17, isFuture: i > 17 })),
+  lifetime: { runs: 83, lifts: 41, distance: { value: 345.67, unit: 'mi' }, volume: { value: 654321, unit: 'lbs' } },
+})
+const fixtures = { 'iron-chips': lift, 'strike-pr': pr, 'hybrid-split': hybrid, 'photo-run': gpsRun, 'photo-lift': lift,
+  trace: gpsRun, 'forged-days': { ...run, streak }, 'streak-count': { ...run, streak: fromStreak({ days: 23 }) } }
+// All C2 images use adapter-derived observations, never mockup/example display strings.
+for (const item of matrix.slice(42)) {
+  const model = fixtures[item.fixture]
+  assert.ok(TEMPLATES.find(entry => entry.id === item.id).supports(model, { showRoute: item.showRoute }))
+  if (item.layout) assert.ok(streakLayouts(model).includes(item.layout), `Unavailable layout: ${item.name}`)
+}
 
 const entryFor = id => C1_TEMPLATES.find(entry => entry.id === id)
 let passed = 0
@@ -118,7 +133,7 @@ await check('offline draw capture: every optional chip, PR delta and hybrid stat
   for (const value of ['--', '0:00', 'NaN', 'undefined', 'null', 'NOT SHARED', '']) assert.equal(entryFor('iron-chips').supports({ ...run, stats: [{ key: 'time', label: 'Time', value }] }), false)
 })
 if (filterOnly) {
-  console.log(`C1 FILTERING OK (${passed} groups; 42-case manifest validated). Browser/pixels/goldens NOT RUN.`)
+  console.log(`C1 FILTERING OK (${passed} groups; 72-case manifest validated). Browser/pixels/goldens NOT RUN.`)
   process.exit(0)
 }
 
@@ -199,9 +214,12 @@ try {
     p.fillStyle = gradient; p.fillRect(0, 0, 1080, 1920)
     p.fillStyle = 'rgb(40,40,40)'; p.fillRect(0, 1300, 1080, 620)
     window.userPhoto = new Image(); window.userPhoto.src = window.photo.toDataURL('image/png'); await window.userPhoto.decode()
-    window.render = async (id, model, theme = 'dark', size = 'feed', withPhoto = false, showRoute = false) => {
+    window.render = async (id, model, theme = 'dark', size = 'feed', withPhoto = false, showRoute = false, layout) => {
       const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d'), calls = [], plates = []
       const fillText = ctx.fillText.bind(ctx), drawImage = ctx.drawImage.bind(ctx), closePath = ctx.closePath.bind(ctx)
+      const arc = ctx.arc.bind(ctx)
+      let markers = 0, images = 0
+      ctx.arc = (...args) => { if ([13, 15].includes(args[2])) markers++; arc(...args) }
       const moveTo = ctx.moveTo.bind(ctx), lineTo = ctx.lineTo.bind(ctx), beginPath = ctx.beginPath.bind(ctx)
       let points = []
       ctx.beginPath = () => { points = []; beginPath() }
@@ -222,13 +240,14 @@ try {
         fillText(value, x, y, ...rest)
       }
       ctx.drawImage = (image, x, y, w, h) => {
+        images++
         if (image === window.logo) {
           const transform = ctx.getTransform(), a = new DOMPoint(x, y).matrixTransform(transform), b = new DOMPoint(x + w, y + h).matrixTransform(transform)
           calls.push({ brand: true, x: a.x, right: b.x, top: a.y, bottom: b.y })
         }
         drawImage(image, x, y, w, h)
       }
-      await window.harness.drawShareCard(canvas, model, { template: id, theme, size, logo: window.logo, photo: withPhoto ? (id === 'full-bleed-story' ? window.userPhoto : window.photo) : null, showRoute })
+      await window.harness.drawShareCard(canvas, model, { template: id, theme, size, logo: window.logo, photo: withPhoto ? (id === 'full-bleed-story' ? window.userPhoto : window.photo) : null, showRoute, layout })
       const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data
       let transparent = 0
       for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 255) transparent++
@@ -244,7 +263,7 @@ try {
       let alphaMismatches = 0
       for (let i = 3; i < pixels.length; i += 4) if (pixels[i] !== exportedPixels[i]) alphaMismatches++
       const exported = { type: blob.type, width: decoded.width, height: decoded.height }; decoded.close()
-      return { calls, plates, transparent, corners, alphaMismatches, exported, width: canvas.width, height: canvas.height, png: canvas.toDataURL('image/png').split(',')[1] }
+      return { calls, plates, markers, images, transparent, corners, alphaMismatches, exported, width: canvas.width, height: canvas.height, png: canvas.toDataURL('image/png').split(',')[1] }
     }
     window.compare = async (actual, expected, size) => {
       const decode = async data => {
@@ -260,7 +279,7 @@ try {
       return different / (a.length / 4)
     }
   })
-  const render = (id, model, theme = 'dark', size = 'feed', photo = false, showRoute = false) => page.evaluate(({ id, model, theme, size, photo, showRoute }) => window.render(id, model, theme, size, photo, showRoute), { id, model, theme, size, photo, showRoute })
+  const render = (id, model, theme = 'dark', size = 'feed', photo = false, showRoute = false, layout) => page.evaluate(({ id, model, theme, size, photo, showRoute, layout }) => window.render(id, model, theme, size, photo, showRoute, layout), { id, model, theme, size, photo, showRoute, layout })
   const texts = result => result.calls.filter(call => call.text).map(call => call.text)
   const bounds = (result, size) => {
     for (const call of result.calls) {
@@ -398,27 +417,72 @@ try {
       assert.equal(row.jpegAlphaMismatches, 0, `${label}: JPEG composite is opaque`)
     }
   })
+  await check('C2 real data, all layouts, privacy OFF/reference/ON and missing-value controls', async () => {
+    for (const item of matrix.slice(42)) {
+      const model = fixtures[item.fixture], args = [item.theme, item.size, false, item.showRoute, item.layout]
+      const on = await render(item.id, model, ...args), text = texts(on).join('\n')
+      bounds(on, item.size)
+      assert.match(text, /@abc/)
+      assert.doesNotMatch(texts(await render(item.id, { ...model, handle: null }, ...args)).join('\n'), /@/)
+      assert.equal(on.markers > 0, item.id === 'trace')
+      assert.equal(on.images, 1, 'only local brand, no map tiles')
+      assert.deepEqual(on.corners, [0, 0, 0, 0])
+      assert.equal(on.alphaMismatches, 0)
+      const off = rendererModel(model, false)
+      assert.equal(off.run.route, null); assert.equal(off.run.elevationProfile, null)
+      assert.doesNotMatch(JSON.stringify(off), /40\.7128123|74\.0060456|123\.456789|route_coords|"lat"|"lng"/)
+      assert.equal(availableShareTemplates(off, { showRoute: false }).some(entry => entry.id === 'trace'), false)
+      const selectedId = resolveShareTemplate(off, { template: item.id, size: item.size, showRoute: false })
+      const disabled = await render(selectedId, off, item.theme, item.size, false, false, item.layout)
+      const reference = rendererModel({ ...model, run: { ...model.run, route: null, elevationProfile: null } }, true)
+      assert.equal(disabled.png, (await render(selectedId, reference, item.theme, item.size, false, true, item.layout)).png)
+      assert.equal(disabled.markers, 0); assert.equal(disabled.images, 1)
+      assert.equal(disabled.png, (await render(selectedId, model, item.theme, item.size, false, false, item.layout)).png)
+      assert.equal((await render(item.id, model, ...args)).png, on.png, 'restored ON pixels')
+      if (item.id === 'trace') {
+        for (const key of ['distance', 'pace', 'time']) {
+          const stat = model.stats.find(stat => stat.key === key)
+          assert.ok(text.includes(stat.value), `${key}: real positive control`)
+          const reduced = { ...model, stats: model.stats.filter(stat => stat.key !== key) }
+          assert.ok(!texts(await render(item.id, reduced, ...args)).join('\n').includes(stat.value), `${key}: no placeholder`)
+        }
+        const noElevation = { ...model, run: { ...model.run, elevationProfile: null } }
+        const without = await render(item.id, noElevation, ...args)
+        assert.doesNotMatch(texts(without).join('\n'), /ELEV GAIN/)
+        if (item.theme === 'color') { assert.match(text, /ELEV GAIN 96 FT/); assert.notEqual(on.png, without.png) }
+      } else {
+        const expected = { week: /5 OF 7 THIS WEEK · 4 RUNS · 3 LIFTS/, month: /100 FORGED[\s\S]*OCTOBER 2026/,
+          milestone: /MILESTONE[\s\S]*100[\s\S]*83 RUNS · 41 LIFTS · 345.67 MI · 654321 LBS/, count: /23[\s\S]*FORGED DAYS/ }
+        assert.match(text, expected[item.layout])
+        if (item.layout === 'count') assert.doesNotMatch(text, /MILESTONE|THIS WEEK|RUNS|LIFTS|OCTOBER/)
+        if (item.layout === 'milestone') {
+          const reduced = { ...model, streak: { ...model.streak, lifetime: null } }
+          assert.doesNotMatch(texts(await render(item.id, reduced, ...args)).join('\n'), /RUNS|LIFTS|345|654321/)
+        }
+      }
+    }
+  })
   const pending = new Map()
-  await check('42-case matrix: exact PNG/JPEG dimensions, alpha, deterministic pixels, Story safe zones', async () => {
+  await check('72-case matrix: exact PNG/JPEG dimensions, alpha, deterministic pixels, Story safe zones', async () => {
     let written = 0, compared = 0
     for (const item of (update ? selected : matrix)) {
-      const result = await render(item.id, fixtures[item.fixture], item.theme, item.size, true, item.showRoute)
+      const result = await render(item.id, fixtures[item.fixture], item.theme, item.size, true, item.showRoute, item.layout)
       bounds(result, item.size)
       assert.deepEqual([result.width, result.height], [SIZES[item.size].w, SIZES[item.size].h])
       assert.deepEqual(result.exported, { type: 'image/jpeg', width: item.width, height: item.height })
       assert.equal(result.transparent, 0, 'Photo composite must be opaque')
-      const bare = await render(item.id, fixtures[item.fixture], item.theme, item.size, false, item.showRoute)
+      const bare = await render(item.id, fixtures[item.fixture], item.theme, item.size, false, item.showRoute, item.layout)
       assert.deepEqual(bare.exported, { type: 'image/png', width: item.width, height: item.height })
       assert.equal(bare.transparent > 0, item.id !== 'full-bleed-story', 'Transparent overlays retain alpha; Full-Bleed is opaque')
       bounds(bare, item.size)
       if (item.id === 'full-bleed-story') {
         assert.notEqual(result.png, bare.png, 'Selected photo must affect actual pixels')
-        const stripped = await render(item.id, rendererModel(fixtures[item.fixture], false), item.theme, item.size, true, item.showRoute)
+        const stripped = await render(item.id, rendererModel(fixtures[item.fixture], false), item.theme, item.size, true, item.showRoute, item.layout)
         assert.equal(result.png !== stripped.png, item.fixture === 'photo-run' && item.showRoute, 'Only ON GPS run draws the thumbnail')
         const restored = await render(item.id, fixtures[item.fixture], item.theme, item.size, true, true)
         if (item.showRoute) assert.equal(restored.png, result.png, 'ON restoration is deterministic')
       }
-      const repeat = await render(item.id, fixtures[item.fixture], item.theme, item.size, true, item.showRoute)
+      const repeat = await render(item.id, fixtures[item.fixture], item.theme, item.size, true, item.showRoute, item.layout)
       assert.equal(result.png, repeat.png, item.name)
       assert.equal(await page.evaluate(({ a, size }) => window.compare(a, a, size), { a: result.png, size: item.size }), 0)
       if (update) {
@@ -459,6 +523,6 @@ try {
     writeFileSync(receiptPath(platformKey, outputRoot), JSON.stringify(receipt, null, 2) + '\n')
     validateReceipt(receipt, approved, platformKey, false, readFileSync, undefined, outputRoot)
   }
-  console.log(`C1+Full-Bleed OK (${passed} groups). ${smoke ? 'SMOKE ONLY: 42 cases; no golden acceptance.' : update ? `GENERATED ${mode} ${platformKey} batch ${batch}: ${selected.length} PNGs + 1 receipt; acceptance unchanged.` : `${selected.length} comparisons <=0.1%; both complete platform manifests verified.`}`)
+  console.log(`C1+Full-Bleed+C2 OK (${passed} groups). ${smoke ? 'SMOKE ONLY: 72 cases; no golden acceptance.' : update ? `GENERATED ${mode} ${platformKey} batch ${batch}: ${selected.length} PNGs + 1 receipt; acceptance unchanged.` : `${selected.length} comparisons <=0.1%; both complete platform manifests verified.`}`)
 
 } finally { await browser?.close(); await server.close(); rmSync(scratch, { recursive: true, force: true }) }
