@@ -923,12 +923,7 @@ router.post('/', auth, async (req, res) => {
       }
 
       const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
-      let prResult = { newPRs: [], discrepancies: [] };
-      try {
-        prResult = await autoUpdatePRs(req.user.id, run, { tx }) || prResult;
-      } catch (err) {
-        console.error('[runs] PR auto-detect failed:', err.message);
-      }
+      const prResult = await autoUpdatePRs(req.user.id, run, { tx, strictErrors: true });
       return { inserted: true, run, userProfile, prResult };
     });
     if (!writeResult.inserted) {
@@ -1034,10 +1029,10 @@ async function updateRunHandler(req, res) {
         distance_miles !== undefined && Number(distance_miles) !== Number(run.distance_miles)
       ) || (
         duration_seconds !== undefined && Number(duration_seconds) !== Number(run.duration_seconds)
-      ) || activityKindChanged;
+      ) || activityKindChanged || (date !== undefined && date !== run.date);
       const existingPrRows = shouldRecomputePrs
         ? await tx.all(
-          `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category='run' AND source='auto'`,
+          `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category IN ('run','time_pr') AND source='auto'`,
           [req.params.id, req.user.id]
         )
         : [];
@@ -1068,7 +1063,7 @@ async function updateRunHandler(req, res) {
       if (shouldRecomputePrs) {
         const labels = existingPrRows.map((row) => row.label);
         await autoUpdatePRs.recomputeRunPrCategories(req.user.id, labels, { tx });
-        await autoUpdatePRs(req.user.id, nextRun, { tx });
+        await autoUpdatePRs(req.user.id, nextRun, { tx, strictErrors: true });
       }
       return nextRun;
     });
@@ -1261,7 +1256,7 @@ router.delete('/:id', auth, async (req, res) => {
         throw notFound;
       }
       const prRows = await tx.all(
-        `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category='run' AND source='auto'`,
+        `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category IN ('run','time_pr') AND source='auto'`,
         [req.params.id, req.user.id]
       );
       const importKeys = buildRunImportKeys({

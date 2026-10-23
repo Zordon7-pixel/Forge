@@ -14,6 +14,68 @@ const RACE_WINDOWS = [
 
 const DISTANCE_TOLERANCE = 0.05;
 
+// Canonical stored miles (the run API/import normalizers own unit conversion).
+// Keep the historical targets/labels used by manual time PRs and their readers.
+const TIME_PR_DISTANCE_TOLERANCE = 0.01;
+const STANDARD_TIME_PRS = Object.freeze(RACE_WINDOWS.map(({ label, miles }) => Object.freeze({
+  label: label.replace(/ PR$/, ''),
+  target: miles,
+  min: miles * (1 - TIME_PR_DISTANCE_TOLERANCE),
+  max: miles * (1 + TIME_PR_DISTANCE_TOLERANCE),
+})));
+
+function nearestStandardTimePr(value) {
+  const miles = Number(value);
+  if (!Number.isFinite(miles) || miles <= 0) return null;
+  return STANDARD_TIME_PRS
+    // Compare endpoints directly: subtraction/ratio rounding can reject an
+    // inclusive boundary. Do not add epsilon (that admits the next float).
+    .map((item, order) => ({ item, order, ratio: Math.abs(miles - item.target) / item.target }))
+    .filter(({ item }) => miles >= item.min && miles <= item.max)
+    .sort((a, b) => a.ratio - b.ratio || a.order - b.order)[0]?.item || null;
+}
+
+function timePrLabel(distance) {
+  return `Time PR: ${distance.label}`;
+}
+
+function buildTimePrCandidate(run) {
+  if (!run || !isRunActivity(run)) return null;
+  const distance = nearestStandardTimePr(run.distance_miles);
+  const seconds = Number(run.duration_seconds);
+  if (!distance || !Number.isFinite(seconds) || seconds <= 0) return null;
+  return { label: timePrLabel(distance), value: seconds, unit: 'seconds', direction: 'lower' };
+}
+
+async function updateTimePr(userId, run, db, result) {
+  if (!run.id || !buildTimePrCandidate(run)) return;
+  // Never link caller-supplied metrics or another account's run. Read the exact
+  // canonical row inside the caller's existing owner mutation transaction.
+  const ownedRun = await db.get('SELECT * FROM runs WHERE id=? AND user_id=?', [run.id, userId]);
+  const candidate = buildTimePrCandidate(ownedRun);
+  if (!candidate) return;
+  const existing = await db.get(
+    `SELECT * FROM personal_records WHERE user_id=? AND category='time_pr'
+     AND label=? AND source='auto' AND run_id IS NOT NULL`,
+    [userId, candidate.label]
+  );
+  if (existing) {
+    if (!isBetter(candidate.value, Number(existing.value))) return;
+    await db.run(
+      `UPDATE personal_records SET value=?, unit='seconds', run_id=?, achieved_at=?
+       WHERE id=? AND user_id=? AND category='time_pr' AND source='auto' AND value>?`,
+      [candidate.value, ownedRun.id, ownedRun.date, existing.id, userId, candidate.value]
+    );
+  } else {
+    await db.run(
+      `INSERT INTO personal_records (id, user_id, category, label, value, unit, run_id, achieved_at, source)
+       VALUES (?, ?, 'time_pr', ?, ?, 'seconds', ?, ?, 'auto')`,
+      [uuidv4(), userId, candidate.label, candidate.value, ownedRun.id, ownedRun.date]
+    );
+  }
+  result.newPRs.push(candidate.label);
+}
+
 function formatDate(date) {
   if (!date) return new Date().toISOString().slice(0, 10);
   return date;
@@ -87,6 +149,8 @@ async function autoUpdatePRs(userId, run, options = {}) {
   if (!run || !userId) return result;
   const db = getDb(options);
 
+  await updateTimePr(userId, run, db, result);
+
   const runDate = formatDate(run.date);
   const candidates = buildRunPrCandidates(run);
 
@@ -141,18 +205,28 @@ async function autoUpdatePRs(userId, run, options = {}) {
 
 async function recomputeRunPrCategories(userId, categoryLabels = [], options = {}) {
   if (!userId) return { recomputed: [], removed: [] };
-  const labels = [...new Set((categoryLabels || []).filter(Boolean))];
   const result = { recomputed: [], removed: [] };
-  if (!labels.length) return result;
   const db = getDb(options);
+  // Import/canonical-run correction callers historically pass only run labels.
+  // Include this owner's linked time records so those same transactions also
+  // revoke provisional times. Unlinked legacy manual entries are excluded.
+  const timeRows = await db.all(
+    "SELECT label FROM personal_records WHERE user_id=? AND category='time_pr' AND source='auto' AND run_id IS NOT NULL",
+    [userId]
+  );
+  const labels = [...new Set([...(categoryLabels || []), ...timeRows.map(row => row.label)].filter(Boolean))];
+  if (!labels.length) return result;
   const runs = await db.all(
-    `SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date ASC, created_at ASC`,
+    `SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date ASC, created_at ASC, id ASC`,
     [userId]
   );
 
   for (const label of labels) {
+    const isTimePr = STANDARD_TIME_PRS.some(distance => timePrLabel(distance) === label);
     const autoPr = await db.get(
-      `SELECT * FROM personal_records WHERE user_id=? AND category='run' AND label=? AND ${options.includeManualDiscrepancies ? "source IN ('auto','manual')" : "source='auto'"}`,
+      isTimePr
+        ? "SELECT * FROM personal_records WHERE user_id=? AND category='time_pr' AND label=? AND source='auto' AND run_id IS NOT NULL"
+        : `SELECT * FROM personal_records WHERE user_id=? AND category='run' AND label=? AND ${options.includeManualDiscrepancies ? "source IN ('auto','manual')" : "source='auto'"}`,
       [userId, label]
     );
     if (!autoPr) continue;
@@ -160,9 +234,12 @@ async function recomputeRunPrCategories(userId, categoryLabels = [], options = {
     const direction = getCandidateDirection(label);
     let best = null;
     for (const run of runs) {
-      const candidate = buildRunPrCandidates(run).find((item) => item.label === label);
+      const candidate = isTimePr
+        ? [buildTimePrCandidate(run)].find(item => item?.label === label)
+        : buildRunPrCandidates(run).find((item) => item.label === label);
       if (!candidate || candidate.value == null) continue;
-      if (!best || isBetter(candidate.value, best.value, direction)) {
+      if (!best || isBetter(candidate.value, best.value, direction)
+        || (isTimePr && candidate.value === best.value && run.id === autoPr.run_id)) {
         best = {
           ...candidate,
           run,
@@ -189,6 +266,15 @@ async function recomputeRunPrCategories(userId, categoryLabels = [], options = {
       continue;
     }
 
+    // Keep a surviving equal winner (including import retries) linked to the
+    // same run; date-only corrections still refresh the achievement date.
+    if (isTimePr && Number(autoPr.value) === best.value && autoPr.unit === best.unit
+      && autoPr.run_id === best.run.id && autoPr.achieved_at === best.achieved_at
+      && !autoPr.discrepancy && autoPr.auto_value == null) {
+      result.recomputed.push(label);
+      continue;
+    }
+
     await db.run(
       `UPDATE personal_records
        SET value=?, unit=?, run_id=?, achieved_at=?, discrepancy=0, auto_value=NULL, source='auto'
@@ -203,4 +289,9 @@ async function recomputeRunPrCategories(userId, categoryLabels = [], options = {
 
 autoUpdatePRs.recomputeRunPrCategories = recomputeRunPrCategories;
 autoUpdatePRs.buildRunPrCandidates = buildRunPrCandidates;
+autoUpdatePRs.STANDARD_TIME_PRS = STANDARD_TIME_PRS;
+autoUpdatePRs.TIME_PR_DISTANCE_TOLERANCE = TIME_PR_DISTANCE_TOLERANCE;
+autoUpdatePRs.nearestStandardTimePr = nearestStandardTimePr;
+autoUpdatePRs.timePrLabel = timePrLabel;
+autoUpdatePRs.buildTimePrCandidate = buildTimePrCandidate;
 module.exports = autoUpdatePRs;

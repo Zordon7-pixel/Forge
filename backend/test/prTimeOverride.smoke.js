@@ -18,8 +18,10 @@ check(STANDARD_TIME_PRS.some((distance) => distance.label === '10 Mile' && dista
 check(standardTimePrForDistance(6.214)?.label === '10K', '10K distance resolves canonically');
 check(standardTimePrForDistance('3.107')?.label === '5K', 'numeric form values resolve');
 check(standardTimePrForDistance(7) === null, 'arbitrary distances are rejected');
-check(nearestStandardTimePr(9.7)?.label === '10 Mile', 'an overlapping 15K/10-mile effort belongs only to its nearest standard distance');
-check(nearestStandardTimePr(9.5)?.label === '15K', 'the nearest-distance classifier still recognizes 15K efforts');
+check(nearestStandardTimePr(9.7) === null, 'old 5% 10-mile window no longer qualifies');
+check(nearestStandardTimePr(9.99)?.label === '10 Mile', 'observed 10-mile efforts inside 1% qualify');
+check(nearestStandardTimePr(9.5) === null, 'old 5% 15K window no longer qualifies');
+check(nearestStandardTimePr(9.32)?.label === '15K', 'observed 15K efforts inside 1% qualify');
 check(manualTimePrLabel({ label: '10K' }) === 'Time PR: 10K', 'manual label is stable');
 check(legacyManualTimePrLabel({ target: 6.214 }) === 'Time PR (6.214mi)', 'legacy rows remain discoverable');
 check(validDate('2020-01-02') === '2020-01-02', 'valid past date survives');

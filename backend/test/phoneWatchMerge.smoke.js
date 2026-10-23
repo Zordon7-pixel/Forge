@@ -112,7 +112,7 @@ function canonical(user, p, w, withRoute) {
   assert.equal(load.latestRun.avgHeartRate, w.avgHeartRate);
   assert.equal(resolveRunEffort(run).zoneLoad, 93, 'load recomputed from authoritative watch zones and duration');
   const prs = db.prepare("SELECT label, value, run_id FROM personal_records WHERE user_id=? AND source='auto'").all(user);
-  const expected = prAuto.buildRunPrCandidates(run);
+  const expected = [...prAuto.buildRunPrCandidates(run), prAuto.buildTimePrCandidate(run)].filter(Boolean);
   assert.equal(prs.length, expected.length);
   for (const pr of prs) { assert.equal(pr.run_id, run.id); assert.equal(pr.value, expected.find(c => c.label === pr.label).value); }
   return run;
