@@ -64,6 +64,62 @@
     "node": "v22.22.3"
   },
   "batches": {
+    "1": [
+      {
+        "name": "iron-chips-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "15718822e83d34d13e97ff062e8ffa23f53a502877007412b8c9ac2cd899dfdd"
+      },
+      {
+        "name": "iron-chips-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "6963cf994753ea019852d819063b0439930444c95ff24f2b6f01ac2cf62fcfbd"
+      },
+      {
+        "name": "iron-chips-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "9eeeb7c5d8186dc20bdd6e65e0f10252440e2297157e733a26579bf562fc2fb1"
+      },
+      {
+        "name": "iron-chips-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "70459cb13c86fde7ded9b07be770801ac0c842d58b1958886c000ee5f6823806"
+      },
+      {
+        "name": "iron-chips-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "07cac5f2150e4f37696fb0082b3a5e5e3ed3f9a5f490992d3df30d7c2bff910e"
+      },
+      {
+        "name": "iron-chips-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "d39115767102f18930df10e2c5e4ae7e698c6aa04b85793d919ce3f1840d1ceb"
+      },
+      {
+        "name": "strike-pr-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "a2d0d5d9506638d166ebfde1cd21a51a78109e87dc3a577e935250e5e8bd53ff"
+      },
+      {
+        "name": "strike-pr-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "53eca46546e8068c6d652482b19d14a2365c198d6f398485c2a2f22e9922c878"
+      },
+      {
+        "name": "strike-pr-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "0422d1e88ba182c8e896499836271995ab3efb3577c352f0a95c2646248ce133"
+      }
+    ],
     "trace": [
       {
         "name": "trace-light-feed.png",
