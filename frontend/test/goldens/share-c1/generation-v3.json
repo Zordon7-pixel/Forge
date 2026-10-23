@@ -177,6 +177,44 @@
         "height": 1920,
         "sha256": "fc6e46b5657fc866e09d56982cf8c24530a990341807adb2b298bbb859f1bf42"
       }
+    ],
+    "forged-days-milestone": [
+      {
+        "name": "forged-days-milestone-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "bf4b93e387f2f151695022dc8cffb909dfcd3b7cc85f15f2c74b587d3d5a3c68"
+      },
+      {
+        "name": "forged-days-milestone-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "08de74c5811742e53b79df3fe4f22cb76dbc1b7af764acc03909397dc064b8ee"
+      },
+      {
+        "name": "forged-days-milestone-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "71b40d2821d423a7b390b6fc28fa3257116bc9653dfb6d786c9d5e740c5b2f45"
+      },
+      {
+        "name": "forged-days-milestone-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "c8476e4e6ab7ca911254b42c94bccb87b57894cbf3ebbf743b48ff46ec08e7ae"
+      },
+      {
+        "name": "forged-days-milestone-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "0f9c4442a8e535cbe8fa828f8d4d1b631016e6c25f2712ba09cf001cc94a50e8"
+      },
+      {
+        "name": "forged-days-milestone-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "fe8bd69ab04cf5793d85a234d8081378444234ccda27a0f7bfd5378b2896e384"
+      }
     ]
   }
 }
