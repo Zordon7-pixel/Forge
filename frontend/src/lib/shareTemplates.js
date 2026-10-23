@@ -1,6 +1,7 @@
 import { SIZES, THEMES, FONTS, alpha, loadShareFonts } from './shareTheme.js'
 import { rendererModel } from './shareStudioModel.js'
 import { C1_TEMPLATES, loadC1Logo } from './shareOverlaysC1.js'
+import { createC2Templates } from './shareOverlaysC2.js'
 import { createFullBleedTemplate } from './shareFullBleed.js'
 
 export function titleForModel(model) { return String(model?.title || (model?.kind === 'lift' ? 'Lift Complete' : model?.kind === 'hybrid' ? 'Hybrid Session' : 'Run Complete')).slice(0, 48) }
@@ -136,11 +137,11 @@ function drawRoute(ctx, route, bounds, t, { casing = t.edge, glow = t.ember, gra
 export function footerForModel(model) {
   return `${model.handle ? `${model.handle} / ` : ''}RUN + LIFT. BUILT IN FORGED HYBRID.`
 }
-export const TEMPLATES = Object.freeze([...C1_TEMPLATES, createFullBleedTemplate(drawRoute)])
+export const TEMPLATES = Object.freeze([...C1_TEMPLATES, ...createC2Templates(drawRoute), createFullBleedTemplate(drawRoute)])
 
 export function availableShareTemplates(model, { showRoute, size = 'feed' }) {
   const safe = rendererModel(model, showRoute)
-  return TEMPLATES.filter(entry => entry.sizes.includes(size) && entry.supports(safe))
+  return TEMPLATES.filter(entry => entry.sizes.includes(size) && entry.supports(safe, { showRoute }))
 }
 
 // Saved/removed/unsupported IDs never reach a legacy registry or renderer.
@@ -149,7 +150,9 @@ export function resolveShareTemplate(model, { template, showRoute, size = 'feed'
   const available = availableShareTemplates(model, { showRoute, size })
   const ids = available.map(entry => entry.id)
   if (ids.includes(template)) return template
-  return ['strike-pr', 'hybrid-split', ...(size === 'story' ? ['full-bleed-story'] : []), 'iron-chips', 'full-bleed-story']
+  // Trace remains an explicit choice; recorded routes are not trimmed.
+  const streak = rendererModel(model, showRoute).streak
+  return ['strike-pr', 'hybrid-split', ...(streak?.milestone ? ['forged-days'] : []), ...(size === 'story' ? ['full-bleed-story'] : []), 'iron-chips', 'full-bleed-story', 'forged-days']
     .find(id => ids.includes(id)) || null
 }
 

@@ -1,4 +1,4 @@
-import { fromRun, fromStrength, fromHybrid, fromPr, prDisplay } from './shareStats.js'
+import { fromRun, fromStrength, fromHybrid, fromPr, prDisplay, fromStreak } from './shareStats.js'
 
 // Export boundary: retain display fields only, never copy symbols, descriptors,
 // raw activity records, HR zones, identity fields or source metadata.
@@ -26,13 +26,26 @@ export function rendererModel(model, showRoute) {
     clean.run = { stats: statsFor(model.run.stats), route: null, elevationProfile: null }
     if (showRoute) {
       const route = model.run.route
-      clean.run.route = Array.isArray(route) ? route.filter(point => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]))
+      clean.run.route = Array.isArray(route) ? route.filter(point => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1]) && Math.abs(point[0]) <= 90 && Math.abs(point[1]) <= 180)
         .map(point => [point[0], point[1]]) : null
       clean.run.elevationProfile = Array.isArray(model.run.elevationProfile) ? Array.from(model.run.elevationProfile).filter(Number.isFinite) : null
     }
   }
   if (model?.lift) clean.lift = { stats: statsFor(model.lift.stats), topLifts: (model.lift.topLifts || []).slice(0, 3)
     .map(item => ({ name: displayText(item.name), scheme: displayText(item.scheme), weight: displayText(item.weight) })) }
+  if (model?.streak) {
+    clean.streak = fromStreak({ days: model.streak.days, week: model.streak.week, monthDays: model.streak.monthDays, milestone: model.streak.milestone })
+    if (clean.streak) {
+      if (![7, 30, 50, 100, 365].includes(clean.streak.milestone) || clean.streak.milestone !== clean.streak.days) clean.streak.milestone = null
+      const lifetime = statsFor(model.streak.lifetime).filter(item => {
+        const value = Number(item.value)
+        if (!Number.isFinite(value) || value <= 0) return false
+        if (['runs', 'lifts'].includes(item.key)) return Number.isInteger(value) && !item.unit
+        return item.key === 'distance' ? ['mi', 'km'].includes(item.unit) : item.key === 'volume' && ['lbs', 'kg'].includes(item.unit)
+      })
+      if (lifetime.length) clean.streak.lifetime = lifetime
+    }
+  }
   return clean
 }
 
