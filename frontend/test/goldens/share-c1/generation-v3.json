@@ -176,6 +176,62 @@
         "sha256": "db9146a95044328f13f42b05d7f3c686dbef8b0090b583c04c6c7b82a3f0473d"
       }
     ],
+    "3": [
+      {
+        "name": "full-bleed-story-run-on-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "61c3ac7962589705a9580a9024d3a2aab4ffd3a315966dc645e1c64e2594c784"
+      },
+      {
+        "name": "full-bleed-story-run-on-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "f91b5c59ab139ec91b653c7e44f5a5759e69d4f9a014d33e705d9d5aec4b550f"
+      },
+      {
+        "name": "full-bleed-story-run-on-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "da8509bea94f3c4c2a9eb2e6c6f9475b491cef5872c0d6052f0c94bbc14a9e8e"
+      },
+      {
+        "name": "full-bleed-story-run-on-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "bce6cc8f4d83678bad29992bd8ce4c884d5f49a0e29592e9772086aa0ec3c357"
+      },
+      {
+        "name": "full-bleed-story-run-on-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "9ba198954f81c1ed55d4d1331a43ecd2d7f7dcc1be2964d97d2663fd803bcaa8"
+      },
+      {
+        "name": "full-bleed-story-run-on-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "efde8aeba6ef13527d27dbe9ca00c96159b17a6afa8666cee7c21c852d46616d"
+      },
+      {
+        "name": "full-bleed-story-run-off-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "768bf39b0d0b7dc2bd001c08969e91046142a8fea7da961167005f3b745cea0a"
+      },
+      {
+        "name": "full-bleed-story-run-off-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "1c8749d64f3e8a6245b9c17337339df2bb63afa532fd1df2f087ed1d92be9f5f"
+      },
+      {
+        "name": "full-bleed-story-run-off-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "b0096ab3b702dac51764dfcc0d32a948ffa57571594499b4377dc270645da8e3"
+      }
+    ],
     "trace": [
       {
         "name": "trace-light-feed.png",
