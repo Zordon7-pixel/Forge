@@ -1,4 +1,4 @@
-// Release provenance: C1 plus Full-Bleed run/lift photos and route states. Generation receipts are never acceptance locks.
+// Release provenance: C1 + Full-Bleed + Trace + every Forged Days layout. Generation receipts are never acceptance locks.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -8,21 +8,40 @@ import { join, resolve, relative, isAbsolute } from 'node:path'
 export const repo = fileURLToPath(new URL('../../', import.meta.url))
 export const goldenRoot = join(repo, 'frontend/test/goldens/share-c1')
 export const runnerPath = 'frontend/test/shareOverlaysC1.smoke.mjs'
-export const lockPath = join(goldenRoot, 'acceptance-v2.json')
-export const pinPath = join(goldenRoot, 'acceptance-v2.sha256')
-export const ids = ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story']
+export const lockPath = join(goldenRoot, 'acceptance-v3.json')
+export const pinPath = join(goldenRoot, 'acceptance-v3.sha256')
+export const ids = ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story', 'trace', 'forged-days']
 const variants = ['run-on', 'run-off', 'lift-on', 'lift-off']
-export const matrix = [
+const legacyMatrix = [
   ...ids.slice(0, 3).flatMap(id => ['light', 'dark', 'color'].flatMap(theme => ['feed', 'story'].map(size =>
     ({ id, theme, size, fixture: id, showRoute: false, name: `${id}-${theme}-${size}.png`, width: 1080, height: size === 'story' ? 1920 : 1350 })))),
   ...variants.flatMap(variant => ['light', 'dark', 'color'].flatMap(theme => ['feed', 'story'].map(size =>
     ({ id: 'full-bleed-story', theme, size, fixture: variant.startsWith('run') ? 'photo-run' : 'photo-lift', showRoute: variant.endsWith('-on'),
       name: `full-bleed-story-${variant}-${theme}-${size}.png`, width: 1080, height: size === 'story' ? 1920 : 1350 })))),
 ]
-export const batchCount = Math.ceil(matrix.length / 9)
+// Preserve every historical C1/Full-Bleed filename and the five original batches.
+export const c2Layouts = ['week', 'month', 'milestone', 'count']
+const c2Cases = (id, layout) => ['light', 'dark', 'color'].flatMap(theme => ['feed', 'story'].map(size =>
+  ({ id, theme, size, fixture: layout === 'count' ? 'streak-count' : id, showRoute: id === 'trace',
+    ...(layout ? { layout } : {}), name: `${id}${layout ? `-${layout}` : ''}-${theme}-${size}.png`,
+    width: 1080, height: size === 'story' ? 1920 : 1350 })))
+export const batches = Object.fromEntries([
+  ...Array.from({ length: 5 }, (_, i) => [String(i + 1), legacyMatrix.slice(i * 9, (i + 1) * 9)]),
+  ['trace', c2Cases('trace')],
+  ...c2Layouts.map(layout => [`forged-days-${layout}`, c2Cases('forged-days', layout)]),
+])
+export const matrix = Object.values(batches).flat()
+export const batchCount = Object.keys(batches).length
+export function selectBatch(batch) {
+  assert.ok(Object.hasOwn(batches, batch), 'Invalid filter/batch: use 1..5, trace, or forged-days-week|month|milestone|count')
+  const selected = batches[batch]
+  assert.ok(selected.length > 0 && selected.length + 1 <= 10, 'Batch exceeds ten paths including receipt')
+  return selected
+}
 export const directories = { 'darwin-arm64': '.', 'linux-x64': 'linux-x64-chromium-151-no-hint' }
 export const sourcePaths = [
   'frontend/src/lib/shareOverlaysC1.js', 'frontend/src/lib/shareFullBleed.js',
+  'frontend/src/lib/shareOverlaysC2.js', 'frontend/test/shareOverlaysC2.smoke.mjs',
   'frontend/src/lib/shareTheme.js', 'frontend/src/lib/shareTemplates.js',
   'frontend/src/lib/shareStats.js', 'frontend/src/lib/shareStudioModel.js',
   'frontend/src/components/ActivityShareStudio.jsx', 'frontend/public/icon-192.png',
@@ -43,16 +62,16 @@ export function parseOptions(args, env = process.env, platform = process.platfor
   const key = selectBaseline(platform, arch)
   let mode = 'compare', selected = matrix, batch = null, candidate = null, output = null
   if (args.length === 1 && ['--smoke', '--filter-only'].includes(args[0])) mode = args[0].slice(2)
-  else if (args.length === 1 && /^--compare=(c1|photo)$/.test(args[0])) selected = matrix.slice(args[0] === '--compare=c1' ? 0 : 18, args[0] === '--compare=c1' ? 18 : matrix.length)
-  else if (args.length === 2 && /^--update-batch=[1-5]$/.test(args[0]) && args[1] === `--platform=${key}`) {
-    mode = 'update'; batch = Number(args[0].split('=')[1]); selected = matrix.slice((batch - 1) * 9, batch * 9)
-  } else if (args.length === 3 && /^--capture-batch=[1-5]$/.test(args[0]) && args[1] === `--platform=${key}` && args[2].startsWith('--output=')) {
-    mode = 'capture'; batch = Number(args[0].split('=')[1]); selected = matrix.slice((batch - 1) * 9, batch * 9)
+  else if (args.length === 1 && /^--compare=(c1|photo|c2)$/.test(args[0])) selected = args[0] === '--compare=c1' ? matrix.slice(0, 18) : args[0] === '--compare=photo' ? matrix.slice(18, 42) : matrix.slice(42)
+  else if (args.length === 2 && args[0].startsWith('--update-batch=') && args[1] === `--platform=${key}`) {
+    mode = 'update'; batch = args[0].slice(args[0].indexOf('=') + 1); selected = selectBatch(batch)
+  } else if (args.length === 3 && args[0].startsWith('--capture-batch=') && args[1] === `--platform=${key}` && args[2].startsWith('--output=')) {
+    mode = 'capture'; batch = args[0].slice(args[0].indexOf('=') + 1); selected = selectBatch(batch)
     output = args[2].slice(9)
     assert.ok(isAbsolute(output) && relative(repo, resolve(output)).startsWith('../'), 'Capture output must be outside repository')
   } else if (args.length === 1 && args[0].startsWith('--candidate=') && args[0].length > 12) {
     mode = 'candidate'; candidate = args[0].slice(12)
-  } else assert.equal(args.length, 0, 'Invalid filter/batch/platform: use --smoke, --filter-only, --compare=c1|photo, --update-batch=1..5 --platform=<actual OS-arch>, or --candidate=<external path>')
+  } else assert.equal(args.length, 0, 'Invalid filter/batch/platform: use --smoke, --filter-only, --compare=c1|photo|c2, --update-batch=<batch> --platform=<actual OS-arch>, or --candidate=<external path>')
   assert.ok(!['update', 'candidate'].includes(mode) || (!env.CI && !env.GITHUB_ACTIONS), 'Golden updates/candidate assembly forbidden in CI')
   return { mode, selected, batch, candidate, output, key }
 }
@@ -75,7 +94,7 @@ export function readLock(read = readFileSync) {
   assert.equal(sha256(bytes), pin, 'Unapproved share provenance digest')
   const lock = JSON.parse(bytes)
   keys(lock, ['schema', 'state', 'runtime', 'fingerprints', 'platforms'], 'Lock fields')
-  assert.equal(lock.schema, 'share-goldens-v2')
+  assert.equal(lock.schema, 'share-goldens-v3')
   assert.ok(['pending', 'complete'].includes(lock.state), 'Invalid lock state')
   keys(lock.platforms, Object.keys(directories), 'Both canonical platforms required')
   return lock
@@ -90,15 +109,15 @@ export function pngRecord(item, png) {
   assert.equal(png[25], 6, `PNG must retain RGBA: ${item.name}`)
   return { name: item.name, width: item.width, height: item.height, sha256: sha256(png) }
 }
-export const receiptPath = (key, base = goldenRoot) => join(base, directories[key], 'generation-v2.json')
+export const receiptPath = (key, base = goldenRoot) => join(base, directories[key], 'generation-v3.json')
 export function newReceipt(lock, key, runtime) {
   assert.ok(Object.hasOwn(directories, key), 'Wrong receipt platform')
   assert.deepEqual(runtime, lock.runtime, 'Receipt runtime mismatch')
-  return { schema: 'share-generation-v2', platform: key, directory: directories[key], runtime, fingerprints: lock.fingerprints, host: { platform: process.platform, arch: process.arch, node: process.version }, batches: {} }
+  return { schema: 'share-generation-v3', platform: key, directory: directories[key], runtime, fingerprints: lock.fingerprints, host: { platform: process.platform, arch: process.arch, node: process.version }, batches: {} }
 }
 export function validateReceipt(receipt, lock, key, complete = false, read = readFileSync, list = readdirSync, base = goldenRoot) {
   keys(receipt, ['schema', 'platform', 'directory', 'runtime', 'fingerprints', 'host', 'batches'], 'Receipt fields')
-  assert.equal(receipt.schema, 'share-generation-v2')
+  assert.equal(receipt.schema, 'share-generation-v3')
   assert.equal(receipt.platform, key, 'Wrong receipt platform')
   keys(receipt.host, ['platform', 'arch', 'node'], 'Host fields')
   assert.equal(`${receipt.host.platform}-${receipt.host.arch}`, key, 'Wrong actual capture host')
@@ -106,12 +125,13 @@ export function validateReceipt(receipt, lock, key, complete = false, read = rea
   assert.equal(receipt.directory, directories[key], 'Wrong platform directory')
   assert.deepEqual(receipt.runtime, lock.runtime, 'Receipt runtime mismatch')
   assert.deepEqual(receipt.fingerprints, lock.fingerprints, 'Receipt source/font/fixture/render mismatch')
-  const batches = Object.keys(receipt.batches).sort()
-  assert.ok(batches.every(batch => /^[1-5]$/.test(batch)), 'Invalid receipt batch')
-  if (complete) assert.deepEqual(batches, Array.from({ length: batchCount }, (_, i) => String(i + 1)), 'Incomplete generation receipt')
+  const globalBatches = batches
+  const recorded = Object.keys(receipt.batches).sort()
+  assert.ok(recorded.every(batch => Object.hasOwn(globalBatches, batch)), 'Invalid receipt batch')
+  if (complete) assert.deepEqual(recorded, Object.keys(globalBatches).sort(), 'Incomplete generation receipt')
   const dir = join(base, directories[key]), bytes = new Map()
-  for (const batch of batches) {
-    const expected = matrix.slice((Number(batch) - 1) * 9, Number(batch) * 9), files = receipt.batches[batch]
+  for (const batch of recorded) {
+    const expected = selectBatch(batch), files = receipt.batches[batch]
     assert.deepEqual(names(files), names(expected), 'Incomplete/extra/duplicate batch files')
     for (const item of expected) {
       const png = read(join(dir, item.name)), record = files.find(file => file.name === item.name)
@@ -140,6 +160,15 @@ export function assembleCandidate(lock, read = readFileSync, list = readdirSync)
 if (process.argv[1] && fileURLToPath(import.meta.url) === (await import('node:path')).resolve(process.argv[1])) {
   const { writeFileSync, existsSync } = await import('node:fs')
   const args = process.argv.slice(2)
+  // Read-only CLI is the aggregate provenance gate, including in CI.
+  if (args.length === 0) {
+    selectBaseline(process.platform, process.arch)
+    const current = readLock()
+    validateProvenance(current, current.runtime)
+    validateBaselines(current)
+    console.log(`PASS share provenance: ${matrix.length} cases on both canonical platforms`)
+    process.exit(0)
+  }
   assert.ok(!process.env.CI && !process.env.GITHUB_ACTIONS, 'Lock mutation forbidden in CI')
   let lock
   if (args.length === 1 && args[0] === '--prepare') {
@@ -148,18 +177,19 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === (await import('node:pa
       for (const key of Object.keys(directories)) assert.ok(!existsSync(receiptPath(key)), 'Existing generation evidence must be reconciled before preparation')
     }
     const runtime = JSON.parse(readFileSync(join(goldenRoot, 'linux-diagnosis.json'), 'utf8')).acceptance.runtime
-    lock = { schema: 'share-goldens-v2', state: 'pending', runtime, fingerprints: fingerprints(),
+    lock = { schema: 'share-goldens-v3', state: 'pending', runtime, fingerprints: fingerprints(),
       platforms: Object.fromEntries(Object.keys(directories).map(key => [key, null])) }
-  } else if (args.length === 3 && /^--import-batch=[1-5]$/.test(args[0]) && args[1].startsWith('--platform=') && args[2].startsWith('--input=')) {
-    const batch = Number(args[0].split('=')[1]), key = args[1].slice(11), input = args[2].slice(8)
+  } else if (args.length === 3 && args[0].startsWith('--import-batch=') && args[1].startsWith('--platform=') && args[2].startsWith('--input=')) {
+    const batch = args[0].slice('--import-batch='.length), key = args[1].slice(11), input = args[2].slice(8)
     assert.ok(Object.hasOwn(directories, key), 'Unsupported import platform')
+    selectBatch(batch)
     const { execFileSync } = await import('node:child_process')
     assert.equal(execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' }).trim(), '', 'Import requires a clean serialized checkpoint')
     const current = readLock()
     validateProvenance(current, current.runtime)
     const captured = JSON.parse(readFileSync(receiptPath(key, input), 'utf8'))
     const bytes = validateReceipt(captured, current, key, true, readFileSync, readdirSync, input)
-    const selected = matrix.slice((batch - 1) * 9, batch * 9)
+    const selected = selectBatch(batch)
     const prior = existsSync(receiptPath(key)) ? JSON.parse(readFileSync(receiptPath(key), 'utf8')) : { ...captured, batches: {} }
     validateReceipt(prior, current, key)
     assert.ok(!Object.hasOwn(prior.batches, String(batch)), 'Import batch already recorded')
