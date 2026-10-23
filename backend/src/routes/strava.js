@@ -11,6 +11,7 @@ const {
 } = require('../lib/stravaActivity');
 const autoUpdatePRs = require('../services/prAuto');
 const { planningInputUnchanged } = require('../lib/planningRevision');
+const { normalizeSegmentedRoute } = require('../lib/runPostRun');
 const { createUserNotification } = require('../services/notifications');
 const { getWebhookVerifyToken, normalizeWebhookEvent, verifyWebhookToken } = require('../lib/stravaWebhook');
 
@@ -257,15 +258,19 @@ async function enrichRunFromStrava(userId, runId, incoming, query) {
     }
   }
 
-  let storedRoute = [];
+  let storedRoutePointCount = 0;
   try {
-    const parsedRoute = Array.isArray(row.route_coords) ? row.route_coords : JSON.parse(row.route_coords || '[]');
-    storedRoute = Array.isArray(parsedRoute) ? parsedRoute : [];
+    const parsedRoute = typeof row.route_coords === 'string' ? JSON.parse(row.route_coords || '[]') : row.route_coords;
+    const segmentedRoute = normalizeSegmentedRoute(parsedRoute);
+    // Enrichment fills absent geometry; a phone segment envelope is already a route.
+    storedRoutePointCount = segmentedRoute
+      ? segmentedRoute.segments.reduce((count, segment) => count + segment.points.length, 0)
+      : Array.isArray(parsedRoute) ? parsedRoute.length : 0;
   } catch (err) {
     console.error('[strava/sync] stored route parse failed:', err.message);
   }
 
-  const addRoute = storedRoute.length < 2 && incoming.routeCoords.length >= 2;
+  const addRoute = storedRoutePointCount < 2 && incoming.routeCoords.length >= 2;
   const addElevation = (row.elevation_gain === null || row.elevation_gain === undefined || row.elevation_gain === '')
     && incoming.elevationGainFeet !== null;
   const addEffort = (row.perceived_effort === null || row.perceived_effort === undefined || row.perceived_effort === '')

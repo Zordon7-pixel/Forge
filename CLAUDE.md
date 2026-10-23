@@ -5,6 +5,46 @@
 
 ---
 
+## Release acceptance restart inspection — t_cdcce340 (local candidate)
+
+Base `18323e553ff21d00732d2673a58e7b06bd559547`. A synthetic executable
+regression proved that Strava enrichment treated version-2 phone route envelopes
+as absent and overwrote them with a continuous upstream line. The route now uses
+the existing segmented-route validator to count stored points. It preserves the
+original geometry, gaps and timestamps byte-for-byte while allowing missing
+metrics or absent geometry to be enriched. Matching, canonical IDs, owner-scoped
+SQL, webhook, OAuth, token encryption and rate-limit behavior are unchanged.
+
+`node backend/test/stravaRouteEnrichment.smoke.js` was RED before the product
+change (actual SQL changes 1, expected 0), then GREEN. It executes actual Strava
+source and SQL with synthetic in-memory SQLite and mocked fetch: complete/gapped
+routes, JSON/decoded values, metric-only enrichment, owner isolation, full sync,
+canonical ID/replay, legacy/missing routes, polyline import, three-stream fallback
+cap, trainer/polyline skip, altitude/time, 429 stop and 401 propagation. It stubs
+planning transactions and PR updates; it is not PostgreSQL/concurrency/PR proof.
+
+Existing recap data, device source/connections, GPS policy/watcher, ActiveRun
+GPS/controls, phone Phase 2 persistence/recap, GPS-gap and Strava webhook checks
+passed. Real auth/profile middleware passed its six synthetic cases after the
+sandbox denied the initial loopback listen. Health-sync liveness passed with
+unchanged assertions in a temporary harness using an explicit worktree root,
+`configFile:false`, empty `envDir` and temporary cache; no environment files or
+credentials were read. Canonical installed tooling was reused without installs;
+this is not exact-lock host QA. The temporary dependency symlink was removed.
+
+No obvious ordinary non-admin auth blocker was demonstrated. Direct Garmin
+remains unavailable; the existing user-authorized Strava path imports runs and
+uses activity polylines or up to three missing-route stream lookups per sync.
+Current GPS mocks cover watcher-derived `native_bg`, continuous automatic
+pause/resume geometry, explicit gaps, privacy OFF, default-ON toggle and the
+durable once-only combined readiness explainer. Physical iPhone >=5-minute lock,
+native build provenance, actual signed-in access and authorized provider transfer
+remain unverified. No live/provider calls, credentials, media/evidence access,
+Hermes/Kanban/messages, release actions, or unrelated branch/card integration.
+
+Four changed paths; flag route privacy/timestamps and scope over two files for
+Hermes-owned exact-SHA review. This is a source candidate, not release acceptance.
+
 ## Manual phone GPS and watch integration
 
 `gpsTrace.js` owns phone quality/readiness, distance and segment policy. Accept only

@@ -6,6 +6,28 @@ Run through every item for every diff. CRITICAL items block ship. HIGH items mus
 
 ---
 
+## t_cdcce340 — Strava segmented-route preservation (host regression)
+
+- [x] Before product edits, `node backend/test/stravaRouteEnrichment.smoke.js`
+      failed on actual enrichment SQL replacing a valid version-2 phone route
+      (changes 1 versus expected 0); after the bounded fix it exits 0.
+- [x] Complete and gapped phone routes retain coordinates, gaps and timestamps;
+      missing metrics still enrich, owner boundaries hold, canonical IDs survive
+      full sync, and identical enrichment is a no-op. Legacy routes and absent
+      route backfill remain covered. Synthetic SQLite only; transaction/PR seams
+      are stubbed and no provider calls are made.
+- [x] Polyline import and bounded full-stream fallback retain GPS/altitude/time;
+      existing three-lookups cap, trainer skip, 429 stop and 401 propagation pass.
+- [x] Existing recap/device/GPS/ActiveRun/phone-persistence/webhook and isolated
+      health-sync liveness checks pass. Synthetic auth/profile test passes after
+      a sandbox loopback EPERM retry. Initial regression-harness import resolution
+      failed before assertions and was corrected before the genuine RED.
+- [ ] Exact-lock host QA and independent exact-SHA review (four paths; route
+      privacy/timestamp preservation) remain coordinator-owned.
+- [ ] Actual non-admin QA login, installed native build provenance, >=5-minute
+      locked-screen iPhone recording and user-authorized Garmin-to-Strava-to-Forge
+      transfer remain outside this host proof. No release/deployment was started.
+
 
 ## t_765505f1 — Phase 3 native run readiness (local patch; device acceptance pending)
 
