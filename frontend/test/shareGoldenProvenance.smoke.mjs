@@ -18,7 +18,7 @@ assert.deepEqual(Object.keys(batches), ['1', '2', '3', '4', '5', 'trace', ...c2L
 assert.deepEqual(c2Layouts, ['week', 'month', 'milestone', 'count'])
 // Bind legacy case order/names/dimensions to both preserved historical receipts.
 for (const key of Object.keys(directories)) {
-  const old = JSON.parse(readFileSync(join(goldenRoot, directories[key], 'generation-v2.json'), 'utf8'))
+  const old = JSON.parse(readFileSync(join(goldenRoot, key === 'darwin-arm64' ? '.' : 'linux-x64-chromium-151-no-hint', 'generation-v2.json'), 'utf8'))
   for (const batch of ['1', '2', '3', '4', '5']) assert.deepEqual(
     batches[batch].map(({ name, width, height }) => ({ name, width, height })),
     old.batches[batch].map(({ name, width, height }) => ({ name, width, height })))
@@ -128,7 +128,7 @@ for (const key of Object.keys(directories)) {
   rejects(`${key} wrong directory`, () => validateReceipt(mutate(r => { r.directory = directories[other] }), lock, key, true, read, list), /Wrong platform directory/)
   rejects(`${key} wrong runtime`, () => validateReceipt(mutate(r => { r.runtime.version = 'wrong' }), lock, key, true, read, list), /runtime mismatch/)
   rejects(`${key} wrong fingerprint`, () => validateReceipt(mutate(r => { r.fingerprints.fixtureSourceSha256 = 'wrong' }), lock, key, true, read, list), /mismatch/)
-  rejects(`${key} historical receipt is not current acceptance`, () => validateReceipt({ ...current, schema: 'share-generation-v2' }, lock, key, true, read, list), /share-generation-v3/)
+  rejects(`${key} historical receipt is not current acceptance`, () => validateReceipt({ ...current, schema: 'share-generation-v2' }, lock, key, true, read, list), /share-generation-v4/)
   for (const batch of ['trace', ...c2Layouts.map(layout => `forged-days-${layout}`)]) {
     rejects(`${key} missing ${batch}`, () => validateReceipt(mutate(r => { delete r.batches[batch] }), lock, key, true, read, list), /Incomplete generation/)
     rejects(`${key} mixed ${batch}`, () => validateReceipt(mutate(r => { r.batches[batch] = r.batches[1] }), lock, key, true, read, list), /batch files/)

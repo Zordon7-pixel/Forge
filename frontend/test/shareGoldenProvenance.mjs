@@ -8,8 +8,8 @@ import { join, resolve, relative, isAbsolute } from 'node:path'
 export const repo = fileURLToPath(new URL('../../', import.meta.url))
 export const goldenRoot = join(repo, 'frontend/test/goldens/share-c1')
 export const runnerPath = 'frontend/test/shareOverlaysC1.smoke.mjs'
-export const lockPath = join(goldenRoot, 'acceptance-v3.json')
-export const pinPath = join(goldenRoot, 'acceptance-v3.sha256')
+export const lockPath = join(goldenRoot, 'acceptance-v4.json')
+export const pinPath = join(goldenRoot, 'acceptance-v4.sha256')
 export const ids = ['iron-chips', 'strike-pr', 'hybrid-split', 'full-bleed-story', 'trace', 'forged-days']
 const variants = ['run-on', 'run-off', 'lift-on', 'lift-off']
 const legacyMatrix = [
@@ -38,7 +38,8 @@ export function selectBatch(batch) {
   assert.ok(selected.length > 0 && selected.length + 1 <= 10, 'Batch exceeds ten paths including receipt')
   return selected
 }
-export const directories = { 'darwin-arm64': '.', 'linux-x64': 'linux-x64-chromium-151-no-hint' }
+// Separate PNG directories keep every completed v2/v3 artifact immutable.
+export const directories = { 'darwin-arm64': 'v4/darwin-arm64', 'linux-x64': 'v4/linux-x64-chromium-151-no-hint' }
 export const sourcePaths = [
   'frontend/src/lib/shareOverlaysC1.js', 'frontend/src/lib/shareFullBleed.js',
   'frontend/src/lib/shareOverlaysC2.js', 'frontend/test/shareOverlaysC2.smoke.mjs',
@@ -94,12 +95,13 @@ export function readLock(read = readFileSync) {
   assert.equal(sha256(bytes), pin, 'Unapproved share provenance digest')
   const lock = JSON.parse(bytes)
   keys(lock, ['schema', 'state', 'runtime', 'fingerprints', 'platforms'], 'Lock fields')
-  assert.equal(lock.schema, 'share-goldens-v3')
+  assert.equal(lock.schema, 'share-goldens-v4')
   assert.ok(['pending', 'complete'].includes(lock.state), 'Invalid lock state')
   keys(lock.platforms, Object.keys(directories), 'Both canonical platforms required')
   return lock
 }
 export function validateProvenance(lock, runtime, read = readFileSync) {
+  assert.equal(lock.schema, 'share-goldens-v4', 'Historical lock is not current acceptance')
   assert.deepEqual(runtime, lock.runtime, 'Browser/Playwright/launch provenance mismatch')
   assert.deepEqual(fingerprints(read), lock.fingerprints, 'Source/font/fixture/render provenance mismatch')
 }
@@ -109,15 +111,15 @@ export function pngRecord(item, png) {
   assert.equal(png[25], 6, `PNG must retain RGBA: ${item.name}`)
   return { name: item.name, width: item.width, height: item.height, sha256: sha256(png) }
 }
-export const receiptPath = (key, base = goldenRoot) => join(base, directories[key], 'generation-v3.json')
+export const receiptPath = (key, base = goldenRoot) => join(base, directories[key], 'generation-v4.json')
 export function newReceipt(lock, key, runtime) {
   assert.ok(Object.hasOwn(directories, key), 'Wrong receipt platform')
   assert.deepEqual(runtime, lock.runtime, 'Receipt runtime mismatch')
-  return { schema: 'share-generation-v3', platform: key, directory: directories[key], runtime, fingerprints: lock.fingerprints, host: { platform: process.platform, arch: process.arch, node: process.version }, batches: {} }
+  return { schema: 'share-generation-v4', platform: key, directory: directories[key], runtime, fingerprints: lock.fingerprints, host: { platform: process.platform, arch: process.arch, node: process.version }, batches: {} }
 }
 export function validateReceipt(receipt, lock, key, complete = false, read = readFileSync, list = readdirSync, base = goldenRoot) {
   keys(receipt, ['schema', 'platform', 'directory', 'runtime', 'fingerprints', 'host', 'batches'], 'Receipt fields')
-  assert.equal(receipt.schema, 'share-generation-v3')
+  assert.equal(receipt.schema, 'share-generation-v4')
   assert.equal(receipt.platform, key, 'Wrong receipt platform')
   keys(receipt.host, ['platform', 'arch', 'node'], 'Host fields')
   assert.equal(`${receipt.host.platform}-${receipt.host.arch}`, key, 'Wrong actual capture host')
@@ -143,6 +145,7 @@ export function validateReceipt(receipt, lock, key, complete = false, read = rea
   return bytes
 }
 export function validateBaselines(lock, read = readFileSync, list = readdirSync) {
+  assert.equal(lock.schema, 'share-goldens-v4', 'Historical lock is not current acceptance')
   keys(lock.platforms, Object.keys(directories), 'Both canonical platforms required')
   assert.equal(lock.state, 'complete', 'Canonical baselines pending: generation is not acceptance')
   return Object.fromEntries(Object.keys(directories).map(key => [key, validateReceipt(lock.platforms[key], lock, key, true, read, list)]))
@@ -174,10 +177,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === (await import('node:pa
   if (args.length === 1 && args[0] === '--prepare') {
     if (existsSync(lockPath) || existsSync(pinPath)) {
       assert.equal(readLock().state, 'pending', 'Cannot replace complete acceptance with preparation')
-      for (const key of Object.keys(directories)) assert.ok(!existsSync(receiptPath(key)), 'Existing generation evidence must be reconciled before preparation')
     }
+    for (const key of Object.keys(directories)) assert.ok(!existsSync(receiptPath(key)), 'Existing generation evidence must be reconciled before preparation')
     const runtime = JSON.parse(readFileSync(join(goldenRoot, 'linux-diagnosis.json'), 'utf8')).acceptance.runtime
-    lock = { schema: 'share-goldens-v3', state: 'pending', runtime, fingerprints: fingerprints(),
+    lock = { schema: 'share-goldens-v4', state: 'pending', runtime, fingerprints: fingerprints(),
       platforms: Object.fromEntries(Object.keys(directories).map(key => [key, null])) }
   } else if (args.length === 3 && args[0].startsWith('--import-batch=') && args[1].startsWith('--platform=') && args[2].startsWith('--input=')) {
     const batch = args[0].slice('--import-batch='.length), key = args[1].slice(11), input = args[2].slice(8)
