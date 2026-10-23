@@ -115,6 +115,6 @@ assert(routePlanner.includes('className="route-planner-controls pt-3"'), 'expand
 
 const routeSource = fs.readFileSync(path.join(repo, 'backend', 'src', 'routes', 'routes.js'), 'utf8')
 assert(/router\.post\('\/search-start', auth, placeSearchLimiter/.test(routeSource), 'place search is authenticated and rate limited')
-assert(/searchRouteStartPlaces\(req\.body\?\.query\)/.test(routeSource), 'place query crosses the validated service boundary')
+assert(/searchRouteStartPlaces\(req\.body\?\.query, \{ owner: req\.user\.id \}\)/.test(routeSource), 'place query crosses the validated service boundary with authenticated owner context')
 
 console.log('TODAY/TRAIN FLOW SMOKE OK (45)')
