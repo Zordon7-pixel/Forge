@@ -1,0 +1,124 @@
+{
+  "schema": "share-generation-v4",
+  "platform": "linux-x64",
+  "directory": "v4/linux-x64-chromium-151-no-hint",
+  "runtime": {
+    "browser": "chromium",
+    "version": "151.0.7922.34",
+    "playwright": "1.62.1",
+    "playwrightCore": "1.62.1",
+    "browsers": [
+      {
+        "name": "chromium",
+        "revision": "1234",
+        "version": "151.0.7922.34"
+      },
+      {
+        "name": "chromium-headless-shell",
+        "revision": "1234",
+        "version": "151.0.7922.34"
+      }
+    ],
+    "args": [
+      "--font-render-hinting=none",
+      "--disable-lcd-text"
+    ],
+    "context": {
+      "viewport": {
+        "width": 1080,
+        "height": 1920
+      },
+      "deviceScaleFactor": 1,
+      "locale": "en-US",
+      "timezoneId": "UTC",
+      "serviceWorkers": "block"
+    }
+  },
+  "fingerprints": {
+    "sources": {
+      "frontend/src/lib/shareOverlaysC1.js": "4e7fe063cf003adef45160ea79443c42be9f52e1af14c88d1824d77d31031852",
+      "frontend/src/lib/shareFullBleed.js": "2db87a82ef05199c40cbc8ed1e0bc7a5cfc28d1e8e28dd7d90f07339e3637885",
+      "frontend/src/lib/shareOverlaysC2.js": "298ddaf2cf6e6c686047454ef2414760bbe60a6f63ea2b99d0ffba336a815a63",
+      "frontend/test/shareOverlaysC2.smoke.mjs": "580fa73560040a2333e4f7b6356b8b0ec46694925e8fcdc1e565da373374981d",
+      "frontend/src/lib/shareTheme.js": "4a402f8feb990e86b656aebd66ac189ae5638ca1a2b87d969c0739d64afa88ca",
+      "frontend/src/lib/shareTemplates.js": "37aae4283580a3524ff5eb6f37a6759d5852a314d64de547a3a8ab40f8c55e20",
+      "frontend/src/lib/shareStats.js": "d0d19d7c7b86993f5f83a68a2d21e376edd6aae0d54630a59c02bd8dba740015",
+      "frontend/src/lib/shareStudioModel.js": "a6d430d9f3ac6a7cbb611f49a605d9cab76dd4728005bb605f0edcc889ffd5f1",
+      "frontend/src/components/ActivityShareStudio.jsx": "ea54b49189e2bcde99bd93b13f6baf32d90b2f645e1d80269fc8c5beff781905",
+      "frontend/public/icon-192.png": "2050419efcea2e189d5f5330bc0c3479088865914722fa797f922abcd84e3dfe",
+      "frontend/package-lock.json": "b7b4292a3fb90f2f356500d9d1a7286cdaa3edf89dbe59d742124f46015792ba",
+      ".github/workflows/forge-qa.yml": "eb01f30602e494330855854af55371567fa868ae840a7307811c7732873b9347",
+      "frontend/src/assets/share-fonts/Anton-Regular.ttf": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+      "frontend/src/assets/share-fonts/BarlowCondensed-ExtraBold.ttf": "724c9c25952d5f4a2d87185d9767aa006144c5f0d944dc05bf7d5d603551c260",
+      "frontend/src/assets/share-fonts/BarlowCondensed-SemiBold.ttf": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+      "frontend/src/assets/share-fonts/JetBrainsMono.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+      "frontend/test/shareOverlaysC1.smoke.mjs": "b9907b9ca634023c62a0be5f40897d82cda1971653aab50830e532b3a090d18c",
+      "frontend/test/shareGoldenProvenance.mjs": "3b82c6210114af6a71bb050079a496a67509419492a7dbc0f5bed5f6e071ed04"
+    },
+    "fixtureSourceSha256": "03ab9a071986ac49ff7ff6878530875469e1c350fd6d7aade065d445dc570429",
+    "renderSourceSha256": "f0087e3fba3fbeef4e4d65e0c3676608f022b583de142ce64ee7135547cfbc90"
+  },
+  "host": {
+    "platform": "linux",
+    "arch": "x64",
+    "node": "v22.23.3"
+  },
+  "batches": {
+    "1": [
+      {
+        "name": "iron-chips-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "316dfd413c105ec03e32af3be6fc7f2658791b4d46bd98f91e5567d75b693415"
+      },
+      {
+        "name": "iron-chips-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "c0b53a6292e155d63f6484106c0f403a317adb347129d8dae7cb9e9764b0f14e"
+      },
+      {
+        "name": "iron-chips-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "f6404c627bd0a8c48d283769fcf1b2fa54e6c9b309a2b682fc445c2f3be7ffaf"
+      },
+      {
+        "name": "iron-chips-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "03b7f9101bcc318ed982105783dad1fb9a0327dd529af8429bcceea97c0fb872"
+      },
+      {
+        "name": "iron-chips-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "13a294c85f6e5695457ca58791d4fecab71f21bcd57c3c24a2e97f5ee42fba96"
+      },
+      {
+        "name": "iron-chips-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "5d51c4817a2f887b77aa33d1ae98fee0c5cbcb66269ff52f22c45f8fe7141948"
+      },
+      {
+        "name": "strike-pr-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "0eee6be6380f93ba7d9c327405c0a156440abca96c1a887b8e688e72d25d1563"
+      },
+      {
+        "name": "strike-pr-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "f054b8e68e3f15e90c858b132ac2380fa4eeedb72e05ca4b8f2fb8c53deb57c9"
+      },
+      {
+        "name": "strike-pr-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "3a7cf9b82af33c8ef60f896af399e60802503db3798f0148dafdf16f36f14462"
+      }
+    ]
+  }
+}
