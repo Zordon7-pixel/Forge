@@ -175,6 +175,62 @@
         "height": 1920,
         "sha256": "aad98312bea84044269d103802d82858689cc2b3df155defb45f5388f53d6106"
       }
+    ],
+    "3": [
+      {
+        "name": "full-bleed-story-run-on-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "9e54a301a3bcd28da467600265334b1c1762d5279fc5e3d08b54f002afbbfcec"
+      },
+      {
+        "name": "full-bleed-story-run-on-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "eba4481b89d0a4eaf7395076657883207b5220a555f343b0f44afdd739709b42"
+      },
+      {
+        "name": "full-bleed-story-run-on-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "6e97435eba41ff2e82eeef64629972f2a2019c28787cbdd5a5cc5f365fd6ac0b"
+      },
+      {
+        "name": "full-bleed-story-run-on-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "8ddd2bd84c1ce6594b765eb5168aaba17f5bdcb0706df7bcf172de7e3866b8f4"
+      },
+      {
+        "name": "full-bleed-story-run-on-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "27c1841251c5de26db83764517ecd301c0c9ef10c22fbb874b9aea474803532b"
+      },
+      {
+        "name": "full-bleed-story-run-on-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "71b01ddae02a1421c776e377970487d0db04539183dea2b92649a7d6c88cd759"
+      },
+      {
+        "name": "full-bleed-story-run-off-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "504f05e871189f2ca3734d852753f9c0f003fadbceccdfd50ca94c26162a2c61"
+      },
+      {
+        "name": "full-bleed-story-run-off-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "fcfd5b8f1143e026b9a06e5630348caf3e5c00bf61119c4e795c8893cb1b1569"
+      },
+      {
+        "name": "full-bleed-story-run-off-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "fe39f7b28f36b3e50f22c4cd416eca196bb753ab4836acb52e16e690efc86910"
+      }
     ]
   }
 }
