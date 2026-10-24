@@ -1,166 +1,95 @@
-name: Forged Hybrid QA
+name: P3 v4 Linux share capture (temporary)
 
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
 
 concurrency:
-  group: forge-qa-${{ github.ref }}
-  cancel-in-progress: true
+  group: p3-v4-linux-capture-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  deterministic-qa:
+  capture:
+    if: github.ref == 'refs/heads/oracle/t_b10c101d-linux-v4'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        lane: [complete, repeat]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - name: Check out immutable candidate
+        uses: actions/checkout@v7
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            frontend/package-lock.json
-            backend/package-lock.json
-      - name: Install dependencies
-        run: |
-          npm --prefix frontend ci
-          npm --prefix backend ci
-      - name: Install Chromium
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
-      - name: Run deterministic smoke suites
-        run: npm run qa:smoke
-      - name: Verify account-data coverage
-        run: npm --prefix backend run check:account-data
-      - name: Audit production dependencies
-        run: |
-          npm --prefix frontend audit --audit-level=high
-          npm --prefix backend audit --audit-level=high
-      - name: Build frontend
-        run: npm --prefix frontend run build
-
-  browser-qa:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            frontend/package-lock.json
-            backend/package-lock.json
-      - name: Install dependencies
-        run: |
-          npm --prefix frontend ci
-          npm --prefix backend ci
-      - name: Install Chromium
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
-      - name: Run mobile browser journeys
-        run: npm run qa:browser
-      - name: Upload browser failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: forge-playwright-report
-          path: |
-            frontend/playwright-report
-            frontend/test-results
-          if-no-files-found: ignore
-          retention-days: 7
-
-  # Keep the previous check identity while requiring both independent jobs.
-  deterministic-and-browser-qa:
-    if: ${{ always() }}
-    needs: [deterministic-qa, browser-qa]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Require deterministic and browser success
-        env:
-          DETERMINISTIC_RESULT: ${{ needs.deterministic-qa.result }}
-          BROWSER_RESULT: ${{ needs.browser-qa.result }}
-        run: test "$DETERMINISTIC_RESULT" = success && test "$BROWSER_RESULT" = success
-
-  ios-native-compile:
-    if: github.event_name != 'schedule'
-    runs-on: macos-15
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+          ref: ba0288551bdea71539b25f9fe0faf6c27a0a3f82
+          fetch-depth: 0
+      - name: Set up locked Node runtime
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install frontend dependencies
+      - name: Install locked frontend dependencies
         run: npm --prefix frontend ci
-      - name: Build and sync Capacitor iOS
-        run: |
-          npm --prefix frontend run build
-          cd frontend && npx cap sync ios
-      - name: Verify native contracts and generated project stability
-        run: |
-          npm run qa:native
-          git diff --exit-code -- frontend/ios frontend/capacitor.config.ts frontend/app.json
-      - name: Compile iOS app and Live Activity extension without signing
-        working-directory: frontend/ios/App
-        run: >-
-          xcodebuild
-          -workspace App.xcworkspace
-          -scheme App
-          -configuration Debug
-          -sdk iphonesimulator
-          -destination 'generic/platform=iOS Simulator'
-          -derivedDataPath "$RUNNER_TEMP/ForgeDerivedData"
-          CODE_SIGNING_ALLOWED=NO
-          CODE_SIGNING_REQUIRED=NO
-          build
-
-  production-shell-qa:
-    if: github.event_name != 'pull_request'
-    needs: [deterministic-qa, browser-qa, deterministic-and-browser-qa]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install frontend dependencies
-        run: npm --prefix frontend ci
-      - name: Install Chromium
+      - name: Install locked Chromium and Linux dependencies
         working-directory: frontend
         run: npx playwright install --with-deps chromium
-      - name: Export expected pushed revision and bundle identity
-        if: github.event_name != 'schedule'
+      - name: Capture all ten v4 batches
+        env:
+          CAPTURE_LANE: ${{ matrix.lane }}
+          EXPECTED_SOURCE_SHA: ba0288551bdea71539b25f9fe0faf6c27a0a3f82
+          OUTPUT_DIR: ${{ runner.temp }}/forge-share-${{ matrix.lane }}
+        shell: bash
         run: |
-          npm --prefix frontend run build
-          echo "FORGE_QA_EXPECTED_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
-          node frontend/scripts/export-built-entry.mjs >> "$GITHUB_ENV"
-      - name: Wait for the pushed Railway shell
-        env:
-          FORGE_QA_BASE_URL: https://forge-production-773f.up.railway.app
-        run: npm --prefix frontend run wait:production
-      - name: Verify live production shell and service worker
-        env:
-          FORGE_QA_BASE_URL: https://forge-production-773f.up.railway.app
-        run: npm run qa:production
-      - name: Upload production browser failure artifacts
-        if: failure()
+          set -Eeuo pipefail
+          mkdir -p "$OUTPUT_DIR"
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1)"
+          uname -a > "$OUTPUT_DIR/platform.txt"
+          cat /etc/os-release >> "$OUTPUT_DIR/platform.txt"
+          node -p 'JSON.stringify({platform:process.platform,arch:process.arch,node:process.version})' >> "$OUTPUT_DIR/platform.txt"
+          printf '%s\n' "$actual_sha" > "$OUTPUT_DIR/source-sha.txt"
+          printf 'lane\tbatch\tcommand\texit\n' > "$OUTPUT_DIR/commands.tsv"
+
+          run_batch() {
+            local batch="$1"
+            local log="$OUTPUT_DIR/$batch.log"
+            local command="node frontend/test/shareOverlaysC1.smoke.mjs --capture-batch=$batch --platform=linux-x64 --output=$OUTPUT_DIR"
+            set +e
+            node frontend/test/shareOverlaysC1.smoke.mjs \
+              "--capture-batch=$batch" \
+              --platform=linux-x64 \
+              "--output=$OUTPUT_DIR" 2>&1 | tee "$log"
+            local rc="${PIPESTATUS[0]}"
+            set -e
+            printf '%s\t%s\t%s\t%s\n' "$CAPTURE_LANE" "$batch" "$command" "$rc" >> "$OUTPUT_DIR/commands.tsv"
+            test "$rc" -eq 0
+          }
+
+          run_batch 1
+          run_batch 2
+          run_batch 3
+          run_batch 4
+          run_batch 5
+          run_batch trace
+          run_batch forged-days-week
+          run_batch forged-days-month
+          run_batch forged-days-milestone
+          run_batch forged-days-count
+
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1)"
+          test -f "$OUTPUT_DIR/generation-v4.json"
+          sha256sum "$OUTPUT_DIR/generation-v4.json" > "$OUTPUT_DIR/generation-v4.sha256"
+      - name: Upload raw capture evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: forge-production-playwright-report
-          path: |
-            frontend/playwright-report
-            frontend/test-results
-          if-no-files-found: ignore
-          retention-days: 7
+          name: forge-share-linux-v4-${{ matrix.lane }}
+          path: ${{ runner.temp }}/forge-share-${{ matrix.lane }}
+          if-no-files-found: error
+          retention-days: 14
