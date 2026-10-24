@@ -477,6 +477,44 @@
         "height": 1920,
         "sha256": "fb1f540de5b7b85ff46294987895bb167511e007cd606e96b2edc294a21b3ab5"
       }
+    ],
+    "forged-days-count": [
+      {
+        "name": "forged-days-count-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "97ab560b5699257b3b646c059c3f26d55eda0bc1614b6547a42462b2c8aa96fa"
+      },
+      {
+        "name": "forged-days-count-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "feeb949549d9286145033de77a83351b42bcb063993e94f144a6fbbe4231bb77"
+      },
+      {
+        "name": "forged-days-count-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "131523592e0e18b6ffed072718d4227cd5a542d0b654997b5cff47eee547f5a6"
+      },
+      {
+        "name": "forged-days-count-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "2b6d313a3d6cc8e635f4ea4f01f8ad3f6a69c2d8dc916a55626f451287a44026"
+      },
+      {
+        "name": "forged-days-count-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "40ae51f0010a6f70c154334a57d1aa1ebb1e9441e4065a09b6b6ac3ce236c2ce"
+      },
+      {
+        "name": "forged-days-count-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "2b4571114f4568fb93b3be3d0983105fd73414bc2757e3e6c5a76bc081ccd190"
+      }
     ]
   }
 }
