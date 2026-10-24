@@ -287,6 +287,44 @@
         "height": 1920,
         "sha256": "7e1db538da294df7bf1b7c4da98012e2e93af59d1807253efc3dc4fa27b90a55"
       }
+    ],
+    "5": [
+      {
+        "name": "full-bleed-story-lift-off-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "cd1ff59608237ef8f81d57f6a68ef265cdd3aa446c8469d01c17a5a69305e9b4"
+      },
+      {
+        "name": "full-bleed-story-lift-off-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "fdf39f2bf3796d5f4d7e65e5d4dd1481fe28250a891ad2260f5430ec2594230f"
+      },
+      {
+        "name": "full-bleed-story-lift-off-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "6144f47e0af2da0a4dd45792f00b2731267c2f9bffc3cf69cf9f9e43ab78f7c7"
+      },
+      {
+        "name": "full-bleed-story-lift-off-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "9cbf2003619e714f9c178ffb32d0341140c01f987e8aaa0b4db8bc05e6c27688"
+      },
+      {
+        "name": "full-bleed-story-lift-off-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "3c78e5bb34811584f3a34c7c00ec6c2e174893187228f2b13414677763435a9e"
+      },
+      {
+        "name": "full-bleed-story-lift-off-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "7e1db538da294df7bf1b7c4da98012e2e93af59d1807253efc3dc4fa27b90a55"
+      }
     ]
   }
 }
