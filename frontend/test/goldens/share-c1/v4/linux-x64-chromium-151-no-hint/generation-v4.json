@@ -325,6 +325,44 @@
         "height": 1920,
         "sha256": "7e1db538da294df7bf1b7c4da98012e2e93af59d1807253efc3dc4fa27b90a55"
       }
+    ],
+    "trace": [
+      {
+        "name": "trace-light-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "57174930f491c737acfa0dfc21a6c0042783b08027277297cd51c44894d829e1"
+      },
+      {
+        "name": "trace-light-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "197fa16f6c830f25ce7ffb4da361c6cffd0d830df94f327f13954d11699d61da"
+      },
+      {
+        "name": "trace-dark-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "8d7baadf3763c95c8120df66b43977019f4418c687108c437ec994addcd91dde"
+      },
+      {
+        "name": "trace-dark-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "8d194b1f366236dbc44be0673317a4a0377cee8c08204b34c5aaa9320bd6a936"
+      },
+      {
+        "name": "trace-color-feed.png",
+        "width": 1080,
+        "height": 1350,
+        "sha256": "81b3bce7e25fbe33e01ebe327b590dc40bfc8b0145882029814ccb469778067f"
+      },
+      {
+        "name": "trace-color-story.png",
+        "width": 1080,
+        "height": 1920,
+        "sha256": "ac92372fbf27d2a0505f3c470b1f452ac0991a25fdfdc43999e33303d6e72196"
+      }
     ]
   }
 }
