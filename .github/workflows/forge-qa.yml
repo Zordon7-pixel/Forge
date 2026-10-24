@@ -1,4 +1,4 @@
-name: P3 v4 Linux share capture (temporary)
+name: P3 exact-SHA Linux QA (temporary)
 
 on:
   workflow_dispatch:
@@ -7,89 +7,231 @@ permissions:
   contents: read
 
 concurrency:
-  group: p3-v4-linux-capture-${{ github.ref }}
+  group: p3-exact-linux-qa-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  EXPECTED_SHA: ec8bbb9c657c38c74aa807478088dee30cbe0262
+
 jobs:
-  capture:
+  deterministic:
     if: github.ref == 'refs/heads/oracle/t_b10c101d-linux-v4'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        lane: [complete, repeat]
     steps:
       - name: Check out immutable candidate
         uses: actions/checkout@v7
         with:
-          ref: ba0288551bdea71539b25f9fe0faf6c27a0a3f82
+          ref: ec8bbb9c657c38c74aa807478088dee30cbe0262
           fetch-depth: 0
       - name: Set up locked Node runtime
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install locked frontend dependencies
-        run: npm --prefix frontend ci
-      - name: Install locked Chromium and Linux dependencies
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
-      - name: Capture all ten v4 batches
-        env:
-          CAPTURE_LANE: ${{ matrix.lane }}
-          EXPECTED_SOURCE_SHA: ba0288551bdea71539b25f9fe0faf6c27a0a3f82
-          OUTPUT_DIR: ${{ runner.temp }}/forge-share-${{ matrix.lane }}
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - name: Run deterministic, contract, build, and audit gates
         shell: bash
         run: |
-          set -Eeuo pipefail
-          mkdir -p "$OUTPUT_DIR"
-          actual_sha="$(git rev-parse HEAD)"
-          test "$actual_sha" = "$EXPECTED_SOURCE_SHA"
-          test -z "$(git status --porcelain=v1)"
-          uname -a > "$OUTPUT_DIR/platform.txt"
-          cat /etc/os-release >> "$OUTPUT_DIR/platform.txt"
-          node -p 'JSON.stringify({platform:process.platform,arch:process.arch,node:process.version})' >> "$OUTPUT_DIR/platform.txt"
-          printf '%s\n' "$actual_sha" > "$OUTPUT_DIR/source-sha.txt"
-          printf 'lane\tbatch\tcommand\texit\n' > "$OUTPUT_DIR/commands.tsv"
-
-          run_batch() {
-            local batch="$1"
-            local log="$OUTPUT_DIR/$batch.log"
-            local command="node frontend/test/shareOverlaysC1.smoke.mjs --capture-batch=$batch --platform=linux-x64 --output=$OUTPUT_DIR"
+          set -uo pipefail
+          EVIDENCE="$RUNNER_TEMP/p3-linux-deterministic"
+          mkdir -p "$EVIDENCE"
+          printf 'name\tcommand\texit\tlog_sha256\n' > "$EVIDENCE/commands.tsv"
+          overall=0
+          run_gate() {
+            local name="$1"
+            shift
+            local log="$EVIDENCE/$name.log"
+            local command
+            printf -v command '%q ' "$@"
             set +e
-            node frontend/test/shareOverlaysC1.smoke.mjs \
-              "--capture-batch=$batch" \
-              --platform=linux-x64 \
-              "--output=$OUTPUT_DIR" 2>&1 | tee "$log"
+            "$@" 2>&1 | tee "$log"
             local rc="${PIPESTATUS[0]}"
             set -e
-            printf '%s\t%s\t%s\t%s\n' "$CAPTURE_LANE" "$batch" "$command" "$rc" >> "$OUTPUT_DIR/commands.tsv"
-            test "$rc" -eq 0
+            local digest
+            digest="$(sha256sum "$log" | cut -d' ' -f1)"
+            printf '%s\t%s\t%s\t%s\n' "$name" "$command" "$rc" "$digest" >> "$EVIDENCE/commands.tsv"
+            if [ "$rc" -ne 0 ]; then overall=1; fi
           }
-
-          run_batch 1
-          run_batch 2
-          run_batch 3
-          run_batch 4
-          run_batch 5
-          run_batch trace
-          run_batch forged-days-week
-          run_batch forged-days-month
-          run_batch forged-days-milestone
-          run_batch forged-days-count
-
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
-          test -z "$(git status --porcelain=v1)"
-          test -f "$OUTPUT_DIR/generation-v4.json"
-          sha256sum "$OUTPUT_DIR/generation-v4.json" > "$OUTPUT_DIR/generation-v4.sha256"
-      - name: Upload raw capture evidence
+          run_gate frontend-ci npm --prefix frontend ci
+          run_gate backend-ci npm --prefix backend ci
+          run_gate qa-smoke npm run qa:smoke
+          run_gate account-data npm --prefix backend run check:account-data
+          run_gate frontend-audit npm --prefix frontend audit --audit-level=high
+          run_gate backend-audit npm --prefix backend audit --audit-level=high
+          run_gate frontend-build npm --prefix frontend run build
+          run_gate native-contracts npm run qa:native
+          printf '%s\n' "$(git rev-parse HEAD)" > "$EVIDENCE/source-sha.txt"
+          uname -a > "$EVIDENCE/platform.txt"
+          cat /etc/os-release >> "$EVIDENCE/platform.txt"
+          node -p 'JSON.stringify({platform:process.platform,arch:process.arch,node:process.version,npm:process.env.npm_config_user_agent})' >> "$EVIDENCE/platform.txt"
+          if [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ]; then overall=1; fi
+          if [ -n "$(git status --porcelain=v1)" ]; then
+            git status --porcelain=v1 > "$EVIDENCE/git-status.txt"
+            overall=1
+          fi
+          exit "$overall"
+      - name: Upload deterministic evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: forge-share-linux-v4-${{ matrix.lane }}
-          path: ${{ runner.temp }}/forge-share-${{ matrix.lane }}
+          name: p3-linux-deterministic-ec8bbb9c
+          path: ${{ runner.temp }}/p3-linux-deterministic
+          if-no-files-found: error
+          retention-days: 14
+
+  browser:
+    if: github.ref == 'refs/heads/oracle/t_b10c101d-linux-v4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out immutable candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ec8bbb9c657c38c74aa807478088dee30cbe0262
+          fetch-depth: 0
+      - name: Set up locked Node runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - name: Run browser journeys
+        shell: bash
+        run: |
+          set -uo pipefail
+          EVIDENCE="$RUNNER_TEMP/p3-linux-browser"
+          mkdir -p "$EVIDENCE"
+          printf 'name\tcommand\texit\tlog_sha256\n' > "$EVIDENCE/commands.tsv"
+          overall=0
+          run_gate() {
+            local name="$1"
+            shift
+            local log="$EVIDENCE/$name.log"
+            local command
+            printf -v command '%q ' "$@"
+            set +e
+            "$@" 2>&1 | tee "$log"
+            local rc="${PIPESTATUS[0]}"
+            set -e
+            local digest
+            digest="$(sha256sum "$log" | cut -d' ' -f1)"
+            printf '%s\t%s\t%s\t%s\n' "$name" "$command" "$rc" "$digest" >> "$EVIDENCE/commands.tsv"
+            if [ "$rc" -ne 0 ]; then overall=1; fi
+          }
+          run_gate frontend-ci npm --prefix frontend ci
+          run_gate backend-ci npm --prefix backend ci
+          run_gate playwright-install bash -lc 'cd frontend && npx playwright install --with-deps chromium'
+          run_gate browser-qa npm run qa:browser
+          printf '%s\n' "$(git rev-parse HEAD)" > "$EVIDENCE/source-sha.txt"
+          uname -a > "$EVIDENCE/platform.txt"
+          cat /etc/os-release >> "$EVIDENCE/platform.txt"
+          node -p 'JSON.stringify({platform:process.platform,arch:process.arch,node:process.version,npm:process.env.npm_config_user_agent})' >> "$EVIDENCE/platform.txt"
+          if [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ]; then overall=1; fi
+          if [ -n "$(git status --porcelain=v1)" ]; then
+            git status --porcelain=v1 > "$EVIDENCE/git-status.txt"
+            overall=1
+          fi
+          exit "$overall"
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p3-linux-browser-ec8bbb9c
+          path: |
+            ${{ runner.temp }}/p3-linux-browser
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: warn
+          retention-days: 14
+
+  p3-exact:
+    if: github.ref == 'refs/heads/oracle/t_b10c101d-linux-v4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out immutable candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ec8bbb9c657c38c74aa807478088dee30cbe0262
+          fetch-depth: 0
+      - name: Set up locked Node runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - name: Run P3 exact focused, byte-export, golden, and provenance gates
+        shell: bash
+        run: |
+          set -uo pipefail
+          EVIDENCE="$RUNNER_TEMP/p3-linux-exact"
+          mkdir -p "$EVIDENCE"
+          printf 'name\tcommand\texit\tlog_sha256\n' > "$EVIDENCE/commands.tsv"
+          overall=0
+          run_gate() {
+            local name="$1"
+            shift
+            local log="$EVIDENCE/$name.log"
+            local command
+            printf -v command '%q ' "$@"
+            set +e
+            "$@" 2>&1 | tee "$log"
+            local rc="${PIPESTATUS[0]}"
+            set -e
+            local digest
+            digest="$(sha256sum "$log" | cut -d' ' -f1)"
+            printf '%s\t%s\t%s\t%s\n' "$name" "$command" "$rc" "$digest" >> "$EVIDENCE/commands.tsv"
+            if [ "$rc" -ne 0 ]; then overall=1; fi
+          }
+          run_gate frontend-ci npm --prefix frontend ci
+          run_gate backend-ci npm --prefix backend ci
+          run_gate playwright-install bash -lc 'cd frontend && npx playwright install --with-deps chromium'
+          run_gate share-context node backend/test/activityShareContext.smoke.js
+          run_gate share-context-honolulu env TZ=Pacific/Honolulu node backend/test/activityShareContext.smoke.js
+          run_gate share-context-tokyo env TZ=Asia/Tokyo node backend/test/activityShareContext.smoke.js
+          run_gate run-linked-time-pr node backend/test/runLinkedTimePr.smoke.js
+          run_gate run-recap-data node backend/test/runRecapData.smoke.js
+          run_gate activity-share-entry node frontend/test/activityShareEntry.smoke.mjs
+          run_gate share-stats node frontend/test/shareStats.smoke.mjs
+          run_gate studio-phase-c node frontend/test/activityShareStudioPhaseC.smoke.mjs
+          run_gate studio-single-flight node frontend/test/activityShareStudioSingleFlight.smoke.mjs
+          run_gate release-templates node frontend/test/shareReleaseTemplates.smoke.mjs
+          run_gate c2-contracts node frontend/test/shareOverlaysC2.smoke.mjs
+          run_gate c1-filter-only node frontend/test/shareOverlaysC1.smoke.mjs --filter-only
+          run_gate framework-modules node frontend/test/shareFrameworkModules.smoke.mjs
+          run_gate export-metadata-helper node frontend/test/shareExportMetadata.mjs
+          run_gate syntax-studio node --check frontend/test/activityShareStudioFramework.smoke.mjs
+          run_gate syntax-runs node --check backend/src/routes/runs.js
+          run_gate studio-framework-browser node frontend/test/activityShareStudioFramework.smoke.mjs
+          run_gate golden-aggregate node frontend/test/shareOverlaysC1.smoke.mjs
+          run_gate golden-c1 node frontend/test/shareOverlaysC1.smoke.mjs --compare=c1
+          run_gate golden-photo node frontend/test/shareOverlaysC1.smoke.mjs --compare=photo
+          run_gate golden-c2 node frontend/test/shareOverlaysC1.smoke.mjs --compare=c2
+          run_gate provenance-aggregate node frontend/test/shareGoldenProvenance.mjs
+          run_gate provenance-negatives node frontend/test/shareGoldenProvenance.smoke.mjs
+          run_gate provenance-rollover node frontend/test/shareGoldenRollover.smoke.mjs
+          printf '%s\n' "$(git rev-parse HEAD)" > "$EVIDENCE/source-sha.txt"
+          uname -a > "$EVIDENCE/platform.txt"
+          cat /etc/os-release >> "$EVIDENCE/platform.txt"
+          node -p 'JSON.stringify({platform:process.platform,arch:process.arch,node:process.version,npm:process.env.npm_config_user_agent})' >> "$EVIDENCE/platform.txt"
+          if [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ]; then overall=1; fi
+          if [ -n "$(git status --porcelain=v1)" ]; then
+            git status --porcelain=v1 > "$EVIDENCE/git-status.txt"
+            overall=1
+          fi
+          exit "$overall"
+      - name: Upload exact P3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p3-linux-exact-ec8bbb9c
+          path: ${{ runner.temp }}/p3-linux-exact
           if-no-files-found: error
           retention-days: 14
