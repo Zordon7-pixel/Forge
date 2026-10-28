@@ -18,8 +18,8 @@ const originalEnv = { ...process.env };
 const mailPath = require.resolve('../src/services/mail');
 function freshMail() { delete require.cache[mailPath]; return require(mailPath); }
 async function main() {
-  assert.equal(require('nodemailer/package.json').version, '10.0.13');
-  assert.equal(require('ip-address/package.json').version, '10.7.1');
+  assert.equal(require('nodemailer/package.json').version, '10.1.4');
+  assert.equal(require('ip-address/package.json').version, '10.7.4');
   assert.deepEqual(Object.keys(nodemailer).sort(), ['createTestAccount', 'createTransport', 'getTestMessageUrl']);
   let mode = 'ok', messages = [], data = '', authSeen = 0;
   const smtp = net.createServer(socket => {
