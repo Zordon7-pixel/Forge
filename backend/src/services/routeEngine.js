@@ -1,4 +1,28 @@
 const crypto = require('crypto');
+const { PlanningError, retrySeconds } = require('./plannedLeg');
+const { createPlanningStore } = require('../db/plannedLegStore');
+
+// Every entry point requires an authenticated owner and the shared durable ledger.
+async function reserveProvider(options, units) {
+  if (typeof options.owner !== 'string' || !options.owner.length) throw new PlanningError('UNAUTHORIZED', 401);
+  try {
+    const store = options.store || createPlanningStore(require('../db'));
+    await store.reserve(options.owner, units);
+    return async (url, init) => {
+      try { await store.checkCooldown(options.owner); }
+      catch (err) { throw err instanceof PlanningError ? err : new PlanningError('PLANNING_UNAVAILABLE'); }
+      const response = await (options.fetchImpl || fetch)(url, { ...init, redirect: 'error' });
+      // Inspect status before reading a potentially malformed or stalled body.
+      if (response.status === 429) {
+        try {
+          await store.cooldown(options.owner, retrySeconds(response.headers?.get('retry-after'), await store.now()));
+          throw new PlanningError('PROVIDER_RATE_LIMITED', 429, await store.remainingCooldown(options.owner));
+        } catch (err) { throw err instanceof PlanningError ? err : new PlanningError('PLANNING_UNAVAILABLE'); }
+      }
+      return response;
+    };
+  } catch (err) { throw err instanceof PlanningError ? err : new PlanningError('PLANNING_UNAVAILABLE'); }
+}
 
 const ORS_BASE_URL = 'https://api.heigit.org/openrouteservice/v2/directions';
 const ORS_GEOCODE_URL = 'https://api.openrouteservice.org/geocode/search';
@@ -296,12 +320,13 @@ function chooseCandidate(candidates, preference) {
 async function generateElevationAwareRoute(rawInput, options = {}) {
   const input = validateRouteInput(rawInput);
   const apiKey = options.apiKey ?? process.env.OPENROUTESERVICE_API_KEY;
-  const fetchImpl = options.fetchImpl || fetch;
   if (!apiKey) {
     throw new RouteEngineError('Route planning is temporarily unavailable.', { status: 503, code: 'ROUTE_PROVIDER_NOT_CONFIGURED' });
   }
 
-  const key = cacheKey(input);
+  // Accepted legacy generates cost three units, including legacy cache hits.
+  const fetchImpl = await reserveProvider(options, CANDIDATE_COUNT);
+  const key = JSON.stringify([options.owner, cacheKey(input)]);
   let candidates = options.skipCache ? null : readCache(key);
   if (!candidates) {
     const results = await Promise.allSettled(
@@ -309,6 +334,9 @@ async function generateElevationAwareRoute(rawInput, options = {}) {
         fetchCandidate(input, deterministicSeed(input, index), apiKey, fetchImpl)
       )),
     );
+    // A shared cooldown/ledger failure cannot be hidden by another candidate.
+    const budgetFailure = results.find(result => result.status === 'rejected' && result.reason instanceof PlanningError);
+    if (budgetFailure) throw budgetFailure.reason;
     candidates = results.filter((result) => result.status === 'fulfilled').map((result) => result.value);
     if (!candidates.length) {
       const failure = results.find((result) => result.status === 'rejected')?.reason;
@@ -332,11 +360,11 @@ async function generateElevationAwareRoute(rawInput, options = {}) {
 async function searchRouteStartPlaces(rawQuery, options = {}) {
   const query = validatePlaceQuery(rawQuery);
   const apiKey = options.apiKey ?? process.env.OPENROUTESERVICE_API_KEY;
-  const fetchImpl = options.fetchImpl || fetch;
   if (!apiKey) {
     throw new RouteEngineError('Route planning is temporarily unavailable.', { status: 503, code: 'ROUTE_PROVIDER_NOT_CONFIGURED' });
   }
 
+  const fetchImpl = await reserveProvider(options, 1);
   const url = new URL(ORS_GEOCODE_URL);
   url.searchParams.set('text', query);
   url.searchParams.set('size', '5');

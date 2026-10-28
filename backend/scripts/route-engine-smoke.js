@@ -9,6 +9,9 @@ const {
   validateRouteInput,
 } = require('../src/services/routeEngine');
 
+// Selection regression only; shared SQL enforcement is exercised by plannedLeg.smoke.
+const budget = { owner: 'synthetic-owner', store: { reserve: async () => {}, checkCooldown: async () => {} } };
+
 function featureForCandidate(callIndex) {
   const altitudeProfiles = [
     [100, 101, 100, 101, 100],
@@ -44,6 +47,7 @@ async function generate(preference) {
     elevationPreference: preference,
     surface: 'road',
   }, {
+    ...budget,
     apiKey: 'test-key',
     skipCache: true,
     fetchImpl: async (url, init) => {
@@ -98,6 +102,7 @@ async function generate(preference) {
   let geocodeUrl = '';
   let geocodeHeaders = null;
   const places = await searchRouteStartPlaces(' Portland,   Maine ', {
+    ...budget,
     apiKey: 'test-key',
     fetchImpl: async (url, init) => {
       geocodeUrl = url;

@@ -929,3 +929,46 @@ CREATE TABLE IF NOT EXISTS provider_import_receipts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (user_id, provider, revision)
 );
+
+-- Private, disposable ORS planning state; seeded once by runAlwaysMigrations.
+CREATE TABLE IF NOT EXISTS ors_planning_global (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  day_bucket BIGINT NOT NULL,
+  minute_bucket BIGINT NOT NULL,
+  day_count INTEGER NOT NULL CHECK (day_count BETWEEN 0 AND 1900),
+  minute_count INTEGER NOT NULL CHECK (minute_count BETWEEN 0 AND 35),
+  blocked_until BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ors_planning_users (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  day_bucket BIGINT NOT NULL,
+  minute_bucket BIGINT NOT NULL,
+  day_count INTEGER NOT NULL CHECK (day_count BETWEEN 0 AND 100),
+  minute_count INTEGER NOT NULL CHECK (minute_count BETWEEN 0 AND 10)
+);
+CREATE TABLE IF NOT EXISTS ors_planning_cache (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  cache_key TEXT NOT NULL,
+  payload TEXT NOT NULL CHECK (length(payload) <= 524288),
+  created_ms BIGINT NOT NULL,
+  expires_ms BIGINT NOT NULL,
+  PRIMARY KEY (user_id, cache_key)
+);
+CREATE INDEX IF NOT EXISTS idx_ors_planning_cache_age ON ors_planning_cache(created_ms, user_id, cache_key);
+
+-- Private saved planned routes; never recorded activity evidence.
+CREATE TABLE IF NOT EXISTS user_routes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+  waypoints_json TEXT NOT NULL CHECK (length(waypoints_json) <= 16384),
+  geometry_json TEXT NOT NULL CHECK (length(geometry_json) <= 1048576),
+  legs_json TEXT NOT NULL CHECK (length(legs_json) <= 32768),
+  distance_meters DOUBLE PRECISION NOT NULL CHECK (distance_meters BETWEEN 0 AND 1000000),
+  target_distance_meters DOUBLE PRECISION CHECK (target_distance_meters BETWEEN 0 AND 1000000),
+  elevation_json TEXT NOT NULL CHECK (length(elevation_json) <= 1024),
+  display_json TEXT NOT NULL CHECK (length(display_json) <= 4096),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_routes_owner_updated ON user_routes(user_id, updated_at DESC, id);

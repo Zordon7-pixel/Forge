@@ -5,6 +5,178 @@
 
 ---
 
+## Private route editor — t_0f9a44da Phase 1B (patched; uncommitted)
+
+Session checkpoint `0c5b580ccf4f2c0c8be79edf52878e6e7dd7ddc2`, original
+reviewed base `07c356d8a4b5bd43bf213089b54ff59e47642eaf`. Train/RunHub links to
+protected `/run/routes`; the existing five-tab shell is unchanged. New editor,
+private paginated library, authenticated CRUD/GPX, and focused tests only.
+`ForgeMap`, backend contracts/security/quota code and ActiveRun are unchanged.
+
+The isolated planned-course engine debounces the next unaccepted waypoint for
+300 ms, normalizes ordered cache endpoints to five decimal places, coalesces
+in-flight duplicates, and keeps at most 64 responses for ten minutes per editor
+session. Auth changes/unmount abort API work and dispose geometry/cache; generation
+tokens fence undo, clear, mode/profile changes, newer waypoints and late failures.
+There is no automatic retry or straight-line fallback. ORS distance is retained;
+only explicitly straight legs use geometry distance. Disconnected snapped leg
+geometry is rejected rather than joined with an invented connector. The user can
+undo or explicitly choose a different/manual segment. Mode/profile apply to new
+legs. Close loop requests only the final leg; out-and-back mirrors accepted
+geometry and provenance, with an explicit return-access caveat.
+
+Current location is an explicit one-shot request with a 12-second timeout;
+failure leaves long-press and keyboard map-center start available. The initial
+world view is labeled as not the user's location. Elevation uses only adjacent
+finite supplied heights; missing/partial coverage remains visible and persists.
+Target halfway is located only within accumulated actual planned geometry, with
+no extrapolation or navigation claim. All draft data is memory-only.
+
+**Known contract limitation, not full editor acceptance:** Phase 1A persists total
+distance, but not each leg's distance. A loaded route is therefore a protected
+base with its exact saved total. Appending, close-loop, out-and-back, rename,
+target changes, update and undo of edits since load work. Undo cannot remove
+individual legs of that saved base. Clear starts a new route. Full loaded-leg
+undo needs a separately authorized per-leg-distance contract; estimating routed
+leg distances or silently rerouting the base would break this session's rules.
+This limitation was disclosed during implementation; no approval was inferred.
+
+Local gates (synthetic data; no live ORS or tile traffic):
+- `node frontend/test/manualRouteBuilder.smoke.mjs`: 15 groups, exit 0, including
+  real backend payload-validator round trips, stale success/failure, cache bounds,
+  geometry joins, distance/elevation, target, and loaded-base behavior.
+- `node frontend/test/routePlannerData.smoke.mjs`: exit 0.
+- `PLAYWRIGHT_BROWSERS_PATH=/Users/zordon/Library/Caches/ms-playwright node frontend/test/manualRoutesBrowser.smoke.mjs`:
+  focused actual-component browser smoke, exit 0. Covers 320/393 px overflow,
+  44px buttons, location success/denial/long-press, mode labels, walking/hiking success and ORS failure, CRUD/GPX,
+  corrupt load, auth clearing, missing/bad tiles and exact attribution. This is
+  not full-SPA Playwright, native VoiceOver, or physical-iPhone acceptance.
+- Normal Vite production build via `build()` with the unchanged imported
+  `frontend/vite.config.js`, `configFile:false`, empty temporary `envDir`, and
+  temporary output: exit 0. No network/build-time credential reads.
+- `git diff --check`: exit 0. Nine intended changed paths relative to checkpoint.
+
+Logs: `/tmp/t_0f9a44da-phase1b-{state,existing,browser,build}.log`.
+Screenshots from the final focused layout check:
+`/var/folders/vs/k_12m6m53nvb9149x1zqrf0h0000gn/T/forge-manual-routes-cpKDUm/manual-{320,393}.png`.
+Verification hiccups were reported as they occurred: stalled rg searches (stopped,
+bounded reads used), batch-tool negotiation timeout, initial float endpoint test
+failure (exact vertex preserved), absent frontend dependencies, sandbox loopback
+EPERM (expanded local-only execution), intermittent map taps, and the map-control
+CSS collision found in screenshot review. A pointer trace proved Leaflet focus
+scrolled the map between pointerdown and pointerup; editor-local preventScroll
+focus fixes that tap loss. Long-press suppression, native map control click
+propagation and bottom placement are now covered. The first file audit also
+found the dependency symlink was not ignored; it was removed after verification. Existing stale
+Browserslist, large-chunk and test-cache Babel notices remain. An initial harness
+Tailwind cwd warning was resolved by running from the frontend root.
+
+A temporary `frontend/node_modules` symlink reused canonical installed packages
+and was removed after the final gates;
+no installs/downloads or manifest/lock changes. That installation has 16 package
+version differences from this lock, including Axios and Capacitor, so exact-lock
+host QA remains required. Full version comparison was performed read-only.
+
+Phase 1C must add the saved planned overlay handoff, preserve `[lon,lat]` to
+`[lat,lon]` conversion and all 10,000 planned vertices (ActiveRun currently slices
+planned input to 800), and prove separation from sampled coordinates/route truth,
+runs/history/evidence and training counts with full Playwright/host QA. Flag this
+nine-path scope for independent review. No commit, messages, Kanban, review request,
+push, merge, deploy, restart, native/provider/settings or production actions.
+
+## Private saved route builder — t_0f9a44da Phase 1A (patched; uncommitted)
+
+Base `07c356d8a4b5bd43bf213089b54ff59e47642eaf`. Backend foundation only:
+`user_routes` is private planned-course storage, separate from `shared_routes`,
+sampled ActiveRun coordinates and canonical activity/training evidence. Identical
+SQLite/PostgreSQL DDL is additive/idempotent, included in the fresh schema and
+the existing locked always-migration transaction. The existing account-data
+registry exports/deletes owned routes; the FK also cascades account deletion.
+
+Bearer-authenticated endpoints (private/no-store, Vary Authorization):
+
+- `POST /api/user-routes` → 201 `{route}`, Location header.
+- `GET /api/user-routes?limit=20&offset=0` → `{routes,limit,offset}`; summaries
+  omit geometry, waypoints and legs. Limit 1–100, offset 0–1,000,000.
+- `GET /api/user-routes/:id` → `{route}`.
+- `PUT /api/user-routes/:id` → `{route}`; full replacement, not a partial patch.
+  Omitted optional metadata clears to unknown. Creation time is preserved.
+- `DELETE /api/user-routes/:id` → 204.
+- `GET /api/user-routes/:id/gpx` → GPX 1.1 `trk/trkseg/trkpt`, every saved point
+  in order, per-point `<ele>` only where finite valid altitude exists. No
+  interpolation, simplification, sampled timestamps or elevation synthesis.
+  XML escapes the name; download filenames use only the validated UUID. The
+  description labels the route planned and discloses straight segments.
+
+POST/PUT accept only this contract:
+
+```js
+{
+  name: 'My planned course',                      // 1–120 characters
+  waypoints: [[-73, 40], [-73.01, 40.01]],         // ordered [lon,lat]
+  geometry: { type: 'LineString',
+    coordinates: [[-73, 40], [-73.01, 40.01]] },   // [lon,lat,altitudeMeters?]
+  legs: [{ mode: 'straight', provenance: 'manual', profile: null,
+    startIndex: 0, endIndex: 1 }],
+  distanceMeters: 1400,                          // finite, 0–1,000,000
+  targetDistanceMeters: null,                    // optional, same range
+  elevation: { source: null, gainMeters: null, lossMeters: null },
+  display: { description: null, surface: null, elevationPreference: null }
+}
+```
+
+Bounds: uncompressed JSON at most 1 MiB, 2–100 waypoints, 2–10,000 geometry
+vertices; primitive finite numbers only, longitude ±180, latitude ±90, altitude
+−2000–100000 meters (existing coordinate-normalizer bounds). No point removal,
+rounding or reordering. Exactly one leg per adjacent waypoint pair; leg indexes
+are inclusive, contiguous and cover the whole geometry. A `straight/manual`
+leg has two points and null profile. A `routed/ors` leg carries `foot-walking`
+or `foot-hiking`. Waypoints are selected controls; routed geometry can be snapped
+by the existing provider. No waypoint-to-geometry snapping is performed here.
+
+Elevation source is nullable or `manual|imported|provider`; any supplied heights
+or gain/loss require a source. Gain/loss are independent nullable supplied values
+(0–1,000,000 meters), never computed or filled with zero. `coverage` is derived
+from point heights as `missing|partial|complete`; callers may echo it only if
+it matches. Coverage describes geometry heights, not aggregate availability.
+Display fields: nullable description ≤500 characters, `road|trail|mixed`
+surface, `flat|balanced|hilly` elevation preference. Unknown fields, control
+characters, malformed UUIDs/numbers and cross-user access fail closed.
+
+Responses add `id`, `schemaVersion:1`, `kind:'planned'`,
+`provenanceTrust:'client_declared'`, `createdAt`, `updatedAt`. These generated
+fields must not be echoed in POST/PUT. Labels never certify provider evidence.
+Missing and foreign IDs both return 404; invalid input 400, oversized bodies 413,
+storage failure 503, with no coordinates or raw SQL errors logged/returned.
+Writes use the existing account mutation guard; no training revision advances.
+
+The reviewed `POST /api/route-planning/leg` remains unchanged and is the only
+manual-builder ORS call path. No new provider logic, quota/cache, live calls,
+ActiveRun changes, native code, dependency manifests or release operations.
+
+Local gates: `node backend/test/userRoutes.smoke.js` and `--postgres` (each
+8 groups, real SQLite/disposable PostgreSQL); existing plannedLeg (12 groups),
+route-engine, account-data coverage (66 tables, atomicity/auth mutation guard),
+accountReceiptCoverage and the three planning mutation/plan/concurrency smokes.
+All pass with network guards/mocks. Syntax/diff checks are also required.
+
+Verification limitations: this worktree had no dependencies; offline npm ci
+failed because xtend was uncached. A separate ignored copy of existing packages
+resolves modules, but seven versions differ from the lock (axios, ip-address,
+nodemailer, proxy-addr, qs, side-channel, side-channel-list); exact-lock host QA
+remains necessary. PostgreSQL's sandbox shared-memory denial recovered under
+expanded local permissions. Initial test DDL regex incorrectly matched
+`updated_at` and was corrected; a zsh wrapper-variable error also recovered.
+No package/lock changes or downloads. This is not independent QA or release
+readiness; coordinator owns commit, review and lifecycle.
+
+Phase 1B must build the manual editor/library and map GeoJSON `[lon,lat]` to the
+existing `[lat,lon]` planned overlay, convert meters to display units, preserve
+straight/routed labels and partial/missing elevation, and keep account-scoped
+client state. ActiveRun currently truncates planned overlays to 800 points;
+address that seam explicitly without changing recorded samples or their truth.
+Do not treat saved routes as completed runs, navigation instructions, or load.
+
 ## Share alpha remediation — t_e510d614 (patched; uncommitted)
 
 Base `00e1864bd0fc2a7c8b4068279f92be8e2f359699`. The actual darwin-arm64
@@ -164,6 +336,207 @@ duration. No migration/backfill or volume column is added; old zero rows remain
 untouched. At this base LogLift uses `/workouts/start` then ActiveWorkout's
 `/:id/end`, not the completed-log POST. Gates: `strengthLogAcquisition.smoke.js`,
 `logLiftSaveFlow.smoke.mjs`, `activeWorkoutMobile.smoke.mjs`.
+
+## ORS one-leg planning — t_fd6b89ea Phase 2 (local candidate)
+
+`POST /api/route-planning/leg` uses existing bearer authentication and accepts only
+`{profile, points}`: profile `foot-walking` or `foot-hiking`, exactly two ordered
+`[longitude, latitude]` pairs of finite JSON numbers within geographic bounds.
+Unknown fields/options and query parameters are rejected. The authenticated JSON
+parser rejects compressed bodies and bodies over 1 KiB. Coordinates normalize via
+`Number(value.toFixed(5))` before hashing and routing; negative zero becomes zero.
+V1 has no client options; fixed `instructions=false`, `elevation=false` and the
+contract version participate in the owner/profile/ordered-points SHA-256 key.
+
+`ORS_API_KEY` is server-only and has no example value. Missing, blank or malformed
+keys disable this endpoint, including cached responses. Valid credentials travel
+only in the Authorization header to the fixed
+`https://api.heigit.org/openrouteservice/v2/directions/{profile}/geojson` endpoint.
+See the [official directions response contract](https://giscience.github.io/openrouteservice/api-reference/endpoints/directions/requests-and-return-types).
+Redirects, retries and automatic provider/straight-line fallbacks are disabled.
+The 8-second abort/deadline covers headers and body; streamed JSON is capped at
+512 KiB and geometry at 10,000 two-dimensional points. Responses contain only
+`leg: {profile, geometry, distanceMeters, durationSeconds}` and `status.cache`,
+or a stable error code plus a bounded integer Retry-After when applicable.
+Responses are private/no-store; request coordinates, keys and upstream/SQL errors
+are never logged by this boundary. Explicit straight-line mode remains a future
+client choice. Planned geometry never updates recorded runs, ActiveRun samples,
+route integrity, workout evidence or canonical route truth.
+
+Database `clock_timestamp()` supplies the clock in PostgreSQL; SQLite adapters
+use UTC epoch milliseconds. Buckets are `floor(epochMs/86400000)` (00:00 UTC daily)
+and `floor(epochMs/60000)` (UTC minute), independent of host/user timezone. Before
+each upstream attempt, one owner-guarded transaction locks the global singleton,
+checks all four limits, and commits both global and user counters atomically:
+1,900/day + 35/minute globally; 100/day + 10/minute per user. This leaves headroom
+of 100/day and 5/minute under the stated 2,000/day and 40/minute provider caps.
+Reservation failures/unknown state fail closed; every committed reservation
+counts even on timeout, 429, invalid credential, provider/body/cache-write failure
+or an interrupted process. Cache hits reserve nothing, including at exhausted
+limits. Rolling windows are not used. A backwards bucket clock fails closed.
+
+The same DB lock bounds the private persistent cache to 10,000 entries. Entries
+expire exactly 24 hours after insertion; expired entries are removed on writes,
+then oldest creation time/owner/hash wins deterministic eviction. Per-process
+in-flight duplicates coalesce; different processes may each make a budgeted miss.
+Cache and user counters survive process/database restart, are owner-scoped and
+participate in account export/deletion; the global counter is never reset by an
+account deletion. Fresh/upgrade DDL is additive, and a transactional migration
+marker seeds the global row only once. Missing/corrupt budget state after that
+requires operator repair; startup never silently replenishes it. Do not drop or
+reseed these tables during an active quota window.
+
+429 handling persists a service-wide cooldown across instances/restarts. Valid
+integer or IMF-fixdate Retry-After values become 60–86,400 seconds; absent/invalid
+values become 60 seconds. No automatic timer initiates another request. Other
+instances may finish attempts already reserved before a 429, within the same
+conservative budgets. Stable 429 responses expose no global or other-user totals.
+
+### Remy P2/P3 remediation — t_fd6b89ea (local candidate)
+
+Starting SHA `0ba2329e185685057f2ad64f05b636c1a209c0e5`; base
+`1b80ccc41b97de8f45698eb1ee69fb6dbe2f2ec4`. Legacy `/api/routes/generate`
+and `/api/routes/search-start` now use the same `ors_planning_global` and
+owner-scoped user ledger as planned legs. Generate reserves exactly three units
+in one all-or-nothing transaction, including accepted legacy cache hits; geocoding
+reserves one. Planned-leg cache hits remain free. All four limits, UTC buckets,
+DB clock, backwards-clock checks, migration marker and account-deletion behavior
+are unchanged. No second ledger or schema change. The legacy in-process limiter
+remains an extra throttle, never quota authority. Legacy credentials remain
+`OPENROUTESERVICE_API_KEY`; safety no longer depends on separate provider accounts.
+
+Legacy calls require an authenticated owner and reserve before upstream work.
+Every candidate checks the persisted cooldown before its fixed-host request;
+redirects are disabled. A 429 persists bounded Retry-After before body parsing,
+and takes precedence over successful sibling candidates. Already-reserved work
+may finish; no retries or automatic fallback. Committed units survive every
+failure. Unknown ledger state fails closed, and provider/SQL error text is not
+logged or sent to clients. Legacy cache keys now include the authenticated owner.
+Unrelated external consumers of the provider account remain outside this ledger.
+
+Thunderforest failure removes only the TileLayer. The same MapContainer,
+recorded/planned polylines and markers remain mounted over a plain background,
+with a bounded non-blocking indicator. The exact attribution text and two links
+remain visible. Missing runtime configuration still shows the unavailable state
+without making tile requests. No public OSM fallback, proxy, service-worker tile
+cache, prefetch or referrer-policy change. Recorded activity truth is untouched.
+
+Local deterministic gates (all exit 0):
+
+```sh
+node backend/test/plannedLeg.smoke.js
+node backend/test/plannedLeg.smoke.js --postgres
+node backend/scripts/route-engine-smoke.js
+node backend/test/authMutationGuard.smoke.js
+node backend/scripts/check-account-data-coverage.js
+node backend/test/planningMutationRoutes.smoke.js
+node backend/test/planningPlanRoutes.smoke.js
+node backend/test/planningRevisionConcurrency.smoke.js
+node backend/test/accountDeletionAtomicity.smoke.js
+node backend/test/accountReceiptCoverage.smoke.js
+node frontend/test/routePlannerData.smoke.mjs
+PLAYWRIGHT_BROWSERS_PATH=/Users/zordon/Library/Caches/ms-playwright node frontend/test/mapTiles.smoke.mjs
+git diff --check
+```
+
+SQLite: 12 groups, including actual 380 planned legs + 1,140 legacy directions
++ 380 geocodes = 1,900 attempted units; the last geocode's malformed 429 counts.
+Per-user/global boundaries, three-unit rejection rollback, cache ownership/cost,
+timeouts/errors, actual legacy HTTP/auth/redaction, missing state/backwards clock
+and shared cooldown are covered. Real disposable PostgreSQL: three groups,
+including concurrent one/three-unit writers, full mixed 1,900 attempts and a
+stopped/restarted local server retaining counters/cache/cooldown. Synthetic
+credentials and intercepted providers only; zero live provider requests.
+
+Browser gate: actual four consumers at 320/393 px, one simulated image error
+preserving exact DOM map/SVG nodes and geometry, visible route/marker overlays,
+plain background, exact attribution/links, and missing/bad keys. Screenshots in
+`frontend/test-results/map-tiles/` (ignored). The gate builds fresh with the normal
+Vite config imported directly, an empty temporary envDir, isolated output and
+source maps. All assets/source maps/responses are sentinel-scanned. Leaflet's
+source-map documentation example is excluded only from the no-OSM-URL assertion;
+executable assets and application mapped sources remain checked, and no mapped
+content is exempt from credential scans.
+
+Verification hiccups: sandbox blocked PostgreSQL shared memory and browser
+loopback listening; authorized expanded local permissions recovered both gates.
+Vite's initial config bundling attempted a write into shared read-only dependency
+storage; direct config import avoids that write. The first expanded map scan
+flagged Leaflet's documentation example; inspection established its origin and
+the assertion was scoped as above. Existing Browserslist age warning remains.
+
+Eight changed paths, including this document and three test files. This exceeds
+two paths and touches authenticated quota enforcement; no schema, dependencies,
+lockfiles, native code, recorded evidence or production data changes. No auxiliary
+reviewer, Hermes/Kanban action, provider/production access, push, release or deploy.
+Independent exact-SHA QA/review and release remain Hermes-owned.
+
+### Served referrer / unavailable-config remediation — t_fd6b89ea (patched)
+
+Starting/failed SHA `d9df2d8b8d4319c525624497c0ef50b6bf84edad`, unchanged base
+`1b80ccc41b97de8f45698eb1ee69fb6dbe2f2ec4`. This supersedes the prior candidate's
+missing-config placeholder and unchanged-referrer statements above. Helmet now
+explicitly sends `Referrer-Policy: strict-origin-when-cross-origin`; every other
+Helmet/CSP option is unchanged. Once configuration resolves or fails, ForgeMap
+mounts Leaflet and its existing children even without a usable key. Only a valid
+key may mount TileLayer. Loading retains its prior placeholder; bad tiles still
+remove only TileLayer. The bounded, noninteractive unavailable indicator and
+exact linked attribution remain visible over the existing plain background.
+
+`mapReferrer.smoke.mjs` builds the normal SPA with an empty envDir into a temporary
+frontend/dist, then executes the actual Express app source, route registration,
+Helmet, static serving and SPA fallback. Only DB/bootstrap operations are stubbed;
+dotenv is disabled and the child environment is allowlisted. Runtime tile config
+uses the real endpoint and real JWT middleware with a signed synthetic user.
+Other app API data and external font CSS are mocked. Browser tile transport is
+intercepted, external DNS is disabled, and backend outbound HTTP/fetch is denied.
+No Referer or User-Agent is injected. Chromium loads `/run/active` with a private
+query, gets the exact built index and JS, then issues tiles with origin-only
+Referer and its own UA. A second execution removes only the new Helmet option:
+the actual prior `no-referrer` header produces blank tile Referer, rejecting the
+required origin contract. All other served security headers match across runs.
+
+`mapTiles.smoke.mjs` now checks all four actual consumers at both 320/393 px for
+absent/null/blank/invalid keys, failed config retrieval, delayed loading, and tile
+failure. It asserts visible route/marker SVGs, plain background, zero tiles when
+unconfigured, bounded indicator, exact attribution/links and no horizontal
+overflow. Existing exact DOM/geometry preservation on tile error and recorder
+truth checks remain. All build/cache/screenshots are temporary, outside the repo.
+The strengthened regression failed before the component fix (missing Leaflet
+container), then passed. Inspected 320 px recorder and 393 px planner failure
+screenshots retain the route/markers and readable attribution.
+
+Local commands (all final exits 0; browser commands use
+`PLAYWRIGHT_BROWSERS_PATH=/Users/zordon/Library/Caches/ms-playwright`):
+
+- `node frontend/test/mapReferrer.smoke.mjs`
+- `node frontend/test/mapTiles.smoke.mjs`
+- `node backend/test/plannedLeg.smoke.js` (12 groups, mixed 1,900 units and
+  SQLite restart-persistent cooldown; PostgreSQL rerun remains host QA scope)
+- `node backend/scripts/route-engine-smoke.js`
+- `node frontend/test/routePlannerData.smoke.mjs`
+- `node backend/test/authMutationGuard.smoke.js`
+- Fresh isolated normal frontend builds within both browser gates; map gate
+  retains source-map/key-sentinel/no-public-OSM-fallback scans.
+- `git diff --check`
+
+Raw final logs: `/tmp/t_fd6b89ea-referrer-final.log`,
+`/tmp/t_fd6b89ea-map-after.log`, and `/tmp/t_fd6b89ea-{plannedLeg,route-engine,
+routePlannerData,authMutationGuard}.log`. Verification hiccups: sandbox loopback
+EPERM recovered with expanded local permissions; the new Express fixture first
+lacked the Strava startup DDL stub, then rejected the SPA's blocked Google Fonts
+CSS request, both corrected without product changes. A batch-tool negotiation
+timeout returned no test receipts/logs; direct runs verified the focused gates.
+Read-only inspection also encountered truncated output, an incorrect db.js path,
+stalled search and denied process inspection; direct reads completed the review.
+Existing Browserslist age, large-chunk and test-cache Babel warnings remain.
+
+Five changed paths, including this document; flag the security-header change and
+scope over two files for independent exact-SHA review. No ORS, routing, auth,
+ownership, schema, native, dependency, recorded evidence or production data
+implementation changed. No live provider requests, Kanban/messages, push, merge,
+deploy or restart. This is local verification, not independent acceptance or
+live WebView verification; Hermes owns host QA, review and lifecycle.
 
 ## What This App Is
 

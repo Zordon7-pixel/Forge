@@ -19,10 +19,11 @@ async function openRun(page, { kind = 'scheduled', autoOpen = true, responses = 
   const state = await installAuthenticatedApi(page, { responses: [
     ['GET /api/plans/today', { today: { date, type: 'easy' }, execution }],
     ['GET /api/routes/planner-status', { available: true }],
+    ['GET /api/meta/map-tiles', { THUNDERFOREST_API_KEY: 'SyntheticTileKey' + '0'.repeat(16) }],
     ['POST /api/routes/generate', { route: generatedRoute }],
     ...responses,
   ] })
-  await page.route('https://*.tile.openstreetmap.org/**', route => route.fulfill({ status: 204 }))
+  await page.route('https://api.thunderforest.com/**', route => route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jC1sAAAAASUVORK5CYII=', 'base64') }))
   // Seed the actual TravelTrainingPrompt handoff using its choice derivation.
   await page.addInitScript(state => {
     if (location.pathname === '/log-run') history.replaceState({ usr: state, key: 'near-me', idx: 0 }, '')

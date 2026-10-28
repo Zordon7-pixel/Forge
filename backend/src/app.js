@@ -53,15 +53,15 @@ app.use(cors({
 // Stripe webhooks require the raw request body for signature verification.
 app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
-app.use(express.json({ limit: '10mb' }));
 app.use(helmet({
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   contentSecurityPolicy: {
     reportOnly: true,
     useDefaults: false,
     directives: {
       defaultSrc: ["'self'"],
       connectSrc: ["'self'", ...allowedOrigins],
-      imgSrc: ["'self'", 'data:', 'blob:'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https://api.thunderforest.com'],
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
       baseUri: ["'self'"],
@@ -70,6 +70,12 @@ app.use(helmet({
     },
   },
 }));
+
+// Planning has its own authenticated 1 KiB parser before the general parser.
+app.use('/api/route-planning', require('./routes/routePlanning'));
+// Private saved plans also authenticate before their bounded parser.
+app.use('/api/user-routes', require('./routes/userRoutes'));
+app.use(express.json({ limit: '10mb' }));
 
 // Service-worker API caches must partition authenticated responses by bearer token.
 app.use('/api', (_req, res, next) => {

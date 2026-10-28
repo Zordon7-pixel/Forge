@@ -1,5 +1,6 @@
+import ForgeMap from './maps/ForgeMap'
 import { useEffect, useMemo, useState } from 'react'
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
+import { CircleMarker, Polyline, useMap } from 'react-leaflet'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ChevronDown, ChevronUp, LoaderCircle, MapPin, Mountain, Navigation, Route as RouteIcon, Search, Trees } from 'lucide-react'
 import api from '../lib/api'
@@ -347,13 +348,12 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
               </div>
 
               <div style={{ height: 240, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-                <MapContainer center={positions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
-                  <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <ForgeMap center={positions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
                   <FitRouteBounds positions={positions} />
                   <Polyline positions={positions} pathOptions={{ color: '#EAB308', weight: 5 }} />
                   <CircleMarker center={positions[0]} radius={9} pathOptions={{ color: '#FFFFFF', fillColor: '#22C55E', fillOpacity: 1, weight: 2 }} />
                   <CircleMarker center={positions[positions.length - 1]} radius={6} pathOptions={{ color: '#FFFFFF', fillColor: '#EF4444', fillOpacity: 1, weight: 2 }} />
-                </MapContainer>
+                </ForgeMap>
               </div>
               <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>Green is the start. Red is the finish.{route.startLabel ? ` Start: ${route.startLabel}.` : ''}</p>
 

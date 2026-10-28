@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { PlanningError } = require('../services/plannedLeg');
 const { generateElevationAwareRoute, searchRouteStartPlaces, RouteEngineError } = require('../services/routeEngine');
 const { resolveEntitlement } = require('../lib/betaAccess');
 
@@ -50,14 +51,17 @@ router.post('/search-start', auth, placeSearchLimiter, async (req, res) => {
     if (!resolveEntitlement(user).effectivePremiumAccess) {
       return res.status(403).json({ error: 'Elevation route planning requires Forged Hybrid Pro.', code: 'PRO_REQUIRED' });
     }
-    const places = await searchRouteStartPlaces(req.body?.query);
+    const places = await searchRouteStartPlaces(req.body?.query, { owner: req.user.id });
     return res.json({ places });
   } catch (err) {
+    if (err instanceof PlanningError) {
+      if (err.retryAfter) res.set('Retry-After', String(err.retryAfter));
+      return res.status(err.status).json({ error: err.code, code: err.code });
+    }
     if (err instanceof RouteEngineError) {
-      if (err.status >= 500) console.error('[routes/search-start]', err.code, err.message);
       return res.status(err.status).json({ error: err.message, code: err.code });
     }
-    console.error('[routes/search-start] unexpected failure:', err.message);
+    // Unknown provider/SQL errors may contain private request data; never log them.
     return res.status(500).json({ error: 'Location search failed.' });
   }
 });
@@ -69,14 +73,17 @@ router.post('/generate', auth, routeGenerationLimiter, async (req, res) => {
     if (!resolveEntitlement(user).effectivePremiumAccess) {
       return res.status(403).json({ error: 'Elevation route planning requires Forged Hybrid Pro.', code: 'PRO_REQUIRED' });
     }
-    const route = await generateElevationAwareRoute(req.body);
+    const route = await generateElevationAwareRoute(req.body, { owner: req.user.id });
     res.json({ route });
   } catch (err) {
+    if (err instanceof PlanningError) {
+      if (err.retryAfter) res.set('Retry-After', String(err.retryAfter));
+      return res.status(err.status).json({ error: err.code, code: err.code });
+    }
     if (err instanceof RouteEngineError) {
-      if (err.status >= 500) console.error('[routes/generate]', err.code, err.message);
       return res.status(err.status).json({ error: err.message, code: err.code });
     }
-    console.error('[routes/generate] unexpected failure:', err.message);
+    // Unknown provider/SQL errors may contain private request data; never log them.
     return res.status(500).json({ error: 'Route generation failed.' });
   }
 });
