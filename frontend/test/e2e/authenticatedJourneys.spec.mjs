@@ -1482,6 +1482,12 @@ test('onboarding persists the athlete profile and generates one plan', async ({ 
 
 test('accepted plan hands off through warm-up and run save into a durable passive recap', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
+  // Keep this synthetic journey offline; unexpected external requests still fail.
+  await page.route(url => ['http:', 'https:'].includes(url.protocol)
+    && url.origin !== 'http://127.0.0.1:5197', route => route.abort())
+  await page.route('https://fonts.googleapis.com/css2?*', route => route.fulfill({
+    contentType: 'text/css', body: '',
+  }))
   let savedRun = null
   const apiState = await installAuthenticatedApi(page, {
     user: { sex: 'female' },
@@ -1537,6 +1543,8 @@ test('accepted plan hands off through warm-up and run save into a durable passiv
   await expect(page.getByTestId('post-run-checkin-page-submit')).toHaveCount(0)
 
   expect(savedRun.plan_session_id).toBe(plannedRun.id)
+  expect(requestsFor(apiState, 'GET', '/api/user-routes').map(request => request.search))
+    .toEqual([{ limit: '20', offset: '0' }])
   expect(requestsFor(apiState, 'POST', '/api/runs')).toHaveLength(1)
   expect(requestsFor(apiState, 'PUT', '/api/plans/my/progress')).toHaveLength(1)
   expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(0)
