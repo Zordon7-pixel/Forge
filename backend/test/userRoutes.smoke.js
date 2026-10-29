@@ -159,6 +159,86 @@ async function suite(adapter, dialect) {
   }
   assert.deepEqual((await adapter.dbAll(buildExportSql(ACCOUNT_EXPORT_TABLES.find(entry => entry.table === 'user_routes')), ['alice']))[0].legs_json, JSON.stringify(withDistances.legs));
   assert.equal((await call({ method: 'DELETE', url: distanceUrl })).status, 204);
+  // Exercise the additive running intent through authenticated routes and the
+  // actual store in BOTH dialects, without changing legacy absent metadata.
+  const runningPreference = 'running-avoid-ferries-fords-steps-v1';
+  const mixed = {
+    name: 'Synthetic walking hiking running manual course',
+    waypoints: [[12, 45], [12.001, 45.001], [12.002, 45.002], [12.003, 45.003], [12.004, 45.004]],
+    geometry: { type: 'LineString', coordinates: Array.from({ length: 5 }, (_, i) => [12 + i / 1000, 45 + i / 1000]) },
+    legs: ['foot-walking', 'foot-hiking', 'foot-walking', null].map((profile, i) => ({
+      mode: profile ? 'routed' : 'straight', provenance: profile ? 'ors' : 'manual', profile,
+      startIndex: i, endIndex: i + 1, distanceMeters: 100, distanceSource: profile ? 'ors' : 'geometry',
+      ...(i === 2 ? { routingPreference: runningPreference } : {}),
+    })),
+    distanceMeters: 400,
+  };
+  const mixedCreated = await call({ method: 'POST', body: mixed });
+  assert.equal(mixedCreated.status, 201);
+  assert.deepEqual(mixedCreated.body.route.legs, mixed.legs);
+  const mixedUrl = `/api/user-routes/${mixedCreated.body.route.id}`;
+  const assertMixedRead = async expected => {
+    const read = await call({ url: mixedUrl });
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.body.route.legs, expected.legs);
+    assert.deepEqual(read.body.route.geometry, expected.geometry);
+    assert.equal(read.body.route.name, expected.name);
+    assert.equal(read.body.route.createdAt, mixedCreated.body.route.createdAt);
+    for (const leg of read.body.route.legs.filter(leg => !leg.routingPreference)) {
+      assert.equal(Object.hasOwn(leg, 'routingPreference'), false, 'legacy absence stays absent, not null or inferred intent');
+    }
+    const exportedRows = await adapter.dbAll(buildExportSql(ACCOUNT_EXPORT_TABLES.find(entry => entry.table === 'user_routes')), ['alice']);
+    const exported = exportedRows.find(row => row.id === mixedCreated.body.route.id);
+    assert.deepEqual(JSON.parse(exported.legs_json), expected.legs, 'account export retains per-leg intent');
+    const download = await call({ url: `${mixedUrl}/gpx` });
+    assert.equal(download.status, 200);
+    const track = (await parseStringPromise(download.text)).gpx.trk[0];
+    assert.equal(track.name[0], expected.name);
+    assert.match(track.desc[0], /straight-line segments/);
+    assert.deepEqual(track.trkseg[0].trkpt.map(p => [Number(p.$.lon), Number(p.$.lat)]), expected.geometry.coordinates);
+    assert.ok(track.trkseg[0].trkpt.every(p => !p.time), 'GPX is planned geometry, not recorded evidence');
+  };
+  await assertMixedRead(mixed);
+  for (const options of [{ url: mixedUrl }, { url: `${mixedUrl}/gpx` },
+    { method: 'PUT', url: mixedUrl, body: mixed }, { method: 'DELETE', url: mixedUrl }]) {
+    assert.equal((await call({ ...options, token: bob })).status, 404);
+  }
+  const malformedMixed = [];
+  for (const routingPreference of [null, '', 'running', 'foot-running', 'road-only', {}, [], true]) {
+    const bad = clone(mixed); bad.legs[2].routingPreference = routingPreference; malformedMixed.push(bad);
+  }
+  for (const profile of ['foot-hiking', 'foot-running', 'driving-car', 'cycling-regular', null]) {
+    const bad = clone(mixed); bad.legs[2].profile = profile; malformedMixed.push(bad);
+  }
+  for (const patch of [{ mode: 'straight' }, { provenance: 'manual' }, { intent: 'running' }]) {
+    const bad = clone(mixed); Object.assign(bad.legs[2], patch); malformedMixed.push(bad);
+  }
+  const manualIntent = clone(mixed); manualIntent.legs[3].routingPreference = runningPreference; malformedMixed.push(manualIntent);
+  const beforeMixedInvalid = await adapter.dbAll('SELECT * FROM user_routes ORDER BY id');
+  const mixedAuditStart = sqlAudit.length;
+  for (const body of malformedMixed) {
+    assert.equal((await call({ method: 'POST', body })).status, 400);
+    assert.equal((await call({ method: 'PUT', url: mixedUrl, body })).status, 400);
+  }
+  assert.deepEqual(await adapter.dbAll('SELECT * FROM user_routes ORDER BY id'), beforeMixedInvalid);
+  assert.ok(sqlAudit.slice(mixedAuditStart).every(({ sql }) => !/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql)), 'malformed intent never reaches a write');
+  const mixedUpdate = clone(mixed);
+  mixedUpdate.name = 'Updated synthetic mixed course';
+  mixedUpdate.legs[0].routingPreference = runningPreference;
+  delete mixedUpdate.legs[2].routingPreference;
+  const mixedUpdated = await call({ method: 'PUT', url: mixedUrl, body: mixedUpdate });
+  assert.equal(mixedUpdated.status, 200);
+  assert.deepEqual(mixedUpdated.body.route.legs, mixedUpdate.legs);
+  await assertMixedRead(mixedUpdate);
+  const legacyUpdate = clone(mixedUpdate);
+  delete legacyUpdate.legs[0].routingPreference;
+  assert.equal((await call({ method: 'PUT', url: mixedUrl, body: legacyUpdate })).status, 200);
+  await assertMixedRead(legacyUpdate);
+  assert.equal((await call({ method: 'DELETE', url: mixedUrl })).status, 204);
+  assert.equal((await call({ url: mixedUrl })).status, 404);
+  assert.equal((await call({ url: `${mixedUrl}/gpx` })).status, 404);
+  assert.deepEqual(await adapter.dbAll('SELECT * FROM user_routes'), []);
+  ok(`${dialect}: authenticated mixed running CRUD/account export/GPX, legacy absence and ${malformedMixed.length} malformed intents rejected without writes`);
   const created = await call({ method: 'POST', body: example() });
   assert.equal(created.status, 201);
   const route = created.body.route, id = route.id, url = `/api/user-routes/${id}`;

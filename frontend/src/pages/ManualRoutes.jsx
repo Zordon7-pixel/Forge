@@ -95,6 +95,7 @@ export default function ManualRoutes() {
   const elevation = elevationStats(state.coordinates), turnaround = targetValid ? turnaroundPoint(state.coordinates, targetMeters) : null
   const retrySeconds = Math.max(0, Math.ceil(((state.error?.retryAt || 0) - clock) / 1000))
   const straightCount = state.legs.filter(leg => leg.mode === 'straight').length
+  const hasRunning = !!state.routingPreference || state.legs.some(leg => !!leg.routingPreference)
   const clear = () => { editor.clear(); setSavedId(null); setName('My planned route'); setLocationError(''); setNotice(''); setError('') }
   async function save(copy) {
     if (!targetValid) return
@@ -127,6 +128,7 @@ export default function ManualRoutes() {
         </div>
         <p className="manual-route-mode" role="status">{MODE_LABELS[state.mode]}{state.mode === 'straight' ? ' · Direct segments; paths and access are not checked.' : ' · Only the next leg is routed.'}</p>
         {state.mode === 'routed' && state.routingPreference && <p className="manual-route-help">Running uses walking-based pedestrian routing (foot-walking), avoiding ferries, fords and steps. It is not road-only. No running ETA is provided.</p>}
+        {hasRunning && <p className="manual-route-help" role="note">Routes containing Running legs can be edited and exported here. Using them as a recorder overlay is not supported yet.</p>}
         <label htmlFor="route-map-style">Map display style</label>
         <select id="route-map-style" value={mapStyle} onChange={event => setMapStyle(event.target.value)}>
           {Object.entries(BUILDER_MAP_STYLES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
