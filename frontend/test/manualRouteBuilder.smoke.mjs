@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { createLegClient, createRouteEditor, elevationStats, geometricMeters, legKey, METERS_PER_MILE,
-  MODE_LABELS, RUNNING_PREFERENCE, validateBuilderSavedRoute, validateLegResponse, routePayload, turnaroundPoint, validateSavedRoute, routeError } from '../src/lib/manualRouteBuilder.js'
+  MODE_LABELS, RUNNING_PREFERENCE, validateLegResponse, routePayload, turnaroundPoint, validateSavedRoute, routeError } from '../src/lib/manualRouteBuilder.js'
+import { normalizePrivatePlan, createPrivatePlanPicker } from '../src/lib/activeRunPlannedRoute.js'
 const require = createRequire(import.meta.url)
 const { validateRoute } = require('../../backend/src/lib/userRoutes.js')
 globalThis.fetch = () => { throw new Error('Live network forbidden') }
@@ -175,50 +176,68 @@ await test('loaded undo invalidates pending routing and additive distance fields
     assert.throws(()=>validateRoute(payload))
   }
 })
-await test('synthetic Running preserves real profile and preference through mixed, mirrored, saved and loaded legs', async () => {
-  const f = fixture(body => ({ ...response(body.points, 1000, body.profile),
-    ...(body.routingPreference ? { routingPreference: body.routingPreference } : {}) }))
-  f.editor.setStart(A); f.editor.add(B); await f.tick()
-  f.editor.setRunning(); f.editor.add(C); await f.tick()
-  assert.deepEqual(f.calls[1], { profile: 'foot-walking', points: [B,C], routingPreference: RUNNING_PREFERENCE })
-  f.editor.setProfile('foot-hiking'); f.editor.add(D); await f.tick()
-  f.editor.setMode('straight'); f.editor.add([-73.04,40])
-  const original = f.editor.snapshot()
-  assert.deepEqual(original.legs.map(l=>l.routingPreference), [undefined,RUNNING_PREFERENCE,undefined,undefined])
-  assert.deepEqual(original.legs.map(l=>l.profile), ['foot-walking','foot-walking','foot-hiking',null])
-  f.editor.outAndBack()
-  assert.deepEqual(f.editor.snapshot().legs.map(l=>l.routingPreference), [...original.legs,...original.legs.toReversed()].map(l=>l.routingPreference))
-  const payload = validateRoute(routePayload(f.editor.snapshot(), 'Synthetic mixed Running', null))
-  const saved = receipt(JSON.parse(JSON.stringify(payload)))
-  assert.deepEqual(validateBuilderSavedRoute(saved), saved)
-  assert.throws(()=>validateSavedRoute(saved), 'default recorder-facing validator retains its existing contract')
-  f.editor.load(saved); assert.equal(f.calls.length, 3)
-  assert.deepEqual(routePayload(f.editor.snapshot(), saved.name, null), payload)
-  f.editor.undo(); assert.equal(f.editor.snapshot().legs.length, 7)
-  f.editor.load(saved); f.editor.setRunning(); f.editor.closeLoop(); await f.tick()
-  // Already closed out-and-back adds no fabricated zero-length leg.
-  assert.equal(f.calls.length, 3)
-  for (const patch of [{routingPreference:null},{routingPreference:'running'}, {routingPreference:'running-avoid-ferries-fords-steps-v2'},
-    {profile:'foot-hiking'}, {options:{avoid_features:['ferries']}}]) {
-    const bad=structuredClone(saved); Object.assign(bad.legs[1],patch)
-    assert.throws(()=>validateBuilderSavedRoute(bad))
-    const {id,kind,schemaVersion,provenanceTrust,createdAt,updatedAt,...body}=bad
-    assert.throws(()=>validateRoute(body))
+await test('Running-only and mixed drafts serialize losslessly to the original recorder contract without retaining intent', async () => {
+  for (const mixed of [false, true]) {
+    const f = fixture(body => ({ ...response(body.points, 1000.125, body.profile),
+      ...(body.routingPreference ? { routingPreference: body.routingPreference } : {}) }))
+    f.editor.setStart(A); f.editor.setRunning(); f.editor.add(B); await f.tick()
+    assert.deepEqual(f.calls[0], { profile: 'foot-walking', points: [A,B], routingPreference: RUNNING_PREFERENCE })
+    if (mixed) {
+      f.editor.setProfile('foot-walking'); f.editor.add(C); await f.tick()
+      f.editor.setProfile('foot-hiking'); f.editor.add(D); await f.tick()
+      f.editor.setMode('straight'); f.editor.add([-73.04,40])
+    }
+    const original = structuredClone(f.editor.snapshot())
+    f.editor.outAndBack()
+    const draft = structuredClone(f.editor.snapshot()), callsBefore = f.calls.length
+    assert.deepEqual(draft.legs.map(l=>l.routingPreference), [...original.legs,...original.legs.toReversed()].map(l=>l.routingPreference))
+    const payload = routePayload(f.editor.snapshot(), 'Synthetic Running course', null)
+    assert.deepEqual(f.editor.snapshot(), draft, 'serialization does not mutate legs or undo state')
+    assert.ok(payload.legs.every((leg,i)=>leg!==f.editor.snapshot().legs[i]))
+    assert.deepEqual(payload.geometry.coordinates, draft.coordinates)
+    assert.equal(payload.distanceMeters, draft.distanceMeters)
+    assert.deepEqual(payload.legs, draft.legs.map(({routingPreference,...leg})=>leg))
+    assert.doesNotMatch(JSON.stringify(payload), /routingPreference/)
+    const saved = receipt(validateRoute(payload))
+    assert.deepEqual(validateSavedRoute(saved), saved)
+    assert.deepEqual(normalizePrivatePlan({ownerUserId:'alice',route:saved}, 'alice').route, saved)
+    let picked
+    const picker = createPrivatePlanPicker({ownerUserId:'alice',current:()=>true,
+      get:async()=>({data:{route:saved}}),onChange:value=>{picked=value}})
+    await picker.select(saved.id,{restore:true}); assert.equal(picked.error,''); assert.deepEqual(picked.selection.route,saved); picker.dispose()
+    f.editor.setRunning(); f.editor.load(saved)
+    assert.equal(f.editor.snapshot().profile, 'foot-walking')
+    assert.equal(f.editor.snapshot().routingPreference, undefined)
+    assert.ok(f.editor.snapshot().legs.every(l=>!Object.hasOwn(l,'routingPreference')))
+    assert.deepEqual(routePayload(f.editor.snapshot(), saved.name, null), payload)
+    assert.equal(f.calls.length,callsBefore)
+    f.editor.undo(); assert.equal(f.editor.snapshot().legs.length, draft.legs.length-1)
+    f.editor.load(saved); f.editor.setRunning(); f.editor.closeLoop(); await f.tick()
+    assert.equal(f.calls.length,callsBefore, 'closed geometry adds no fabricated leg')
+    for (const routingPreference of [RUNNING_PREFERENCE,null,'running',{},[],true]) {
+      const bad=structuredClone(saved); bad.legs[0].routingPreference=routingPreference
+      assert.throws(()=>validateSavedRoute(bad)); assert.throws(()=>f.editor.load(bad))
+      assert.equal(normalizePrivatePlan({ownerUserId:'alice',route:bad},'alice'),null)
+    }
+    for (const patch of [{routingPreference:undefined},{routingPreference:null},{routingPreference:'running'},
+      {routingPreference:'running-avoid-ferries-fords-steps-v2'}, {routingPreference:{}}, {routingPreference:[]},
+      {profile:'foot-hiking'}, {mode:'straight',provenance:'manual',profile:null}, {provenance:'manual'},
+      {intent:'running'}, {options:{avoid_features:['ferries']}}, {unknown:true}]) {
+      const bad=structuredClone(draft); Object.assign(bad.legs[0],patch)
+      const before=structuredClone(bad)
+      assert.throws(()=>routePayload(bad,'Invalid intent',null))
+      assert.deepEqual(bad,before)
+    }
+    // Unknown keys also fail on legs without the known ephemeral field.
+    const unknown=structuredClone(draft); delete unknown.legs[0].routingPreference; unknown.legs[0].extra=true
+    assert.throws(()=>routePayload(unknown,'Unknown leg key',null))
+    f.editor.dispose()
   }
   const closing = fixture(body => ({...response(body.points),routingPreference:RUNNING_PREFERENCE}))
   closing.editor.setRunning(); closing.editor.setStart(A); closing.editor.add(B); await closing.tick()
   closing.editor.closeLoop(); await closing.tick()
   assert.deepEqual(closing.calls[1],{profile:'foot-walking',points:[B,A],routingPreference:RUNNING_PREFERENCE})
   closing.editor.undo(); assert.equal(closing.editor.snapshot().legs[0].routingPreference,RUNNING_PREFERENCE)
-  const badStraight = structuredClone(saved)
-  badStraight.legs[3].routingPreference=RUNNING_PREFERENCE
-  assert.throws(()=>validateBuilderSavedRoute(badStraight))
-  const {id,kind,schemaVersion,provenanceTrust,createdAt,updatedAt,...straightBody}=badStraight
-  assert.throws(()=>validateRoute(straightBody))
-  const legacy = receipt(validateRoute(routePayload(original, 'Legacy unaffected', null)))
-  delete legacy.legs[1].routingPreference
-  f.editor.load(legacy)
-  assert.ok(f.editor.snapshot().legs.every(l=>!Object.hasOwn(l,'routingPreference')))
 })
 await test('synthetic Running client keys, in-flight work and response metadata cannot alias walking', async () => {
   const waits = [], client=createLegClient(body=>new Promise(resolve=>waits.push({body,resolve})))

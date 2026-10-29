@@ -4,7 +4,7 @@ import { ArrowLeft, MapPin, Route, Undo2 } from 'lucide-react'
 import api from '../lib/api'
 import { getAuthSession, isAuthSessionCurrent, subscribeAuthSession } from '../lib/tokenStore'
 import { createLegClient, createRouteEditor, elevationStats, METERS_PER_MILE, MODE_LABELS,
-  routePayload, turnaroundPoint, validPoint, validRouteId, validateBuilderSavedRoute } from '../lib/manualRouteBuilder'
+  routePayload, turnaroundPoint, validPoint, validRouteId, validateSavedRoute } from '../lib/manualRouteBuilder'
 import { BUILDER_MAP_STYLES } from '../components/maps/ForgeMap'
 import ManualRouteMap from '../components/maps/ManualRouteMap'
 import './manualRoutes.css'
@@ -95,7 +95,6 @@ export default function ManualRoutes() {
   const elevation = elevationStats(state.coordinates), turnaround = targetValid ? turnaroundPoint(state.coordinates, targetMeters) : null
   const retrySeconds = Math.max(0, Math.ceil(((state.error?.retryAt || 0) - clock) / 1000))
   const straightCount = state.legs.filter(leg => leg.mode === 'straight').length
-  const hasRunning = !!state.routingPreference || state.legs.some(leg => !!leg.routingPreference)
   const clear = () => { editor.clear(); setSavedId(null); setName('My planned route'); setLocationError(''); setNotice(''); setError('') }
   async function save(copy) {
     if (!targetValid) return
@@ -106,7 +105,7 @@ export default function ManualRoutes() {
         : await api.post('/user-routes', payload, config())
       if (!current()) return
       // Validate receipt without replacing the in-memory undo history/distances.
-      const saved = validateBuilderSavedRoute(data?.route)
+      const saved = validateSavedRoute(data?.route)
       setSavedId(saved.id); setNotice('Saved privately as a planned route.')
       try { await readLibrary(0) } catch { if (current()) setError('Route saved, but the library refresh failed. Refresh the library to verify it.') }
     })
@@ -128,7 +127,7 @@ export default function ManualRoutes() {
         </div>
         <p className="manual-route-mode" role="status">{MODE_LABELS[state.mode]}{state.mode === 'straight' ? ' · Direct segments; paths and access are not checked.' : ' · Only the next leg is routed.'}</p>
         {state.mode === 'routed' && state.routingPreference && <p className="manual-route-help">Running uses walking-based pedestrian routing (foot-walking), avoiding ferries, fords and steps. It is not road-only. No running ETA is provided.</p>}
-        {hasRunning && <p className="manual-route-help" role="note">Routes containing Running legs can be edited and exported here. Using them as a recorder overlay is not supported yet.</p>}
+        <p className="manual-route-help" role="note">Running preferences apply only to new legs and are not retained on reload. Saved geometry and distances are retained; loading resets the routing selection to Walking.</p>
         <label htmlFor="route-map-style">Map display style</label>
         <select id="route-map-style" value={mapStyle} onChange={event => setMapStyle(event.target.value)}>
           {Object.entries(BUILDER_MAP_STYLES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}

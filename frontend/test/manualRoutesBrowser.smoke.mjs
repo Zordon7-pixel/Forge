@@ -9,6 +9,8 @@ import path from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { chromium, devices, expect } from '@playwright/test'
+import { validateSavedRoute } from '../src/lib/manualRouteBuilder.js'
+import { normalizePrivatePlan } from '../src/lib/activeRunPlannedRoute.js'
 const RUNNING_PREFERENCE = 'running-avoid-ferries-fords-steps-v1'
 const SYNTHETIC_COLORS = { outdoors:'#225533', landscape:'#685533', 'mobile-atlas':'#334455' }
 // Chromium emulation using Playwright's native descriptor, NOT a physical iPhone.
@@ -83,8 +85,12 @@ try {
     }
     if (url.pathname === '/api/user-routes' && request.method() === 'GET') return route.fulfill({json:{routes:routes.map(({geometry,legs,waypoints,...summary})=>summary),limit:20,offset:0}})
     if (url.pathname === '/api/user-routes' && request.method() === 'POST' || url.pathname.startsWith('/api/user-routes/') && request.method() === 'PUT') {
-      const payload = validateRoute(request.postDataJSON())
+      const body = request.postDataJSON()
+      assert.doesNotMatch(JSON.stringify(body), /routingPreference/, 'API writes contain only saved-route fields')
+      const payload = validateRoute(body)
       const saved = {...payload,id:request.method()==='PUT'?url.pathname.split('/').at(-1):`00000000-0000-4000-8000-${String(routes.length+1).padStart(12,'0')}`,kind:'planned',schemaVersion:1,provenanceTrust:'client_declared',createdAt:'2026-10-20T00:00:00Z',updatedAt:'2026-10-20T00:00:00Z'}
+      assert.deepEqual(validateSavedRoute(saved),saved)
+      assert.deepEqual(normalizePrivatePlan({ownerUserId:'route-smoke',route:saved},'route-smoke').route,saved)
       routes = [...routes.filter(item=>item.id!==saved.id),saved]; return route.fulfill({status:request.method()==='POST'?201:200,json:{route:saved}})
     }
     if (url.pathname.startsWith('/api/user-routes/')) {
@@ -119,8 +125,8 @@ try {
   await expect(page.getByRole('alert')).toContainText('Could not get your location')
   await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(0)
   const map=page.locator('.leaflet-container')
-  const recorderNotice=page.getByRole('note').filter({hasText:'Routes containing Running legs'})
-  await expect(recorderNotice).toHaveCount(0)
+  const newLegNotice=page.getByRole('note').filter({hasText:'Running preferences apply only to new legs'})
+  await expect(newLegNotice).toBeVisible()
   // Wait for the CURRENT layer to be fully visible on screen. Image completion
   // alone cannot detect Leaflet's offscreen opacity=0 fade (the 320px regression).
   async function paintDiagnostics() {
@@ -267,7 +273,7 @@ try {
   corrupt=true; await page.getByRole('button',{name:'Load / edit',exact:true}).click()
   await expect(page.getByRole('alert')).toContainText('Load route failed'); await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(0)
   corrupt=false; await page.getByRole('button',{name:'Load / edit',exact:true}).click()
-  await expect(recorderNotice).toHaveCount(0)
+  await expect(newLegNotice).toBeVisible()
   await expect(page.getByText(/Undo removes the latest waypoint and leg/)).toBeVisible()
   await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeEnabled()
   await page.getByRole('button',{name:'Undo',exact:true}).click()
@@ -350,7 +356,8 @@ try {
   assert.equal(await page.evaluate(()=>window.syntheticMapNode===document.querySelector('.leaflet-container')),true)
   await page.getByLabel('Routing profile').selectOption('running')
   await expect(page.getByText(/Running uses walking-based pedestrian routing/)).toContainText('not road-only. No running ETA')
-  await expect(recorderNotice).toHaveText('Routes containing Running legs can be edited and exported here. Using them as a recorder overlay is not supported yet.')
+  await expect(newLegNotice).toHaveText('Running preferences apply only to new legs and are not retained on reload. Saved geometry and distances are retained; loading resets the routing selection to Walking.')
+  await expect(page.getByText(/recorder overlay is not supported/)).toHaveCount(0)
   let releasePlanning
   planningHold=new Promise(resolve=>{releasePlanning=resolve})
   await map.click({position:{x:210,y:260}})
@@ -359,20 +366,27 @@ try {
   await expect(page.getByText('Routing the new leg… Accepted distance is unchanged.',{exact:true})).toBeVisible()
   releasePlanning(); planningHold=undefined
   await expect(page.getByText('3 accepted legs',{exact:true})).toBeVisible()
+  await page.getByLabel('New leg mode').selectOption('straight')
+  await map.click({position:{x:180,y:200}})
+  const mixedLegLabel='4 accepted legs · 1 planned straight-line legs (dashed)'
+  await expect(page.getByText(mixedLegLabel,{exact:true})).toBeVisible()
   await page.getByLabel('Route name',{exact:true}).fill('Synthetic mixed running course')
   await page.getByRole('button',{name:'Save private route',exact:true}).click()
   await expect(page.getByRole('heading',{name:'Synthetic mixed running course',exact:true})).toBeVisible()
-  assert.deepEqual(routes[0].legs.map(leg=>leg.profile),['foot-walking','foot-hiking','foot-walking'])
-  assert.deepEqual(routes[0].legs.map(leg=>leg.routingPreference),[undefined,undefined,RUNNING_PREFERENCE])
-  await page.getByLabel('Routing profile').selectOption('foot-walking')
-  await expect(recorderNotice).toBeVisible()
+  const mixedSaved=structuredClone(routes[0])
+  assert.deepEqual(mixedSaved.legs.map(leg=>leg.profile),['foot-walking','foot-hiking','foot-walking',null])
+  assert.deepEqual(mixedSaved.legs.slice(0,3).map(leg=>leg.distanceMeters),[1609.344,1609.344,1609.344])
+  assert.doesNotMatch(JSON.stringify(mixedSaved),/routingPreference/)
+  // Save leaves the new-leg selection alone; load must reset a prior Running selection.
+  await expect(page.getByLabel('Routing profile')).toHaveValue('running')
   await page.getByRole('button',{name:'Clear',exact:true}).click()
-  await expect(recorderNotice).toHaveCount(0)
-  await expect(page.getByLabel('Routing profile')).toHaveValue('foot-walking')
   await page.getByRole('button',{name:'Load / edit',exact:true}).click()
-  await expect(page.getByText('3 accepted legs',{exact:true})).toBeVisible()
+  await expect(page.getByText(mixedLegLabel,{exact:true})).toBeVisible()
   await expect(page.getByLabel('Routing profile')).toHaveValue('foot-walking')
-  await expect(recorderNotice).toBeVisible()
+  await expect(newLegNotice).toBeVisible()
+  await page.getByRole('button',{name:'Update private route',exact:true}).click()
+  await expect(page.getByText('Saved privately as a planned route.',{exact:true})).toBeVisible()
+  assert.deepEqual(routes[0],mixedSaved,'save/load/update retains exact profile, geometry and distances')
   for(const {label,width,height} of paintViewports) {
     await page.setViewportSize({width,height})
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
@@ -394,12 +408,49 @@ try {
           && node.getAttribute('d')===window.syntheticGeometry[i])
         && document.querySelector('.leaflet-map-pane').style.transform===window.syntheticView),true)
       await expect(page.getByLabel('Map display style')).toHaveValue(style)
-      await expect(page.getByText('3 accepted legs',{exact:true})).toBeVisible()
-      await expect(recorderNotice).toBeVisible()
+      await expect(page.getByText(mixedLegLabel,{exact:true})).toBeVisible()
+      await expect(newLegNotice).toBeVisible()
       await expect(page.getByTestId('map-attribution')).toHaveText('Maps © Thunderforest, Data © OpenStreetMap contributors')
     }
     assert.equal(calls.filter(call=>call[1]==='/api/route-planning/leg').length,beforePaintCalls)
   }
+  // Construct a separate Running-only route in the actual builder, then reload
+  // both saved courses through the unchanged ActiveRun picker without recording.
+  await page.getByRole('button',{name:'Clear',exact:true}).click()
+  await page.getByLabel('New leg mode').selectOption('routed')
+  await page.getByLabel('Routing profile').selectOption('running')
+  await page.getByRole('button',{name:'Use map center as start',exact:true}).click()
+  await map.click({position:{x:190,y:230}})
+  await expect(page.getByText('1 accepted legs',{exact:true})).toBeVisible()
+  await page.getByLabel('Route name',{exact:true}).fill('Synthetic Running-only course')
+  await page.getByRole('button',{name:'Save private route',exact:true}).click()
+  await expect(page.getByRole('heading',{name:'Synthetic Running-only course',exact:true})).toBeVisible()
+  const runningSaved=structuredClone(routes.find(route=>route.name==='Synthetic Running-only course'))
+  assert.equal(runningSaved.legs.length,1); assert.equal(runningSaved.legs[0].profile,'foot-walking')
+  assert.equal(runningSaved.distanceMeters,1609.344)
+  assert.equal(runningSaved.legs[0].distanceMeters,1609.344)
+  assert.doesNotMatch(JSON.stringify(runningSaved),/routingPreference/)
+  const runningItem=page.locator('.manual-route-library li').filter({has:page.getByRole('heading',{name:runningSaved.name,exact:true})})
+  await runningItem.getByRole('button',{name:'Load / edit',exact:true}).click()
+  await expect(page.getByLabel('Routing profile')).toHaveValue('foot-walking')
+  await page.getByRole('button',{name:'Update private route',exact:true}).click()
+  await expect(page.getByText('Saved privately as a planned route.',{exact:true})).toBeVisible()
+  assert.deepEqual(routes.find(route=>route.id===runningSaved.id),runningSaved)
+  for (const saved of [mixedSaved,runningSaved]) {
+    await page.goto(url.replace('/manual-test','/active-test'))
+    const picker=page.getByLabel('Planned route · Private (optional)')
+    await expect(picker.locator('option')).toHaveCount(3)
+    await picker.selectOption(saved.id)
+    await expect(page.locator('.planned-route-overlay')).toHaveCount(1)
+    await expect(page.locator('.recorded-route-overlay')).toHaveCount(0)
+    await expect(page.getByText('Planned route · Private',{exact:true})).toBeVisible()
+    assert.equal(await page.evaluate(()=>window.watchStarts),0)
+    assert.deepEqual(routes.find(route=>route.id===saved.id),saved)
+    await page.getByRole('button',{name:'Use no planned route',exact:true}).click()
+    await expect(page.locator('.planned-route-overlay')).toHaveCount(0)
+  }
+  await page.goto(url)
+  await expect(page.getByLabel('Routing profile')).toHaveValue('foot-walking')
   await page.getByRole('button',{name:'Clear',exact:true}).click()
   await page.getByRole('button',{name:'Use map center as start',exact:true}).click()
   await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(1)
@@ -494,6 +545,6 @@ try {
   await expect(page.getByRole('alert')).toContainText('Account changed')
   assert.deepEqual(errors,[]); assert.deepEqual(unexpected,[])
   console.log('PASS ActiveRun 393/320: private selection/none/malformed/404/auth race, distinct planned vs GPS, 10000-point retention, map remount immutability, resume reauthorization and recorded-only save')
-  if (!process.argv.includes('--active-only')) console.log('PASS focused browser smoke: actual RunHub Map a run CTA; real editor/map; Running disclosure on selection and mixed load with Walking picker; location success/denial/long-press, straight/walking/hiking/Running/ORS failure; synthetic style recovery, overlay identity and captured PNG color for every style at iPhone 17 descriptor/402x874/320x568 in Chromium emulation (NOT physical device); private CRUD/GPX, fail-closed load, auth fencing, missing/bad tiles and attribution. No live map/probe evidence.')
+  if (!process.argv.includes('--active-only')) console.log('PASS focused browser smoke: actual RunHub Map a run CTA; real editor/map; Running-only/mixed save/load/update accepted by unchanged ActiveRun picker; new-leg disclaimer and reset to Walking; location success/denial/long-press, straight/walking/hiking/Running/ORS failure; synthetic style recovery, overlay identity and captured PNG color for every style at iPhone 17 descriptor/402x874/320x568 in Chromium emulation (NOT physical device); private CRUD/GPX, fail-closed load, auth fencing, missing/bad tiles and attribution. No live map/probe evidence.')
   console.log(`Artifacts: ${artifacts}`)
 } finally { await browser?.close(); await server.close() }

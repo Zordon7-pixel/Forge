@@ -48,7 +48,7 @@ export function turnaroundPoint(points, targetMeters) {
   }
   return null
 }
-export function validateSavedRoute(raw, allowRunning = false) {
+export function validateSavedRoute(raw) {
   if (!keys(raw, ['id', 'kind', 'schemaVersion', 'provenanceTrust', 'createdAt', 'updatedAt',
     'name', 'waypoints', 'geometry', 'legs', 'distanceMeters', 'targetDistanceMeters', 'elevation', 'display'])
     || !validRouteId(raw.id) || raw.kind !== 'planned' || raw.schemaVersion !== 1
@@ -64,12 +64,11 @@ export function validateSavedRoute(raw, allowRunning = false) {
     || !(raw.targetDistanceMeters === null || bounded(raw.targetDistanceMeters, 0, 1000000))) invalid()
   let end = 0
   for (const leg of raw.legs) {
-    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex', 'distanceMeters', 'distanceSource', ...(allowRunning ? ['routingPreference'] : [])])
+    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex', 'distanceMeters', 'distanceSource'])
       || leg.startIndex !== end || !Number.isInteger(leg.endIndex) || leg.endIndex <= end
       || leg.endIndex >= raw.geometry.coordinates.length
       || !(leg.mode === 'routed' && leg.provenance === 'ors' && PROFILES.includes(leg.profile)
         || leg.mode === 'straight' && leg.provenance === 'manual' && leg.profile === null && leg.endIndex === end + 1)) invalid()
-    if (Object.hasOwn(leg, 'routingPreference') && (leg.mode !== 'routed' || !validPreference(leg.routingPreference, leg.profile))) invalid()
     const hasDistance = Object.hasOwn(leg, 'distanceMeters')
     if (hasDistance !== Object.hasOwn(leg, 'distanceSource')
       || (hasDistance && (!bounded(leg.distanceMeters, 0, 1000000)
@@ -92,17 +91,27 @@ export function validateSavedRoute(raw, allowRunning = false) {
     || ![null, 'flat', 'balanced', 'hilly'].includes(d.elevationPreference)) invalid()
   return structuredClone(raw)
 }
-// Builder opt-in only: the recorder keeps its existing saved-route acceptance contract.
-export const validateBuilderSavedRoute = raw => validateSavedRoute(raw, true)
 export function routePayload(state, name, targetDistanceMeters) {
+  // Only this known new-leg preference is ephemeral. Reject unknown fields and
+  // mismatched intent before removing it; the original saved validator checks
+  // every remaining field. Copy each leg so saving never changes editor history.
+  if (!Array.isArray(state.legs)) invalid()
+  const legs = state.legs.map(leg => {
+    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex', 'distanceMeters', 'distanceSource', 'routingPreference'])) invalid()
+    if (Object.hasOwn(leg, 'routingPreference')
+      && (leg.mode !== 'routed' || leg.provenance !== 'ors' || !validPreference(leg.routingPreference, leg.profile))) invalid()
+    const saved = { ...leg }
+    delete saved.routingPreference
+    return saved
+  })
   const elevation = elevationStats(state.coordinates)
   const payload = { name: name.trim(), waypoints: state.waypoints,
-    geometry: { type: 'LineString', coordinates: state.coordinates }, legs: state.legs,
+    geometry: { type: 'LineString', coordinates: state.coordinates }, legs,
     distanceMeters: state.distanceMeters, targetDistanceMeters,
     elevation: { ...elevation, source: elevation.coverage === 'missing' ? null : state.elevationSource },
     display: state.display }
   // Use the same fail-closed shape for writes as reads; no generated fields escape.
-  validateBuilderSavedRoute({ ...payload, id: '00000000-0000-0000-0000-000000000000', kind: 'planned', schemaVersion: 1, provenanceTrust: 'client_declared' })
+  validateSavedRoute({ ...payload, id: '00000000-0000-0000-0000-000000000000', kind: 'planned', schemaVersion: 1, provenanceTrust: 'client_declared' })
   if (new TextEncoder().encode(JSON.stringify(payload)).length > 1048576) invalid()
   return payload
 }
@@ -258,7 +267,7 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
       emit()
     },
     load(raw) {
-      const route = validateBuilderSavedRoute(raw)
+      const route = validateSavedRoute(raw)
       invalidate(); history = []
       const legs = route.legs.map(leg => {
         if (Number.isFinite(leg.distanceMeters) || leg.mode !== 'straight') return leg
@@ -276,7 +285,7 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
       if (knownTotal > route.distanceMeters + 0.000001 || !unknown.length && Math.abs(knownTotal - route.distanceMeters) > 0.000001) {
         for (const leg of legs) { delete leg.distanceMeters; delete leg.distanceSource }
       }
-      state = { ...state, waypoints: route.waypoints, coordinates: route.geometry.coordinates, legs,
+      state = { ...state, profile: 'foot-walking', routingPreference: undefined, waypoints: route.waypoints, coordinates: route.geometry.coordinates, legs,
         distanceMeters: route.distanceMeters, elevationSource: route.elevation.source, display: route.display, legacyDistances: legs.some(leg => !Number.isFinite(leg.distanceMeters)) }
       emit(); return route
     },
