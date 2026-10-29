@@ -1,3 +1,4 @@
+const { validPreference } = require('../services/plannedLeg');
 const { normalizeRouteCoords } = require('./runPostRun');
 
 const MAX_BYTES = 1024 * 1024;
@@ -49,7 +50,7 @@ function validateRoute(value) {
   if (!Array.isArray(value.legs) || value.legs.length !== waypoints.length - 1) invalid();
   let previousEnd = 0;
   const legs = value.legs.map(leg => {
-    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex', 'distanceMeters', 'distanceSource'])
+    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex', 'distanceMeters', 'distanceSource', 'routingPreference'])
       || !Number.isInteger(leg.startIndex) || !Number.isInteger(leg.endIndex)
       || leg.startIndex !== previousEnd || leg.endIndex <= leg.startIndex
       || leg.endIndex >= coordinates.length) invalid();
@@ -58,6 +59,7 @@ function validateRoute(value) {
     const straight = leg.mode === 'straight' && leg.provenance === 'manual'
       && leg.profile === null && leg.endIndex === leg.startIndex + 1;
     if (!routed && !straight) invalid();
+    if (Object.hasOwn(leg, 'routingPreference') && (!routed || !validPreference(leg.routingPreference, leg.profile))) invalid();
     const hasDistance = Object.hasOwn(leg, 'distanceMeters');
     if (hasDistance !== Object.hasOwn(leg, 'distanceSource')
       || (hasDistance && (!bounded(leg.distanceMeters, 0, 1000000)
@@ -67,6 +69,7 @@ function validateRoute(value) {
     previousEnd = leg.endIndex;
     return { mode: leg.mode, provenance: leg.provenance, profile: leg.profile,
       startIndex: leg.startIndex, endIndex: leg.endIndex,
+      ...(Object.hasOwn(leg, 'routingPreference') ? { routingPreference: leg.routingPreference } : {}),
       ...(hasDistance ? { distanceMeters: leg.distanceMeters, distanceSource: leg.distanceSource } : {}) };
   });
   if (previousEnd !== coordinates.length - 1 || !bounded(value.distanceMeters, 0, 1000000)) invalid();

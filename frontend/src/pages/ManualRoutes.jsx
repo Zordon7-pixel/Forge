@@ -4,7 +4,8 @@ import { ArrowLeft, MapPin, Route, Undo2 } from 'lucide-react'
 import api from '../lib/api'
 import { getAuthSession, isAuthSessionCurrent, subscribeAuthSession } from '../lib/tokenStore'
 import { createLegClient, createRouteEditor, elevationStats, METERS_PER_MILE, MODE_LABELS,
-  routePayload, turnaroundPoint, validPoint, validRouteId, validateSavedRoute } from '../lib/manualRouteBuilder'
+  routePayload, turnaroundPoint, validPoint, validRouteId, validateBuilderSavedRoute } from '../lib/manualRouteBuilder'
+import { BUILDER_MAP_STYLES } from '../components/maps/ForgeMap'
 import ManualRouteMap from '../components/maps/ManualRouteMap'
 import './manualRoutes.css'
 
@@ -27,6 +28,7 @@ export default function ManualRoutes() {
   const [busy, setBusy] = useState(''), [notice, setNotice] = useState(''), [error, setError] = useState('')
   const [locating, setLocating] = useState(false), [locationError, setLocationError] = useState('')
   const [fitVersion, setFitVersion] = useState(0), [deleteId, setDeleteId] = useState(null)
+  const [mapStyle, setMapStyle] = useState('outdoors')
   const [clock, setClock] = useState(Date.now())
   const active = useRef(false), controller = useRef(null), operation = useRef(false)
   const current = () => active.current && isAuthSessionCurrent(session)
@@ -103,7 +105,7 @@ export default function ManualRoutes() {
         : await api.post('/user-routes', payload, config())
       if (!current()) return
       // Validate receipt without replacing the in-memory undo history/distances.
-      const saved = validateSavedRoute(data?.route)
+      const saved = validateBuilderSavedRoute(data?.route)
       setSavedId(saved.id); setNotice('Saved privately as a planned route.')
       try { await readLibrary(0) } catch { if (current()) setError('Route saved, but the library refresh failed. Refresh the library to verify it.') }
     })
@@ -119,16 +121,22 @@ export default function ManualRoutes() {
           <div><label htmlFor="route-mode">New leg mode</label><select id="route-mode" value={state.mode} onChange={event => editor.setMode(event.target.value)}>
             <option value="routed">Planned ORS route</option><option value="straight">Planned straight line</option>
           </select></div>
-          <div><label htmlFor="route-profile">Routing profile</label><select id="route-profile" value={state.profile} disabled={state.mode === 'straight'} onChange={event => editor.setProfile(event.target.value)}>
-            <option value="foot-walking">Walking</option><option value="foot-hiking">Hiking</option>
+          <div><label htmlFor="route-profile">Routing profile</label><select id="route-profile" value={state.routingPreference ? 'running' : state.profile} disabled={state.mode === 'straight'} onChange={event => event.target.value === 'running' ? editor.setRunning() : editor.setProfile(event.target.value)}>
+            <option value="running">Running</option><option value="foot-walking">Walking</option><option value="foot-hiking">Hiking</option>
           </select></div>
         </div>
         <p className="manual-route-mode" role="status">{MODE_LABELS[state.mode]}{state.mode === 'straight' ? ' · Direct segments; paths and access are not checked.' : ' · Only the next leg is routed.'}</p>
+        {state.mode === 'routed' && state.routingPreference && <p className="manual-route-help">Running uses walking-based pedestrian routing (foot-walking), avoiding ferries, fords and steps. It is not road-only. No running ETA is provided.</p>}
+        <label htmlFor="route-map-style">Map display style</label>
+        <select id="route-map-style" value={mapStyle} onChange={event => setMapStyle(event.target.value)}>
+          {Object.entries(BUILDER_MAP_STYLES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+        <p className="manual-route-help">Styles change the display only, not routing. Outdoors emphasizes trails; Landscape emphasizes terrain and omits hiking routes; Mobile Atlas emphasizes roads. No style promises newer or complete path data.</p>
         <button type="button" onClick={locate} disabled={locating || !!state.waypoints.length}><MapPin size={18} aria-hidden="true" />{locating ? 'Finding location…' : 'Start at current location'}</button>
         {locationError && <p role="alert">{locationError}</p>}
         <p id="route-map-help">{state.waypoints.length ? 'Tap the map to add a waypoint. A new tap replaces an unaccepted waypoint.' : 'Or long-press the map to set a start. The world view is not your location.'} Keyboard: pan with arrow keys, then use the map center button.</p>
         <div className="manual-route-map" aria-describedby="route-map-help" style={busy ? { pointerEvents: 'none' } : undefined}>
-          <ManualRouteMap state={state} editor={editor} turnaround={turnaround} fitVersion={fitVersion} disabled={!!busy} />
+          <ManualRouteMap mapStyle={mapStyle} state={state} editor={editor} turnaround={turnaround} fitVersion={fitVersion} disabled={!!busy} />
         </div>
         <div className="manual-route-actions">
           <button type="button" onClick={() => editor.undo()} disabled={!state.canUndo}><Undo2 size={16} aria-hidden="true" />Undo</button>

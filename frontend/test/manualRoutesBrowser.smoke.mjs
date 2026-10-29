@@ -8,7 +8,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
-import { chromium, expect } from '@playwright/test'
+import { chromium, devices, expect } from '@playwright/test'
+const RUNNING_PREFERENCE = 'running-avoid-ferries-fords-steps-v1'
 const require = createRequire(import.meta.url)
 const { validateRoute, toGpx } = require('../../backend/src/lib/userRoutes.js')
 const root = fileURLToPath(new URL('..', import.meta.url)), artifacts = mkdtempSync(path.join(os.tmpdir(), 'forge-manual-routes-'))
@@ -24,7 +25,7 @@ const server = await createServer({ root, configFile: false, envDir: path.join(a
   optimizeDeps: { noDiscovery: true, include: ['react','react-dom/client','react/jsx-runtime','react-router','react-leaflet','leaflet','lucide-react','axios','@capacitor/core','@capacitor/app'] },
   plugins: [react(), { name: 'manual-route-smoke', configureServer(s) { s.middlewares.use(async (req,res,next) => {
     if (!['/manual-test','/active-test'].includes(req.url)) return next()
-    res.setHeader('Content-Type','text/html'); res.end(await s.transformIndexHtml(req.url, '<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0"><main id="root" style="padding:16px;max-width:760px;margin:auto"></main><script type="module" src="/manual-entry.jsx"></script></body></html>'))
+    res.setHeader('Content-Type','text/html'); res.end(await s.transformIndexHtml(req.url, '<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0"><p style="margin:8px;text-align:center">SYNTHETIC QA — mocked tiles and routing, no live provider verification</p><main id="root" style="padding:16px;max-width:760px;margin:auto"></main><script type="module" src="/manual-entry.jsx"></script></body></html>'))
   }) }, resolveId(id) { if(id === '/manual-entry.jsx') return id }, load(id) { if(id === '/manual-entry.jsx') return entry } }],
   server: { host:'127.0.0.1',port:0 } })
 let browser
@@ -33,7 +34,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, args: ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] })
   const context = await browser.newContext({ viewport: {width:393,height:852}, serviceWorkers:'block', reducedMotion:'reduce', acceptDownloads:true })
   const page = await context.newPage(), errors = [], unexpected = [], calls = []
-  let routes = [], corrupt = false, routeFailure = false, tiles = false, tileRequests = 0, missing = false, detailHold, savedRunPayload
+  let routes = [], corrupt = false, routeFailure = false, tiles = false, tileRequests = 0, syntheticTiles = false, missing = false, detailHold, planningHold, savedRunPayload
   page.on('pageerror', error => errors.push(error.message))
   await page.addInitScript(() => {
     localStorage.setItem('forge_token','synthetic.'+btoa(JSON.stringify({id:'route-smoke',exp:9999999999}))+'.synthetic')
@@ -44,7 +45,14 @@ try {
   })
   await page.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url())
-    if (url.hostname === 'api.thunderforest.com') { tileRequests++; return route.abort() }
+    if (url.hostname === 'api.thunderforest.com') {
+      tileRequests++
+      const style = url.pathname.split('/')[1]
+      assert.ok(['outdoors','landscape','mobile-atlas'].includes(style), 'fixed style allowlist')
+      if (!syntheticTiles) return route.abort()
+      const color = { outdoors:'#225533', landscape:'#685533', 'mobile-atlas':'#334455' }[style]
+      return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="${color}"/><text x="8" y="100" fill="white">SYNTHETIC ${style}</text></svg>`})
+    }
     if (url.hostname !== '127.0.0.1') { if (url.hostname !== 'fonts.googleapis.com' && url.hostname !== 'fonts.gstatic.com') unexpected.push(url.origin); return route.fulfill({body:'',contentType:'text/css'}) }
     if (!url.pathname.startsWith('/api/')) return route.continue()
     assert.match(request.headers().authorization || '', /^Bearer synthetic\./)
@@ -54,9 +62,11 @@ try {
     if (url.pathname === '/api/meta/map-tiles') return route.fulfill({json:{THUNDERFOREST_API_KEY:tiles ? '0'.repeat(32) : null}})
     if (url.pathname === '/api/route-planning/leg') {
       const body = request.postDataJSON()
-      assert.deepEqual(Object.keys(body).sort(),['points','profile']); assert.equal(body.points.length,2)
+      assert.deepEqual(Object.keys(body).sort(),body.routingPreference ? ['points','profile','routingPreference'] : ['points','profile']); assert.equal(body.points.length,2)
+      if(body.routingPreference) { assert.equal(body.routingPreference,RUNNING_PREFERENCE); assert.equal(body.profile,'foot-walking') }
       if(routeFailure) return route.fulfill({status:503,json:{error:'PLANNING_UNAVAILABLE'}})
-      return route.fulfill({json:{leg:{profile:body.profile,geometry:{type:'LineString',coordinates:body.points},distanceMeters:1609.344,durationSeconds:600}}})
+      await planningHold
+      return route.fulfill({json:{leg:{profile:body.profile,...(body.routingPreference ? {routingPreference:body.routingPreference} : {}),geometry:{type:'LineString',coordinates:body.points},distanceMeters:1609.344,durationSeconds:600}}})
     }
     if (url.pathname === '/api/user-routes' && request.method() === 'GET') return route.fulfill({json:{routes:routes.map(({geometry,legs,waypoints,...summary})=>summary),limit:20,offset:0}})
     if (url.pathname === '/api/user-routes' && request.method() === 'POST' || url.pathname.startsWith('/api/user-routes/') && request.method() === 'PUT') {
@@ -117,8 +127,9 @@ try {
   await expect(page.getByRole('button',{name:'Update private route',exact:true})).toBeDisabled()
   await page.getByRole('button',{name:'Undo',exact:true}).click()
   await expect(page.getByRole('button',{name:'Update private route',exact:true})).toBeEnabled()
-  for(const width of [393,320]) {
-    await page.setViewportSize({width,height:852})
+  for(const viewport of [{width:393,height:852},{width:320,height:852},devices['iPhone 17'].viewport]) {
+    const {width}=viewport
+    await page.setViewportSize(viewport)
     await expect(page.getByTestId('map-attribution')).toHaveText('Maps © Thunderforest, Data © OpenStreetMap contributors')
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`no overflow ${width}`)
     assert.equal(await page.locator('.manual-route-map-center').evaluate(el=>{
@@ -147,6 +158,67 @@ try {
   await page.getByRole('button',{name:'Add map center waypoint',exact:true}).click()
   await expect(page.getByText('2 accepted legs',{exact:true})).toBeVisible()
   await expect(page.locator('.manual-route-metrics')).toContainText('2.00')
+  // Synthetic map-style recovery: preserve the actual map, SVG overlays, view and route.
+  await expect(page.getByLabel('Map display style')).toHaveValue('outdoors')
+  assert.deepEqual(await page.getByLabel('Map display style').locator('option').allTextContents(),
+    ['Outdoors (trails)','Landscape (terrain)','Mobile Atlas (roads)'])
+  await expect(page.getByText(/Styles change the display only/)).toBeVisible()
+  const routingCallsBeforeStyles=calls.filter(call=>call[1]==='/api/route-planning/leg').length
+  await page.evaluate(()=>{
+    window.syntheticMapNode=document.querySelector('.leaflet-container')
+    window.syntheticOverlayNodes=[...document.querySelectorAll('.leaflet-overlay-pane path')]
+    window.syntheticGeometry=window.syntheticOverlayNodes.map(node=>node.getAttribute('d'))
+    window.syntheticView=document.querySelector('.leaflet-map-pane').style.transform
+  })
+  syntheticTiles=true
+  for(const style of ['landscape','mobile-atlas','outdoors']) {
+    await page.getByLabel('Map display style').selectOption(style)
+    await expect(page.getByTestId('forge-map')).toHaveAttribute('data-map-state','ready')
+    await expect.poll(()=>page.locator('.leaflet-tile-loaded').count()).toBeGreaterThan(0)
+    assert.equal(await page.evaluate(()=>window.syntheticMapNode===document.querySelector('.leaflet-container')
+      && window.syntheticOverlayNodes.every((node,i)=>node===document.querySelectorAll('.leaflet-overlay-pane path')[i]
+        && node.getAttribute('d')===window.syntheticGeometry[i])
+      && document.querySelector('.leaflet-map-pane').style.transform===window.syntheticView),true)
+    await expect(page.getByText('2 accepted legs',{exact:true})).toBeVisible()
+    await expect(page.getByTestId('map-attribution')).toHaveText('Maps © Thunderforest, Data © OpenStreetMap contributors')
+  }
+  await page.evaluate(()=>{
+    window.syntheticOldTile=document.querySelector('.leaflet-tile-loaded')
+    window.syntheticOldTile.dispatchEvent(new Event('error'))
+  })
+  await expect(page.getByTestId('forge-map')).toHaveAttribute('data-map-state','unavailable')
+  await page.getByLabel('Map display style').selectOption('landscape')
+  await expect.poll(()=>page.locator('.leaflet-tile-loaded').count()).toBeGreaterThan(0)
+  await page.evaluate(()=>window.syntheticOldTile.dispatchEvent(new Event('error')))
+  await expect(page.getByTestId('forge-map')).toHaveAttribute('data-map-state','ready')
+  await page.getByLabel('Map display style').selectOption('outdoors')
+  await page.evaluate(()=>window.syntheticOldTile.dispatchEvent(new Event('error')))
+  await expect(page.getByTestId('forge-map')).toHaveAttribute('data-map-state','ready')
+  assert.equal(calls.filter(call=>call[1]==='/api/route-planning/leg').length,routingCallsBeforeStyles)
+  assert.equal(await page.evaluate(()=>window.syntheticMapNode===document.querySelector('.leaflet-container')),true)
+  await page.getByLabel('Routing profile').selectOption('running')
+  await expect(page.getByText(/Running uses walking-based pedestrian routing/)).toContainText('not road-only. No running ETA')
+  let releasePlanning
+  planningHold=new Promise(resolve=>{releasePlanning=resolve})
+  await map.click({position:{x:210,y:260}})
+  await expect.poll(()=>calls.filter(call=>call[1]==='/api/route-planning/leg').length).toBe(routingCallsBeforeStyles+1)
+  await page.getByLabel('Map display style').selectOption('mobile-atlas')
+  await expect(page.getByText('Routing the new leg… Accepted distance is unchanged.',{exact:true})).toBeVisible()
+  releasePlanning(); planningHold=undefined
+  await expect(page.getByText('3 accepted legs',{exact:true})).toBeVisible()
+  await page.getByLabel('Route name',{exact:true}).fill('Synthetic mixed running course')
+  await page.getByRole('button',{name:'Save private route',exact:true}).click()
+  await expect(page.getByRole('heading',{name:'Synthetic mixed running course',exact:true})).toBeVisible()
+  assert.deepEqual(routes[0].legs.map(leg=>leg.profile),['foot-walking','foot-hiking','foot-walking'])
+  assert.deepEqual(routes[0].legs.map(leg=>leg.routingPreference),[undefined,undefined,RUNNING_PREFERENCE])
+  await page.getByRole('button',{name:'Clear',exact:true}).click()
+  await page.getByRole('button',{name:'Load / edit',exact:true}).click()
+  await expect(page.getByText('3 accepted legs',{exact:true})).toBeVisible()
+  for(const viewport of [{width:320,height:852},devices['iPhone 17'].viewport]) {
+    await page.setViewportSize(viewport)
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
+    await page.screenshot({path:path.join(artifacts,`synthetic-running-styles-${viewport.width}.png`),fullPage:true})
+  }
   await page.getByRole('button',{name:'Clear',exact:true}).click()
   await page.getByRole('button',{name:'Use map center as start',exact:true}).click()
   await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(1)
@@ -241,6 +313,6 @@ try {
   await expect(page.getByRole('alert')).toContainText('Account changed')
   assert.deepEqual(errors,[]); assert.deepEqual(unexpected,[])
   console.log('PASS ActiveRun 393/320: private selection/none/malformed/404/auth race, distinct planned vs GPS, 10000-point retention, map remount immutability, resume reauthorization and recorded-only save')
-  if (!process.argv.includes('--active-only')) console.log('PASS focused browser smoke: real editor/map, 393/320 layout, location success/denial/long-press, straight/walking/hiking/ORS failure, private CRUD/GPX, fail-closed load, auth fencing, missing/bad tiles and attribution')
+  if (!process.argv.includes('--active-only')) console.log('PASS focused browser smoke: real editor/map, 393/320 layout, location success/denial/long-press, straight/walking/hiking/Running/ORS failure, synthetic style recovery and overlay preservation, iPhone 17 descriptor viewport + 320 layout, private CRUD/GPX, fail-closed load, auth fencing, missing/bad tiles and attribution')
   console.log(`Artifacts: ${artifacts}`)
 } finally { await browser?.close(); await server.close() }

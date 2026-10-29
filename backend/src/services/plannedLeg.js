@@ -4,6 +4,12 @@ const MAX_BYTES = 512 * 1024;
 const TTL_MS = 86400000;
 const TIMEOUT_MS = 8000;
 const PROFILES = ['foot-walking', 'foot-hiking'];
+// Closed preference: version binds intent to these exact documented foot-* options.
+const RUNNING_PREFERENCE = 'running-avoid-ferries-fords-steps-v1';
+const RUNNING_OPTIONS = Object.freeze({ avoid_features: Object.freeze(['ferries', 'fords', 'steps']) });
+const validPreference = (value, profile) => value === RUNNING_PREFERENCE && profile === 'foot-walking';
+const preferenceFields = input => Object.hasOwn(input, 'routingPreference') ? { routingPreference: input.routingPreference } : {};
+const routingOptions = input => input.routingPreference === RUNNING_PREFERENCE ? { options: RUNNING_OPTIONS } : {};
 class PlanningError extends Error {
   constructor(code, status = 503, retryAfter = undefined) {
     super(code);
@@ -18,33 +24,45 @@ const keys = (v, allowed) => object(v) && Object.keys(v).every(k => allowed.incl
 const bounded = (n, min, max) => typeof n === 'number' && Number.isFinite(n) && n >= min && n <= max;
 const point = p => Array.isArray(p) && p.length === 2 && bounded(p[0], -180, 180) && bounded(p[1], -90, 90);
 function validateInput(body) {
-  if (!keys(body, ['profile', 'points']) || !PROFILES.includes(body.profile)
+  if (!keys(body, ['profile', 'points', 'routingPreference']) || !PROFILES.includes(body.profile)
+    || (Object.hasOwn(body, 'routingPreference') && !validPreference(body.routingPreference, body.profile))
     || !Array.isArray(body.points) || body.points.length !== 2 || !point(body.points[0]) || !point(body.points[1])) {
     fail('INVALID_LEG', 400);
   }
-  // No client routing options in v1. Version binds the fixed options in the key.
-  return { profile: body.profile, points: body.points.map(p => p.map(n => Number(n.toFixed(5)) || 0)) };
+  // Arbitrary options are never accepted. Legacy absence keeps original walking/hiking.
+  return { profile: body.profile, ...preferenceFields(body), points: body.points.map(p => p.map(n => Number(n.toFixed(5)) || 0)) };
 }
 function cacheKey(owner, input) {
-  return createHash('sha256').update(JSON.stringify(['leg-v1', owner, input.profile,
-    { instructions: false, elevation: false }, input.points])).digest('hex');
+  return createHash('sha256').update(JSON.stringify(['leg-v2', owner, input.profile, input.routingPreference ?? null,
+    { instructions: false, elevation: false, ...routingOptions(input) }, input.points])).digest('hex');
 }
 function validateLeg(leg) {
-  if (!keys(leg, ['profile', 'geometry', 'distanceMeters', 'durationSeconds'])
+  if (!keys(leg, ['profile', 'geometry', 'distanceMeters', 'durationSeconds', 'routingPreference'])
+    || (Object.hasOwn(leg, 'routingPreference') && !validPreference(leg.routingPreference, leg.profile))
     || !PROFILES.includes(leg.profile) || !keys(leg.geometry, ['type', 'coordinates'])
     || leg.geometry.type !== 'LineString' || !Array.isArray(leg.geometry.coordinates)
     || leg.geometry.coordinates.length < 2 || leg.geometry.coordinates.length > 10000
     || !leg.geometry.coordinates.every(point) || !bounded(leg.distanceMeters, 0, 1000000)
     || !bounded(leg.durationSeconds, 0, 2592000)
     || Buffer.byteLength(JSON.stringify(leg)) > MAX_BYTES) fail('INVALID_PROVIDER_RESPONSE', 502);
-  return { profile: leg.profile, geometry: { type: 'LineString', coordinates: leg.geometry.coordinates },
+  return { profile: leg.profile, ...preferenceFields(leg), geometry: { type: 'LineString', coordinates: leg.geometry.coordinates },
     distanceMeters: leg.distanceMeters, durationSeconds: leg.durationSeconds };
 }
-function providerLeg(data, profile) {
+function providerLeg(data, input) {
   if (data?.type !== 'FeatureCollection' || !Array.isArray(data.features) || data.features.length !== 1
     || data.features[0]?.type !== 'Feature') fail('INVALID_PROVIDER_RESPONSE', 502);
+  // ORS echoes request metadata. Running must prove the actual profile/options;
+  // legacy responses may omit metadata, but supplied contradictions fail closed.
+  const query = data.metadata?.query;
+  if (input.routingPreference || query !== undefined) {
+    const expected = routingOptions(input).options;
+    if (!object(query) || query.profile !== input.profile
+      || (expected ? !keys(query.options, ['avoid_features'])
+        || JSON.stringify(query.options.avoid_features) !== JSON.stringify(expected.avoid_features)
+        : query.options !== undefined && (!keys(query.options, []) ))) fail('INVALID_PROVIDER_RESPONSE', 502);
+  }
   const feature = data.features[0];
-  return validateLeg({ profile, geometry: feature.geometry && {
+  return validateLeg({ profile: input.profile, ...preferenceFields(input), geometry: feature.geometry && {
     type: feature.geometry.type, coordinates: feature.geometry.coordinates,
   }, distanceMeters: feature.properties?.summary?.distance, durationSeconds: feature.properties?.summary?.duration });
 }
@@ -94,7 +112,7 @@ function createPlanner({ store, fetchImpl = (...args) => fetch(...args), getKey 
       const cached = await store.lookup(owner, key);
       if (cached !== null) {
         const leg = validateLeg(JSON.parse(cached));
-        if (leg.profile !== input.profile) fail();
+        if (leg.profile !== input.profile || leg.routingPreference !== input.routingPreference) fail();
         return { leg, status: { cache: 'hit' } };
       }
       await store.reserve(owner);
@@ -112,7 +130,7 @@ function createPlanner({ store, fetchImpl = (...args) => fetch(...args), getKey 
           const response = await fetchImpl(`https://api.heigit.org/openrouteservice/v2/directions/${input.profile}/geojson`, {
             method: 'POST', redirect: 'error', signal: controller.signal,
             headers: { Authorization: credential, 'Content-Type': 'application/json', Accept: 'application/geo+json' },
-            body: JSON.stringify({ coordinates: input.points, instructions: false, elevation: false }),
+            body: JSON.stringify({ coordinates: input.points, instructions: false, elevation: false, ...routingOptions(input) }),
           });
           if (controller.signal.aborted) fail('PROVIDER_TIMEOUT', 504);
           if (response.status === 429) {
@@ -122,7 +140,7 @@ function createPlanner({ store, fetchImpl = (...args) => fetch(...args), getKey 
           }
           if (response.status === 401 || response.status === 403) fail('PLANNING_UNAVAILABLE');
           if (response.status !== 200) fail('PROVIDER_UNAVAILABLE', 502);
-          return providerLeg(await readProvider(response, controller.signal), input.profile);
+          return providerLeg(await readProvider(response, controller.signal), input);
         })()]);
       } finally {
         clearTimer(timer);
@@ -155,4 +173,4 @@ function createPlanner({ store, fetchImpl = (...args) => fetch(...args), getKey 
     return inFlight.get(key);
   };
 }
-module.exports = { createPlanner, PlanningError, validateInput, validateLeg, cacheKey, retrySeconds, MAX_BYTES, TTL_MS, TIMEOUT_MS };
+module.exports = { RUNNING_PREFERENCE, validPreference, createPlanner, PlanningError, validateInput, validateLeg, cacheKey, retrySeconds, MAX_BYTES, TTL_MS, TIMEOUT_MS };

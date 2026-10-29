@@ -65,8 +65,8 @@ function EditorControls({ state, editor, fitVersion, disabled }) {
     }}>{state.waypoints.length ? 'Add map center waypoint' : 'Use map center as start'}</button>
   </div>
 }
-export default function ManualRouteMap({ state, editor, turnaround, fitVersion, disabled }) {
-  return <ForgeMap center={[20, 0]} zoom={2} minZoom={2} worldCopyJump keyboard doubleClickZoom={false}
+export default function ManualRouteMap({ state, editor, turnaround, fitVersion, disabled, mapStyle }) {
+  return <ForgeMap builderMapStyle={mapStyle} center={[20, 0]} zoom={2} minZoom={2} worldCopyJump keyboard doubleClickZoom={false}
     style={{ height: 390 }}>
     <EditorControls state={state} editor={editor} fitVersion={fitVersion} disabled={disabled} />
     {state.legs.map((leg, index) => <Polyline key={`${index}-${leg.mode}-${leg.endIndex}`}
