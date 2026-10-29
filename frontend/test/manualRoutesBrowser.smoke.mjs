@@ -451,7 +451,10 @@ try {
   }
   await page.goto(url)
   await expect(page.getByLabel('Routing profile')).toHaveValue('foot-walking')
-  await page.getByRole('button',{name:'Clear',exact:true}).click()
+  // Return navigation remounts a fresh, empty editor.
+  await expect(page.getByRole('button',{name:'Clear',exact:true})).toBeDisabled()
+  await expect(page.getByText('0 accepted legs',{exact:true})).toBeVisible()
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(0)
   await page.getByRole('button',{name:'Use map center as start',exact:true}).click()
   await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(1)
   await page.evaluate(()=>window.changeAccount()); await expect(page.getByRole('heading',{name:'Account changed'})).toBeVisible()
