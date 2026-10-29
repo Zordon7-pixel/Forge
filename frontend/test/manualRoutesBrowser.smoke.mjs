@@ -1,7 +1,7 @@
 // Mocked browser acceptance for the actual editor, ActiveRun and map. No live providers.
 // Full host/cross-surface SPA and physical-device acceptance remain coordinator-owned.
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
@@ -123,9 +123,63 @@ try {
   await expect(recorderNotice).toHaveCount(0)
   // Wait for the CURRENT layer to be fully visible on screen. Image completion
   // alone cannot detect Leaflet's offscreen opacity=0 fade (the 320px regression).
+  async function paintDiagnostics() {
+    return map.evaluate(node=>{
+      const boundsOf=el=>{
+        const r=el.getBoundingClientRect()
+        return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}
+      }
+      const appearance=el=>{
+        const css=getComputedStyle(el)
+        return {tag:el.tagName,leafletClasses:[...el.classList].filter(name=>/^leaflet-[a-z-]+$/.test(name)),
+          bounds:boundsOf(el),display:css.display,visibility:css.visibility,opacity:css.opacity,
+          overflowX:css.overflowX,overflowY:css.overflowY,transform:css.transform,
+          contentVisibility:css.contentVisibility,clipPath:css.clipPath==='none'?'none':'present'}
+      }
+      const ancestorsOf=el=>{
+        const ancestors=[]
+        for(let parent=el.parentElement;parent;parent=parent.parentElement) ancestors.push(appearance(parent))
+        return ancestors
+      }
+      // Only return fixed style labels. Never serialize src/currentSrc, HTML,
+      // arbitrary attributes, computed background URLs or request headers.
+      const styleOf=tile=>{
+        try {
+          const style=new URL(tile.currentSrc||tile.src).pathname.split('/')[1]
+          return ['outdoors','landscape','mobile-atlas'].includes(style)?style:'other'
+        } catch { return 'invalid' }
+      }
+      const bounds=boundsOf(node)
+      const tiles=[...node.querySelectorAll('.leaflet-tile')].map((tile,index)=>{
+        const r=boundsOf(tile)
+        return {index,style:styleOf(tile),complete:tile.complete,naturalWidth:tile.naturalWidth,
+          naturalHeight:tile.naturalHeight,loadedClass:tile.classList.contains('leaflet-tile-loaded'),
+          status:!tile.complete?'loading':tile.naturalWidth>0?'decoded':'empty-or-failed',
+          intersectsMap:r.right>bounds.left&&r.left<bounds.right&&r.bottom>bounds.top&&r.top<bounds.bottom,
+          ...appearance(tile),ancestors:ancestorsOf(tile)}
+      })
+      const state=node.closest('[data-map-state]')?.getAttribute('data-map-state')
+      const visual=window.visualViewport
+      return {state:['ready','loading','unavailable'].includes(state)?state:'unknown',
+        documentVisibility:document.visibilityState,viewport:{width:innerWidth,height:innerHeight,
+          scrollX,scrollY,devicePixelRatio,documentWidth:document.documentElement.scrollWidth,
+          documentHeight:document.documentElement.scrollHeight,
+          visual:visual?{width:visual.width,height:visual.height,offsetLeft:visual.offsetLeft,
+            offsetTop:visual.offsetTop,pageLeft:visual.pageLeft,pageTop:visual.pageTop,scale:visual.scale}:null},
+        map:{...appearance(node),ancestors:ancestorsOf(node),
+          fullyOnScreen:bounds.top>=0&&bounds.bottom<=innerHeight&&bounds.left>=0&&bounds.right<=innerWidth},
+        tileCount:tiles.length,intersectingTileCount:tiles.filter(tile=>tile.intersectsMap).length,tiles}
+    })
+  }
   async function paintedScreenshot(style, label) {
+    const diagnostics={style,label,stage:'before-scroll',snapshots:{}}
+    try {
+    diagnostics.snapshots.beforeScroll=await paintDiagnostics()
     await map.scrollIntoViewIfNeeded()
+    diagnostics.snapshots.afterScroll=await paintDiagnostics()
+    diagnostics.stage='ready-state'
     await expect(page.getByTestId('forge-map')).toHaveAttribute('data-map-state','ready')
+    diagnostics.stage='opaque-current-layer-and-viewport'
     await expect.poll(()=>map.evaluate((node, selectedStyle)=>{
       const bounds=node.getBoundingClientRect()
       if (bounds.top<0 || bounds.bottom>innerHeight || bounds.left<0 || bounds.right>innerWidth) return false
@@ -148,7 +202,11 @@ try {
     const rect=await map.evaluate(node=>{
       const r=node.getBoundingClientRect(); return {x:r.left+scrollX,y:r.top+scrollY,width:r.width,height:r.height}
     })
+    diagnostics.stage='full-page-screenshot'
+    diagnostics.snapshots.beforeScreenshot=await paintDiagnostics()
     const png=await page.screenshot({path:path.join(artifacts,`synthetic-${label}-${style}.png`),fullPage:true,scale:'css'})
+    diagnostics.snapshots.afterScreenshot=await paintDiagnostics()
+    diagnostics.stage='png-paint'
     assert.ok(png.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')) && png.toString('ascii',12,16)==='IHDR')
     assert.ok(png.length<16000000 && png.readUInt32BE(16)*png.readUInt32BE(20)<=16000000,'bound PNG before decoding')
     // Decode the captured PNG with Chromium's native decoder via existing
@@ -166,8 +224,26 @@ try {
       for(let i=0;i<pixels.length;i+=4) if(pixels[i]===rgb[0]&&pixels[i+1]===rgb[1]&&pixels[i+2]===rgb[2]&&pixels[i+3]===255) matches++
       return matches/(width*height)
     },{base64:png.toString('base64'),rect,color:SYNTHETIC_COLORS[style]})
+    diagnostics.fixtureColorFraction=fraction
     assert.ok(fraction>0.65,`captured ${label}/${style} map must contain >65% fixture color, got ${(fraction*100).toFixed(1)}%`)
     console.log(`PASS SYNTHETIC Chromium paint ${label}/${style}: ${(fraction*100).toFixed(1)}% fixture color; NOT live cartography/probe evidence`)
+    } catch(error) {
+      // Capture geometry BEFORE screenshots can affect compositing/layout. Do
+      // not scroll, alter CSS, retry acceptance or replace the original failure.
+      try { diagnostics.snapshots.failure=await paintDiagnostics() }
+      catch { diagnostics.snapshotUnavailable=true; console.error('FAIL synthetic paint diagnostic snapshot unavailable') }
+      const prefix=path.join(artifacts,`synthetic-${label}-${style}-failure`)
+      console.error('FAIL SYNTHETIC paint diagnostics (no provider URLs/credentials): '+JSON.stringify(diagnostics))
+      try { writeFileSync(prefix+'.json',JSON.stringify(diagnostics,null,2)); console.error('Paint diagnostics: '+prefix+'.json') }
+      catch { console.error('FAIL synthetic paint diagnostic JSON write unavailable') }
+      for(const [suffix,fullPage] of [['viewport',false],['full-page',true]]) {
+        try {
+          await page.screenshot({path:prefix+'-'+suffix+'.png',fullPage,scale:'css',timeout:5000})
+          console.error('Paint failure screenshot: '+prefix+'-'+suffix+'.png')
+        } catch { console.error('FAIL synthetic paint '+suffix+' failure screenshot unavailable') }
+      }
+      throw error
+    }
   }
   await map.hover(); let box=await map.boundingBox()
   await page.mouse.move(box.x+box.width/2,box.y+box.height/2); await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up()
