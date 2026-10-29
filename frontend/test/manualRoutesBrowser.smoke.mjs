@@ -175,7 +175,8 @@ try {
     const diagnostics={style,label,stage:'before-scroll',snapshots:{}}
     try {
     diagnostics.snapshots.beforeScroll=await paintDiagnostics()
-    await map.scrollIntoViewIfNeeded()
+    // Center with viewport margins so subpixel scroll rounding cannot clip an edge.
+    await map.evaluate(node=>node.scrollIntoView({block:'center',inline:'center',behavior:'instant'}))
     diagnostics.snapshots.afterScroll=await paintDiagnostics()
     diagnostics.stage='ready-state'
     await expect(page.getByTestId('forge-map')).toHaveAttribute('data-map-state','ready')
