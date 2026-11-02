@@ -3,15 +3,16 @@
 // WebKit is mandatory in both modes. No Chromium fallback, downloads or providers.
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdirSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { buildFixture, serveFixture, fixtureNegativeControls } from './raceSearchBuiltFixture.mjs'
 const require = createRequire(import.meta.url)
-const { artifactDir, exactDependencies, identity, startFixture, scratchDir, runGuarded, cleanupSteps, bounded } = require('../../backend/test/raceSearch.integration.js')
+const { artifactDir, exactDependencies, identity, startFixture, scratchDir, runGuarded, cleanupSteps, bounded, assertStoredPlanWeeks } = require('../../backend/test/raceSearch.integration.js')
 const artifacts = artifactDir()
 const e2e = process.argv.includes('--e2e')
 const checkEntry = process.argv.includes('--check-entry')
-assert.ok(!(checkEntry && e2e),'--check-entry is a transform check, not E2E')
+assert.ok(!(checkEntry && e2e),'--check-entry is a bundle/link check, not E2E')
 const mode = checkEntry ? 'entry-check' : e2e ? 'e2e' : 'ui'
 const entry = `import React from 'react'; import {createRoot} from 'react-dom/client';
 import {BrowserRouter,Routes,Route} from 'react-router'; import PlanCatalog from '/src/pages/PlanCatalog.jsx';
@@ -30,69 +31,40 @@ const record = (event, details) => appendFileSync(diagnostics,JSON.stringify({ti
 await runGuarded(`browser-${mode}`, async () => {
   writeFileSync(path.join(artifacts,`browser-${mode}-candidate.json`),JSON.stringify(identity(),null,2))
   exactDependencies('frontend')
-  const { createServer, build, isFileServingAllowed } = await import('vite')
-  const { default: react } = await import('@vitejs/plugin-react')
+  const { build } = await import('vite')
   const { webkit, expect } = await import('@playwright/test')
   const root = fileURLToPath(new URL('..',import.meta.url))
-  const scratch = scratchDir('race-browser-')
-  mkdirSync(path.join(scratch,'no-env'))
   process.chdir(root)
 
   if (e2e) fixture=await startFixture()
   // Normal production build is a separate gate; no .env/config/proxy mutation.
   if (process.argv.includes('--build')) {
+    const scratch = scratchDir('race-browser-')
+    mkdirSync(path.join(scratch,'no-env'))
     const config=(await import('../vite.config.js')).default
     await build({...config,root,configFile:false,envDir:path.join(scratch,'no-env'),cacheDir:path.join(scratch,'build-cache'),build:{...config.build,outDir:path.join(scratch,'dist')}})
     console.log('PASS normal production build with empty envDir')
   }
-  server=await createServer({root,configFile:false,envDir:path.join(scratch,'no-env'),cacheDir:path.join(scratch,'cache'),
-    optimizeDeps:{noDiscovery:true,include:['react','react-dom/client','react/jsx-runtime','react-router','lucide-react','axios','@capacitor/core','@capacitor/app']},
-    plugins:[react(),{name:'race-qa-entry',enforce:'pre',configureServer(s){s.middlewares.use(async(req,res,next)=>{
-      if(!['/plan-catalog','/upgrade','/plan'].includes(req.url))return next()
-      res.setHeader('Content-Type','text/html; charset=utf-8')
-      try { res.end(await s.transformIndexHtml(req.url,'<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>SYNTHETIC LOCAL QA — '+mode+'</p><main id="root" style="padding:12px;max-width:760px;margin:auto"></main><script type="module" src="/race-qa.jsx"></script></body></html>')) } catch(error) { next(error) }
-    })},resolveId(id){if(id==='/race-qa.jsx')return path.join(root,'race-qa.jsx')},load(id){if(id===path.join(root,'race-qa.jsx'))return entry}}],
-    server:{host:'127.0.0.1',port:0,...(checkEntry?{middlewareMode:true,ws:false,watch:null}:{}),fs:{strict:true,allow:[root,scratch]},...(fixture?{proxy:{'/api':fixture.base}}:{})}})
-  // Vite initializes the explicit dependency optimizer on listen (or during
-  // createServer in middleware mode). Transforming beforehand caches raw linked
-  // react-router ESM importing named React bindings from CommonJS. Later listen
-  // does not invalidate that cache: WebKit fails before React can mount.
-  if(!checkEntry) await server.listen()
-  // Cache entries import shared chunks that are not in Vite's safeModulePaths.
-  // Strict fs access must explicitly include this invocation's isolated cache.
-  const transformed = await server.transformRequest('/race-qa.jsx')
-  writeFileSync(path.join(artifacts,`browser-${mode}-entry.js`),transformed?.code || '')
-  assert.ok(transformed?.code.includes('qaLogin') && !transformed.code.includes('<BrowserRouter>'),'virtual JSX entry transformed')
-  for(const name of ['react','react-dom_client','react-router']) {
-    assert.ok(transformed.code.includes(`/deps/${name}.js?`),`${name} must be optimized before the entry is cached`)
+  const built = await buildFixture(root, entry, mode)
+  writeFileSync(path.join(artifacts,`browser-${mode}-module-graph.json`),JSON.stringify(built.graph,null,2))
+  // Durable exact served bytes are evidence, not scratch or a source-file server.
+  const bundleEvidence = path.join(artifacts,`browser-${mode}-bundle-${Date.now()}`)
+  for(const [name,body] of built.files){
+    const destination=path.join(bundleEvidence,name.slice(1))
+    mkdirSync(path.dirname(destination),{recursive:true});writeFileSync(destination,body)
   }
-  record('entry-transformed',{id:path.join(root,'race-qa.jsx'),scratch,fsAllow:server.config.server.fs.allow})
+  record('fixture-built-linked',{sources:built.graph.sources.length,chunks:built.graph.chunks.length,bundleEvidence})
+  console.log(built.linkResult)
+  console.log(fixtureNegativeControls(built.files))
   if(checkEntry){
-    // Exercise the actual Vite transforms and dependency loader without opening
-    // a listener. This is a deterministic harness check, never WebKit acceptance.
-    const depUrls=[...transformed.code.matchAll(/(?:from|import)\s*["']([^"']+)["']/g)].map(match=>match[1]).filter(url=>url.startsWith('/@fs')&&url.includes('/deps/'))
-    assert.ok(depUrls.length>0,'entry resolves optimized dependency imports')
-    let chunks=0
-    for(const url of depUrls){
-      const dep=await server.transformRequest(url)
-      assert.ok(dep?.code,'optimized dependency loads')
-      const emitted=readFileSync(url.slice('/@fs'.length).split('?')[0],'utf8')
-      for(const match of emitted.matchAll(/["'](\.\/chunk-[^"']+\.js)["']/g)){
-        const file=path.resolve(path.dirname(url.slice('/@fs'.length).split('?')[0]),match[1])
-        assert.ok(readFileSync(file,'utf8').length,'shared chunk exists')
-        assert.equal(isFileServingAllowed('/@fs'+file,server),true,'isolated shared chunk is allowed')
-        chunks++
-      }
-    }
-    assert.ok(chunks>0,'shared chunks checked, not only entry wrappers')
-    for(const url of ['/src/pages/PlanCatalog.jsx','/src/pages/Upgrade.jsx','/src/context/ProContext.jsx','/src/components/PlanCandidateDecisionSheet.jsx']) assert.ok((await server.transformRequest(url))?.code)
-    record('entry-check-completed',{dependencies:depUrls.length,chunks})
-    console.log(`PASS virtual JSX, actual component transforms, ${depUrls.length} dependency modules and ${chunks} shared chunk references; NOT browser acceptance`)
+    record('entry-check-completed',{sources:built.graph.sources.length,chunks:built.graph.chunks.length})
+    console.log('PASS complete production fixture graph and link controls; NOT browser acceptance')
     return
   }
+  server=await serveFixture(built.files,fixture?.base)
   browser=await webkit.launch()
   writeFileSync(path.join(artifacts,`webkit-${mode}-version.json`),JSON.stringify({browser:'WebKit',version:browser.version(),mode,candidate:identity()},null,2))
-  const origin=`http://127.0.0.1:${server.httpServer.address().port}`
+  const origin=server.origin
   const token=id=>'synthetic.'+Buffer.from(JSON.stringify({id,exp:9999999999})).toString('base64url')+'.synthetic'
   async function pageFor(role='pro', width=393) {
     const context=await browser.newContext({viewport:{width,height:852},timezoneId:'UTC',serviceWorkers:'block',reducedMotion:'reduce'})
@@ -296,7 +268,7 @@ await runGuarded(`browser-${mode}`, async () => {
       assert.equal(after.n,before.n+(role==='free'?0:1))
       if(role!=='free'){
         const stored=await fixture.db.dbGet("SELECT tp.plan_data FROM training_plans tp JOIN user_plans up ON up.plan_id=tp.id WHERE up.user_id=? AND up.status='active'",[fixture.users[role].id])
-        assert.ok(JSON.parse(stored.plan_data).weeks.length>0)
+        assertStoredPlanWeeks(stored)
       }
       console.log(`PASS C WebKit -> actual HTTP -> PostgreSQL ${role} ${catalog?'catalog':'manual'}`)
       assert.deepEqual(pageErrors,[],'no unhandled browser errors before closing the page')
@@ -315,7 +287,7 @@ await runGuarded(`browser-${mode}`, async () => {
   }
   await cleanupSteps([
     ['browser close',()=>browser?.close()],
-    ['Vite close',()=>server?.close()],
+    ['built fixture server close',()=>server?.close()],
     ['fixture close',()=>fixture?.close(),55000],
   ])
 } }).catch(error=>{console.error(error);process.exitCode=1})

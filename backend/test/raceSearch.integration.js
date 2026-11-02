@@ -284,6 +284,16 @@ async function startFixture() {
     throw error;
   }
 }
+// schema.pg.sql declares JSONB; pg's default JSONB parser returns an object and
+// dbGet passes rows through unchanged. String decoding supports serialized rows
+// without changing the production adapter or accepting absent/empty calendars.
+function assertStoredPlanWeeks(stored) {
+  assert.ok(stored, 'active stored plan row exists');
+  const plan = typeof stored.plan_data === 'string' ? JSON.parse(stored.plan_data) : stored.plan_data;
+  assert.ok(plan && typeof plan === 'object' && !Array.isArray(plan), 'stored plan_data is an object');
+  assert.ok(Array.isArray(plan.weeks) && plan.weeks.length > 0, 'stored plan has real calendar weeks');
+  return plan;
+}
 async function integration(fixture) {
   const { call, db, users } = fixture;
   const search = q => call('/races/catalog?q='+encodeURIComponent(q));
@@ -316,7 +326,7 @@ async function integration(fixture) {
     const after = await db.dbGet('SELECT COUNT(*) AS n FROM user_plans WHERE user_id=?',[users[role].id]);
     assert.equal(after.n,before.n+1);
     const stored = await db.dbGet("SELECT tp.plan_data FROM training_plans tp JOIN user_plans up ON up.plan_id=tp.id WHERE up.user_id=? AND up.status='active'",[users[role].id]);
-    assert.ok(JSON.parse(stored.plan_data).weeks.length>0);
+    assertStoredPlanWeeks(stored);
     console.log(`PASS real deterministic preview/apply/persistence ${role} ${catalog?'catalog':'manual'}`);
   }
   fixture.setBeta(false);
@@ -416,7 +426,7 @@ if (process.argv.includes('--dates')) {
 
 }
 module.exports = { artifactDir, exactDependencies, identity, startCluster, startFixture, planningClock,
-  scratchDir, bounded, cleanupSteps, runGuarded, socketAllowed, installSocketGuard };
+  scratchDir, bounded, cleanupSteps, runGuarded, socketAllowed, installSocketGuard, assertStoredPlanWeeks };
 if (require.main === module) {
   if (process.argv.includes('--unit')) {
     // Dependency-free canonical checks require no browser/evidence environment.

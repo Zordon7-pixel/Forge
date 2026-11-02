@@ -5,9 +5,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
-const { artifactDir, socketAllowed, installSocketGuard, bounded, cleanupSteps, runGuarded } = require('./raceSearch.integration');
+const { artifactDir, socketAllowed, installSocketGuard, bounded, cleanupSteps, runGuarded, assertStoredPlanWeeks } = require('./raceSearch.integration');
 
 runGuarded('harness-regression', async () => {
+  // Use the installed pg JSONB parser (OID 3802), without a DB replacement.
+  const plan = { weeks: [{ week_number: 1, days: [{ date: '2027-01-01' }] }] };
+  const serialized = JSON.stringify(plan);
+  const decoded = require('pg').types.getTypeParser(3802, 'text')(serialized);
+  assert.deepEqual(assertStoredPlanWeeks({ plan_data: decoded }), plan);
+  assert.equal(assertStoredPlanWeeks({ plan_data: decoded }), decoded);
+  assert.deepEqual(assertStoredPlanWeeks({ plan_data: serialized }), plan);
+  for (const invalid of [undefined, null, {}, [], 0, true, { weeks: [] }, { weeks: 'wrong' }, { weeks: { length: 1 } }]) {
+    assert.throws(() => assertStoredPlanWeeks({ plan_data: invalid }));
+    if (invalid !== undefined) assert.throws(() => assertStoredPlanWeeks({ plan_data: JSON.stringify(invalid) }));
+  }
+  assert.throws(() => assertStoredPlanWeeks(null));
+  assert.throws(() => assertStoredPlanWeeks({ plan_data: '{bad json' }));
+  console.log('PASS actual pg JSONB decode and serialized rows; missing/malformed/empty calendars rejected');
+
   const dir = '/nonexistent-race-qa-' + randomUUID();
   const socket = dir + '/.s.PGSQL.55481';
   for (const args of [[socket,undefined],[socket,()=>{}],[{path:socket}],[[{path:socket},()=>{}]],

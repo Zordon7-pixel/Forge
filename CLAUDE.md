@@ -5,6 +5,25 @@
 
 ---
 
+## Race search remediation 3 — t_29890261 (patched; uncommitted, NO DEPLOY)
+
+Bounded test-only delta on `5437dcf5de1ea18eef6c9991445fb40638602edf`.
+Both real-DB suites now accept pg-decoded JSONB while requiring nonempty stored
+calendar weeks. The dialog smoke executes the real close delegate through Escape,
+including its generation lock and stale-prefill invalidation.
+
+The browser harness now builds the unchanged real component graph with Vite's
+production bundler and serves only an explicit in-memory asset allowlist. The
+previous dev entry optimizer checks missed transitive component dependencies.
+`--check-entry` builds and links every emitted chunk (including dynamic branches),
+with missing-export/chunk/external-import and filesystem denial controls. Exact
+bundle bytes, hashes and complete module graph are retained as durable evidence.
+No listener/scratch write is needed for this check; it is NOT WebKit acceptance.
+Actual WebKit UI and PostgreSQL E2E gates, network denial, failed receipts and
+failure screenshots remain mandatory and host-owned. No product or dependency
+change. See task artifact `CODEX-REMEDIATION-3-REPORT.md` for verified results and
+remaining host reruns. Earlier optimizer instructions below are historical.
+
 ## Race search remediation 2 — t_29890261 (patched; uncommitted, NO DEPLOY)
 
 Delta on `812a122eb168475d30de58a14e94614420c15359`: catalog SQL uses a

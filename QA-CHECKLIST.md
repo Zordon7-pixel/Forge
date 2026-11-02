@@ -40,10 +40,17 @@ Run through every item for every diff. CRITICAL items block ship. HIGH items mus
 - [ ] Real WebKit (not Chromium substitution) renders 320/393 px empty, error and
   manual states; capture browser/version, exact candidate file hashes, screenshots,
   raw commands/exits and no horizontal overflow/unhandled errors.
-- [ ] Initialize Vite before the first entry transform in listener mode. Assert
-  React/React DOM/Router imports resolve to optimized modules; late initialization
-  leaves raw linked ESM cached. A middleware transform/module-link check alone
-  cannot prove WebKit rendering or satisfy the browser gate.
+- [ ] Build the isolated real-component fixture with Vite's production bundler;
+  retain the complete transitive module graph and hashes of exact served bytes.
+  Link every emitted static/dynamic chunk; reject missing default/star exports,
+  unresolved imports and missing chunks. Serve only explicit local bundle assets,
+  never raw source/dependency paths. Bundle/link checks do not satisfy WebKit rendering.
+- [ ] Read real stored PostgreSQL JSONB as the pg-decoded object (or decode a string
+  representation); assert a present plan object and a nonempty weeks array. Keep
+  real route, assignment-count and stored-plan queries in backend AND browser E2E.
+- [ ] Escape invokes the actual catalog close delegate, invalidates stale prefill
+  and clears the selection; an in-flight generation blocks those effects while
+  retaining focus containment, inert background and scroll lock.
 - [ ] Real browser → actual auth/race/plan routes → isolated PostgreSQL covers
   catalog selection, Pro/beta manual generation, review/apply, stored calendar and
   free upgrade/402/no-plan. UI transport isolation alone is NOT this E2E gate.
@@ -80,8 +87,8 @@ full-shell/native acceptance. `--probe-postgres` checks only cluster availabilit
 
 The browser harness is deliberately `.integration.mjs`, outside the unchanged
 canonical `.smoke.mjs` discovery. WebKit remains mandatory in UI/E2E modes.
-`--check-entry` uses Vite transforms/dependency loaders without a listener; this
-is not browser acceptance. `raceSearchHarness.integration.js` checks real pg
+`--check-entry` builds and links the complete isolated production fixture in memory
+without a listener or scratch writes; this is not browser acceptance. `raceSearchHarness.integration.js` checks real pg
 rejected-connect cleanup and negative-control receipt/timeout behavior, not a
 successful database session. Neither backend integration is auto-smoke.
 
