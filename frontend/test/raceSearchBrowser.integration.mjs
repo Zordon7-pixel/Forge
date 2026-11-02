@@ -3,24 +3,16 @@
 // WebKit is mandatory in both modes. No Chromium fallback, downloads or providers.
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import os from 'node:os'
 import path from 'node:path'
 const require = createRequire(import.meta.url)
-const { artifactDir, exactDependencies, identity, startFixture } = require('../../backend/test/raceSearch.integration.js')
+const { artifactDir, exactDependencies, identity, startFixture, scratchDir, runGuarded, cleanupSteps, bounded } = require('../../backend/test/raceSearch.integration.js')
 const artifacts = artifactDir()
 const e2e = process.argv.includes('--e2e')
-const mode = e2e ? 'e2e' : 'ui'
-writeFileSync(path.join(artifacts,`browser-${mode}-candidate.json`),JSON.stringify(identity(),null,2))
-exactDependencies('frontend')
-const { createServer, build } = await import('vite')
-const { default: react } = await import('@vitejs/plugin-react')
-const { webkit, expect } = await import('@playwright/test')
-const root = fileURLToPath(new URL('..',import.meta.url))
-const scratch = mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(),'race-browser-'))
-mkdirSync(path.join(scratch,'no-env'))
-process.chdir(root)
+const checkEntry = process.argv.includes('--check-entry')
+assert.ok(!(checkEntry && e2e),'--check-entry is a transform check, not E2E')
+const mode = checkEntry ? 'entry-check' : e2e ? 'e2e' : 'ui'
 const entry = `import React from 'react'; import {createRoot} from 'react-dom/client';
 import {BrowserRouter,Routes,Route} from 'react-router'; import PlanCatalog from '/src/pages/PlanCatalog.jsx';
 import Upgrade from '/src/pages/Upgrade.jsx'; import {ProProvider,useProContext} from '/src/context/ProContext.jsx';
@@ -32,8 +24,20 @@ function Probe(){const pro=useProContext(); window.qaRefresh=pro.refreshPro; ret
 const root=createRoot(document.getElementById('root')); window.qaUnmount=()=>root.unmount();
 root.render(<BrowserRouter><ProProvider><Probe/><PlanCandidateDecisionSheet/><Routes><Route path="/plan-catalog" element={<PlanCatalog/>}/><Route path="/upgrade" element={<Upgrade/>}/><Route path="/plan" element={<h1>Plan navigation reached</h1>}/></Routes></ProProvider></BrowserRouter>);`
 let fixture, server, browser
-const unexpected = [], pageErrors = []
-try {
+const unexpected = [], pageErrors = [], pages = []
+const diagnostics = path.join(artifacts,`browser-${mode}-${Date.now()}-diagnostics.jsonl`)
+const record = (event, details) => appendFileSync(diagnostics,JSON.stringify({time:new Date().toISOString(),event,...details})+'\n')
+await runGuarded(`browser-${mode}`, async () => {
+  writeFileSync(path.join(artifacts,`browser-${mode}-candidate.json`),JSON.stringify(identity(),null,2))
+  exactDependencies('frontend')
+  const { createServer, build, isFileServingAllowed } = await import('vite')
+  const { default: react } = await import('@vitejs/plugin-react')
+  const { webkit, expect } = await import('@playwright/test')
+  const root = fileURLToPath(new URL('..',import.meta.url))
+  const scratch = scratchDir('race-browser-')
+  mkdirSync(path.join(scratch,'no-env'))
+  process.chdir(root)
+
   if (e2e) fixture=await startFixture()
   // Normal production build is a separate gate; no .env/config/proxy mutation.
   if (process.argv.includes('--build')) {
@@ -43,12 +47,40 @@ try {
   }
   server=await createServer({root,configFile:false,envDir:path.join(scratch,'no-env'),cacheDir:path.join(scratch,'cache'),
     optimizeDeps:{noDiscovery:true,include:['react','react-dom/client','react/jsx-runtime','react-router','lucide-react','axios','@capacitor/core','@capacitor/app']},
-    plugins:[react(),{name:'race-qa-entry',configureServer(s){s.middlewares.use(async(req,res,next)=>{
+    plugins:[react(),{name:'race-qa-entry',enforce:'pre',configureServer(s){s.middlewares.use(async(req,res,next)=>{
       if(!['/plan-catalog','/upgrade','/plan'].includes(req.url))return next()
       res.setHeader('Content-Type','text/html; charset=utf-8')
-      res.end(await s.transformIndexHtml(req.url,'<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>SYNTHETIC LOCAL QA — '+mode+'</p><main id="root" style="padding:12px;max-width:760px;margin:auto"></main><script type="module" src="/race-qa.jsx"></script></body></html>'))
-    })},resolveId(id){if(id==='/race-qa.jsx')return id},load(id){if(id==='/race-qa.jsx')return entry}}],
-    server:{host:'127.0.0.1',port:0,...(fixture?{proxy:{'/api':fixture.base}}:{})}})
+      try { res.end(await s.transformIndexHtml(req.url,'<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>SYNTHETIC LOCAL QA — '+mode+'</p><main id="root" style="padding:12px;max-width:760px;margin:auto"></main><script type="module" src="/race-qa.jsx"></script></body></html>')) } catch(error) { next(error) }
+    })},resolveId(id){if(id==='/race-qa.jsx')return path.join(root,'race-qa.jsx')},load(id){if(id===path.join(root,'race-qa.jsx'))return entry}}],
+    server:{host:'127.0.0.1',port:0,...(checkEntry?{middlewareMode:true,ws:false,watch:null}:{}),fs:{strict:true,allow:[root,scratch]},...(fixture?{proxy:{'/api':fixture.base}}:{})}})
+  // Cache entries import shared chunks that are not in Vite's safeModulePaths.
+  // Strict fs access must explicitly include this invocation's isolated cache.
+  const transformed = await server.transformRequest('/race-qa.jsx')
+  assert.ok(transformed?.code.includes('qaLogin') && !transformed.code.includes('<BrowserRouter>'),'virtual JSX entry transformed')
+  record('entry-transformed',{id:path.join(root,'race-qa.jsx'),scratch,fsAllow:server.config.server.fs.allow})
+  if(checkEntry){
+    // Exercise the actual Vite transforms and dependency loader without opening
+    // a listener. This is a deterministic harness check, never WebKit acceptance.
+    const depUrls=[...transformed.code.matchAll(/(?:from|import)\s*["']([^"']+)["']/g)].map(match=>match[1]).filter(url=>url.startsWith('/@fs')&&url.includes('/deps/'))
+    assert.ok(depUrls.length>0,'entry resolves optimized dependency imports')
+    let chunks=0
+    for(const url of depUrls){
+      const dep=await server.transformRequest(url)
+      assert.ok(dep?.code,'optimized dependency loads')
+      const emitted=readFileSync(url.slice('/@fs'.length).split('?')[0],'utf8')
+      for(const match of emitted.matchAll(/["'](\.\/chunk-[^"']+\.js)["']/g)){
+        const file=path.resolve(path.dirname(url.slice('/@fs'.length).split('?')[0]),match[1])
+        assert.ok(readFileSync(file,'utf8').length,'shared chunk exists')
+        assert.equal(isFileServingAllowed('/@fs'+file,server),true,'isolated shared chunk is allowed')
+        chunks++
+      }
+    }
+    assert.ok(chunks>0,'shared chunks checked, not only entry wrappers')
+    for(const url of ['/src/pages/PlanCatalog.jsx','/src/pages/Upgrade.jsx','/src/context/ProContext.jsx','/src/components/PlanCandidateDecisionSheet.jsx']) assert.ok((await server.transformRequest(url))?.code)
+    record('entry-check-completed',{dependencies:depUrls.length,chunks})
+    console.log(`PASS virtual JSX, actual component transforms, ${depUrls.length} dependency modules and ${chunks} shared chunk references; NOT browser acceptance`)
+    return
+  }
   await server.listen()
   browser=await webkit.launch()
   writeFileSync(path.join(artifacts,`webkit-${mode}-version.json`),JSON.stringify({browser:'WebKit',version:browser.version(),mode,candidate:identity()},null,2))
@@ -57,7 +89,12 @@ try {
   async function pageFor(role='pro', width=393) {
     const context=await browser.newContext({viewport:{width,height:852},timezoneId:'UTC',serviceWorkers:'block',reducedMotion:'reduce'})
     const page=await context.newPage()
-    page.on('pageerror',e=>pageErrors.push(e.message))
+    pages.push(page)
+    page.on('console',message=>record('console',{type:message.type(),text:message.text()}))
+    page.on('pageerror',error=>{pageErrors.push(error.message);record('pageerror',{message:error.message,stack:error.stack})})
+    const localPath = request => { const url=new URL(request.url()); return url.origin===origin ? url.pathname : null }
+    page.on('requestfailed',request=>{const pathname=localPath(request);if(pathname)record('local-request-failed',{pathname,error:request.failure()?.errorText})})
+    page.on('response',response=>{const pathname=localPath(response.request());if(pathname&&response.status()>=400)record('local-response-error',{pathname,status:response.status()})})
     await page.addInitScript(value=>localStorage.setItem('forge_token',value),fixture?fixture.users[role].token:token(role))
     await context.route('**/*',async route=>{
       const url=new URL(route.request().url())
@@ -211,6 +248,7 @@ try {
     searchBehavior='error';await search(page,'error');await screenshot(page,'error-320')
     await manual(page,'Arbitrary Compact Event');await screenshot(page,'manual-320')
     await page.evaluate(()=>window.qaUnmount())
+    assert.deepEqual(pageErrors,[],'no unhandled browser errors before closing the page')
     await context.close()
     console.log('PASS B/D UI transport-isolated WebKit matrix; NOT database E2E')
   } else {
@@ -253,13 +291,23 @@ try {
         assert.ok(JSON.parse(stored.plan_data).weeks.length>0)
       }
       console.log(`PASS C WebKit -> actual HTTP -> PostgreSQL ${role} ${catalog?'catalog':'manual'}`)
+      assert.deepEqual(pageErrors,[],'no unhandled browser errors before closing the page')
       await context.close()
     }
   }
   assert.deepEqual(unexpected,[],'no unexpected provider or API requests')
   assert.deepEqual(pageErrors,[],'no unhandled browser errors')
-}finally{
-  await browser?.close()
-  await server?.close()
-  await fixture?.close()
-}
+}, { cleanup: async failure => {
+  if(failure){
+    record('failure',{message:failure.message,stack:failure.stack})
+    for(const [index,page] of pages.entries()) if(!page.isClosed()) {
+      try { await bounded('failure screenshot',()=>page.screenshot({path:path.join(artifacts,`webkit-${mode}-failure-${index}-${Date.now()}.png`),fullPage:true,timeout:5000}),6000) }
+      catch(error){record('failure-screenshot-error',{message:error.message});console.error('Failure screenshot unavailable:',error.message)}
+    }
+  }
+  await cleanupSteps([
+    ['browser close',()=>browser?.close()],
+    ['Vite close',()=>server?.close()],
+    ['fixture close',()=>fixture?.close(),55000],
+  ])
+} }).catch(error=>{console.error(error);process.exitCode=1})

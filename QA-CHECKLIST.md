@@ -43,34 +43,52 @@ Run through every item for every diff. CRITICAL items block ship. HIGH items mus
   committed candidate/commit guard precede the single independent exact-SHA review.
   This task never authorizes deployment, even after review.
 
-Focused commands (set a durable absolute `RACE_QA_ARTIFACT_DIR` first):
+Explicit integration commands (set a fresh durable absolute `RACE_QA_ARTIFACT_DIR`
+for each run, and `PLAYWRIGHT_BROWSERS_PATH` to the installed WebKit cache):
 
 ```sh
-node backend/test/raceSearch.integration.js --unit
-node frontend/test/programInputAuthority.smoke.mjs
-node backend/test/raceSearch.integration.js
-node frontend/test/raceSearchBrowser.smoke.mjs --ui --build
-node frontend/test/raceSearchBrowser.smoke.mjs --e2e
-node backend/test/forgedHybridH8.smoke.js
-node backend/test/racePlanQuality.smoke.js
-node backend/test/planningPlanRoutes.smoke.js
-node backend/test/planningMutationRoutes.smoke.js
-node frontend/test/planCandidateActivation.smoke.mjs
-node frontend/test/planCandidateReview.smoke.mjs
+/opt/homebrew/bin/node backend/test/raceSearch.integration.js --unit
+/opt/homebrew/bin/node frontend/test/programInputAuthority.smoke.mjs
+/opt/homebrew/bin/node backend/test/raceSearchHarness.integration.js
+/opt/homebrew/bin/node frontend/test/raceSearchBrowser.integration.mjs --check-entry
+/opt/homebrew/bin/node backend/test/raceSearch.integration.js
+/opt/homebrew/bin/node frontend/test/raceSearchBrowser.integration.mjs --ui --build
+/opt/homebrew/bin/node frontend/test/raceSearchBrowser.integration.mjs --e2e
+/opt/homebrew/bin/node backend/test/forgedHybridH8.smoke.js
+/opt/homebrew/bin/node backend/test/racePlanQuality.smoke.js
+/opt/homebrew/bin/node backend/test/planningPlanRoutes.smoke.js
+/opt/homebrew/bin/node backend/test/planningMutationRoutes.smoke.js
+/opt/homebrew/bin/node frontend/test/planCandidateActivation.smoke.mjs
+/opt/homebrew/bin/node frontend/test/planCandidateReview.smoke.mjs
 ```
 
 The new harness refuses missing/mismatched installed lock versions, creates its
-own PostgreSQL cluster under TMPDIR, omits production catalog seeds, and denies
+own PostgreSQL cluster under `/Users/zordon/.hermes/cache/scratch` (explicit
+`RACE_QA_SCRATCH_DIR` override only), omits production catalog seeds, and denies
 external providers. It does not install anything or use an existing DB. UI mode
 is actual-component/transport-isolated coverage; E2E mode uses real routes, DB and
 the existing deterministic classic path (`mode=off`), not adaptive/public `on` or
 full-shell/native acceptance. `--probe-postgres` checks only cluster availability.
 
-November 2 worker status: deterministic/unit checks passed; real PG, WebKit,
-browser E2E and build/full host QA remain unverified because of missing exact
-dependencies, sandbox shared-memory/listen denial and absent WebKit executable.
-No screenshots or independent review PASS have been produced. See the durable
-`t_29890261` implementation report; unchecked acceptance above remains mandatory.
+The browser harness is deliberately `.integration.mjs`, outside the unchanged
+canonical `.smoke.mjs` discovery. WebKit remains mandatory in UI/E2E modes.
+`--check-entry` uses Vite transforms/dependency loaders without a listener; this
+is not browser acceptance. `raceSearchHarness.integration.js` checks real pg
+rejected-connect cleanup and negative-control receipt/timeout behavior, not a
+successful database session. Neither backend integration is auto-smoke.
+
+- [ ] Require nonempty execution logs, exit 0, and a unique `status: completed`
+  receipt after every assertion and cleanup. An empty log, missing receipt,
+  timeout, unsettled promise, startup/cleanup error or `failed` receipt is a RED.
+- [ ] On render failure retain console/pageerrors, failed local requests/responses
+  and failure screenshot (or explicit screenshot failure), before closing pages.
+- [ ] Startup failure and normal cleanup stop only the newly owned cluster via
+  bounded smart shutdown; preserve all scratch/server logs. No existing DB/service.
+
+November 2 remediation: host dependencies/WebKit are provisioned. Initial host
+reds were remediated in test harnesses; real PostgreSQL/WebKit/E2E host reruns
+remain mandatory. See `CODEX-REMEDIATION-1-REPORT.md` in the task artifact directory
+for the delta and sandbox limits. No independent review PASS is claimed.
 
 ## CRITICAL — Block ship if any are true
 

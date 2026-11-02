@@ -6,6 +6,30 @@
 ---
 
 
+## Race search remediation 1 — t_29890261 (uncommitted; NO DEPLOY)
+
+Bounded harness-only delta atop clean `8483ed210fc88f76bb1a051650c27ecc080aab07`.
+Hermes has resolved exact dependency caches and installed mandatory WebKit; the
+missing-dependency/browser statements in the initial implementation history below
+are superseded. Host found empty backend execution, an unmounted UI, and a stale
+entitlement source-shape check. The remediation corrects pg socket signatures,
+async rejection, bounded cleanup/failed receipts, isolated Vite chunk access and
+browser diagnostics. No product behavior or entitlement grant changed.
+
+Browser acceptance is explicitly `raceSearchBrowser.integration.mjs`, excluded
+from the canonical `.smoke.mjs` discovery. WebKit stays mandatory for `--ui` and
+`--e2e`. `--check-entry` checks only Vite transforms/chunk access without a listener;
+it never substitutes for rendering. Test scratch defaults explicitly to
+`/Users/zordon/.hermes/cache/scratch` (optional `RACE_QA_SCRATCH_DIR` override).
+Use `/opt/homebrew/bin/node`; completion requires a **completed** receipt after
+all assertions and cleanup, exit 0 and populated logs. Failed/unfinished receipts
+are never acceptance. No files/evidence or dependencies are removed.
+
+Delta results, failures and exact host reruns:
+`/Users/zordon/hermes-artifacts/forge-race-search-t29890261-20261102/CODEX-REMEDIATION-1-REPORT.md`.
+Host real PostgreSQL/browser/E2E re-acceptance is still pending; Hermes owns that
+work and lifecycle. No commit, review request or independent QA claim by Codex.
+
 ## Race search and manual entry — t_29890261 (patched; uncommitted, NO DEPLOY)
 
 Assigned base `be9661078390e01b3e1040b9665738a106087964`, branch
@@ -35,9 +59,9 @@ apostrophes and distance spellings on queries and stored SQL fields. No branded
 production aliases or catalog seed changes.
 
 Local evidence (synthetic, no providers):
-- `node backend/test/raceSearch.integration.js --unit`: normalization/bounds and
+- `/opt/homebrew/bin/node backend/test/raceSearch.integration.js --unit`: normalization/bounds and
   fixed-clock date checks in UTC, New York, UTC+14 and Honolulu pass.
-- `node frontend/test/programInputAuthority.smoke.mjs`: existing schedule authority,
+- `/opt/homebrew/bin/node frontend/test/programInputAuthority.smoke.mjs`: existing schedule authority,
   stale prefill success/failure, isolated search/manual validation, and actual
   ProProvider closure tests pass,
   including a real 8-second deferred auth response, login/logout, web/native event
@@ -65,9 +89,9 @@ clean frozen SHA, independent review or release readiness is claimed.
 Host reruns (exact installed dependencies and WebKit must already be available;
 no install is authorized by this task): set `RACE_QA_ARTIFACT_DIR` to the durable
 packet, `PLAYWRIGHT_BROWSERS_PATH` to the host cache, and optionally `RACE_QA_PG_BIN`.
-Run `node backend/test/raceSearch.integration.js`, then
-`node frontend/test/raceSearchBrowser.smoke.mjs --ui --build` and
-`node frontend/test/raceSearchBrowser.smoke.mjs --e2e`. The UI mode isolates HTTP
+Run `/opt/homebrew/bin/node backend/test/raceSearch.integration.js`, then
+`/opt/homebrew/bin/node frontend/test/raceSearchBrowser.integration.mjs --ui --build` and
+`/opt/homebrew/bin/node frontend/test/raceSearchBrowser.integration.mjs --e2e`. The UI mode isolates HTTP
 transport; E2E mounts actual catalog/context/Upgrade/review components against
 actual auth/race/plan routes and a newly created local PostgreSQL cluster, not the
 full SPA shell. The existing deterministic classic (`mode=off`) generation path

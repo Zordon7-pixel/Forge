@@ -56,7 +56,7 @@ console.log('PASS prefill close/replacement and auth-session stale failure fence
 
 // Execute the actual ProProvider request/lifecycle closures with a minimal hook
 // adapter and deferred transport. This is isolated unit coverage, NOT React DOM,
-// native-plugin or browser E2E acceptance (see raceSearchBrowser.smoke.mjs).
+// native-plugin or browser E2E acceptance (see raceSearchBrowser.integration.mjs).
 const proSource = readFileSync(new URL('../src/context/ProContext.jsx', import.meta.url), 'utf8')
   .replace(/^import .+\n/gm, '')
   .replace(/export function /g, 'function ')
