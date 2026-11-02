@@ -15,6 +15,10 @@ Run through every item for every diff. CRITICAL items block ship. HIGH items mus
   generic distance aliases, multi-word name and city/state searches pass against
   real local PostgreSQL; nonsense and filler-only searches return zero; logged-out
   requests return 401. No branded production aliases or seed/catalog expansion.
+- [ ] Actual catalog SQL through the actual adapter has exactly one bind per
+  parameter, including distance/month/state filters. SQL regex literals must not
+  contain question marks; the shared adapter converts those too. Real PostgreSQL
+  must cover stored `Ten-Miler`, compact `Tenmiler`/`Halfmarathon`, and apostrophes.
 - [ ] An 8-second `/auth/me` delay leaves Use this race / generation visibly loading
   and disabled; access failure is visible and retryable, never a silent no-op.
 - [ ] Login/logout and web visibility/native App resume refresh access; in-flight
@@ -36,6 +40,10 @@ Run through every item for every diff. CRITICAL items block ship. HIGH items mus
 - [ ] Real WebKit (not Chromium substitution) renders 320/393 px empty, error and
   manual states; capture browser/version, exact candidate file hashes, screenshots,
   raw commands/exits and no horizontal overflow/unhandled errors.
+- [ ] Initialize Vite before the first entry transform in listener mode. Assert
+  React/React DOM/Router imports resolve to optimized modules; late initialization
+  leaves raw linked ESM cached. A middleware transform/module-link check alone
+  cannot prove WebKit rendering or satisfy the browser gate.
 - [ ] Real browser → actual auth/race/plan routes → isolated PostgreSQL covers
   catalog selection, Pro/beta manual generation, review/apply, stored calendar and
   free upgrade/402/no-plan. UI transport isolation alone is NOT this E2E gate.

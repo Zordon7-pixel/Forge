@@ -5,6 +5,21 @@
 
 ---
 
+## Race search remediation 2 — t_29890261 (patched; uncommitted, NO DEPLOY)
+
+Delta on `812a122eb168475d30de58a14e94614420c15359`: catalog SQL uses a
+capture/backreference instead of regex lookahead, because the unchanged DB adapter
+converts even quoted question marks to binds. Unit coverage executes the actual
+query builder/converter; the real PostgreSQL spelling matrix is expanded.
+The browser harness now initializes Vite before caching its entry transform;
+previously raw linked Router ESM imported `useOptimistic` from CommonJS React.
+Exact dependencies, strict filesystem scope, real components, WebKit assertions,
+network denial and failed-receipt/cleanup behavior remain required.
+
+Deterministic checks/build pass; sandbox `shmget` and loopback `EPERM` block real
+PostgreSQL and browser acceptance. Hermes owns host A–E gates and lifecycle.
+Delta/evidence/host reruns: task artifact `CODEX-REMEDIATION-2-REPORT.md`.
+
 
 ## Race search remediation 1 — t_29890261 (uncommitted; NO DEPLOY)
 

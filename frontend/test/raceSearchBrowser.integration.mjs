@@ -53,10 +53,19 @@ await runGuarded(`browser-${mode}`, async () => {
       try { res.end(await s.transformIndexHtml(req.url,'<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><p>SYNTHETIC LOCAL QA — '+mode+'</p><main id="root" style="padding:12px;max-width:760px;margin:auto"></main><script type="module" src="/race-qa.jsx"></script></body></html>')) } catch(error) { next(error) }
     })},resolveId(id){if(id==='/race-qa.jsx')return path.join(root,'race-qa.jsx')},load(id){if(id===path.join(root,'race-qa.jsx'))return entry}}],
     server:{host:'127.0.0.1',port:0,...(checkEntry?{middlewareMode:true,ws:false,watch:null}:{}),fs:{strict:true,allow:[root,scratch]},...(fixture?{proxy:{'/api':fixture.base}}:{})}})
+  // Vite initializes the explicit dependency optimizer on listen (or during
+  // createServer in middleware mode). Transforming beforehand caches raw linked
+  // react-router ESM importing named React bindings from CommonJS. Later listen
+  // does not invalidate that cache: WebKit fails before React can mount.
+  if(!checkEntry) await server.listen()
   // Cache entries import shared chunks that are not in Vite's safeModulePaths.
   // Strict fs access must explicitly include this invocation's isolated cache.
   const transformed = await server.transformRequest('/race-qa.jsx')
+  writeFileSync(path.join(artifacts,`browser-${mode}-entry.js`),transformed?.code || '')
   assert.ok(transformed?.code.includes('qaLogin') && !transformed.code.includes('<BrowserRouter>'),'virtual JSX entry transformed')
+  for(const name of ['react','react-dom_client','react-router']) {
+    assert.ok(transformed.code.includes(`/deps/${name}.js?`),`${name} must be optimized before the entry is cached`)
+  }
   record('entry-transformed',{id:path.join(root,'race-qa.jsx'),scratch,fsAllow:server.config.server.fs.allow})
   if(checkEntry){
     // Exercise the actual Vite transforms and dependency loader without opening
@@ -81,7 +90,6 @@ await runGuarded(`browser-${mode}`, async () => {
     console.log(`PASS virtual JSX, actual component transforms, ${depUrls.length} dependency modules and ${chunks} shared chunk references; NOT browser acceptance`)
     return
   }
-  await server.listen()
   browser=await webkit.launch()
   writeFileSync(path.join(artifacts,`webkit-${mode}-version.json`),JSON.stringify({browser:'WebKit',version:browser.version(),mode,candidate:identity()},null,2))
   const origin=`http://127.0.0.1:${server.httpServer.address().port}`

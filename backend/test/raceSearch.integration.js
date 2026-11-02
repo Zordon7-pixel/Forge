@@ -10,6 +10,18 @@ const { spawnSync } = require('node:child_process');
 const { randomUUID, createHash } = require('node:crypto');
 const Module = require('node:module');
 const root = path.resolve(__dirname, '../..');
+// Every spelling runs through the real HTTP + PostgreSQL path below. Keep the
+// exact reported query and both compact generic aliases; no production seeds.
+const catalogQueries = [
+  ['generic', ['River Trail Half', 'the River and Trail Half Marathon', 'River & Trail Half',
+    'River n Trail Half', "River 'n' Trail Half", 'River of the Trail Halfmarathon', 'Meadow VA']],
+  ['apostrophe', ["Women's River Ten-Miler", 'Women’s River Ten-Miler', 'Women‘s River Ten-Miler',
+    'womens river 10 miler', 'womens river tenmiler', 'Washington D.C.']],
+  ['brand-fixture', ['rock and roll half marathon', "rock'n'roll half marathon", "Rock 'n' Roll Half Marathon",
+    'rock n roll half marathon', 'rock & roll half-marathon', 'the rock ’n’ roll halfmarathon']],
+  ['compact', ['Creek 10 miler', 'Creek tenmiler', 'Creek Ten-Miler']],
+  ['curly', ["Women's Creek Half Marathon", 'Women’s Creek Halfmarathon', 'Womens Creek Half-Marathon']],
+];
 
 function artifactDir() {
   const dir = process.env.RACE_QA_ARTIFACT_DIR;
@@ -244,6 +256,8 @@ async function startFixture() {
         ['generic','River and Trail Half Marathon','Meadow','VA',date],
         ['apostrophe',"Women's River Ten-Miler",'Washington','DC',date],
         ['brand-fixture',"Rock 'n' Roll Half Marathon",'Meadow','VA',date],
+        ['compact','Creek Tenmiler','Meadow','VA',date],
+        ['curly','Women’s Creek Halfmarathon','Meadow','VA',date],
         ['past','Old River Half Marathon','Meadow','VA',addDays(today(),-1)],
       ];
       for (const [id,name,city,state,raceDate] of catalog) await db.dbRun(
@@ -274,12 +288,14 @@ async function integration(fixture) {
   const { call, db, users } = fixture;
   const search = q => call('/races/catalog?q='+encodeURIComponent(q));
   assert.equal((await call('/races/catalog?q=river',{role:null})).status,401);
-  for (const q of ['River Trail Half','the River and Trail Half Marathon','River & Trail Half','Meadow VA','Women’s River Ten-Miler','womens river 10 miler','Washington D.C.',
-    'rock and roll half marathon',"rock'n'roll half marathon",'rock n roll half marathon','rock & roll half-marathon']) {
+  for (const [id, queries] of catalogQueries) for (const q of queries) {
     const result = await search(q); assert.equal(result.status,200,q); assert.ok(result.body.races.length >= 1,q);
+    assert.ok(result.body.races.some(race => race.id === id),`${q}: expected fixture ${id}`);
     assert.deepEqual(Object.keys(result.body),['races']);
   }
-  for (const q of ['zznotaracexx','the of and n','%_']) assert.deepEqual((await search(q)).body.races,[]);
+  for (const q of ['zznotaracexx','the of and n','%_']) {
+    const result = await search(q); assert.equal(result.status,200,q); assert.deepEqual(result.body.races,[]);
+  }
   console.log('PASS A: real PostgreSQL catalog, auth401, multi-word/location and spelling variants');
   for (const url of ['/plans/generate-for-race/missing','/plans/candidates/missing/apply']) {
     const r=await call(url,{role:'free',body:{}}); assert.equal(r.status,402); assert.equal(r.body.upgrade,true);
@@ -306,7 +322,44 @@ async function integration(fixture) {
   fixture.setBeta(false);
   assert.equal((await db.dbGet('SELECT COUNT(*) AS n FROM user_plans WHERE user_id=?',[users.free.id])).n,0);
 }
-function unitTests() {
+async function sqlAdapterRegression() {
+  // Execute the actual route query-builder and actual adapter converter. Capture
+  // the DB boundary only for this unit assertion; real PG integration above is
+  // still mandatory and never uses this capture in place of the database.
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(root,'backend/src/routes/races.js'),'utf8');
+  const handlers = [...source.matchAll(/router\.get\('\/catalog', auth, (async \(req, res\) => \{[^]*?\n\})\);/g)];
+  assert.equal(handlers.length,1,'exact catalog handler');
+  const adapterSource = fs.readFileSync(path.join(root,'backend/src/db/index.js'),'utf8');
+  const converters = [...adapterSource.matchAll(/function toPositional\(sql\) \{[^]*?\n\}/g)];
+  assert.equal(converters.length,1,'exact actual DB converter');
+  const convert = vm.runInNewContext(`(${converters[0][0]})`);
+  const course = require('../src/lib/raceCourse');
+  let captured;
+  const handler = vm.runInNewContext(`(${handlers[0][1]})`, {
+    raceCourse:course, dbAll:async(sql,params)=>{captured={sql,params};return [];},
+    withCourseIntelligence:row=>row, console,
+  });
+  for (const q of [...catalogQueries.flatMap(([,queries])=>queries), 'zznotaracexx', 'the of and n', '%_',
+    'one two three four five six seven eight nine', "x' OR 1=1 --"]) {
+    for (const filtered of [false,true]) {
+      captured=null;
+      const query={q,...(filtered?{distance:'13.1',month:'11',state:'va'}:{})};
+      await handler({query},{json:body=>assert.equal(body.races.length,0),status:status=>{throw new Error(`Unexpected HTTP ${status}`);}});
+      assert.ok(captured,q);
+      const expected=course.normalizeCatalogSearchTokens(q).flatMap(token=>Array(4).fill(`%${token}%`));
+      if(filtered)expected.push(12.1,14.1,11,'11','VA');
+      assert.deepEqual(Array.from(captured.params),expected,q);
+      const positional=convert(captured.sql);
+      const binds=[...positional.matchAll(/\$(\d+)/g)].map(match=>Number(match[1]));
+      assert.deepEqual(binds,expected.map((_,index)=>index+1),`${q}: each actual SQL bind has exactly one value`);
+      assert.equal((captured.sql.match(/ILIKE \?/g)||[]).length,course.normalizeCatalogSearchTokens(q).length*4);
+      assert.ok(!positional.includes('?'),'no leftover placeholder');
+    }
+  }
+  console.log('PASS actual catalog SQL builder + actual toPositional: all spellings, 8-token bound, filters, parameter order/count');
+}
+async function unitTests() {
 // Dependency-free domain/date checks. These are NOT HTTP/database/browser E2E.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -352,6 +405,7 @@ if (process.argv.includes('--dates')) {
   }
   console.log(`PASS local date semantics ${process.env.TZ}`);
 } else {
+  await sqlAdapterRegression();
   for (const TZ of ['UTC', 'America/New_York', 'Pacific/Kiritimati', 'Pacific/Honolulu']) {
     const child = spawnSync(process.execPath, [__filename, '--unit', '--dates'], { env: { ...process.env, TZ }, encoding: 'utf8' });
     process.stdout.write(child.stdout); process.stderr.write(child.stderr);
@@ -366,7 +420,7 @@ module.exports = { artifactDir, exactDependencies, identity, startCluster, start
 if (require.main === module) {
   if (process.argv.includes('--unit')) {
     // Dependency-free canonical checks require no browser/evidence environment.
-    unitTests();
+    unitTests().catch(error => { console.error(error); process.exitCode = 1; });
   } else {
     let fixture;
     const probe = process.argv.includes('--probe-postgres');

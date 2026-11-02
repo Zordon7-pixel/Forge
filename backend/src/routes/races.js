@@ -451,8 +451,10 @@ router.get('/catalog', auth, async (req, res) => {
         for (const token of searchTokens) {
           // Normalize apostrophes and generic distance words on stored text too.
           // Identifiers and patterns below are fixed; user tokens stay parameters.
+          // Capture/restore the suffix: the DB adapter treats every question mark
+          // as a bind, even inside a quoted regex, so lookahead is unsafe here.
           const fields = ['name', 'city', 'state', 'country'].map((field) =>
-            `regexp_replace(replace(replace(replace(lower(${field}), chr(39), ''), '’', ''), '‘', ''), '\\mten(?=miler\\M|\\M)', '10', 'g') ILIKE ?`);
+            `regexp_replace(replace(replace(replace(lower(${field}), chr(39), ''), '’', ''), '‘', ''), '\\mten(miler\\M|\\M)', '10\\1', 'g') ILIKE ?`);
           where.push(`(${fields.join(' OR ')})`);
           const pattern = `%${token}%`;
           params.push(pattern, pattern, pattern, pattern);
