@@ -5,6 +5,83 @@
 
 ---
 
+
+## Race search and manual entry — t_29890261 (patched; uncommitted, NO DEPLOY)
+
+Assigned base `be9661078390e01b3e1040b9665738a106087964`, branch
+`codex/t_29890261/race-search`. Ten changed repository paths. No integration of
+intentionally divergent origin/main. Hermes owns commit guard, host QA, and the
+single exact-SHA review handoff; this patch has no reviewed candidate SHA.
+
+PlanCatalog now shows prominent searching/result/empty/error feedback and an
+always-available “Enter your race manually” form with arbitrary name, date and
+0.1–100 mile distance. Manual entry does not require premium; generation still
+does. Free/non-beta users see an explanation and a button to the existing Upgrade
+screen before any race/plan write. Pro/beta use the existing save → deterministic
+preview → review when required → apply path. Backend premium middleware and 402
+behavior are unchanged. Race details survive an in-app Upgrade/back round trip
+in session-bound memory. Full reload, logout/account replacement, or an external
+checkout that destroys the page loses that draft; no durable-storage claim.
+
+ProProvider now exposes loading/error/retry, refreshes on the existing auth-session
+subscription and visibility/native App resume events, coalesces in-flight checks,
+and fences/aborts stale account and unmounted responses. Existing Capacitor APIs
+are reused; no native/plugin/config change. Catalog use and generation show a
+disabled access check during delayed auth. Search, prefill, and generation have
+stale/duplicate fences; generation locks the form. Past catalog dates are labeled
+and cannot be selected; date-only validation and week arithmetic avoid timezone
+and DST date shifts. Generic search normalization handles conjunctions, fillers,
+apostrophes and distance spellings on queries and stored SQL fields. No branded
+production aliases or catalog seed changes.
+
+Local evidence (synthetic, no providers):
+- `node backend/test/raceSearch.integration.js --unit`: normalization/bounds and
+  fixed-clock date checks in UTC, New York, UTC+14 and Honolulu pass.
+- `node frontend/test/programInputAuthority.smoke.mjs`: existing schedule authority,
+  stale prefill success/failure, isolated search/manual validation, and actual
+  ProProvider closure tests pass,
+  including a real 8-second deferred auth response, login/logout, web/native event
+  coalescing, stale success/failure, retry/beta and teardown. The hook/transport
+  adapters are unit fixtures, not React DOM or physical native acceptance.
+- Existing racePlanQuality, planningPlanRoutes, planningMutationRoutes and
+  planCandidateActivation smokes pass. JSX parser and JS syntax/diff checks pass.
+- Candidate-review smoke cannot load Axios; worktree dependencies are absent.
+  Canonical installed packages differ from locks (18 frontend, 9 backend version
+  differences plus 2 missing frontend packages); they were not linked/reused for
+  app builds or acceptance. Matching installed parser/Playwright tooling was used
+  only for advisory syntax/availability probes, with version/install-integrity
+  metadata checks. Cached archives were absent, so full package-byte verification
+  was unavailable; these probes do not establish exact dependency acceptance.
+- Real PostgreSQL probe fails `initdb` with sandbox `shmget: Operation not permitted`.
+  Loopback bind probe fails `EPERM`. WebKit launch probe fails because its browser
+  executable is absent. No sandbox bypass or download was attempted.
+
+The durable report, exact commands/exits, source fingerprints and raw logs are in
+`/Users/zordon/hermes-artifacts/forge-race-search-t29890261-20261102/`.
+`CODEX-IMPLEMENTATION-REPORT.md` distinguishes each acceptance item. No real PG
+integration, WebKit render/screenshot, browser E2E, production build, full host QA,
+clean frozen SHA, independent review or release readiness is claimed.
+
+Host reruns (exact installed dependencies and WebKit must already be available;
+no install is authorized by this task): set `RACE_QA_ARTIFACT_DIR` to the durable
+packet, `PLAYWRIGHT_BROWSERS_PATH` to the host cache, and optionally `RACE_QA_PG_BIN`.
+Run `node backend/test/raceSearch.integration.js`, then
+`node frontend/test/raceSearchBrowser.smoke.mjs --ui --build` and
+`node frontend/test/raceSearchBrowser.smoke.mjs --e2e`. The UI mode isolates HTTP
+transport; E2E mounts actual catalog/context/Upgrade/review components against
+actual auth/race/plan routes and a newly created local PostgreSQL cluster, not the
+full SPA shell. The existing deterministic classic (`mode=off`) generation path
+is exercised; adaptive public `on` and physical iPhone acceptance are not implied.
+Migration DDL runs with only production race/shoe data-seed calls omitted; schema,
+repository, auth, middleware, planner, preview/apply and persistence are real.
+The harness never accepts an existing DATABASE_URL and denies external traffic.
+
+Flag for independent review: scope exceeds two files; shared client entitlement /
+auth-session lifecycle changes and PostgreSQL regex matching need host scrutiny.
+Protected byte checks against both required SHAs distinguish inherited map/lock
+changes in the assigned base from this task. No server entitlement, data/evidence,
+map, recorder, native, Garmin, dependency, manifest or configuration mutation.
+
 ## Private route editor — t_0f9a44da Phase 1B (patched; uncommitted)
 
 Session checkpoint `0c5b580ccf4f2c0c8be79edf52878e6e7dd7ddc2`, original

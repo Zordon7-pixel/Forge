@@ -231,7 +231,7 @@ async function runRaceRouteSmoke() {
     check(response.statusCode === 200 && response.payload?.races?.[0]?.id === catalogRace.id, 'Army Ten-Miler alias finds the Army 10-Miler catalog row');
     let searchCall = calls.filter((call) => call.kind === 'all' && call.sql.includes('FROM race_catalog')).at(-1);
     check(same([...new Set(searchCall.params)], ['%army%', '%10%', '%miler%']), 'alias search binds canonical tokens as parameters');
-    check(/city ILIKE \?/.test(searchCall.sql) && /state ILIKE \?/.test(searchCall.sql), 'catalog search spans canonical name and location columns');
+    check(/lower\(city\)/.test(searchCall.sql) && /lower\(state\)/.test(searchCall.sql) && /ILIKE \?/.test(searchCall.sql), 'catalog search spans canonical name and location columns');
     check(!searchCall.sql.includes('Army Ten-Miler'), 'catalog search never interpolates the user query into SQL');
 
     response = await invoke(searchHandler, { query: { q: 'Washington D.C.' }, user: { id: 'owner-h8' } });

@@ -6,6 +6,72 @@ Run through every item for every diff. CRITICAL items block ship. HIGH items mus
 
 ---
 
+
+## Race catalog / manual fallback — permanent regression gate
+
+- [ ] Every Enter/Search attempt shows prominent searching, match count, no-match
+  or actionable error feedback; repeated/out-of-order requests cannot repaint stale results.
+- [ ] Exact test query `rock and roll half marathon`, and/n/&/apostrophe/filler and
+  generic distance aliases, multi-word name and city/state searches pass against
+  real local PostgreSQL; nonsense and filler-only searches return zero; logged-out
+  requests return 401. No branded production aliases or seed/catalog expansion.
+- [ ] An 8-second `/auth/me` delay leaves Use this race / generation visibly loading
+  and disabled; access failure is visible and retryable, never a silent no-op.
+- [ ] Login/logout and web visibility/native App resume refresh access; in-flight
+  duplicates coalesce, stale success/failure cannot change another account, and
+  unmount/late-listener cleanup does not publish stale state.
+- [ ] One-tap manual entry works for every entitlement, accepts arbitrary name,
+  validates a real local date today or later and finite distance 0.1–100 miles.
+- [ ] Pro AND effective beta manual races use exactly the catalog save/preview/apply
+  path and persist real plans; genuine free/non-beta sees the existing upgrade
+  prompt with explanation and creates no plan. Server generation AND apply still
+  return 402 for genuine free/non-beta.
+- [ ] Race name/date/distance survive in-app Upgrade/back; logout/account change
+  clears the memory draft. Full reload/external page destruction remains a stated
+  limitation, never claimed as persistent upgrade recovery.
+- [ ] Past dates are clearly labeled and not selectable; today is not past even at
+  late local times or UTC+14, invalid calendar dates reject, DST does not add a week.
+- [ ] Prefill cannot overwrite edits or reopen/error a closed/replaced dialog;
+  generation is single-flight, account-bound and locks the form during mutations.
+- [ ] Real WebKit (not Chromium substitution) renders 320/393 px empty, error and
+  manual states; capture browser/version, exact candidate file hashes, screenshots,
+  raw commands/exits and no horizontal overflow/unhandled errors.
+- [ ] Real browser → actual auth/race/plan routes → isolated PostgreSQL covers
+  catalog selection, Pro/beta manual generation, review/apply, stored calendar and
+  free upgrade/402/no-plan. UI transport isolation alone is NOT this E2E gate.
+- [ ] Exact dependency/full host gates, both protected-SHA identity checks and clean
+  committed candidate/commit guard precede the single independent exact-SHA review.
+  This task never authorizes deployment, even after review.
+
+Focused commands (set a durable absolute `RACE_QA_ARTIFACT_DIR` first):
+
+```sh
+node backend/test/raceSearch.integration.js --unit
+node frontend/test/programInputAuthority.smoke.mjs
+node backend/test/raceSearch.integration.js
+node frontend/test/raceSearchBrowser.smoke.mjs --ui --build
+node frontend/test/raceSearchBrowser.smoke.mjs --e2e
+node backend/test/forgedHybridH8.smoke.js
+node backend/test/racePlanQuality.smoke.js
+node backend/test/planningPlanRoutes.smoke.js
+node backend/test/planningMutationRoutes.smoke.js
+node frontend/test/planCandidateActivation.smoke.mjs
+node frontend/test/planCandidateReview.smoke.mjs
+```
+
+The new harness refuses missing/mismatched installed lock versions, creates its
+own PostgreSQL cluster under TMPDIR, omits production catalog seeds, and denies
+external providers. It does not install anything or use an existing DB. UI mode
+is actual-component/transport-isolated coverage; E2E mode uses real routes, DB and
+the existing deterministic classic path (`mode=off`), not adaptive/public `on` or
+full-shell/native acceptance. `--probe-postgres` checks only cluster availability.
+
+November 2 worker status: deterministic/unit checks passed; real PG, WebKit,
+browser E2E and build/full host QA remain unverified because of missing exact
+dependencies, sandbox shared-memory/listen denial and absent WebKit executable.
+No screenshots or independent review PASS have been produced. See the durable
+`t_29890261` implementation report; unchecked acceptance above remains mandatory.
+
 ## CRITICAL — Block ship if any are true
 
 - [ ] DELETE or UPDATE query missing `AND user_id=?` ownership check

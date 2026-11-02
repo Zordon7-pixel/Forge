@@ -449,7 +449,11 @@ router.get('/catalog', auth, async (req, res) => {
         where.push('1=0');
       } else {
         for (const token of searchTokens) {
-          where.push('(name ILIKE ? OR city ILIKE ? OR state ILIKE ? OR country ILIKE ?)');
+          // Normalize apostrophes and generic distance words on stored text too.
+          // Identifiers and patterns below are fixed; user tokens stay parameters.
+          const fields = ['name', 'city', 'state', 'country'].map((field) =>
+            `regexp_replace(replace(replace(replace(lower(${field}), chr(39), ''), '’', ''), '‘', ''), '\\mten(?=miler\\M|\\M)', '10', 'g') ILIKE ?`);
+          where.push(`(${fields.join(' OR ')})`);
           const pattern = `%${token}%`;
           params.push(pattern, pattern, pattern, pattern);
         }
