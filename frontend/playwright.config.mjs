@@ -1,5 +1,12 @@
 import { defineConfig } from '@playwright/test'
 
+const portValue = process.env.FORGE_E2E_PORT ?? '5197'
+if (!/^[1-9]\d{0,4}$/.test(portValue) || Number(portValue) > 65535) {
+  throw new Error('FORGE_E2E_PORT must be an integer TCP port from 1 to 65535 (no whitespace or leading zeros)')
+}
+const port = Number(portValue)
+const baseURL = `http://127.0.0.1:${port}`
+
 export default defineConfig({
   testDir: './test/e2e',
   testMatch: ['coreJourneys.spec.mjs', 'authenticatedJourneys.spec.mjs', 'dashboardWeeklyRecap.spec.mjs', 'coachTakeaways.spec.mjs', 'runNearMe.spec.mjs'],
@@ -9,15 +16,15 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [['line'], ['html', { open: 'never' }]] : 'line',
   use: {
-    baseURL: 'http://127.0.0.1:5197',
+    baseURL,
     serviceWorkers: 'block',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },
   webServer: {
-    command: 'npm run build && npm run preview -- --host 127.0.0.1 --port 5197',
-    url: 'http://127.0.0.1:5197',
+    command: `npm run build && npm run preview -- --host 127.0.0.1 --port ${port} --strictPort`,
+    url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,
   },
