@@ -170,6 +170,8 @@ const generationEnd=source.indexOf('\n  return (',generationStart)
 assert.ok(generationStart>0&&generationEnd>generationStart)
 let validationError='', gateCalls=0
 const validation={ generationInFlight:{current:null},parsedGoalTime:undefined,weeks:'',selectedDistance:13.1,
+  trainUntilDuration:()=>({weeks:null,error:''}),
+  trainUntil:'',
   runDaysPerWeek:3,liftingEnabled:false,liftDaysPerWeek:0,isRacePlan:true,
   raceDraft:{name:'Arbitrary Sunrise Event',date:'2027-01-01'},trainingDays:['Tue','Thu','Sat'],liftEligibleWeekdays:[],
   localTodayISO:()=> '2026-11-02', isValidISODate: value=>/^\d{4}-\d{2}-\d{2}$/.test(value),
