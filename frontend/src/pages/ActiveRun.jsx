@@ -1,6 +1,4 @@
 import ForgeMap from '../components/maps/ForgeMap'
-import { RunReadinessExplainer, runReadiness, useRunReadiness } from '../components/RunReadiness'
-import { runReadinessLine } from '../lib/runReadiness'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { CircleMarker, Polyline, useMapEvents } from 'react-leaflet'
@@ -29,8 +27,6 @@ import { createPrivatePlanPicker, plannedPresentation, privatePlanOverlay } from
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 import { buildLiveActivityStart, buildLiveActivityUpdate } from '../lib/liveActivityState'
 import LiveActivityService from '../services/LiveActivityService'
-import { finishedPhoneRoute, phoneRunDiagnostics, phoneRunStatusLine, acceptGpsFix, createGpsTrace, gpsPaused, METERS_PER_MILE, runElapsedSeconds, runPauseLabel, setTraceAutoPause, splitTraceSegments, traceBoundary } from '../lib/gpsTrace'
-import { createGpsForegroundHandler, createPhoneGpsWatcher } from '../lib/phoneGpsWatcher'
 
 /*
  * Phase B migration note: tracked completion formerly called
@@ -39,8 +35,14 @@ import { createGpsForegroundHandler, createPhoneGpsWatcher } from '../lib/phoneG
  * Both behaviors are retired; the durable factual recap is now immediately ready.
  */
 import {
+  requestNativeRunLocation,
+  requestWebRunLocation,
+  canAcceptRunLocationPoint,
   consumeRunAutoStartState,
+  createRunLocationWatcherCallbacks,
+  createRunLocationWatcherLifecycle,
   RUN_LOCATION_STATUS,
+  runLocationErrorStatus,
   runLocationStatusMessage,
 } from '../lib/runLocationAccess'
 import {
@@ -54,9 +56,6 @@ import {
   ACTIVE_RUN_MAP_LAYOUTS,
   activeRunBackDecision,
   activeRunMapCommand,
-  activeRunMapViewDecision,
-  activeRunNearViewEdge,
-  createActiveRunMapPolicy,
   loadActiveRunMapLayout,
   normalizeMapPosition,
   resolveActiveRunReturnTarget,
@@ -78,6 +77,17 @@ function restoreCompletionHandoff(ownerUserId) {
   }
   const handoff = loadRunCompletionHandoff(null, ownerUserId)
   return { handoff, invalid: hadStoredHandoff && !handoff }
+}
+
+function haversineMiles(a, b) {
+  const R = 3958.8
+  const toRad = d => (d * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLon = toRad(b.lon - a.lon)
+  const lat1 = toRad(a.lat)
+  const lat2 = toRad(b.lat)
+  const x = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2)
+  return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
 }
 
 const ZONES = [
@@ -180,40 +190,32 @@ function normalizePlannedRoute(value) {
 }
 
 function MapViewController({
-  layout,
   command,
   followPaused,
   onFollowPaused,
   recenterToken,
   reduceMotion,
 }) {
-  const cameraPolicy = useRef(createActiveRunMapPolicy())
   const map = useMapEvents({
     dragstart: () => {
-      if (layout === 'follow') onFollowPaused()
+      if (command.type === 'follow') onFollowPaused()
     },
   })
 
   useEffect(() => {
     map.invalidateSize({ animate: false })
-    const { state, action } = activeRunMapViewDecision(cameraPolicy.current, {
-      layout, command, followPaused, recenterToken, nowMs: performance.now(),
-      nearViewEdge: layout === 'follow' && !followPaused && command.type === 'follow'
-        ? activeRunNearViewEdge(map, command.position) : null,
-    })
-    cameraPolicy.current = state
-    if (action?.type === 'fit' && command.type === 'fit') {
-      if (action.positions.length === 1) map.setView(action.positions[0], 15, { animate: false })
-      else map.fitBounds(action.positions, { padding: [24, 24], animate: !reduceMotion })
+    if (command.type === 'fit') {
+      if (command.positions.length === 1) map.setView(command.positions[0], 15, { animate: false })
+      else if (command.positions.length > 1) map.fitBounds(command.positions, { padding: [24, 24], animate: !reduceMotion })
     }
-    if (action?.type === 'pan' && command.type === 'follow') {
+    if (command.type === 'follow' && !followPaused) {
       map.panTo(command.position, { animate: !reduceMotion, duration: reduceMotion ? 0 : 0.35 })
     }
-  }, [layout, command, followPaused, map, recenterToken, reduceMotion])
+  }, [command, followPaused, map, recenterToken, reduceMotion])
   return null
 }
 
-export default function ActiveRun({ backgroundRefreshStatus } = {}) {
+export default function ActiveRun() {
   const location = useLocation()
   const navigate = useNavigate()
   const { fmt, units } = useUnits()
@@ -289,7 +291,9 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   const [distanceMiles, setDistanceMiles] = useState(restoredSession?.distanceMiles || 0)
   const [gpsError, setGpsError] = useState('')
   const [gpsAvailable, setGpsAvailable] = useState(restoredSession ? restoredSession.gpsAvailable : true)
-  const [locationStatus, setLocationStatus] = useState(RUN_LOCATION_STATUS.IDLE)
+  const [locationStatus, setLocationStatus] = useState(() => (
+    restoredSession?.gpsStarted ? RUN_LOCATION_STATUS.READY : RUN_LOCATION_STATUS.IDLE
+  ))
   const [manualDistance, setManualDistance] = useState(restoredSession?.manualDistance || '')
   const [awaitingManualDistance, setAwaitingManualDistance] = useState(restoredSession?.phase === 'awaiting_distance')
   const [saving, setSaving] = useState(false)
@@ -324,29 +328,13 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   const activeRunReturnTarget = useMemo(() => (
     resolveActiveRunReturnTarget(incomingNavigationState.activeRunReturnTo)
   ), [incomingNavigationState.activeRunReturnTo])
-  const [autoPauseEnabled, setAutoPauseEnabled] = useState(restoredSession?.autoPauseEnabled ?? true)
-  const [autoPaused, setAutoPaused] = useState(Boolean(restoredSession?.autoPaused))
-  const [gpsIsPaused, setGpsIsPaused] = useState(false)
-  const [gpsSource, setGpsSource] = useState(restoredSession?.gps_source ?? null)
-  const readiness = useRunReadiness()
-  // Keep the Phase 2 injectable seam; production always reads the native observer.
-  const diagnostics = phoneRunDiagnostics({ gps_source: gpsSource, backgroundRefreshStatus: backgroundRefreshStatus === undefined ? readiness.backgroundRefreshStatus : backgroundRefreshStatus })
-  const startPendingRef = useRef(false)
-  const savePendingRef = useRef(false)
-  const runMountedRef = useRef(true)
-  useEffect(() => {
-    runMountedRef.current = true
-    return () => { runMountedRef.current = false }
-  }, [])
-  const traceRef = useRef(null)
-  if (!traceRef.current) {
-    traceRef.current = { ...createGpsTrace({ startedAtMs: restoredSession?.startedAt, autoPauseEnabled }),
-      segmentId: restoredSession?.routeCoords?.length ? (restoredSession.routeCoords.at(-1)[5] ?? 0) : -1, autoPaused,
-      boundary: restoredSession ? 'restore' : null }
-  }
-  const watcherRef = useRef(null)
-  const handlePointRef = useRef(null)
-  const watcherWantedRef = useRef(false)
+  const watchRef = useRef(null)
+  const nativeWatchRef = useRef(false)
+  const lastPointRef = useRef(restoredSession?.routeCoords?.length ? {
+    lat: restoredSession.routeCoords.at(-1)[0],
+    lon: restoredSession.routeCoords.at(-1)[1],
+    alt: restoredSession.routeCoords.at(-1)[2],
+  } : null)
   const lastFixAtRef = useRef(restoredSession?.lastFixAt || restoredSession?.savedAt || null)
   const gpsGapSecondsRef = useRef(restoredSession?.gpsGapSeconds || 0)
   const gpsGapCountRef = useRef(restoredSession?.gpsGapCount || 0)
@@ -355,6 +343,12 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   const pausedDurationMsRef = useRef(restoredSession?.pausedDurationMs || 0)
   const pauseStartedAtRef = useRef(restoredSession?.pauseStartedAt || null)
   const finishedAtRef = useRef(restoredSession?.finishedAt || null)
+  const routeRecordingLifecycleRef = useRef(null)
+  if (!routeRecordingLifecycleRef.current) {
+    routeRecordingLifecycleRef.current = createRunLocationWatcherLifecycle({
+      active: restoredSession?.phase === 'running',
+    })
+  }
   const clientRunIdRef = useRef(restoredSession?.clientRunId || createClientRunId())
   const resumeAttemptedRef = useRef(false)
   const autoStartExecutedRef = useRef(false)
@@ -366,16 +360,13 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   const navigationProtectedRef = useRef(false)
   const activeRunReturnTargetRef = useRef(activeRunReturnTarget)
   const requestBackRef = useRef(null)
-  const stopRouteRecording = useCallback(() => {
-    watcherWantedRef.current = false
-    void watcherRef.current?.stop()
+  const beginRouteRecording = useCallback(() => {
+    return routeRecordingLifecycleRef.current.begin()
   }, [])
-  const recordedSegments = useMemo(() => splitTraceSegments(routeCoords), [routeCoords])
-  const actualElevation = useMemo(() => recordedSegments.reduce((total, segment) => {
-    const stats = calculateElevationStats(segment)
-    return { available: total.available || stats.available, gainFeet: total.gainFeet + stats.gainFeet,
-      lossFeet: total.lossFeet + stats.lossFeet }
-  }, { available: false, gainFeet: 0, lossFeet: 0 }), [recordedSegments])
+  const stopRouteRecording = useCallback(() => {
+    routeRecordingLifecycleRef.current.stop()
+  }, [])
+  const actualElevation = useMemo(() => calculateElevationStats(routeCoords), [routeCoords])
   const plannedDisplay = useMemo(() => plannedPresentation(plannedRoute?.coordinates), [plannedRoute])
   // Fit every valid planned vertex; only the drawn polyline is sampled.
   const plannedRoutePositions = useMemo(() => validMapPositions(plannedRoute?.coordinates), [plannedRoute])
@@ -432,10 +423,7 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
     pausedDurationMs: pausedDurationMsRef.current,
     pauseStartedAt: pauseStartedAtRef.current,
     distanceMiles,
-    autoPauseEnabled,
-    autoPaused,
     routeCoords,
-    ...diagnostics,
     manualDistance,
     mapMyRun,
     gpsStarted,
@@ -713,9 +701,9 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
     hrZone,
     mapMyRun,
     gpsStarted,
-    gpsAvailable: gpsAvailable && !gpsIsPaused,
+    gpsAvailable,
     currentAccuracy,
-    paused: pausedRun || autoPaused,
+    paused: pausedRun,
   })
 
   useEffect(() => {
@@ -760,73 +748,122 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
       window.clearInterval(interval)
       listenerHandles.forEach((handle) => handle?.remove?.())
     }
-  }, [autoPaused, pausedRun, running])
+  }, [pausedRun, running])
 
   useEffect(() => {
     if (!['running', 'paused', 'awaiting_distance'].includes(restoredSession?.phase)) void LiveActivityService.end()
   }, [restoredSession?.phase])
 
-  const handlePoint = useCallback((fix) => {
-    if (!watcherWantedRef.current) return
-    const now = Date.now()
-    const previous = traceRef.current
-    const result = acceptGpsFix(previous, fix, now)
-    traceRef.current = result.state
-    if (!result.accepted) {
-      if (result.reason === 'speed') discardedSegmentRef.current = true
-      return
-    }
+  const handlePoint = useCallback((lat, lon, alt, accuracy, timestamp, recordingEpoch) => {
+    if (!canAcceptRunLocationPoint({
+      watcherLifecycle: routeRecordingLifecycleRef.current,
+      recordingEpoch,
+      latitude: lat,
+      longitude: lon,
+    })) return
+    const latitude = Number(lat)
+    const longitude = Number(lon)
     setGpsAvailable(true)
     setGpsStarted(true)
-    setGpsIsPaused(false)
     setLocationStatus(RUN_LOCATION_STATUS.READY)
     setGpsError('')
-    lastFixAtRef.current = fix.timestampMs
-    if (result.gap) {
-      gpsGapCountRef.current += 1
-      gpsGapSecondsRef.current += result.gap.afterTimestampMs === null ? 0
-        : Math.max(0, (result.gap.beforeTimestampMs - result.gap.afterTimestampMs) / 1000)
-    }
-    if (previous.autoPaused !== result.state.autoPaused) {
-      if (result.state.autoPaused) pauseStartedAtRef.current = now
-      else if (pauseStartedAtRef.current !== null) {
-        pausedDurationMsRef.current += Math.max(0, now - pauseStartedAtRef.current)
-        pauseStartedAtRef.current = null
-      }
-      setAutoPaused(result.state.autoPaused)
-      setElapsed(runElapsedSeconds({ startedAt: startTimestampRef.current,
-        pausedDurationMs: pausedDurationMsRef.current, pauseStartedAt: pauseStartedAtRef.current }, now))
-    }
-    if (result.point) setRouteCoords(points => [...points, result.point])
-    if (result.distanceMeters) setDistanceMiles(value => value + result.distanceMeters / METERS_PER_MILE)
-  }, [])
-  handlePointRef.current = handlePoint
 
-  const clearActiveWatch = useCallback(() => watcherRef.current?.stop(), [])
-  const setLocationFailure = useCallback((status) => {
-    setLocationStatus(status)
-    setGpsError(runLocationStatusMessage(status))
-    // Missing fixes are exposed by the independent 20-second liveness status.
-    // Existing recorded distance remains measured GPS, even after a watcher error.
+    const parsedTimestamp = Number(timestamp)
+    const parsedDateTimestamp = typeof timestamp === 'string' ? Date.parse(timestamp) : Number.NaN
+    const fixAt = Number.isFinite(parsedTimestamp)
+      ? parsedTimestamp
+      : Number.isFinite(parsedDateTimestamp) ? parsedDateTimestamp : Date.now()
+    if (lastFixAtRef.current) {
+      const gapSeconds = Math.round((fixAt - lastFixAtRef.current) / 1000)
+      if (gapSeconds > 15) {
+        gpsGapSecondsRef.current += gapSeconds
+        gpsGapCountRef.current += 1
+      }
+    }
+    const parsedAltitude = alt === null || alt === undefined || alt === '' ? Number.NaN : Number(alt)
+    const parsedAccuracy = accuracy === null || accuracy === undefined || accuracy === '' ? Number.NaN : Number(accuracy)
+    const point = {
+      lat: latitude,
+      lon: longitude,
+      alt: Number.isFinite(parsedAltitude) && parsedAltitude >= -2000 && parsedAltitude <= 100000 ? parsedAltitude : null,
+      accuracy: Number.isFinite(parsedAccuracy) && parsedAccuracy >= 0 && parsedAccuracy <= 10000 ? parsedAccuracy : null,
+    }
+    if (lastPointRef.current) {
+      const segment = haversineMiles(lastPointRef.current, point)
+      if (segment > 0 && segment < 0.25) {
+        setDistanceMiles(v => v + segment)
+      } else if (segment >= 0.25) {
+        discardedSegmentRef.current = true
+      }
+    }
+    setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt, fixAt, point.accuracy]])
+    lastPointRef.current = point
+    lastFixAtRef.current = fixAt
   }, [])
-  const getWatcher = useCallback(() => {
-    if (!watcherRef.current) watcherRef.current = createPhoneGpsWatcher({
-      native: BackgroundGeolocation,
-      web: typeof navigator === 'undefined' ? null : navigator.geolocation,
-      isNative: Capacitor.isNativePlatform(),
-      canFallbackSilently: runReadiness.nativeIOS ? async () => {
-        try { return (await navigator.permissions?.query({ name: 'geolocation' }))?.state === 'granted' }
-        catch { return false }
-      } : undefined,
-      onFix: fix => handlePointRef.current(fix), onError: setLocationFailure, onSource: source => setGpsSource(source === 'browser' ? 'web_fallback' : source),
+
+  const clearActiveWatch = useCallback(async () => {
+    const id = watchRef.current
+    if (id == null) return
+    watchRef.current = null
+    const wasNative = nativeWatchRef.current
+    nativeWatchRef.current = false
+    if (wasNative) {
+      try {
+        await BackgroundGeolocation.removeWatcher({ id })
+      } catch (err) {
+        console.error('[ActiveRun] failed to remove native GPS watcher:', err)
+      }
+    } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        navigator.geolocation.clearWatch(id)
+      } catch (err) {
+        console.error('[ActiveRun] failed to clear web GPS watcher:', err)
+      }
+    }
+  }, [])
+
+  const setLocationFailure = useCallback((status) => {
+    stopRouteRecording()
+    const normalizedStatus = Object.values(RUN_LOCATION_STATUS).includes(status)
+      ? status
+      : RUN_LOCATION_STATUS.UNAVAILABLE
+    setLocationStatus(normalizedStatus)
+    setGpsAvailable(false)
+    setGpsStarted(false)
+    setGpsError(runLocationStatusMessage(normalizedStatus))
+  }, [stopRouteRecording])
+
+  const startWebGeolocation = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      stopRouteRecording()
+      setLocationFailure(RUN_LOCATION_STATUS.UNAVAILABLE)
+      return false
+    }
+
+    const recordingEpoch = beginRouteRecording()
+    const watcherCallbacks = createRunLocationWatcherCallbacks({
+      watcherLifecycle: routeRecordingLifecycleRef.current,
+      recordingEpoch,
+      onLocation: (pos) => {
+        handlePoint(pos.coords.latitude, pos.coords.longitude, pos.coords.altitude, pos.coords.accuracy, Date.now(), recordingEpoch)
+      },
+      onError: (error) => {
+        setLocationFailure(runLocationErrorStatus(error))
+      },
     })
-    return watcherRef.current
-  }, [setLocationFailure])
+    nativeWatchRef.current = false
+    watchRef.current = navigator.geolocation.watchPosition(
+      watcherCallbacks.location,
+      watcherCallbacks.error,
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
+    )
+    return true
+  }, [beginRouteRecording, handlePoint, setLocationFailure, stopRouteRecording])
 
   const activateRunTimer = useCallback(() => {
     const now = Date.now()
     if (!startTimestampRef.current) startTimestampRef.current = now
-    if (pauseStartedAtRef.current !== null && !traceRef.current.autoPaused) {
+    if (pauseStartedAtRef.current) {
       pausedDurationMsRef.current += Math.max(0, now - pauseStartedAtRef.current)
       pauseStartedAtRef.current = null
     }
@@ -835,78 +872,91 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   }, [])
 
   const startGPS = useCallback(async ({ resume = false, recordRoute = mapMyRun } = {}) => {
-    if (startPendingRef.current) return
-    startPendingRef.current = true
-    const { requestPermissions } = await runReadiness.prepareStart({ resume })
-    startPendingRef.current = false
-    if (!runMountedRef.current) return
     setSaveError('')
     setGpsGapSummary(null)
     if (!resume) {
-      traceRef.current = createGpsTrace({ startedAtMs: Date.now(), autoPauseEnabled: traceRef.current.autoPauseEnabled })
       lastFixAtRef.current = null
       gpsGapSecondsRef.current = 0
       gpsGapCountRef.current = 0
       discardedSegmentRef.current = false
     }
-    activateRunTimer()
     if (!recordRoute) {
       stopRouteRecording()
       setGpsStarted(false)
       setGpsAvailable(false)
       setLocationStatus(RUN_LOCATION_STATUS.IDLE)
       setGpsError('Route recording is off — enter your distance when you finish')
+      activateRunTimer()
       return
     }
+
     setGpsError('')
     setGpsAvailable(true)
     setLocationStatus(RUN_LOCATION_STATUS.CHECKING)
-    watcherWantedRef.current = true
-    await getWatcher().start({ requestPermissions: runReadiness.nativeIOS ? requestPermissions : !resume })
-    void runReadiness.refresh()
-  }, [activateRunTimer, getWatcher, mapMyRun, stopRouteRecording])
-
-  useEffect(() => {
-    if (!running || !mapMyRun) return undefined
-    const foreground = createGpsForegroundHandler({
-      boundary: reason => { traceRef.current = traceBoundary(traceRef.current, reason) },
-      restart: () => {
-        if (!watcherWantedRef.current) return
-        setLocationStatus(RUN_LOCATION_STATUS.CHECKING)
-        return watcherRef.current?.restart()
-      },
-    })
-    let disposed = false
-    let nativeListener = null
-    const visibility = () => foreground(!document.hidden)
-    const removeListener = handle => Promise.resolve(handle.remove())
-      .catch(() => setLocationFailure(RUN_LOCATION_STATUS.UNAVAILABLE))
     if (Capacitor.isNativePlatform()) {
-      CapacitorApp.addListener('appStateChange', ({ isActive }) => foreground(isActive))
-        .then(handle => { if (disposed) void removeListener(handle); else nativeListener = handle })
-        .catch(() => setLocationFailure(RUN_LOCATION_STATUS.UNAVAILABLE))
-    } else document.addEventListener('visibilitychange', visibility)
-    return () => {
-      disposed = true
-      document.removeEventListener('visibilitychange', visibility)
-      if (nativeListener) void removeListener(nativeListener)
-    }
-  }, [mapMyRun, running, setLocationFailure])
-
-  const toggleAutoPause = () => {
-    const enabled = !autoPauseEnabled
-    traceRef.current = setTraceAutoPause(traceRef.current, enabled)
-    setAutoPauseEnabled(enabled)
-    if (!enabled && autoPaused) {
-      // Manual pause retains ownership of its clock until the explicit Resume action.
-      if (!pausedRun && pauseStartedAtRef.current !== null) {
-        pausedDurationMsRef.current += Date.now() - pauseStartedAtRef.current
-        pauseStartedAtRef.current = null
+      try {
+        let registrationError = null
+        const recordingEpoch = beginRouteRecording()
+        const watcherCallbacks = createRunLocationWatcherCallbacks({
+          watcherLifecycle: routeRecordingLifecycleRef.current,
+          recordingEpoch,
+          onLocation: (loc) => {
+            handlePoint(loc.latitude, loc.longitude, loc.altitude, loc.accuracy, loc.time || Date.now(), recordingEpoch)
+          },
+          onError: (err) => {
+            console.error('[ActiveRun] bg-geo error', err.message)
+            registrationError = err
+            setLocationFailure(runLocationErrorStatus(err))
+          },
+        })
+        const id = await BackgroundGeolocation.addWatcher({
+          backgroundMessage: 'Forged Hybrid is recording your run',
+          backgroundTitle: 'Forged Hybrid',
+          requestPermissions: true,
+          stale: false,
+          distanceFilter: 5,
+        }, (loc, err) => {
+          if (err) {
+            watcherCallbacks.error(err)
+            return
+          }
+          if (!loc) return
+          watcherCallbacks.location(loc)
+        })
+        if (registrationError) {
+          await BackgroundGeolocation.removeWatcher({ id }).catch((error) => {
+            console.error('[ActiveRun] failed to remove rejected native GPS watcher:', error?.message || error)
+          })
+          return
+        }
+        watchRef.current = id
+        nativeWatchRef.current = true
+        activateRunTimer()
+        return
+      } catch (err) {
+        stopRouteRecording()
+        console.warn('[ActiveRun] background geolocation unavailable, falling back to web GPS:', err?.message)
       }
-      traceRef.current = traceBoundary(traceRef.current, 'auto-pause-disabled')
-      setAutoPaused(false)
     }
-  }
+
+    if (startWebGeolocation()) activateRunTimer()
+  }, [activateRunTimer, beginRouteRecording, handlePoint, mapMyRun, setLocationFailure, startWebGeolocation, stopRouteRecording])
+
+  const checkLocationBeforeRun = useCallback(async () => {
+    setLocationStatus(RUN_LOCATION_STATUS.CHECKING)
+    setGpsError('')
+    const result = Capacitor.isNativePlatform()
+      ? await requestNativeRunLocation(BackgroundGeolocation)
+      : await requestWebRunLocation(typeof navigator === 'undefined' ? null : navigator.geolocation)
+    if (result.status !== RUN_LOCATION_STATUS.READY) {
+      setLocationFailure(result.status)
+      return false
+    }
+    setLocationStatus(RUN_LOCATION_STATUS.READY)
+    setGpsAvailable(true)
+    setGpsError('')
+    return true
+  }, [setLocationFailure])
 
   const launchRun = useCallback(async ({ recordRoute = mapMyRun } = {}) => {
     setCountdownVal(selectedCountdown)
@@ -918,8 +968,9 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   }, [mapMyRun, selectedCountdown, startGPS])
 
   const beginRun = useCallback(async () => {
+    if (mapMyRun && !await checkLocationBeforeRun()) return
     await launchRun({ recordRoute: mapMyRun })
-  }, [launchRun, mapMyRun])
+  }, [checkLocationBeforeRun, launchRun, mapMyRun])
 
   const continueWithoutRoute = useCallback(async () => {
     setMapMyRun(false)
@@ -931,7 +982,12 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   }, [launchRun])
 
   const openLocationSettings = useCallback(async () => {
-    if (!await runReadiness.openSettings()) setGpsError('Settings unavailable — you can continue running.')
+    if (!Capacitor.isNativePlatform()) return
+    try {
+      await BackgroundGeolocation.openSettings()
+    } catch (error) {
+      console.error('[ActiveRun] failed to open location settings:', error?.message || error)
+    }
   }, [])
 
   useEffect(() => {
@@ -983,25 +1039,21 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
     if (!running) return
     const updateElapsed = () => {
       if (!startTimestampRef.current) return
-      const now = Date.now()
-      setElapsed(runElapsedSeconds({ startedAt: startTimestampRef.current,
-        pausedDurationMs: pausedDurationMsRef.current, pauseStartedAt: pauseStartedAtRef.current }, now))
-      setGpsIsPaused(mapMyRun && gpsPaused(traceRef.current, now))
+      setElapsed(Math.max(0, Math.round((Date.now() - startTimestampRef.current - pausedDurationMsRef.current) / 1000)))
     }
     updateElapsed()
     const t = setInterval(updateElapsed, 1000)
     return () => clearInterval(t)
-  }, [mapMyRun, running])
+  }, [running])
 
   const pauseRun = useCallback(async () => {
     if (!running || !startTimestampRef.current) return
     stopRouteRecording()
     const now = Date.now()
-    const frozenElapsed = runElapsedSeconds({ startedAt: startTimestampRef.current, pausedDurationMs: pausedDurationMsRef.current, pauseStartedAt: pauseStartedAtRef.current }, now)
+    const frozenElapsed = Math.max(0, Math.round((now - startTimestampRef.current - pausedDurationMsRef.current) / 1000))
     setElapsed(frozenElapsed)
-    pauseStartedAtRef.current ??= now
-    traceRef.current = traceBoundary({ ...traceRef.current, autoPaused: false }, 'manual-pause')
-    setAutoPaused(false)
+    pauseStartedAtRef.current = now
+    lastPointRef.current = null
     lastFixAtRef.current = null
     setRunning(false)
     setPausedRun(true)
@@ -1043,7 +1095,7 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
     if (!mapMyRun || !gpsStarted) return null
     const totalGapSeconds = gpsGapSecondsRef.current
     const discardedCatchUp = discardedSegmentRef.current
-    if (!gpsGapCountRef.current && !discardedCatchUp) return null
+    if (totalGapSeconds <= 60 && !discardedCatchUp) return null
     return {
       seconds: totalGapSeconds,
       count: gpsGapCountRef.current,
@@ -1060,9 +1112,7 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
     return `[gps_gap_notice:${pieces.join('; ')}. Distance/route may be incomplete.]`
   }
 
-  const buildRunPayload = (observedReadiness) => {
-    const savedDiagnostics = phoneRunDiagnostics({ gps_source: gpsSource,
-      backgroundRefreshStatus: backgroundRefreshStatus === undefined ? observedReadiness?.backgroundRefreshStatus : backgroundRefreshStatus })
+  const buildRunPayload = () => {
     const runSurface = runEnvironment === 'indoor' && surface === 'treadmill' ? 'treadmill' : surface
     const shouldUseManualDistance = !gpsStarted || !gpsAvailable || distanceMiles <= 0
     let finalDistance = shouldUseManualDistance ? Number(manualDistance || 0) : distanceMiles
@@ -1099,9 +1149,13 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
       avg_heart_rate: liveHr || null,
       elevation_gain: actualElevation.available ? actualElevation.gainFeet : null,
       elevation_loss: actualElevation.available ? actualElevation.lossFeet : null,
-      route_coords: finishedPhoneRoute(routeCoords),
-      ...savedDiagnostics,
-      workout_metrics_json: savedDiagnostics,
+      route_coords: routeCoords.map(([lat, lon, alt, time, accuracy]) => ({
+        lat,
+        lon,
+        alt: alt ?? null,
+        time: time ?? null,
+        accuracy: accuracy ?? null,
+      })),
       treadmill_brand: treadmillBrand || null
     }
   }
@@ -1163,20 +1217,14 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
   }
   
   const saveRun = async () => {
-    if (savePendingRef.current) return
-    savePendingRef.current = true
-    setSaving(true)
     setSaveError('')
-    const observedReadiness = await runReadiness.refresh()
-    if (!runMountedRef.current) { savePendingRef.current = false; return }
-    const payload = buildRunPayload(observedReadiness)
+    const payload = buildRunPayload()
     if (!Number.isFinite(payload.distance_miles) || payload.distance_miles <= 0) {
       setSaveError(`Enter a distance greater than 0 ${fmt.distanceLabel} before saving.`)
-      savePendingRef.current = false
-      setSaving(false)
       return
     }
 
+    setSaving(true)
     try {
       const res = await api.post('/runs', payload)
       const runId = res.data?.id || res.data?.run?.id
@@ -1217,7 +1265,7 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
       } else {
         setSaveError(err?.response?.data?.error || 'Could not save this run. Check the details and try again.')
       }
-    } finally { savePendingRef.current = false; setSaving(false) }
+    } finally { setSaving(false) }
   }
 
   const finishRun = async () => {
@@ -1249,7 +1297,6 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
     }
   }
 
-  const pauseLabel = runPauseLabel({ manualPaused: pausedRun, autoPaused, gpsIsPaused })
   const completionNavigation = runCompletionNavigation(pendingCompletionHandoff)
   if (completionNavigation) {
     return <Navigate to={completionNavigation.destination} replace />
@@ -1346,10 +1393,6 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
         </div>
       )}
       <h2 className="t-micro mb-4">Active Run</h2>
-      <label className="flex items-center gap-3 mb-4" style={{ minHeight: 44 }}>
-        <input type="checkbox" checked={autoPauseEnabled} onChange={toggleAutoPause} />
-        Auto-pause when stationary
-      </label>
 
       {!running && !pausedRun && !countingDown && !awaitingManualDistance && elapsed === 0 && activeRunOwnerId && (
         <section className="mb-4 rounded-xl p-3" aria-label="Private planned route" style={{ background: 'var(--bg-input)', minWidth: 0 }}>
@@ -1428,8 +1471,6 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
         ) : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect watch for live HR</p>}
       </div>
 
-      <RunReadinessExplainer observe={false} eligible={!restoredSession && !completionRestorePending} />
-      <p role="status" data-testid="run-settings-diagnostics" className="mb-3 text-xs" style={{ color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{phoneRunStatusLine(diagnostics)}{runReadiness.nativeIOS ? ` · ${runReadinessLine(readiness)}` : ''}</p>
       {(!gpsAvailable || gpsError) && <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>{gpsError || 'GPS unavailable — tracking time and effort only'}</div>}
       {restoredNotice && (
         <button type="button" onClick={() => setRestoredNotice(false)} className="w-full rounded-xl p-3 mb-3 text-left" role="status" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)' }}>
@@ -1441,7 +1482,6 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
           {groupRunNotice}
         </div>
       )}
-      {mapMyRun && gpsGapCountRef.current > 0 && <p role="status" data-testid="gps-gap" className="mb-3 text-sm" style={{ color: 'var(--accent)' }}>GPS gap · recorded segments are kept separate; missing distance is excluded.</p>}
       {gpsGapSummary && (
         <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
           GPS paused during this run{gpsGapSummary.seconds > 0 ? ` for about ${formatGapDuration(gpsGapSummary.seconds)}` : ''}. Review the distance; Forged Hybrid saves a note that the route may be incomplete.
@@ -1499,7 +1539,6 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
         >
           <ForgeMap center={currentPosition || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
             <MapViewController
-              layout={mapLayout}
               command={mapCommand}
               followPaused={followPaused}
               onFollowPaused={() => setFollowPaused(true)}
@@ -1507,7 +1546,7 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
               reduceMotion={reduceMotion}
             />
             {plannedRoutePositions.length > 1 && <Polyline className="planned-route-overlay" positions={plannedDisplay.positions} pathOptions={{ color: '#D1D5DB', weight: 4, opacity: 0.9, dashArray: '7 9' }} />}
-            {recordedSegments.map((segment, index) => segment.length > 1 && <Polyline key={index} className="recorded-route-overlay" positions={segment.map(point => [point[0], point[1]])} pathOptions={{ color: '#EAB308', weight: 6, opacity: 1 }} />)}
+            {recordedRoutePositions.length > 1 && <Polyline className="recorded-route-overlay" positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 6, opacity: 1 }} />}
             {currentPosition && <CircleMarker center={currentPosition} radius={15} pathOptions={{ color: '#EAB308', fillColor: '#EAB308', fillOpacity: 0.2, weight: 2 }} />}
             {currentPosition && <CircleMarker center={currentPosition} radius={8} pathOptions={{ color: '#FFFFFF', fillColor: '#EAB308', fillOpacity: 1, weight: 3 }} />}
           </ForgeMap>
@@ -1572,14 +1611,14 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
           {plannedRoute && <div className="w-full py-2 text-center text-sm font-semibold mb-2" style={{ borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)' }}>Planned course loaded · GPS recording ready</div>}
           <div className="rounded-xl p-3 mb-3" role="status" data-testid="run-location-preflight" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Your iPhone records the route. Keep your watch running too — Forged Hybrid will combine the data after sync.</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--accent)' }}>GPS not ready · You can start now. Recording begins with the first accurate, fresh fix.</p>
+            <p className="text-xs mt-1" style={{ color: locationStatus === RUN_LOCATION_STATUS.DENIED ? 'var(--danger)' : 'var(--text-muted)' }}>{runLocationStatusMessage(locationStatus)}</p>
             {locationStatus === RUN_LOCATION_STATUS.DENIED && Capacitor.isNativePlatform() && (
               <button type="button" onClick={openLocationSettings} className="pressable mt-3 rounded-lg border px-3 py-2 text-xs font-black" style={{ minHeight: 44, borderColor: 'var(--accent)', color: 'var(--accent)' }}>
                 Open iPhone Settings
               </button>
             )}
           </div>
-          <button type="button" disabled={privatePlans.loading || groupRunAuthorization === 'pending'} onClick={beginRun} className="pressable w-full rounded-xl py-3 font-black" style={{ minHeight: 52, background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : locationStatus === RUN_LOCATION_STATUS.DENIED ? 'Try Location Again' : 'Start Run'}</button>
+          <button type="button" disabled={privatePlans.loading || groupRunAuthorization === 'pending' || locationStatus === RUN_LOCATION_STATUS.CHECKING} onClick={beginRun} className="pressable w-full rounded-xl py-3 font-black" style={{ minHeight: 52, background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' || locationStatus === RUN_LOCATION_STATUS.CHECKING ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : locationStatus === RUN_LOCATION_STATUS.CHECKING ? 'Checking Location...' : locationStatus === RUN_LOCATION_STATUS.DENIED ? 'Try Location Again' : 'Start Run'}</button>
           {[RUN_LOCATION_STATUS.DENIED, RUN_LOCATION_STATUS.TIMEOUT, RUN_LOCATION_STATUS.UNAVAILABLE].includes(locationStatus) && (
             <button type="button" disabled={privatePlans.loading} onClick={continueWithoutRoute} className="pressable mt-2 w-full rounded-xl border px-3 py-3 text-sm font-black" style={{ minHeight: 48, borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
               Continue without route
@@ -1587,21 +1626,19 @@ export default function ActiveRun({ backgroundRefreshStatus } = {}) {
           )}
         </div>
       )}
-      {running && mapMyRun && !gpsIsPaused && gpsStarted && gpsAvailable && locationStatus === RUN_LOCATION_STATUS.READY && (
+      {running && mapMyRun && gpsStarted && gpsAvailable && locationStatus === RUN_LOCATION_STATUS.READY && (
         <div className="rounded-xl p-3 mb-3 text-sm font-semibold" role="status" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)' }}>
-          Route connected · {gpsSource === 'native_bg' ? 'iPhone background GPS' : 'Browser GPS · keep the app visible'}{currentAccuracy !== null && currentAccuracy !== undefined && Number.isFinite(Number(currentAccuracy)) ? ` · GPS ±${Math.round(Number(currentAccuracy))} m` : ''}
+          Route connected · iPhone recording in the background{currentAccuracy !== null && currentAccuracy !== undefined && Number.isFinite(Number(currentAccuracy)) ? ` · GPS ±${Math.round(Number(currentAccuracy))} m` : ''}
         </div>
       )}
-      {running && mapMyRun && !gpsIsPaused && (!gpsStarted || locationStatus === RUN_LOCATION_STATUS.CHECKING) && (
+      {running && mapMyRun && !gpsStarted && (
         <div className="rounded-xl p-3 mb-3 text-sm font-semibold" role="status" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
           Connecting to GPS · route tracking is not confirmed yet
         </div>
       )}
-      {running && autoPaused && <div role="status" data-testid="auto-paused" className="rounded-xl p-3 mb-3" style={{ color: 'var(--accent)' }}>{pauseLabel} · timer and distance frozen. Move to resume.</div>}
-      {running && mapMyRun && gpsIsPaused && <div role="status" data-testid="gps-paused" className="rounded-xl p-3 mb-3" style={{ color: 'var(--accent)' }}>GPS paused · no accepted fix for 20 seconds. Waiting for a fresh location.</div>}
       {pausedRun && (
         <div className="rounded-xl p-3 mb-3 text-sm font-semibold" role="status" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
-          {pauseLabel} · timer and GPS recording are stopped
+          Run paused · timer and GPS recording are stopped
         </div>
       )}
       {(running || pausedRun) && (

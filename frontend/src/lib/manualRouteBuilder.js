@@ -1,5 +1,8 @@
 // Planned-course state only. This module has no recording or activity dependencies.
 export const METERS_PER_MILE = 1609.344
+export const RUNNING_PREFERENCE = 'running-avoid-ferries-fords-steps-v1'
+const validPreference = (value, profile) => value === RUNNING_PREFERENCE && profile === 'foot-walking'
+const preferenceFields = value => value === undefined ? {} : { routingPreference: value }
 export const PROFILES = ['foot-walking', 'foot-hiking']
 export const MODE_LABELS = { routed: 'Planned ORS route', straight: 'Planned straight line' }
 const bounded = (n, min, max) => typeof n === 'number' && Number.isFinite(n) && n >= min && n <= max
@@ -89,9 +92,21 @@ export function validateSavedRoute(raw) {
   return structuredClone(raw)
 }
 export function routePayload(state, name, targetDistanceMeters) {
+  // Only this known new-leg preference is ephemeral. Reject unknown fields and
+  // mismatched intent before removing it; the original saved validator checks
+  // every remaining field. Copy each leg so saving never changes editor history.
+  if (!Array.isArray(state.legs)) invalid()
+  const legs = state.legs.map(leg => {
+    if (!keys(leg, ['mode', 'provenance', 'profile', 'startIndex', 'endIndex', 'distanceMeters', 'distanceSource', 'routingPreference'])) invalid()
+    if (Object.hasOwn(leg, 'routingPreference')
+      && (leg.mode !== 'routed' || leg.provenance !== 'ors' || !validPreference(leg.routingPreference, leg.profile))) invalid()
+    const saved = { ...leg }
+    delete saved.routingPreference
+    return saved
+  })
   const elevation = elevationStats(state.coordinates)
   const payload = { name: name.trim(), waypoints: state.waypoints,
-    geometry: { type: 'LineString', coordinates: state.coordinates }, legs: state.legs,
+    geometry: { type: 'LineString', coordinates: state.coordinates }, legs,
     distanceMeters: state.distanceMeters, targetDistanceMeters,
     elevation: { ...elevation, source: elevation.coverage === 'missing' ? null : state.elevationSource },
     display: state.display }
@@ -100,8 +115,10 @@ export function routePayload(state, name, targetDistanceMeters) {
   if (new TextEncoder().encode(JSON.stringify(payload)).length > 1048576) invalid()
   return payload
 }
-export function validateLegResponse(raw, profile) {
-  if (!raw || raw.profile !== profile || !PROFILES.includes(profile)
+export function validateLegResponse(raw, profile, routingPreference) {
+  if ((routingPreference !== undefined && !validPreference(routingPreference, profile))
+    || !raw || raw.routingPreference !== routingPreference
+    || (Object.hasOwn(raw, 'routingPreference') && !validPreference(raw.routingPreference, raw.profile)) || raw.profile !== profile || !PROFILES.includes(profile)
     || raw.geometry?.type !== 'LineString' || !Array.isArray(raw.geometry.coordinates)
     || raw.geometry.coordinates.length < 2 || raw.geometry.coordinates.length > 10000
     || !raw.geometry.coordinates.every(p => validPoint(p)) || !bounded(raw.distanceMeters, 0, 1000000)) {
@@ -109,24 +126,25 @@ export function validateLegResponse(raw, profile) {
   }
   return structuredClone(raw)
 }
-export function legKey(profile, points) {
-  if (!PROFILES.includes(profile) || points.length !== 2 || !points.every(p => validPoint(p, false))) invalid()
-  return JSON.stringify([profile, points.map(p => p.map(n => Number(n.toFixed(5)) || 0))])
+export function legKey(profile, points, routingPreference) {
+  if ((routingPreference !== undefined && !validPreference(routingPreference, profile)) || !PROFILES.includes(profile) || points.length !== 2 || !points.every(p => validPoint(p, false))) invalid()
+  return JSON.stringify(['leg-v2', profile, routingPreference ?? null, points.map(p => p.map(n => Number(n.toFixed(5)) || 0)),
+    routingPreference ? { avoid_features: ['ferries', 'fords', 'steps'] } : null])
 }
 // One instance per authenticated editor; never shared across accounts or persisted.
 export function createLegClient(request, { now = Date.now, maxEntries = 64, ttl = 600000 } = {}) {
   const cache = new Map(), flight = new Map()
   let disposed = false
   return {
-    get(profile, points) {
+    get(profile, points, routingPreference) {
       if (disposed) return Promise.reject(new Error('Route editor closed.'))
-      const key = legKey(profile, points), cached = cache.get(key)
+      const key = legKey(profile, points, routingPreference), cached = cache.get(key)
       if (cached && now() - cached.at < ttl) return Promise.resolve(structuredClone(cached.leg))
       if (flight.has(key)) return flight.get(key)
-      const normalized = JSON.parse(key)[1]
-      const promise = Promise.resolve().then(() => request({ profile, points: normalized }))
+      const normalized = JSON.parse(key)[3]
+      const promise = Promise.resolve().then(() => request({ profile, points: normalized, ...preferenceFields(routingPreference) }))
         .then(raw => {
-          const leg = validateLegResponse(raw, profile)
+          const leg = validateLegResponse(raw, profile, routingPreference)
           if (!disposed) {
             cache.delete(key); cache.set(key, { at: now(), leg })
             while (cache.size > maxEntries) cache.delete(cache.keys().next().value)
@@ -152,7 +170,7 @@ export function routeError(error) {
 const empty = () => ({ waypoints: [], coordinates: [], legs: [], distanceMeters: 0,
   elevationSource: null, display: { description: null, surface: null, elevationPreference: null }, legacyDistances: false })
 export function createRouteEditor({ client, onChange = () => {}, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now }) {
-  let state = { ...empty(), mode: 'routed', profile: 'foot-walking', pending: null, error: null, revision: 0 }
+  let state = { ...empty(), mode: 'routed', profile: 'foot-walking', routingPreference: undefined, pending: null, error: null, revision: 0 }
   let history = [], timer, generation = 0, disposed = false
   const emit = () => { if (!disposed) onChange({ ...state, canUndo: history.length > 0 || state.waypoints.length > 0 || !!state.pending }) }
   const invalidate = () => { generation++; clearTimer(timer); state = { ...state, pending: null, error: null, revision: state.revision + 1 } }
@@ -172,6 +190,7 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
     state = { ...state, coordinates, waypoints: [...state.waypoints, point],
       legs: [...state.legs, { mode, provenance: mode === 'straight' ? 'manual' : 'ors', profile: mode === 'straight' ? null : profile,
         startIndex, endIndex: coordinates.length - 1, distanceMeters: leg.distanceMeters,
+        ...preferenceFields(mode === 'routed' ? leg.routingPreference : undefined),
         distanceSource: mode === 'straight' ? 'geometry' : 'ors' }],
       distanceMeters: state.distanceMeters === null ? null : state.distanceMeters + leg.distanceMeters,
       elevationSource: state.elevationSource || (elevationStats(coords).coverage !== 'missing' ? 'provider' : null), pending: null, error: null }
@@ -186,7 +205,7 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
     add(point) {
       if (!validPoint(point, false) || !state.waypoints.length || disposed) return
       invalidate()
-      const token = generation, mode = state.mode, profile = state.profile
+      const token = generation, mode = state.mode, profile = state.profile, routingPreference = state.routingPreference
       const start = state.coordinates.at(-1).slice(0, 2)
       if (samePoint(start, point)) { emit(); return }
       state = { ...state, pending: point }; emit()
@@ -197,7 +216,7 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
       }
       timer = setTimer(async () => {
         try {
-          const leg = await client.get(profile, [start, point])
+          const leg = await client.get(profile, [start, point], routingPreference)
           if (disposed || token !== generation) return
           append(point, leg, mode, profile); emit()
         } catch (error) {
@@ -210,13 +229,14 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
     },
     retry() { if (state.pending && state.error && now() >= state.error.retryAt) api.add(state.pending) },
     setMode(mode) { if (!Object.hasOwn(MODE_LABELS, mode)) return; invalidate(); state = { ...state, mode }; emit() },
-    setProfile(profile) { if (!PROFILES.includes(profile)) return; invalidate(); state = { ...state, profile }; emit() },
+    setProfile(profile) { if (!PROFILES.includes(profile)) return; invalidate(); state = { ...state, profile, routingPreference: undefined }; emit() },
+    setRunning() { invalidate(); state = { ...state, profile: 'foot-walking', routingPreference: RUNNING_PREFERENCE }; emit() },
     undo() {
       const pending = !!state.pending
       invalidate()
       if (!pending && history.length) {
         const previous = history.pop()
-        state = { ...previous, mode: state.mode, profile: state.profile, pending: null, error: null, revision: state.revision }
+        state = { ...previous, mode: state.mode, profile: state.profile, routingPreference: state.routingPreference, pending: null, error: null, revision: state.revision }
       } else if (!pending && state.waypoints.length) {
         const removed = state.legs.at(-1), legs = state.legs.slice(0, -1)
         // Unknown legacy routed distances cannot be estimated from geometry.
@@ -265,7 +285,7 @@ export function createRouteEditor({ client, onChange = () => {}, setTimer = setT
       if (knownTotal > route.distanceMeters + 0.000001 || !unknown.length && Math.abs(knownTotal - route.distanceMeters) > 0.000001) {
         for (const leg of legs) { delete leg.distanceMeters; delete leg.distanceSource }
       }
-      state = { ...state, waypoints: route.waypoints, coordinates: route.geometry.coordinates, legs,
+      state = { ...state, profile: 'foot-walking', routingPreference: undefined, waypoints: route.waypoints, coordinates: route.geometry.coordinates, legs,
         distanceMeters: route.distanceMeters, elevationSource: route.elevation.source, display: route.display, legacyDistances: legs.some(leg => !Number.isFinite(leg.distanceMeters)) }
       emit(); return route
     },

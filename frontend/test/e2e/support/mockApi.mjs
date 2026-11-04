@@ -268,6 +268,8 @@ function defaultResponses(user) {
     ['GET /api/plans/reconciliation/current', { reconciliation: null }],
     ['GET /api/plans/compliance', null],
     ['GET /api/routes/planner-status', { available: false, requiresPro: false }],
+    // ActiveRun reads the authenticated user's private planned-route library.
+    ['GET /api/user-routes', { routes: [], limit: 20, offset: 0 }],
     ['GET /api/releases/state', { seenSequence: 999 }],
     ['GET /api/recovery/readiness', { available: false }],
     ['GET /api/recovery/readiness/history', { days: [] }],

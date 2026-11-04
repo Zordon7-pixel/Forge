@@ -153,7 +153,7 @@ check(/effective_premium_access:\s*entitlement\.effectivePremiumAccess/.test(aut
 check(/monthly:[\s\S]*limit:\s*entitlement\.monthlyAiLimit/.test(authRoute) && /resets_at:\s*windows\.monthlyResetAt/.test(authRoute), 'AI usage payload uses canonical monthly limit and reset metadata')
 check([runsRoute, workoutsRoute].every((source) => /canUseAiFeedback\(resolveEntitlement\(profile\)/.test(source)), 'run and workout feedback share canonical enforcement')
 check([premiumGate, routesRoute].every((source) => /resolveEntitlement\(user\)\.effectivePremiumAccess/.test(source)), 'premium gates consume canonical entitlement access')
-check(/api\.get\('\/auth\/me'\)/.test(proContext) && /entitlement\.accessSource/.test(proContext), 'frontend access context consumes canonical server entitlement')
+check(/api\.get\('\/auth\/me'\s*[,)]/.test(proContext) && /const entitlement = user\.entitlement/.test(proContext) && /const pro = entitlement\.effectivePremiumAccess === true/.test(proContext) && /accessSource: entitlement\.accessSource \|\| 'free'/.test(proContext), 'frontend access context consumes canonical server entitlement')
 check(/entitlementPresentation\(\{ accessSource, paidTier \}\)/.test(upgrade), 'upgrade page renders from explicit entitlement source and paid tier')
 
 console.log(`ENTITLEMENT TRUTH SMOKE OK (${passed})`)

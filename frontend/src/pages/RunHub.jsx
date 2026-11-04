@@ -113,7 +113,7 @@ export default function RunHub() {
       </Link>
 
       <Link to="/run/routes" className="block rounded-2xl p-4" style={{ minHeight: 44, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', textDecoration: 'none' }}>
-        <span className="block text-base font-black">Build a route</span>
+        <span className="block text-base font-black">Map a run</span>
         <span className="mt-1 block text-sm">Choose waypoints, plan your distance, and save private routes.</span>
       </Link>
 

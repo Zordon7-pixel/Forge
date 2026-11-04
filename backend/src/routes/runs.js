@@ -42,12 +42,10 @@ const {
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
-  phoneRunDiagnostics,
 } = require('../lib/runPostRun');
 const { planningInputUnchanged } = require('../lib/planningRevision');
 const { getGoalBackwardV24Mode } = require('../lib/betaPlanRollout');
 const { buildAttributedCorrection } = require('../lib/goalBackwardEvidence');
-const { mergePhoneCompletion, findPhoneCompletionReplay } = require('./import');
 
 const RUN_FEEDBACK_CLAIM_STALE_MS = 10 * 60 * 1000;
 
@@ -91,7 +89,6 @@ function paceFromSeconds(distanceMiles, seconds) {
 }
 
 function firstRoutePoint(routeCoords) {
-  if (routeCoords?.version === 2) routeCoords = routeCoords.segments?.[0]?.points;
   if (!Array.isArray(routeCoords) || routeCoords.length === 0) return null;
   const point = routeCoords[0];
   if (Array.isArray(point)) {
@@ -731,8 +728,7 @@ router.get('/:id/share-context', auth, async (req, res) => {
 
 router.get('/:id', auth, async (req, res) => {
   try {
-    const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id])
-      || await findPhoneCompletionReplay({ all: dbAll }, req.user.id, req.params.id);
+    const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
     const enrichedRun = withCalculatedEffort(run);
     if (isRunActivity(run)
@@ -804,13 +800,6 @@ router.post('/', auth, async (req, res) => {
       coverageIncomplete: gps_available === false,
     });
     const recordingMetrics = {
-      ...phoneRunDiagnostics(req.body),
-      metric_sources: Object.fromEntries(Object.entries({
-        distance_miles: resolvedDistanceMiles, duration_seconds,
-        elevation_gain: resolvedElevationGain, elevation_loss: resolvedElevationLoss,
-        avg_heart_rate, max_heart_rate, min_heart_rate, cadence_spm,
-      }).filter(([, value]) => value !== undefined && value !== null)
-        .map(([field]) => [field, recordingHealthSource ? 'forged_phone' : 'manual'])),
       ...(distanceEvidence.source ? {
         distance_source: distanceEvidence.source,
         distance_unit: distanceEvidence.unit,
@@ -846,8 +835,7 @@ router.post('/', auth, async (req, res) => {
     }
 
     const writeResult = await withPlanningInputMutation(req.user.id, async (tx) => {
-      const replay = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id])
-        || await findPhoneCompletionReplay(tx, req.user.id, id);
+      const replay = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
       if (replay) return planningInputUnchanged({ inserted: false, run: replay, userProfile: null, prResult: null });
       const actualShoeId = await resolveActualShoe(tx, req.user.id, shoe_id);
       // The client may select an ID, not supply its own completion authority.
@@ -863,14 +851,6 @@ router.post('/', auth, async (req, res) => {
         resolvedPlanSessionId = exact.sessionId;
         storedPlannedSession = exact;
       }
-      const merged = await mergePhoneCompletion(tx, req.user.id, {
-        id, date, type, distance_miles: resolvedDistanceMiles, duration_seconds: duration_seconds || 0,
-        health_source: recordingHealthSource, health_start_at: resolvedActivityStart,
-        route_coords: normalizedRouteCoords, workout_metrics_json: recordingMetrics,
-        notes: notes || null, shoe_id: actualShoeId,
-        plan_session_id: resolvedPlanSessionId, planned_session_json: storedPlannedSession,
-      });
-      if (merged) return { inserted: false, run: merged, userProfile: null, prResult: null };
       const insertResult = await tx.run(`INSERT INTO runs (
         id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
         run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
@@ -923,7 +903,12 @@ router.post('/', auth, async (req, res) => {
       }
 
       const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
-      const prResult = await autoUpdatePRs(req.user.id, run, { tx, strictErrors: true });
+      let prResult = { newPRs: [], discrepancies: [] };
+      try {
+        prResult = await autoUpdatePRs(req.user.id, run, { tx }) || prResult;
+      } catch (err) {
+        console.error('[runs] PR auto-detect failed:', err.message);
+      }
       return { inserted: true, run, userProfile, prResult };
     });
     if (!writeResult.inserted) {
@@ -1029,10 +1014,10 @@ async function updateRunHandler(req, res) {
         distance_miles !== undefined && Number(distance_miles) !== Number(run.distance_miles)
       ) || (
         duration_seconds !== undefined && Number(duration_seconds) !== Number(run.duration_seconds)
-      ) || activityKindChanged || (date !== undefined && date !== run.date);
+      ) || activityKindChanged;
       const existingPrRows = shouldRecomputePrs
         ? await tx.all(
-          `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category IN ('run','time_pr') AND source='auto'`,
+          `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category='run' AND source='auto'`,
           [req.params.id, req.user.id]
         )
         : [];
@@ -1063,7 +1048,7 @@ async function updateRunHandler(req, res) {
       if (shouldRecomputePrs) {
         const labels = existingPrRows.map((row) => row.label);
         await autoUpdatePRs.recomputeRunPrCategories(req.user.id, labels, { tx });
-        await autoUpdatePRs(req.user.id, nextRun, { tx, strictErrors: true });
+        await autoUpdatePRs(req.user.id, nextRun, { tx });
       }
       return nextRun;
     });
@@ -1256,7 +1241,7 @@ router.delete('/:id', auth, async (req, res) => {
         throw notFound;
       }
       const prRows = await tx.all(
-        `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category IN ('run','time_pr') AND source='auto'`,
+        `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category='run' AND source='auto'`,
         [req.params.id, req.user.id]
       );
       const importKeys = buildRunImportKeys({

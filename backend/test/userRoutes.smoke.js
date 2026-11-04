@@ -159,6 +159,115 @@ async function suite(adapter, dialect) {
   }
   assert.deepEqual((await adapter.dbAll(buildExportSql(ACCOUNT_EXPORT_TABLES.find(entry => entry.table === 'user_routes')), ['alice']))[0].legs_json, JSON.stringify(withDistances.legs));
   assert.equal((await call({ method: 'DELETE', url: distanceUrl })).status, 204);
+  // Real editor -> narrow serializer -> authenticated HTTP router -> actual
+  // disposable store -> unchanged saved validator and recorder picker, per dialect.
+  const { createRouteEditor, createLegClient, routePayload, validateSavedRoute, RUNNING_PREFERENCE } =
+    await import('../../frontend/src/lib/manualRouteBuilder.js');
+  const { normalizePrivatePlan, createPrivatePlanPicker } = await import('../../frontend/src/lib/activeRunPlannedRoute.js');
+  for (const mixed of [false, true]) {
+    let timer;
+    const planningCalls = [];
+    const editor = createRouteEditor({ setTimer: fn => { timer = fn; return 1; }, clearTimer: () => { timer = null; },
+      client: createLegClient(async body => {
+        planningCalls.push(clone(body));
+        const [start, end] = body.points;
+        return { profile: body.profile, ...(body.routingPreference ? { routingPreference: body.routingPreference } : {}),
+          geometry: { type: 'LineString', coordinates: [start, [(start[0]+end[0])/2, (start[1]+end[1])/2], end] },
+          distanceMeters: 123.456 + planningCalls.length };
+      }) });
+    editor.setStart([12,45]); editor.setRunning(); editor.add([12.001,45.001]); await timer();
+    if (mixed) {
+      editor.setProfile('foot-walking'); editor.add([12.002,45.002]); await timer();
+      editor.setProfile('foot-hiking'); editor.add([12.003,45.003]); await timer();
+      editor.setMode('straight'); editor.add([12.004,45.004]);
+    }
+    const draft = clone(editor.snapshot());
+    assert.equal(draft.legs.length, mixed ? 4 : 1);
+    assert.equal(draft.legs[0].routingPreference, RUNNING_PREFERENCE);
+    assert.deepEqual(draft.legs.map(leg=>leg.profile), mixed ? ['foot-walking','foot-walking','foot-hiking',null] : ['foot-walking']);
+    assert.equal(planningCalls[0].routingPreference, RUNNING_PREFERENCE);
+    const payload = routePayload(editor.snapshot(), mixed ? 'Synthetic mixed course' : 'Synthetic running-only course', null);
+    assert.deepEqual(editor.snapshot(), draft);
+    assert.deepEqual(payload.legs, draft.legs.map(({routingPreference,...leg})=>leg));
+    assert.deepEqual(payload.geometry.coordinates,draft.coordinates);
+    assert.equal(payload.distanceMeters,draft.distanceMeters);
+    const noIntent = value => assert.doesNotMatch(JSON.stringify(value), /routingPreference/);
+    noIntent(payload);
+    const createdCourse = await call({ method:'POST', body:payload });
+    assert.equal(createdCourse.status,201);
+    const courseId=createdCourse.body.route.id, courseUrl=`/api/user-routes/${courseId}`;
+    const assertAccepted = saved => {
+      noIntent(saved);
+      assert.deepEqual(validateSavedRoute(saved),saved);
+      assert.deepEqual(saved.legs,payload.legs);
+      assert.deepEqual(saved.geometry,payload.geometry);
+      assert.equal(saved.distanceMeters,payload.distanceMeters);
+      assert.deepEqual(normalizePrivatePlan({ownerUserId:'alice',route:saved},'alice').route,saved);
+    };
+    assertAccepted(createdCourse.body.route);
+    const verifyRead = async expectedName => {
+      const read=await call({url:courseUrl}); assert.equal(read.status,200); assertAccepted(read.body.route);
+      assert.equal(read.body.route.name,expectedName);
+      assert.equal(read.body.route.createdAt,createdCourse.body.route.createdAt);
+      const stored=await adapter.dbGet('SELECT legs_json,geometry_json,distance_meters FROM user_routes WHERE id=? AND user_id=?',[courseId,'alice']);
+      noIntent(stored); assert.deepEqual(JSON.parse(stored.legs_json),payload.legs);
+      assert.deepEqual(JSON.parse(stored.geometry_json),payload.geometry); assert.equal(stored.distance_meters,payload.distanceMeters);
+      const rows=await adapter.dbAll(buildExportSql(ACCOUNT_EXPORT_TABLES.find(entry=>entry.table==='user_routes')),['alice']);
+      noIntent(rows); const exported=rows.find(row=>row.id===courseId);
+      assert.deepEqual(JSON.parse(exported.legs_json),payload.legs);
+      assert.deepEqual(JSON.parse(exported.geometry_json),payload.geometry); assert.equal(exported.distance_meters,payload.distanceMeters);
+      let picked;
+      const picker=createPrivatePlanPicker({ownerUserId:'alice',current:()=>true,onChange:state=>{picked=state},
+        get:async (endpoint, config)=>{
+          const query=config.params ? '?'+new URLSearchParams(config.params) : '';
+          const res=await call({url:'/api'+endpoint+query}); assert.equal(res.status,200); return {data:res.body};
+        }});
+      await picker.list(); assert.equal(picked.error,''); assert.ok(picked.routes.some(route=>route.id===courseId));
+      await picker.select(courseId); assert.equal(picked.error,''); assertAccepted(picked.selection.route); picker.dispose();
+      const download=await call({url:courseUrl+'/gpx'}); assert.equal(download.status,200);
+      const track=(await parseStringPromise(download.text)).gpx.trk[0];
+      assert.deepEqual(track.trkseg[0].trkpt.map(p=>[Number(p.$.lon),Number(p.$.lat)]),payload.geometry.coordinates);
+      assert.ok(track.trkseg[0].trkpt.every(p=>!p.time));
+    };
+    await verifyRead(payload.name);
+    for (const options of [{url:courseUrl},{url:courseUrl+'/gpx'}, {method:'PUT',url:courseUrl,body:payload},{method:'DELETE',url:courseUrl}]) {
+      assert.equal((await call({...options,token:bob})).status,404);
+    }
+    const malformed=[];
+    for (const routingPreference of [RUNNING_PREFERENCE,null,'','running','foot-running','road-only',{},[],true]) {
+      const bad=clone(payload); bad.legs[0].routingPreference=routingPreference; malformed.push(bad);
+    }
+    for (const patch of [{routingPreference:RUNNING_PREFERENCE,profile:'foot-hiking'},
+      {routingPreference:RUNNING_PREFERENCE,mode:'straight',provenance:'manual',profile:null}, {intent:'running'}, {unknown:true}]) {
+      const bad=clone(payload); Object.assign(bad.legs[0],patch); malformed.push(bad);
+    }
+    const before=await adapter.dbAll('SELECT * FROM user_routes ORDER BY id'), auditStart=sqlAudit.length;
+    for (const body of malformed) {
+      assert.equal((await call({method:'POST',body})).status,400);
+      assert.equal((await call({method:'PUT',url:courseUrl,body})).status,400);
+    }
+    assert.deepEqual(await adapter.dbAll('SELECT * FROM user_routes ORDER BY id'),before);
+    assert.ok(sqlAudit.slice(auditStart).every(({sql})=>!/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql)), 'even valid Running metadata is rejected without writes');
+    // A preexisting/corrupt stored preference is not silently accepted or repaired
+    // on read either. Only this disposable fixture seeds the invalid row.
+    const corruptLegs=clone(payload.legs); corruptLegs[0].routingPreference=RUNNING_PREFERENCE;
+    await adapter.dbRun('UPDATE user_routes SET legs_json=? WHERE id=? AND user_id=?',[JSON.stringify(corruptLegs),courseId,'alice']);
+    const corruptBefore=await adapter.dbAll('SELECT * FROM user_routes ORDER BY id'), readAuditStart=sqlAudit.length;
+    for (const url of [courseUrl,courseUrl+'/gpx']) assert.equal((await call({url})).status,503);
+    assert.deepEqual(await adapter.dbAll('SELECT * FROM user_routes ORDER BY id'),corruptBefore);
+    assert.ok(sqlAudit.slice(readAuditStart).every(({sql})=>!/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql)));
+    const updatedPayload=routePayload(editor.snapshot(),'Updated '+payload.name,null); noIntent(updatedPayload);
+    const updated=await call({method:'PUT',url:courseUrl,body:updatedPayload}); assert.equal(updated.status,200); assertAccepted(updated.body.route);
+    await verifyRead(updatedPayload.name);
+    editor.setRunning(); editor.load(updated.body.route);
+    assert.equal(editor.snapshot().profile,'foot-walking'); assert.equal(editor.snapshot().routingPreference,undefined);
+    assert.deepEqual(editor.snapshot().coordinates,draft.coordinates); assert.deepEqual(editor.snapshot().legs,payload.legs);
+    assert.equal(planningCalls.length,mixed?3:1); editor.dispose();
+    assert.equal((await call({method:'DELETE',url:courseUrl})).status,204);
+    assert.equal((await call({url:courseUrl})).status,404);
+  }
+  assert.deepEqual(await adapter.dbAll('SELECT * FROM user_routes'),[]);
+  ok(`${dialect}: real Running-only/mixed editor POST/GET/PUT, lossless storage/export, original recorder acceptance and metadata rejected without writes`);
   const created = await call({ method: 'POST', body: example() });
   assert.equal(created.status, 201);
   const route = created.body.route, id = route.id, url = `/api/user-routes/${id}`;

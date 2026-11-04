@@ -620,6 +620,60 @@ async function postgresSuite() {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+async function runningSuite() {
+  const { RUNNING_PREFERENCE, validateLeg } = require('../src/services/plannedLeg');
+  const running = { ...input, routingPreference: RUNNING_PREFERENCE };
+  const options = { avoid_features: ['ferries', 'fords', 'steps'] };
+  const cache = new Map(); let reserved = 0, fetched = 0, release;
+  const store = { lookup: async (_owner, key) => cache.get(key) ?? null,
+    reserve: async () => { reserved++; }, save: async (_owner, key, value) => { cache.set(key, value); } };
+  const planner = createPlanner({ store, getKey: () => SENTINEL, fetchImpl: async (url, opts) => {
+    fetched++; const body = JSON.parse(opts.body);
+    assert.ok(url.endsWith('/foot-walking/geojson'));
+    assert.deepEqual(body, { coordinates: validateInput(input).points, instructions: false, elevation: false,
+      ...(body.options ? { options } : {}) });
+    await new Promise(resolve => { release = resolve; });
+    return response({ ...valid(), metadata: { query: { profile: 'foot-walking', ...(body.options ? { options } : {}) } } });
+  } });
+  for (const bad of [null, '', 'running', 'running-avoid-ferries-fords-steps-v2', {}, ['running']]) {
+    assert.throws(() => validateInput({ ...input, routingPreference: bad }), errorIs('INVALID_LEG'));
+  }
+  assert.throws(() => validateInput({ ...running, profile: 'foot-hiking' }), errorIs('INVALID_LEG'));
+  assert.throws(() => validateInput({ ...running, options }), errorIs('INVALID_LEG'));
+  const oldKey = require('node:crypto').createHash('sha256').update(JSON.stringify(['leg-v1', 'alice', input.profile,
+    { instructions: false, elevation: false }, validateInput(input).points])).digest('hex');
+  assert.notEqual(cacheKey('alice', validateInput(input)), oldKey);
+  assert.notEqual(cacheKey('alice', validateInput(running)), cacheKey('alice', validateInput(input)));
+  cache.set(oldKey, 'obsolete cache must not be read');
+  const walking = planner('alice', input);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const releaseWalking = release; release = null;
+  const runA = planner('alice', running), runB = planner('alice', running);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fetched, 2); assert.equal(reserved, 2); release(); releaseWalking();
+  const [walk, a, b] = await Promise.all([walking, runA, runB]);
+  assert.equal(walk.leg.routingPreference, undefined);
+  assert.equal(a.leg.profile, 'foot-walking'); assert.equal(a.leg.routingPreference, RUNNING_PREFERENCE);
+  assert.deepEqual(a, b); assert.equal((await planner('alice', running)).status.cache, 'hit'); assert.equal(reserved, 2);
+  const runningKey = cacheKey('alice', validateInput(running));
+  cache.set(runningKey, JSON.stringify(walk.leg));
+  await assert.rejects(planner('alice', running), errorIs('PLANNING_UNAVAILABLE'));
+  cache.set(cacheKey('alice', validateInput(input)), JSON.stringify(a.leg));
+  await assert.rejects(planner('alice', input), errorIs('PLANNING_UNAVAILABLE'));
+  for (const patch of [{ routingPreference: null }, { routingPreference: 'running' }, { profile: 'foot-hiking' }]) {
+    assert.throws(() => validateLeg({ ...a.leg, ...patch }), errorIs('INVALID_PROVIDER_RESPONSE'));
+  }
+  for (const query of [undefined, { profile: 'foot-hiking', options }, { profile: 'foot-walking' },
+    { profile: 'foot-walking', options: { avoid_features: ['ferries', 'fords'] } },
+    { profile: 'foot-walking', options: { ...options, arbitrary: true } }]) {
+    const strict = createPlanner({ store: { ...store, lookup: async () => null }, getKey: () => SENTINEL,
+      fetchImpl: async () => response({ ...valid(), metadata: { query } }) });
+    await assert.rejects(strict('alice', running), errorIs('INVALID_PROVIDER_RESPONSE'));
+  }
+  assert.equal(unexpectedFetch, 0);
+  ok('synthetic Running fixed options, profile/metadata validation, versioned cache and in-flight isolation; no fallback');
+}
 (process.argv.includes('--postgres') ? postgresSuite() : sqliteSuite())
+  .then(runningSuite)
   .then(() => console.log(`Planned leg smoke OK (${groups} groups; zero live provider requests).`))
   .catch(err => { console.error(err); process.exitCode = 1; });

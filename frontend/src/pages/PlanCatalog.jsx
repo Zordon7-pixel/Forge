@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { CalendarDays, ChevronRight, MapPin, Search, X } from 'lucide-react'
 import api from '../lib/api'
+import { getAuthSession, isAuthSessionCurrent, subscribeAuthSession } from '../lib/tokenStore'
 import { previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { activateModalDialog } from '../lib/modalDialog'
@@ -12,6 +13,10 @@ import { formatDuration, normalizeDurationSeconds } from '../lib/duration'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const PLAN_GENERATION_TIMEOUT_MS = 90000
+// Memory-only, session-bound return from the existing upgrade screen. No race
+// or account data is written to browser storage. A full reload loses this draft.
+let upgradeDraft = null
+subscribeAuthSession(() => { upgradeDraft = null })
 
 function localTodayISO() {
   const now = new Date()
@@ -54,7 +59,8 @@ function sortDays(days) {
 function isValidISODate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false
   const parsed = new Date(`${value}T12:00:00`)
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+  return !Number.isNaN(parsed.getTime()) && parsed.getFullYear() === Number(value.slice(0, 4))
+    && parsed.getMonth() + 1 === Number(value.slice(5, 7)) && parsed.getDate() === Number(value.slice(8, 10))
 }
 
 function formatRaceDate(value) {
@@ -76,8 +82,8 @@ function raceDistance(race = {}) {
 
 function weeksToRace(value) {
   if (!isValidISODate(value)) return null
-  const race = new Date(`${value}T12:00:00`)
-  const today = new Date(`${localTodayISO()}T12:00:00`)
+  const race = new Date(`${value}T12:00:00Z`)
+  const today = new Date(`${localTodayISO()}T12:00:00Z`)
   const days = Math.ceil((race.getTime() - today.getTime()) / 86400000)
   return days >= 0 ? Math.max(1, Math.ceil(days / 7)) : null
 }
@@ -87,7 +93,12 @@ export default function PlanCatalog() {
   const location = useLocation()
   const requestedRaceHandledRef = useRef(false)
   const planDialogRef = useRef(null)
-  const { isPro, loading: proLoading } = useProContext()
+  const { isPro, loading: proLoading, error: proError, refreshPro, accessSession } = useProContext()
+  const [accessMessage, setAccessMessage] = useState('')
+  const [upgradeNeeded, setUpgradeNeeded] = useState(false)
+  const searchRequest = useRef(null)
+  const generationInFlight = useRef(false)
+  const lifetime = useRef(0)
   const todayISO = localTodayISO()
   const [selectedGoal, setSelectedGoal] = useState(null)
   const [prefillLoading, setPrefillLoading] = useState(false)
@@ -130,43 +141,136 @@ export default function PlanCatalog() {
   const selectedCourse = raceSelection?.race?.course_intelligence || null
 
   useEffect(() => {
+    if (!proLoading && !proError && isPro) { setAccessMessage(''); setUpgradeNeeded(false) }
+  }, [isPro, proLoading, proError])
+
+  const closeOptions = () => {
+    if (generationInFlight.current) return
+    prefillRequestRevision.current += 1
+    setPrefillLoading(false)
+    setSelectedGoal(null)
+  }
+
+  useEffect(() => {
+    const draft = upgradeDraft
+    upgradeDraft = null
+    if (draft && isAuthSessionCurrent(draft.session)) {
+      setSelectedGoal(draft.selectedGoal)
+      setRaceDraft(draft.raceDraft)
+      setCustomDistance(draft.customDistance)
+      setRaceSelection(draft.raceSelection)
+      setGoalTime(draft.goalTime)
+    }
+    const invalidate = () => {
+      lifetime.current += 1
+      prefillRequestRevision.current += 1
+      searchRequest.current?.controller.abort()
+      searchRequest.current = null
+      setGenerating(false)
+      setGenerationStep('')
+      setPrefillLoading(false)
+      requestedRaceHandledRef.current = false
+      generationInFlight.current = null
+      setRaceSearchLoading(false)
+      setRaceResults([])
+      setRaceQuery('')
+      setRaceSearchError('')
+      setRaceSelection(null)
+      setCustomDistance('')
+      setGoalTime(0)
+      setRaceSearched(false)
+      setSavedRaces([])
+      setSelectedGoal(null)
+      setHyroxSetupOpen(false)
+      setRaceDraft({ name: '', date: '', location: '' })
+      setAccessMessage('')
+      setUpgradeNeeded(false)
+      setError('')
+    }
+    const unsubscribe = subscribeAuthSession(invalidate)
+    return () => {
+      unsubscribe()
+      lifetime.current += 1
+      prefillRequestRevision.current += 1
+      searchRequest.current?.controller.abort()
+      searchRequest.current = null
+    }
+  }, [])
+
+  useEffect(() => {
     if (!selectedGoal) return undefined
     return activateModalDialog({
       dialog: planDialogRef.current,
-      onClose: () => setSelectedGoal(null),
+      onClose: closeOptions,
     })
   }, [selectedGoal])
 
   useEffect(() => {
     let active = true
-    api.get('/races')
-      .then(({ data }) => {
-        if (!active) return
-        const upcoming = (Array.isArray(data?.races) ? data.races : [])
-          .filter((race) => race.status === 'upcoming' && race.race_date >= todayISO && String(race.event_kind || 'run_race') === 'run_race')
-          .sort((a, b) => String(a.race_date).localeCompare(String(b.race_date)))
-        setSavedRaces(upcoming)
-      })
-      .catch((err) => console.error('[PlanCatalog] saved race load failed:', err.message))
-    return () => { active = false }
+    let revision = 0
+    const load = () => {
+      const request = ++revision
+      const session = getAuthSession()
+      if (!session.token) { setSavedRaces([]); return }
+      api.get('/races', { forgeAuthSession: session })
+        .then(({ data }) => {
+          if (!active || request !== revision || !isAuthSessionCurrent(session)) return
+          const upcoming = (Array.isArray(data?.races) ? data.races : [])
+            .filter((race) => race.status === 'upcoming' && race.race_date >= todayISO && String(race.event_kind || 'run_race') === 'run_race')
+            .sort((a, b) => String(a.race_date).localeCompare(String(b.race_date)))
+          setSavedRaces(upcoming)
+        })
+        .catch((err) => {
+          if (active && request === revision && isAuthSessionCurrent(session)) console.error('[PlanCatalog] saved race load failed:', err.message)
+        })
+    }
+    load()
+    const unsubscribe = subscribeAuthSession(load)
+    return () => { active = false; unsubscribe() }
   }, [todayISO])
 
   const ensurePro = () => {
-    if (proLoading) return false
-    if (isPro !== true) {
-      navigate('/upgrade')
+    if (proLoading || (!proError && !isAuthSessionCurrent(accessSession))) {
+      setAccessMessage('Checking Pro access. Please wait, then try again.')
       return false
     }
+    if (proError) {
+      setAccessMessage(proError)
+      return false
+    }
+    if (isPro !== true) {
+      setUpgradeNeeded(true)
+      setAccessMessage('Race calendars require Pro. You can enter any race here; upgrade to build its training plan.')
+      return false
+    }
+    setAccessMessage('')
+    setUpgradeNeeded(false)
     return true
   }
 
+  const openUpgrade = () => {
+    if (isRacePlan) upgradeDraft = {
+      session: getAuthSession(), selectedGoal, raceDraft, customDistance, raceSelection, goalTime,
+    }
+    navigate('/upgrade')
+  }
+
+  const accessNotice = (proLoading || proError || accessMessage) && (
+    <div role={proError ? 'alert' : 'status'} style={{ padding: 12, margin: '12px 0', background: 'var(--bg-input)', border: '1px solid var(--accent)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 15 }}>
+      {proLoading ? 'Checking Pro access… Race entry is available while you wait.' : proError || accessMessage}
+      {proError && <button type="button" onClick={() => { setAccessMessage(''); void refreshPro() }} style={{ display: 'block', minHeight: 44 }}>Retry access check</button>}
+      {!proLoading && !proError && upgradeNeeded && <button type="button" onClick={openUpgrade} style={{ display: 'block', minHeight: 44 }}>View Pro upgrade</button>}
+    </div>
+  )
+
   const loadPrefill = async () => {
+    const session = getAuthSession()
     const requestRevision = ++prefillRequestRevision.current
     const editRevision = preferenceEditRevision.current
     setPrefillLoading(true)
     try {
-      const { data } = await api.get('/plans/prefill')
-      if (requestRevision !== prefillRequestRevision.current || editRevision !== preferenceEditRevision.current) return
+      const { data } = await api.get('/plans/prefill', { forgeAuthSession: session })
+      if (!isAuthSessionCurrent(session) || requestRevision !== prefillRequestRevision.current || editRevision !== preferenceEditRevision.current) return
       const inferred = Array.isArray(data?.inferredTrainingDays) && data.inferredTrainingDays.length
         ? data.inferredTrainingDays
         : ['Tue', 'Thu', 'Sat']
@@ -180,8 +284,11 @@ export default function PlanCatalog() {
       setLiftDaysPerWeek(liftCount)
       setStrengthMode('hybrid_maintain')
     } catch (err) {
+      if (!isAuthSessionCurrent(session) || requestRevision !== prefillRequestRevision.current) return
       if (err?.response?.status === 402) {
-        navigate('/upgrade')
+        setUpgradeNeeded(true)
+        setAccessMessage('Race calendars require Pro. Upgrade to build your training plan.')
+        void refreshPro()
         return
       }
       console.error('[PlanCatalog] prefill failed:', err.message)
@@ -204,7 +311,13 @@ export default function PlanCatalog() {
   }
 
   const openRace = async (race = null, selectionType = 'catalog') => {
-    if (!ensurePro()) return
+    if (race && !ensurePro()) return
+    if (race && isValidISODate(race.race_date) && race.race_date < localTodayISO()) {
+      setAccessMessage('This race date has passed. Enter a future edition manually.')
+      return
+    }
+    prefillRequestRevision.current += 1
+    setPrefillLoading(false)
     const name = race ? raceName(race) : ''
     setSelectedGoal({
       key: 'race',
@@ -224,39 +337,50 @@ export default function PlanCatalog() {
       date: race?.race_date || '',
       location: race ? raceLocation(race) : '',
     })
-    await loadPrefill()
+    if (!proLoading && !proError && isPro) await loadPrefill()
   }
 
   useEffect(() => {
     const requestedRaceId = location.state?.raceId
-    if (!requestedRaceId || requestedRaceHandledRef.current || !savedRaces.length) return
+    if (proLoading || proError || !requestedRaceId || requestedRaceHandledRef.current || !savedRaces.length) return
     const race = savedRaces.find((item) => String(item.id) === String(requestedRaceId))
     requestedRaceHandledRef.current = true
     navigate(location.pathname, { replace: true, state: null })
     if (race) void openRace(race, 'owned')
     // openRace intentionally runs once for the navigation state handoff.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname, location.state?.raceId, navigate, savedRaces])
+  }, [location.pathname, location.state?.raceId, navigate, savedRaces, proLoading, proError])
 
   const searchRaces = async (event) => {
     event.preventDefault()
     const query = raceQuery.trim()
+    if (searchRequest.current?.query === query) return
+    searchRequest.current?.controller.abort()
+    searchRequest.current = null
+    setRaceResults([])
+    setRaceSearched(true)
     if (query.length < 2) {
+      setRaceSearchLoading(false)
       setRaceSearchError('Enter at least two letters from the race name or location.')
       return
     }
+    const request = { query, controller: new AbortController(), session: getAuthSession() }
+    searchRequest.current = request
+    const current = () => searchRequest.current === request && isAuthSessionCurrent(request.session)
     setRaceSearchLoading(true)
     setRaceSearchError('')
-    setRaceSearched(true)
     try {
-      const { data } = await api.get('/races/catalog', { params: { q: query } })
+      const { data } = await api.get('/races/catalog', { params: { q: query }, signal: request.controller.signal, forgeAuthSession: request.session })
+      if (!current()) return
       setRaceResults(Array.isArray(data?.races) ? data.races.slice(0, 8) : [])
-    } catch (err) {
-      console.error('[PlanCatalog] race search failed:', err.message)
-      setRaceResults([])
-      setRaceSearchError(err?.response?.data?.error || 'Race search is unavailable right now.')
+    } catch {
+      if (!current()) return
+      setRaceSearchError('Race search is unavailable right now. Try Search again or enter your race manually.')
     } finally {
-      setRaceSearchLoading(false)
+      if (current()) {
+        searchRequest.current = null
+        setRaceSearchLoading(false)
+      }
     }
   }
 
@@ -274,13 +398,14 @@ export default function PlanCatalog() {
   }
 
   const generatePlan = async () => {
+    if (generationInFlight.current) return
     const goalTimeSeconds = parsedGoalTime
     const parsedWeeks = Number(weeks)
     const distanceMiles = Number(selectedDistance)
     const runCount = Number(runDaysPerWeek)
     const liftCount = liftingEnabled ? Number(liftDaysPerWeek) : 0
 
-    if (!distanceMiles || distanceMiles <= 0 || distanceMiles > 100) {
+    if (!Number.isFinite(distanceMiles) || distanceMiles < 0.1 || distanceMiles > 100) {
       setError('Enter a target distance between 0.1 and 100 miles.')
       return
     }
@@ -313,6 +438,14 @@ export default function PlanCatalog() {
       return
     }
 
+    setError('')
+    if (!ensurePro()) return
+    const session = getAuthSession()
+    const revision = lifetime.current
+    const current = () => isAuthSessionCurrent(session) && lifetime.current === revision
+    const config = { forgeAuthSession: session }
+    const operation = {}
+    generationInFlight.current = operation
     setGenerating(true)
     setGenerationStep(isRacePlan ? 'Saving race...' : 'Building your calendar...')
     setError('')
@@ -338,8 +471,9 @@ export default function PlanCatalog() {
           const catalogRaceOptions = goalTimeSeconds ? { goal_time_seconds: goalTimeSeconds } : {}
           const { data } = await api.post(
             `/races/from-catalog/${encodeURIComponent(raceSelection.race.id)}`,
-            catalogRaceOptions,
+            catalogRaceOptions, config,
           )
+          if (!current()) return
           ownedRace = data?.race
         }
         if (!ownedRace) {
@@ -350,12 +484,14 @@ export default function PlanCatalog() {
             location: raceDraft.location.trim() || null,
             goal_time_seconds: goalTimeSeconds || null,
             status: 'upcoming',
-          })
+          }, config)
+          if (!current()) return
           ownedRace = data?.race
         }
         const requestedGoalTime = goalTimeSeconds || null
         if (ownedRace && raceSelection?.type === 'owned' && Number(ownedRace.goal_time_seconds || 0) !== Number(requestedGoalTime || 0)) {
-          const { data } = await api.patch(`/races/${encodeURIComponent(ownedRace.id)}`, { goal_time_seconds: requestedGoalTime })
+          const { data } = await api.patch(`/races/${encodeURIComponent(ownedRace.id)}`, { goal_time_seconds: requestedGoalTime }, config)
+          if (!current()) return
           ownedRace = data?.race || ownedRace
         }
         if (!ownedRace?.id) throw new Error('Race could not be saved before plan generation.')
@@ -365,21 +501,24 @@ export default function PlanCatalog() {
         await previewAndApplyPlan(
           `/plans/generate-for-race/${encodeURIComponent(ownedRace.id)}`,
           { target },
-          { timeout: PLAN_GENERATION_TIMEOUT_MS },
+          { ...config, timeout: PLAN_GENERATION_TIMEOUT_MS },
         )
       } else {
         if (weeks) target.weeks = parsedWeeks
         setGenerationStep('Building your calendar...')
-        await previewAndApplyPlan('/plans/generate', { target }, { timeout: PLAN_GENERATION_TIMEOUT_MS })
+        await previewAndApplyPlan('/plans/generate', { target }, { ...config, timeout: PLAN_GENERATION_TIMEOUT_MS })
       }
-      navigate('/plan')
+      if (current()) navigate('/plan')
     } catch (err) {
+      if (!current()) return
       if (isPlanCandidateReviewCancelled(err)) {
         setError(`${savedRaceThisAttempt ? 'Your race was saved. ' : ''}Your current training plan was kept. No plan calendar changes were made.`)
         return
       }
       if (err?.response?.status === 402) {
-        navigate('/upgrade')
+        setUpgradeNeeded(true)
+        setAccessMessage('Race calendars require Pro. Upgrade to build your training plan; your race details are kept here.')
+        void refreshPro()
         return
       }
       console.error('[PlanCatalog] plan generation failed:', err.message)
@@ -389,6 +528,8 @@ export default function PlanCatalog() {
         setError(`${savedRaceThisAttempt ? 'Your race was saved, but your training plan was not changed. ' : ''}${err?.response?.data?.error || err?.message || 'Unable to generate this plan right now.'}`)
       }
     } finally {
+      if (generationInFlight.current === operation) generationInFlight.current = null
+      if (!current()) return
       setGenerating(false)
       setGenerationStep('')
     }
@@ -404,6 +545,7 @@ export default function PlanCatalog() {
         </p>
       </header>
 
+      {!selectedGoal && accessNotice}
       <section style={{ padding: '4px 0 22px', borderBottom: '1px solid var(--border-subtle)', marginBottom: 22 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
           <Search size={18} color="var(--accent)" />
@@ -416,6 +558,7 @@ export default function PlanCatalog() {
           <label style={{ display: 'grid', gap: 6, marginBottom: 10, maxWidth: 420 }}>
             <span style={{ color: 'var(--text-primary)', fontSize: 12, fontWeight: 850 }}>Use one of your saved races</span>
             <select
+              disabled={proLoading}
               value=""
               onChange={(event) => {
                 const race = savedRaces.find((item) => item.id === event.target.value)
@@ -434,7 +577,7 @@ export default function PlanCatalog() {
             type="search"
             value={raceQuery}
             onChange={(event) => setRaceQuery(event.target.value)}
-            placeholder="Army Ten-Miler or Washington, DC"
+            placeholder="Race name or city, state"
             aria-label="Search race catalog"
             style={{ flex: '1 1 230px', minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }}
           />
@@ -442,26 +585,31 @@ export default function PlanCatalog() {
             {raceSearchLoading ? 'Searching...' : 'Search'}
           </button>
           <button type="button" onClick={() => openRace()} className="rounded-lg px-4 py-3 font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
-            Enter manually
+            Enter your race manually
           </button>
         </form>
 
-        {raceSearchError && <p role="alert" style={{ color: 'var(--danger)', fontSize: 13, marginTop: 10 }}>{raceSearchError}</p>}
-        {raceSearched && !raceSearchLoading && !raceSearchError && raceResults.length === 0 && (
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 12 }}>No matching race yet. Enter it manually and the plan will use distance-only course logic.</p>
+        {(raceSearchLoading || raceSearchError || raceSearched) && (
+          <p role={raceSearchError ? 'alert' : 'status'} aria-live="polite" style={{ color: 'var(--text-primary)', background: 'var(--bg-input)', border: `1px solid ${raceSearchError ? 'var(--danger)' : 'var(--accent)'}`, borderRadius: 8, padding: 14, fontSize: 16, fontWeight: 750, marginTop: 12 }}>
+            {raceSearchLoading ? 'Searching the race catalog…' : raceSearchError || (raceResults.length
+              ? `${raceResults.length === 8 ? 'Showing up to 8' : raceResults.length} matching race${raceResults.length === 1 ? '' : 's'}. Check the date before choosing.`
+              : 'No matching races found. Enter your race manually with any name, date and distance.')}
+          </p>
         )}
         {raceResults.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10, marginTop: 14 }}>
             {raceResults.map((race) => {
               const course = race.course_intelligence
+              const past = isValidISODate(race.race_date) && race.race_date < todayISO
               return (
                 <article key={race.id} className="rounded-lg p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', minWidth: 0 }}>
                   <p style={{ color: 'var(--text-primary)', fontSize: 15, fontWeight: 950, margin: 0, overflowWrap: 'anywhere' }}>{raceName(race)}</p>
                   <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 850, margin: '5px 0 0' }}>{formatRaceDate(race.race_date)} · {raceDistance(race)} mi</p>
                   <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: 5 }}><MapPin size={12} /> {raceLocation(race) || 'Location not listed'}</p>
                   {course && <p style={{ color: course.trusted ? 'var(--success)' : 'var(--text-muted)', fontSize: 11, fontWeight: 850, margin: '7px 0 0' }}>{course.label}</p>}
-                  <button type="button" onClick={() => openRace(race)} className="rounded-lg px-3 py-2" style={{ marginTop: 10, width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 13, fontWeight: 950 }}>
-                    Use this race
+                  {past && <p style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 850 }}>Past race — enter a new date manually to plan a future edition.</p>}
+                  <button type="button" disabled={proLoading || past} onClick={() => openRace(race)} className="rounded-lg px-3 py-2" style={{ marginTop: 10, width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 13, fontWeight: 950 }}>
+                    {past ? 'Past race' : proLoading ? 'Checking Pro access…' : 'Use this race'}
                   </button>
                 </article>
               )
@@ -549,15 +697,16 @@ export default function PlanCatalog() {
                 <h2 id="plan-options-title" style={{ color: 'var(--text-primary)', fontSize: 23, fontWeight: 950, margin: 0, overflowWrap: 'anywhere' }}>{isRacePlan ? raceDraft.name || 'Custom race' : selectedGoal.name}</h2>
                 <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{selectedGoal.duration} / {selectedGoal.feel}</p>
               </div>
-              <button type="button" onClick={() => setSelectedGoal(null)} aria-label="Close plan options" style={{ flex: '0 0 auto', width: 38, height: 38, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)' }}>
+              <button type="button" disabled={generating} onClick={closeOptions} aria-label="Close plan options" style={{ flex: '0 0 auto', width: 38, height: 38, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)' }}>
                 <X size={18} />
               </button>
             </div>
 
+            {accessNotice}
             {prefillLoading && <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>Loading your usual training rhythm...</p>}
             {error && <div role="alert" className="rounded-lg p-3" style={{ background: 'var(--danger-dim)', border: '1px solid var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 700, marginBottom: 12 }}>{error}</div>}
 
-            <div style={{ display: 'grid', gap: 16 }}>
+            <fieldset disabled={generating} style={{ display: 'grid', gap: 16, border: 0, padding: 0, margin: 0, minWidth: 0 }}>
               {isRacePlan && (
                 <section aria-label="Race details" style={{ display: 'grid', gap: 12 }}>
                   <label style={{ display: 'grid', gap: 7 }}>
@@ -717,10 +866,10 @@ export default function PlanCatalog() {
                 </label>
               )}
 
-              <button type="button" onClick={generatePlan} disabled={generating || prefillLoading} className="rounded-lg p-4" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 15, fontWeight: 950, opacity: generating || prefillLoading ? 0.65 : 1 }}>
-                {generating ? generationStep || 'Generating...' : isRacePlan ? 'Build Race Calendar' : 'Generate Training Block'}
+              <button type="button" onClick={generatePlan} disabled={generating || prefillLoading || proLoading} className="rounded-lg p-4" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 15, fontWeight: 950, opacity: generating || prefillLoading ? 0.65 : 1 }}>
+                {proLoading ? 'Checking Pro access…' : generating ? generationStep || 'Generating...' : isRacePlan ? 'Build Race Calendar' : 'Generate Training Block'}
               </button>
-            </div>
+            </fieldset>
           </div>
         </div>
       )}

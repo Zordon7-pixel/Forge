@@ -1,4 +1,3 @@
-import { normalizeSegmentedRoute } from './gpsTrace.js'
 import { ZONE_HEAT_PALETTE } from './athleteLanguage.js'
 
 const MIN_TRUSTED_ZONE_COVERAGE_PCT = 70
@@ -91,31 +90,22 @@ export function workoutMetricSourceLabel(streams, key) {
 
 export function elevationStreamFromRoute(value, units = 'imperial') {
   const parsed = parseJson(value, [])
-  const envelope = normalizeSegmentedRoute(parsed)
-  const segments = envelope ? envelope.segments.map(segment => segment.points) : Array.isArray(parsed) ? [parsed] : []
-  let firstTimestamp = null, index = 0
-  const result = []
-  for (const [segmentIndex, points] of segments.entries()) {
-    if (segmentIndex) result.push({ t: null, v: null, gap: true })
-    for (const point of points) {
-      const altitude = finiteNumber(Array.isArray(point) ? point[2] : point?.alt ?? point?.altitude)
-      const rawTime = Array.isArray(point) ? point[3] : point?.time
-      const timestamp = rawTime == null ? NaN : new Date(rawTime).getTime()
-      if (firstTimestamp === null && Number.isFinite(timestamp)) firstTimestamp = timestamp
-      result.push({ t: Number.isFinite(timestamp) && firstTimestamp !== null ? Math.max(0, (timestamp - firstTimestamp) / 1000) : index,
-        v: altitude === null || altitude < -2000 || altitude > 100000 ? null : units === 'metric' ? altitude : altitude * 3.280839895 })
-      index++
-    }
-  }
-  return result
-}
-
-export function parseRunRouteSegments(value) {
-  const parsed = parseJson(value, [])
-  const envelope = normalizeSegmentedRoute(parsed)
-  if (envelope) return envelope.segments.map(segment => ({ gap: segment.gap, positions: segment.points.map(point => [point.lat, point.lon]) }))
-  const positions = parseRunRoute(parsed)
-  return positions.length ? [{ gap: null, positions }] : []
+  if (!Array.isArray(parsed)) return []
+  const candidates = parsed.flatMap((point, index) => {
+    const altitudeMeters = finiteNumber(Array.isArray(point) ? point[2] : point?.alt ?? point?.altitude)
+    if (altitudeMeters === null || altitudeMeters < -500 || altitudeMeters > 9000) return []
+    const rawTime = Array.isArray(point) ? point[3] : point?.time
+    const timestamp = rawTime ? new Date(rawTime).getTime() : Number.NaN
+    return [{ index, timestamp, altitudeMeters }]
+  })
+  if (!candidates.length) return []
+  const firstTimestamp = candidates.find((point) => Number.isFinite(point.timestamp))?.timestamp
+  return candidates.map((point) => ({
+    t: Number.isFinite(point.timestamp) && Number.isFinite(firstTimestamp)
+      ? Math.max(0, (point.timestamp - firstTimestamp) / 1000)
+      : point.index,
+    v: units === 'metric' ? point.altitudeMeters : point.altitudeMeters * 3.280839895,
+  })).slice(0, 600)
 }
 
 function parsePaceSeconds(value) {

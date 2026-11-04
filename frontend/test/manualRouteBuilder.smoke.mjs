@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { createLegClient, createRouteEditor, elevationStats, geometricMeters, legKey, METERS_PER_MILE,
-  MODE_LABELS, routePayload, turnaroundPoint, validateSavedRoute, routeError } from '../src/lib/manualRouteBuilder.js'
+  MODE_LABELS, RUNNING_PREFERENCE, validateLegResponse, routePayload, turnaroundPoint, validateSavedRoute, routeError } from '../src/lib/manualRouteBuilder.js'
+import { normalizePrivatePlan, createPrivatePlanPicker } from '../src/lib/activeRunPlannedRoute.js'
 const require = createRequire(import.meta.url)
 const { validateRoute } = require('../../backend/src/lib/userRoutes.js')
 globalThis.fetch = () => { throw new Error('Live network forbidden') }
@@ -174,5 +175,104 @@ await test('loaded undo invalidates pending routing and additive distance fields
     assert.throws(()=>validateSavedRoute(bad)); const {id,kind,schemaVersion,provenanceTrust,createdAt,updatedAt,...payload}=bad
     assert.throws(()=>validateRoute(payload))
   }
+})
+await test('Running-only and mixed drafts serialize losslessly to the original recorder contract without retaining intent', async () => {
+  for (const mixed of [false, true]) {
+    const f = fixture(body => ({ ...response(body.points, 1000.125, body.profile),
+      ...(body.routingPreference ? { routingPreference: body.routingPreference } : {}) }))
+    f.editor.setStart(A); f.editor.setRunning(); f.editor.add(B); await f.tick()
+    assert.deepEqual(f.calls[0], { profile: 'foot-walking', points: [A,B], routingPreference: RUNNING_PREFERENCE })
+    if (mixed) {
+      f.editor.setProfile('foot-walking'); f.editor.add(C); await f.tick()
+      f.editor.setProfile('foot-hiking'); f.editor.add(D); await f.tick()
+      f.editor.setMode('straight'); f.editor.add([-73.04,40])
+    }
+    const original = structuredClone(f.editor.snapshot())
+    f.editor.outAndBack()
+    const draft = structuredClone(f.editor.snapshot()), callsBefore = f.calls.length
+    assert.deepEqual(draft.legs.map(l=>l.routingPreference), [...original.legs,...original.legs.toReversed()].map(l=>l.routingPreference))
+    const payload = routePayload(f.editor.snapshot(), 'Synthetic Running course', null)
+    assert.deepEqual(f.editor.snapshot(), draft, 'serialization does not mutate legs or undo state')
+    assert.ok(payload.legs.every((leg,i)=>leg!==f.editor.snapshot().legs[i]))
+    assert.deepEqual(payload.geometry.coordinates, draft.coordinates)
+    assert.equal(payload.distanceMeters, draft.distanceMeters)
+    assert.deepEqual(payload.legs, draft.legs.map(({routingPreference,...leg})=>leg))
+    assert.doesNotMatch(JSON.stringify(payload), /routingPreference/)
+    const saved = receipt(validateRoute(payload))
+    assert.deepEqual(validateSavedRoute(saved), saved)
+    assert.deepEqual(normalizePrivatePlan({ownerUserId:'alice',route:saved}, 'alice').route, saved)
+    let picked
+    const picker = createPrivatePlanPicker({ownerUserId:'alice',current:()=>true,
+      get:async()=>({data:{route:saved}}),onChange:value=>{picked=value}})
+    await picker.select(saved.id,{restore:true}); assert.equal(picked.error,''); assert.deepEqual(picked.selection.route,saved); picker.dispose()
+    f.editor.setRunning(); f.editor.load(saved)
+    assert.equal(f.editor.snapshot().profile, 'foot-walking')
+    assert.equal(f.editor.snapshot().routingPreference, undefined)
+    assert.ok(f.editor.snapshot().legs.every(l=>!Object.hasOwn(l,'routingPreference')))
+    assert.deepEqual(routePayload(f.editor.snapshot(), saved.name, null), payload)
+    assert.equal(f.calls.length,callsBefore)
+    f.editor.undo(); assert.equal(f.editor.snapshot().legs.length, draft.legs.length-1)
+    f.editor.load(saved); f.editor.setRunning(); f.editor.closeLoop(); await f.tick()
+    assert.equal(f.calls.length,callsBefore, 'closed geometry adds no fabricated leg')
+    for (const routingPreference of [RUNNING_PREFERENCE,null,'running',{},[],true]) {
+      const bad=structuredClone(saved); bad.legs[0].routingPreference=routingPreference
+      assert.throws(()=>validateSavedRoute(bad)); assert.throws(()=>f.editor.load(bad))
+      assert.equal(normalizePrivatePlan({ownerUserId:'alice',route:bad},'alice'),null)
+    }
+    for (const patch of [{routingPreference:undefined},{routingPreference:null},{routingPreference:'running'},
+      {routingPreference:'running-avoid-ferries-fords-steps-v2'}, {routingPreference:{}}, {routingPreference:[]},
+      {profile:'foot-hiking'}, {mode:'straight',provenance:'manual',profile:null}, {provenance:'manual'},
+      {intent:'running'}, {options:{avoid_features:['ferries']}}, {unknown:true}]) {
+      const bad=structuredClone(draft); Object.assign(bad.legs[0],patch)
+      const before=structuredClone(bad)
+      assert.throws(()=>routePayload(bad,'Invalid intent',null))
+      assert.deepEqual(bad,before)
+    }
+    // Unknown keys also fail on legs without the known ephemeral field.
+    const unknown=structuredClone(draft); delete unknown.legs[0].routingPreference; unknown.legs[0].extra=true
+    assert.throws(()=>routePayload(unknown,'Unknown leg key',null))
+    f.editor.dispose()
+  }
+  const closing = fixture(body => ({...response(body.points),routingPreference:RUNNING_PREFERENCE}))
+  closing.editor.setRunning(); closing.editor.setStart(A); closing.editor.add(B); await closing.tick()
+  closing.editor.closeLoop(); await closing.tick()
+  assert.deepEqual(closing.calls[1],{profile:'foot-walking',points:[B,A],routingPreference:RUNNING_PREFERENCE})
+  closing.editor.undo(); assert.equal(closing.editor.snapshot().legs[0].routingPreference,RUNNING_PREFERENCE)
+})
+await test('synthetic Running client keys, in-flight work and response metadata cannot alias walking', async () => {
+  const waits = [], client=createLegClient(body=>new Promise(resolve=>waits.push({body,resolve})))
+  const walk=client.get('foot-walking',[A,B]), run=client.get('foot-walking',[A,B],RUNNING_PREFERENCE)
+  assert.notEqual(walk,run); assert.equal(run,client.get('foot-walking',[A,B],RUNNING_PREFERENCE))
+  await flush(); assert.equal(waits.length,2)
+  waits[0].resolve(response([A,B])); waits[1].resolve({...response([A,B]),routingPreference:RUNNING_PREFERENCE})
+  await Promise.all([walk,run]); assert.equal((await client.get('foot-walking',[A,B])).routingPreference,undefined)
+  assert.equal((await client.get('foot-walking',[A,B],RUNNING_PREFERENCE)).routingPreference,RUNNING_PREFERENCE)
+  assert.notEqual(legKey('foot-walking',[A,B]),JSON.stringify(['foot-walking',[A,B]]))
+  assert.notEqual(legKey('foot-walking',[A,B]),legKey('foot-walking',[A,B],RUNNING_PREFERENCE))
+  for(const preference of [null,'running','running-avoid-ferries-fords-steps-v2',{},[]]) assert.throws(()=>legKey('foot-walking',[A,B],preference))
+  assert.throws(()=>legKey('foot-hiking',[A,B],RUNNING_PREFERENCE))
+  for(const raw of [response([A,B]), {...response([A,B]),routingPreference:null}, {...response([A,B]),routingPreference:'running'},
+    {...response([A,B],1000,'foot-hiking'),routingPreference:RUNNING_PREFERENCE}]) {
+    assert.throws(()=>validateLegResponse(raw,'foot-walking',RUNNING_PREFERENCE))
+  }
+  assert.throws(()=>validateLegResponse({...response([A,B]),routingPreference:RUNNING_PREFERENCE},'foot-walking'))
+})
+await test('synthetic Running transitions fence delayed success/failure and preserve failures without fallback', async () => {
+  for(const fromRunning of [false,true]) for(const fail of [false,true]) {
+    const d=deferred(),f=fixture(()=>d.promise)
+    if(fromRunning) f.editor.setRunning()
+    f.editor.setStart(A);f.editor.add(B);await f.tick()
+    if(fromRunning) f.editor.setProfile('foot-walking'); else f.editor.setRunning()
+    const before=structuredClone(f.editor.snapshot())
+    if(fail) d.reject(new Error('synthetic late failure'))
+    else d.resolve({...response([A,B]),...(fromRunning?{routingPreference:RUNNING_PREFERENCE}:{})})
+    await flush();assert.deepEqual(f.editor.snapshot(),before)
+  }
+  const f=fixture(()=>{throw {response:{status:429,headers:{'retry-after':'2'}}}})
+  f.editor.setRunning();f.editor.setStart(A);f.editor.add(B);await f.tick()
+  assert.equal(f.editor.snapshot().legs.length,0);assert.match(f.editor.snapshot().error.message,/limit/)
+  f.editor.retry();await f.tick();assert.equal(f.calls.length,1)
+  f.editor.setMode('straight');f.editor.add(B)
+  assert.equal(f.editor.snapshot().legs[0].routingPreference,undefined)
 })
 console.log(`PASS ${groups} deterministic manual-route groups; mocked providers only`)

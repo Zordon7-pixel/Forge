@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import vm from 'node:vm'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { activateModalDialog } from '../src/lib/modalDialog.js'
@@ -42,7 +43,17 @@ assert.match(calendar, /cell\.hasRecordedRun/, 'activity-only month dates remain
 assert.match(dayView, /Recorded separately from this plan/, 'off-plan activity is never presented as plan completion')
 assert.match(plan, /navigate\(`\/history\?runId=\$\{encodeURIComponent\(activity\.id\)\}`\)/, 'recorded activity opens its existing History recap')
 assert.match(catalog, /location\.state\?\.raceId[\s\S]*openRace\(race, 'owned'\)/, 'plan rebuild handoff opens the exact edited race')
-assert.match(catalog, /activateModalDialog\([\s\S]*dialog: planDialogRef\.current[\s\S]*setSelectedGoal\(null\)/, 'rebuild dialog activates the shared modal behavior controller')
+assert.match(catalog, /activateModalDialog\(\{\s*dialog: planDialogRef\.current,\s*onClose: closeOptions,/, 'rebuild dialog delegates Escape to closeOptions')
+const closeDelegates = [...catalog.matchAll(/const closeOptions = \(\) => \{([\s\S]*?)\n  \}/g)]
+assert.equal(closeDelegates.length, 1, 'execute the actual catalog close delegate')
+const generationInFlight = { current: false }
+const prefillRequestRevision = { current: 7 }
+const closeEffects = []
+const closeOptions = vm.runInNewContext(`(() => {${closeDelegates[0][1]}\n})`, {
+  generationInFlight, prefillRequestRevision,
+  setPrefillLoading: value => closeEffects.push(['prefill', value]),
+  setSelectedGoal: value => closeEffects.push(['goal', value]),
+})
 assert.match(modalDialog, /event\.key === 'Escape'[\s\S]*node\.inert = true[\s\S]*documentRef\.body\.style\.overflow = 'hidden'/, 'modal controller handles Escape, inert background, and scroll lock')
 assert.match(catalog, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-labelledby="plan-options-title"/, 'rebuild dialog exposes modal semantics and an accessible title')
 
@@ -107,7 +118,7 @@ let closeCount = 0
 const cleanupModal = activateModalDialog({
   dialog,
   documentRef,
-  onClose: () => { closeCount += 1 },
+  onClose: () => { closeCount += 1; closeOptions() },
 })
 
 assert.equal(documentRef.activeElement, dialog, 'opening the dialog moves focus inside it')
@@ -128,9 +139,20 @@ assert.equal(documentRef.activeElement, lastButton, 'reverse Tab wraps to the la
 opener.focus()
 dispatchKey(documentRef, 'Tab')
 assert.equal(documentRef.activeElement, firstButton, 'focus forced outside the dialog is recovered')
+generationInFlight.current = { id: 'pending-generation' }
+const lockedEscape = dispatchKey(documentRef, 'Escape')
+assert.equal(lockedEscape.defaultPrevented, true, 'Escape is consumed during generation')
+assert.equal(closeCount, 1, 'Escape reaches the actual delegate during generation')
+assert.deepEqual(closeEffects, [], 'generation lock prevents all close side effects')
+assert.equal(prefillRequestRevision.current, 7, 'locked Escape does not invalidate pending prefill')
+assert.equal(body.style.overflow, 'hidden', 'locked dialog keeps scroll locked')
+assert.equal(page.inert, true, 'locked dialog keeps the background inert')
+generationInFlight.current = false
 const escape = dispatchKey(documentRef, 'Escape')
 assert.equal(escape.defaultPrevented, true, 'Escape is consumed by the dialog')
-assert.equal(closeCount, 1, 'Escape requests one close')
+assert.equal(closeCount, 2, 'unlocked Escape reaches the same delegate once')
+assert.deepEqual(closeEffects, [['prefill', false], ['goal', null]], 'close stops loading and clears selected goal')
+assert.equal(prefillRequestRevision.current, 8, 'close invalidates stale prefill')
 
 cleanupModal()
 assert.equal(body.style.overflow, 'auto', 'cleanup restores the prior body scroll state')
@@ -140,4 +162,4 @@ assert.equal(page.getAttribute('aria-hidden'), null, 'cleanup removes newly adde
 assert.equal(outsideFooter.getAttribute('aria-hidden'), 'false', 'cleanup restores an existing aria-hidden value')
 assert.equal(documentRef.activeElement, opener, 'cleanup restores focus to the opener')
 
-console.log('RACE CALENDAR ACTIVITY SMOKE OK (46)')
+console.log('RACE CALENDAR ACTIVITY SMOKE OK (including actual close delegate and generation lock)')

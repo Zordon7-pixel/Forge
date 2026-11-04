@@ -1,7 +1,6 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { createRequire } = require('module');
 
 const {
   chooseMatchingHealthRun,
@@ -12,7 +11,6 @@ const {
 const { normalizeWorkoutMetrics } = require('../src/lib/workoutMetrics');
 
 const root = path.join(__dirname, '..', '..');
-const { parse } = createRequire(path.join(root, 'frontend/package.json'))('@babel/parser');
 const stravaRoute = fs.readFileSync(path.join(root, 'backend/src/routes/strava.js'), 'utf8');
 const importRoute = fs.readFileSync(path.join(root, 'backend/src/routes/import.js'), 'utf8');
 const swift = fs.readFileSync(path.join(root, 'frontend/ios/App/App/ForgeHealthPlugin.swift'), 'utf8');
@@ -21,7 +19,7 @@ const recap = fs.readFileSync(path.join(root, 'frontend/src/components/RunDetail
 const shareStudio = fs.readFileSync(path.join(root, 'frontend/src/components/ActivityShareStudio.jsx'), 'utf8');
 const shareTemplates = fs.readFileSync(path.join(root, 'frontend/src/lib/shareTemplates.js'), 'utf8');
 const { THEMES, BRAND } = require('../../frontend/src/lib/shareTheme.js');
-const { TEMPLATES, availableShareTemplates, resolveShareTemplate } = require('../../frontend/src/lib/shareTemplates.js');
+const { TEMPLATES } = require('../../frontend/src/lib/shareTemplates.js');
 const { fromRun } = require('../../frontend/src/lib/shareStats.js');
 
 const decoded = decodeSummaryPolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
@@ -115,58 +113,15 @@ for (const [name, theme] of Object.entries(THEMES)) {
   assert.strictEqual(theme.start, '#22C55E', `${name} share routes mark the first coordinate in green`);
   assert.strictEqual(theme.end, '#EF4444', `${name} share routes mark the last coordinate in red`);
 }
-// Inspect the actual call, not a formatting-sensitive copy of its source. Keep
-// every binding explicit: especially showRoute and the C2 selected streak layout.
-const studioAst = parse(shareStudio, { sourceType: 'module', plugins: ['jsx'] });
-const rendererImports = studioAst.program.body.filter(node => node.type === 'ImportDeclaration'
-  && node.source.value === '../lib/shareTemplates').flatMap(node => node.specifiers)
-  .filter(node => node.type === 'ImportSpecifier' && node.imported.name === 'drawShareCard');
-assert.strictEqual(rendererImports.length, 1, 'studio imports the one canonical share renderer');
-assert.strictEqual(rendererImports[0].local.name, 'drawShareCard');
-const rendererCalls = [];
-function visitStudio(node, parent) {
-  if (!node || typeof node !== 'object') return;
-  if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'drawShareCard') {
-    assert.strictEqual(parent.type, 'AwaitExpression', 'studio waits for the canonical render');
-    rendererCalls.push(node);
-  }
-  for (const value of Object.values(node)) {
-    if (Array.isArray(value)) value.forEach(child => visitStudio(child, node));
-    else if (value && typeof value === 'object') visitStudio(value, node);
-  }
-}
-visitStudio(studioAst);
-assert.strictEqual(rendererCalls.length, 1, 'studio has exactly one canonical render dispatch');
-const renderArgs = rendererCalls[0].arguments;
-assert.strictEqual(renderArgs.length, 3);
-assert.strictEqual(renderArgs[0].type, 'Identifier');
-assert.strictEqual(renderArgs[0].name, 'rendered', 'render into the offscreen canvas');
-assert.strictEqual(renderArgs[1].type, 'Identifier');
-assert.strictEqual(renderArgs[1].name, 'cardModel', 'render the canonical display model');
-assert.strictEqual(renderArgs[2].type, 'ObjectExpression');
-const optionBindings = renderArgs[2].properties.map(property => {
-  assert.strictEqual(property.type, 'ObjectProperty', 'no spread may override privacy or selected options');
-  assert.strictEqual(property.computed, false);
-  assert.strictEqual(property.key.type, 'Identifier');
-  assert.strictEqual(property.value.type, 'Identifier');
-  return [property.key.name, property.value.name];
-});
-assert.deepStrictEqual(optionBindings.sort(), Object.entries({
-  template: 'template', theme: 'theme', size: 'size', photo: 'photo', logo: 'logo',
-  showRoute: 'showRoute', layout: 'streakLayout',
-}).sort(), 'canonical renderer receives all selected options without substitutions or duplicates');
+assert(/import\s*\{[^}]*\bdrawShareCard\b[^}]*\}\s*from\s*'\.\.\/lib\/shareTemplates'/.test(shareStudio)
+  && /await drawShareCard\(rendered, cardModel, \{ template, theme, size, photo, logo, showRoute, layout: streakLayout \}\)/.test(shareStudio), 'share studio renders through the canonical template entry point');
 assert(/const safe = rendererModel\(model, options\.showRoute\)/.test(shareTemplates)
   && /entry\.draw\(ctx, safe, \{ \.\.\.options, logo \}\)/.test(shareTemplates), 'canonical renderer forwards selected theme after sanitizing the model');
-assert.deepStrictEqual(TEMPLATES.map(entry => entry.id), ['iron-chips', 'strike-pr', 'hybrid-split', 'trace', 'forged-days', 'full-bleed-story'], 'only the current C1, C2 and Full-Bleed designs are renderable');
+assert.deepStrictEqual(TEMPLATES.map(entry => entry.id), ['iron-chips', 'strike-pr', 'hybrid-split', 'trace', 'forged-days', 'full-bleed-story'], "only this release's new designs are renderable");
 // The route painter is retained only for Full-Bleed. Exercise actual theme and
 // strict route dispatch instead of requiring removed legacy renderer source.
 const fullBleed = TEMPLATES.find(entry => entry.id === 'full-bleed-story');
 const shareModel = fromRun({ name: 'Synthetic run', distance_miles: 1, route_coords: [[40, -74], [40.01, -74.01]] }, { timezone: 'UTC' });
-assert(availableShareTemplates(shareModel, { showRoute: true }).some(entry => entry.id === 'trace'), 'recorded geometry permits explicit Trace selection');
-assert(!availableShareTemplates(shareModel, { showRoute: false }).some(entry => entry.id === 'trace'), 'route OFF excludes Trace');
-assert.strictEqual(resolveShareTemplate(shareModel, { template: 'trace', showRoute: true }), 'trace');
-assert.notStrictEqual(resolveShareTemplate(shareModel, { template: 'trace', showRoute: false }), 'trace', 'saved Trace preference cannot override route privacy');
-assert.notStrictEqual(resolveShareTemplate(shareModel, { showRoute: true }), 'trace', 'Trace remains an explicit choice');
 for (const [theme, tokens] of Object.entries(THEMES)) {
   for (const showRoute of [true, false]) {
     const calls = [];

@@ -1,4 +1,3 @@
-import { normalizeGapReason, phoneRunDiagnostics } from './gpsTrace.js'
 import { normalizePrivatePlan } from './activeRunPlannedRoute.js'
 
 export const ACTIVE_RUN_SESSION_KEY = 'forged_hybrid_active_run_v1'
@@ -25,11 +24,6 @@ function finiteNumber(value, fallback = 0) {
 }
 
 function downsampleRouteCoords(points) {
-  // Segment-bearing phone samples must retain every boundary and its reason.
-  if (points.some(point => point.length > 5)) {
-    if (points.length > 100000) throw new Error('Phone trace exceeds session limit')
-    return points
-  }
   if (points.length <= MAX_ROUTE_POINTS) return points
   return Array.from({ length: MAX_ROUTE_POINTS }, (_, index) => {
     const sourceIndex = Math.round((index * (points.length - 1)) / (MAX_ROUTE_POINTS - 1))
@@ -55,7 +49,6 @@ function normalizeRouteCoords(value) {
     point[4] === null || point[4] === undefined || !Number.isFinite(Number(point[4])) || Number(point[4]) < 0 || Number(point[4]) > 10_000
       ? null
       : Number(point[4]),
-    ...(Number.isSafeInteger(point[5]) && point[5] >= 0 ? [point[5], ...(point.length > 6 ? [point[6] === null ? null : normalizeGapReason(point[6])] : [])] : []),
   ])
   return downsampleRouteCoords(points)
 }
@@ -106,12 +99,9 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
         ? finiteNumber(parsed.finishedAt, 0)
         : 0,
       pausedDurationMs: Math.min(MAX_SESSION_AGE_MS, Math.max(0, Math.round(finiteNumber(parsed.pausedDurationMs, 0)))),
-      autoPauseEnabled: parsed.autoPauseEnabled !== false,
-      autoPaused: parsed.autoPaused === true,
-      pauseStartedAt: parsed.phase === 'paused' || parsed.autoPaused === true ? Math.max(0, finiteNumber(parsed.pauseStartedAt, savedAt)) : 0,
+      pauseStartedAt: parsed.phase === 'paused' ? Math.max(0, finiteNumber(parsed.pauseStartedAt, savedAt)) : 0,
       distanceMiles: Math.min(500, Math.max(0, finiteNumber(parsed.distanceMiles, 0))),
       routeCoords: normalizeRouteCoords(parsed.routeCoords),
-      ...phoneRunDiagnostics(parsed),
       manualDistance: String(parsed.manualDistance || ''),
       mapMyRun: Boolean(parsed.mapMyRun),
       gpsStarted: Boolean(parsed.gpsStarted),
@@ -140,7 +130,7 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
 
 export function elapsedFromSession(session, now = Date.now()) {
   if (!session?.startedAt) return 0
-  if (session.phase !== 'running' || session.autoPaused) return Math.max(0, Number(session.elapsed || 0))
+  if (session.phase !== 'running') return Math.max(0, Number(session.elapsed || 0))
   const activeMilliseconds = now - session.startedAt - Math.max(0, Number(session.pausedDurationMs || 0))
   return Math.max(Number(session.elapsed || 0), Math.round(activeMilliseconds / 1000))
 }
@@ -167,7 +157,6 @@ export function saveActiveRunSession(session, ownerUserId, storage, now = Date.n
 
     target.setItem(ACTIVE_RUN_SESSION_KEY, JSON.stringify({
       ...session,
-      ...phoneRunDiagnostics(session),
       ownerUserId: normalizedOwnerUserId,
       savedAt: now,
       privatePlanChoice: session.privatePlanChoice === true,

@@ -86,14 +86,11 @@ function isPlainObject(value) {
 // Name normalization + alias handling
 // ---------------------------------------------------------------------------
 
-// Deterministic alias map. Keys and values are normalized forms. Only safe,
-// well-known aliases for catalog events already present in the repo.
+// Generic distance spelling only; no event or brand abbreviations.
 const NAME_ALIASES = {
-  'army ten miler': 'army 10 miler',
-  'army 10 miler': 'army 10 miler',
-  'army tenmiler': 'army 10 miler',
-  atm: 'army 10 miler',
-  'the army ten miler': 'army 10 miler',
+  ten: '10',
+  tenmiler: '10 miler',
+  halfmarathon: 'half marathon',
 };
 
 function normalizeRaceName(name) {
@@ -101,14 +98,12 @@ function normalizeRaceName(name) {
   const cleaned = String(name)
     .toLowerCase()
     .replace(/[\u2010-\u2015]/g, '-') // unicode dashes -> hyphen
+    .replace(/['’‘]/g, '') // apostrophes do not split words
     .replace(/[^a-z0-9]+/g, ' ') // strip punctuation to spaces
     .replace(/\s+/g, ' ')
     .trim();
   if (!cleaned) return '';
-  if (Object.prototype.hasOwnProperty.call(NAME_ALIASES, cleaned)) {
-    return NAME_ALIASES[cleaned];
-  }
-  return cleaned;
+  return cleaned.split(' ').map((word) => Object.hasOwn(NAME_ALIASES, word) ? NAME_ALIASES[word] : word).join(' ');
 }
 
 function normalizeRaceLocation(value) {
@@ -125,15 +120,13 @@ function normalizeRaceLocation(value) {
 function normalizeCatalogSearchTokens(value) {
   if (value === null || value === undefined) return [];
   const bounded = String(value).slice(0, CATALOG_SEARCH_MAX_INPUT_LENGTH);
-  const normalized = normalizeRaceLocation(bounded);
+  const normalized = normalizeRaceLocation(bounded.replace(/['’‘]n['’‘]/gi, ' ').replace(/['’‘]/g, ''));
   if (!normalized) return [];
-  const canonical = Object.prototype.hasOwnProperty.call(NAME_ALIASES, normalized)
-    ? NAME_ALIASES[normalized]
-    : normalized;
+  const canonical = normalized.split(' ').map((word) => Object.hasOwn(NAME_ALIASES, word) ? NAME_ALIASES[word] : word).join(' ');
   return [...new Set(canonical
     .split(' ')
-    .map((token) => token.slice(0, CATALOG_SEARCH_MAX_TOKEN_LENGTH))
-    .filter(Boolean))]
+    .filter((token) => token && !['and', 'n', 'the', 'of'].includes(token))
+    .map((token) => token.slice(0, CATALOG_SEARCH_MAX_TOKEN_LENGTH)))]
     .slice(0, CATALOG_SEARCH_MAX_TOKENS);
 }
 
