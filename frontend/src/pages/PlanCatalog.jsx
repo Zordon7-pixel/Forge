@@ -63,6 +63,24 @@ function isValidISODate(value) {
     && parsed.getMonth() + 1 === Number(value.slice(5, 7)) && parsed.getDate() === Number(value.slice(8, 10))
 }
 
+// No-owned-race targets start at planningDateLocal (plans.js); emitted weeks
+// still follow the existing Monday alignment. Convert from the target anchor.
+// Count ISO calendar days in UTC, independent of local DST-length days. Ceil
+// gives 4..20 weeks for 22..140 days; a partial last week extends past the date.
+export function trainUntilDuration(value, planningDateLocal = localTodayISO()) {
+  if (!value) return { weeks: null, error: '' }
+  if (!isValidISODate(value) || !isValidISODate(planningDateLocal)) {
+    return { weeks: null, error: 'Choose a valid Train until calendar date.' }
+  }
+  const days = (Date.parse(`${value}T12:00:00Z`) - Date.parse(`${planningDateLocal}T12:00:00Z`)) / 86400000
+  if (days < 0) return { weeks: null, error: 'Train until must be after today.' }
+  const weeks = Math.ceil(days / 7)
+  if (weeks < 4 || weeks > 20) {
+    return { weeks: null, error: 'Choose a Train until date that rounds up to 4–20 weeks from today (22–140 days).' }
+  }
+  return { weeks, error: '' }
+}
+
 function formatRaceDate(value) {
   if (!isValidISODate(value)) return 'Date not set'
   return new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -115,6 +133,9 @@ export default function PlanCatalog() {
   const [liftDaysPerWeek, setLiftDaysPerWeek] = useState(0)
   const [equipmentPreset, setEquipmentPreset] = useState('full_gym')
   const [weeks, setWeeks] = useState('')
+  const trainUntilInputRef = useRef(null)
+  const [trainUntil, setTrainUntil] = useState('')
+  const [trainUntilSubmitError, setTrainUntilSubmitError] = useState('')
   const [goalTime, setGoalTime] = useState(0)
   const [customDistance, setCustomDistance] = useState('')
   const [raceQuery, setRaceQuery] = useState('')
@@ -128,6 +149,8 @@ export default function PlanCatalog() {
   const [hyroxSetupOpen, setHyroxSetupOpen] = useState(false)
 
   const isRacePlan = selectedGoal?.kind === 'race'
+  const trainUntilPreview = trainUntilDuration(trainUntil, todayISO)
+  const trainUntilError = trainUntilSubmitError || trainUntilPreview.error
   const selectedDistance = useMemo(() => {
     if (!selectedGoal) return ''
     return selectedGoal.key === 'custom' || selectedGoal.kind === 'race'
@@ -181,6 +204,8 @@ export default function PlanCatalog() {
       setRaceSearched(false)
       setSavedRaces([])
       setSelectedGoal(null)
+      setTrainUntil('')
+      setTrainUntilSubmitError('')
       setHyroxSetupOpen(false)
       setRaceDraft({ name: '', date: '', location: '' })
       setAccessMessage('')
@@ -304,6 +329,8 @@ export default function PlanCatalog() {
     setError('')
     setGoalTime(0)
     setWeeks('')
+    setTrainUntil('')
+    setTrainUntilSubmitError('')
     setCustomDistance(goal.key === 'custom' ? '' : String(goal.distanceMiles))
     setRaceSelection(null)
     setRaceDraft({ name: '', date: '', location: '' })
@@ -330,6 +357,8 @@ export default function PlanCatalog() {
     setError('')
     setGoalTime(normalizeDurationSeconds(race?.goal_time_seconds))
     setWeeks('')
+    setTrainUntil('')
+    setTrainUntilSubmitError('')
     setCustomDistance(race ? String(raceDistance(race)) : '')
     setRaceSelection(race ? { type: selectionType, race } : null)
     setRaceDraft({
@@ -400,7 +429,13 @@ export default function PlanCatalog() {
   const generatePlan = async () => {
     if (generationInFlight.current) return
     const goalTimeSeconds = parsedGoalTime
-    const parsedWeeks = Number(weeks)
+    // Revalidate against the current local date, including a sheet left open overnight.
+    const trainUntilNow = trainUntilDuration(trainUntil)
+    if (!isRacePlan && (trainUntilNow.error || trainUntilInputRef.current?.validity.badInput)) {
+      setTrainUntilSubmitError(trainUntilNow.error || 'Choose a valid Train until calendar date.')
+      return
+    }
+    const parsedWeeks = trainUntil ? trainUntilNow.weeks : Number(weeks)
     const distanceMiles = Number(selectedDistance)
     const runCount = Number(runDaysPerWeek)
     const liftCount = liftingEnabled ? Number(liftDaysPerWeek) : 0
@@ -421,7 +456,7 @@ export default function PlanCatalog() {
       setError('Choose a goal pace between 3:00 and 30:00 per mile.')
       return
     }
-    if (!isRacePlan && weeks && (!Number.isInteger(parsedWeeks) || parsedWeeks < 4 || parsedWeeks > 20)) {
+    if (!isRacePlan && !trainUntil && weeks && (!Number.isInteger(parsedWeeks) || parsedWeeks < 4 || parsedWeeks > 20)) {
       setError('Weeks must be a whole number from 4 to 20.')
       return
     }
@@ -504,7 +539,7 @@ export default function PlanCatalog() {
           { ...config, timeout: PLAN_GENERATION_TIMEOUT_MS },
         )
       } else {
-        if (weeks) target.weeks = parsedWeeks
+        if (trainUntil || weeks) target.weeks = parsedWeeks
         setGenerationStep('Building your calendar...')
         await previewAndApplyPlan('/plans/generate', { target }, { ...config, timeout: PLAN_GENERATION_TIMEOUT_MS })
       }
@@ -714,10 +749,11 @@ export default function PlanCatalog() {
                     <input value={raceDraft.name} onChange={(event) => updateRaceDraft('name', event.target.value)} placeholder="Race or event name" maxLength={200} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-                    <label style={{ display: 'grid', gap: 7 }}>
-                      <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850, display: 'flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} color="var(--accent)" /> Race date</span>
-                      <input type="date" min={todayISO} value={raceDraft.date} onChange={(event) => updateRaceDraft('date', event.target.value)} style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', colorScheme: 'dark', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 16 }} />
-                    </label>
+                    <div style={{ display: 'grid', gap: 7 }}>
+                      <label htmlFor="manual-race-date" style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850, display: 'flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} color="var(--accent)" /> Race date</label>
+                      <input id="manual-race-date" aria-describedby="manual-race-date-help" type="date" min={todayISO} value={raceDraft.date} onChange={(event) => updateRaceDraft('date', event.target.value)} style={{ minHeight: 44, width: '100%', boxSizing: 'border-box', minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', colorScheme: 'dark', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 16 }} />
+                      <span id="manual-race-date-help" style={{ color: 'var(--text-muted)', fontSize: 12 }}>Select race date</span>
+                    </div>
                     <label style={{ display: 'grid', gap: 7 }}>
                       <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Distance miles</span>
                       <input type="number" min="0.1" max="100" step="0.1" value={customDistance} onChange={(event) => { setRaceSelection(null); setCustomDistance(event.target.value) }} inputMode="decimal" placeholder="10.0" style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
@@ -815,10 +851,25 @@ export default function PlanCatalog() {
                   )}
                 </label>
                 {!isRacePlan && (
-                  <label style={{ display: 'grid', gap: 8 }}>
-                    <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Weeks</span>
-                    <input type="number" min="4" max="20" value={weeks} onChange={(event) => setWeeks(event.target.value)} placeholder="optional" inputMode="numeric" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
-                  </label>
+                  <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
+                    <label htmlFor="block-train-until" style={{ display: 'grid', gap: 8 }}>
+                      <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Train until (optional)</span>
+                      <input ref={trainUntilInputRef} id="block-train-until" type="date" value={trainUntil}
+                        aria-describedby="block-train-until-help block-train-until-preview"
+                        aria-invalid={Boolean(trainUntilError)}
+                        onChange={(event) => { setTrainUntil(event.target.value); setTrainUntilSubmitError(event.target.validity.badInput ? 'Choose a valid Train until calendar date.' : '') }}
+                        style={{ minHeight: 44, minWidth: 0, width: '100%', boxSizing: 'border-box', background: 'var(--bg-input)', color: 'var(--text-primary)', colorScheme: 'dark', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 16 }} />
+                    </label>
+                    <p id="block-train-until-help" style={{ color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>Select a date or leave blank to use Weeks. From today, calendar days round up to whole weeks (4–20). The calendar end can differ from this date.</p>
+                    <div id="block-train-until-preview" aria-live="polite" style={{ fontSize: 13, color: trainUntilError ? 'var(--danger)' : 'var(--text-primary)' }}>
+                      {trainUntilError ? <span role="alert">{trainUntilError}</span> : trainUntilPreview.weeks ? `${trainUntilPreview.weeks} weeks from today (rounded up).` : ''}
+                    </div>
+                    {trainUntil && <button type="button" onClick={() => { setTrainUntil(''); setTrainUntilSubmitError('') }} style={{ minHeight: 44 }}>Clear Train until</button>}
+                    <label style={{ display: 'grid', gap: 8 }}>
+                      <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Weeks</span>
+                      <input type="number" min="4" max="20" value={weeks} disabled={Boolean(trainUntil)} onChange={(event) => setWeeks(event.target.value)} placeholder="optional" inputMode="numeric" style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
+                    </label>
+                  </div>
                 )}
               </div>
 
